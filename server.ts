@@ -39,7 +39,7 @@ function getAiClient(): GoogleGenAI {
 // -------------------------------------------------------------
 app.post('/api/gemini', async (req, res) => {
   try {
-    const { prompt, cellarState } = req.body;
+    const { prompt, cellarState, stream } = req.body;
 
     if (!process.env.GEMINI_API_KEY) {
       return res.status(400).json({
@@ -74,6 +74,30 @@ ${JSON.stringify(cellarState.sampleData || [], null, 2)}
     const fullPrompt = `${SYSTEM_PROMPT}\n\n${chemicalContext}\n\nWinemaker Query: ${prompt}\n\nAI Winemaker Response:\n`;
 
     const client = getAiClient();
+
+    // Streaming (Server-Sent Events) for the chat UI. Callers that don't ask for
+    // a stream (e.g. the Weather tab) still get a single JSON response below.
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+      try {
+        const streamed = await client.models.generateContentStream({
+          model: GEMINI_MODEL,
+          contents: fullPrompt,
+        });
+        for await (const chunk of streamed) {
+          const piece = chunk.text;
+          if (piece) res.write(`data: ${JSON.stringify({ text: piece })}\n\n`);
+        }
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      } catch (streamErr: any) {
+        res.write(`data: ${JSON.stringify({ error: streamErr?.message || 'Streaming failed' })}\n\n`);
+      }
+      return res.end();
+    }
+
     const response = await client.models.generateContent({
       model: GEMINI_MODEL,
       contents: fullPrompt,

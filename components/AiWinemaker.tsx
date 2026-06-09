@@ -40,38 +40,74 @@ export default function AiWinemaker({ lang, cellarState }: Props) {
 
   const handleSend = async (textToSend?: string) => {
     const query = (textToSend || inputMsg).trim();
-    if (!query) return;
+    if (!query || isLoading) return;
 
     if (!textToSend) {
       setInputMsg('');
     }
 
-    const newUserMsg: Message = { role: 'user', content: query };
-    setMessages(prev => [...prev, newUserMsg]);
+    setMessages(prev => [...prev, { role: 'user', content: query }]);
     setIsLoading(true);
 
     try {
       const resp = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: query,
-          cellarState: cellarState
-        })
+        body: JSON.stringify({ prompt: query, cellarState, stream: true })
       });
 
-      const data = await resp.json();
-      if (!resp.ok) {
+      if (!resp.ok || !resp.body) {
+        const data = await resp.json().catch(() => ({}));
         throw new Error(data.error || 'Server error communicating with Gemini');
       }
 
-      setMessages(prev => [...prev, { role: 'assistant', content: data.text }]);
+      // Open an empty assistant bubble and stream tokens into it as they arrive.
+      setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+      const appendToLast = (chunk: string) =>
+        setMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          copy[copy.length - 1] = { ...last, content: last.content + chunk };
+          return copy;
+        });
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let streamError = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+        for (const evt of events) {
+          const line = evt.trim();
+          if (!line.startsWith('data:')) continue;
+          try {
+            const payload = JSON.parse(line.slice(5).trim());
+            if (payload.text) appendToLast(payload.text);
+            else if (payload.error) streamError = payload.error;
+          } catch {
+            /* ignore malformed / keep-alive lines */
+          }
+        }
+      }
+
+      if (streamError) throw new Error(streamError);
     } catch (err: any) {
       console.error(err);
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: `⚠️ **Connection Error**: ${err.message || 'The AI Winemaker is currently unavailable. Please verify your GEMINI_API_KEY environment variable is configured in the workspace settings.'} ` 
-      }]);
+      const errMsg = `⚠️ **Connection Error**: ${err.message || 'The AI Winemaker is currently unavailable. Please verify your GEMINI_API_KEY environment variable is configured in the workspace settings.'} `;
+      setMessages(prev => {
+        const copy = [...prev];
+        const last = copy[copy.length - 1];
+        if (last && last.role === 'assistant' && last.content === '') {
+          copy[copy.length - 1] = { ...last, content: errMsg };
+          return copy;
+        }
+        return [...copy, { role: 'assistant', content: errMsg }];
+      });
     } finally {
       setIsLoading(false);
     }
