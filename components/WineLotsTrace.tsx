@@ -3,15 +3,16 @@
 import React, { useState } from 'react';
 import { translations, Language } from '../lib/i18n';
 import { WineLot, WinemakingStage, WineClass } from '../lib/wineryState';
-import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter } from 'lucide-react';
+import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText } from 'lucide-react';
 
 interface Props {
   lang: Language;
   lots: WineLot[];
   onUpdateLots: (newLots: WineLot[]) => void;
+  onOpenPassport?: (lotId: string) => void;
 }
 
-export default function WineLotsTrace({ lang, lots, onUpdateLots }: Props) {
+export default function WineLotsTrace({ lang, lots, onUpdateLots, onOpenPassport }: Props) {
   const t = translations[lang];
   const [selectedLotId, setSelectedLotId] = useState<string | null>(lots[0]?.id || null);
   const [filterClass, setFilterClass] = useState<string>('all');
@@ -343,6 +344,14 @@ export default function WineLotsTrace({ lang, lots, onUpdateLots }: Props) {
                 <span className="text-xs font-bold uppercase tracking-wider text-[#4e0e15] bg-[#FAF8F5] border border-[#e8dfd5] px-2.5 py-1 rounded inline-block mt-1">
                   {selectedLot.stage.replace('_', ' ')}
                 </span>
+                {onOpenPassport && (
+                  <button
+                    onClick={() => onOpenPassport(selectedLot.id)}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-white bg-[#4e0e15] hover:bg-[#6b151e] rounded-lg transition-colors cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5" /> Passport (PDF)
+                  </button>
+                )}
               </div>
             </div>
 

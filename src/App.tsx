@@ -4,6 +4,7 @@ import { translations, Language } from '../lib/i18n';
 import { authenticate, DEMO_PASSCODE } from '../lib/auth';
 import { computeAlerts, Alert } from '../lib/alerts';
 import NotificationCenter from '../components/NotificationCenter';
+import LotPassport from '../components/LotPassport';
 import {
   initialVessels,
   initialLots,
@@ -151,6 +152,7 @@ export default function App() {
   const [isClient, setIsClient] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [passportLotId, setPassportLotId] = useState<string | null>(null);
 
   useEffect(() => {
     if (toastMessage) {
@@ -703,6 +705,22 @@ export default function App() {
           <span>🍇</span> {toastMessage}
         </div>
       )}
+
+      {/* Lot Passport — traceability report modal (preview + print/save-PDF) */}
+      {passportLotId && (() => {
+        const passportLot = lots.find(l => l.id === passportLotId);
+        if (!passportLot) return null;
+        return (
+          <LotPassport
+            lot={passportLot}
+            fermLogs={fermLogs.filter(f => f.lotId === passportLot.id)}
+            labLogs={labLogs.filter(l => l.lotId === passportLot.id)}
+            company={companyProfile}
+            generatedBy={currentUser.fullName}
+            onClose={() => setPassportLotId(null)}
+          />
+        );
+      })()}
       {/* 1. Global Navigation Bar header */}
       <header className="px-6 md:px-8 py-3 bg-white/95 backdrop-blur-md border-b border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-0 z-40 shadow-[0_4px_30px_rgba(78,14,21,0.03)] transition-all duration-300">
         {/* Luxury Top Wine Edge Border */}
@@ -1582,7 +1600,7 @@ export default function App() {
 
           {/* C. WINE LOTS TAB */}
           {activeTab === 'lots' && (
-            <WineLotsTrace lang={lang} lots={lots} onUpdateLots={setLots} />
+            <WineLotsTrace lang={lang} lots={lots} onUpdateLots={setLots} onOpenPassport={setPassportLotId} />
           )}
 
           {/* D. TRANSFERS & BLENDS */}
