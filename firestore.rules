@@ -1,0 +1,164 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global reusable helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Check if the user is verified
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.provider_id == 'google.com');
+    }
+
+    // Utility validation helpers
+    function validateBasicWinery(data) {
+      return data.id is string && data.name is string && data.name.size() <= 100;
+    }
+
+    function validateBasicTank(data) {
+      return data.id is string && data.name is string && data.type in ['stainless_steel', 'qvevri', 'barrel', 'plastic', 'concrete', 'other'] && data.capacity is number && data.capacity > 0 && data.currentVolume is number && data.currentVolume >= 0 && data.currentVolume <= data.capacity;
+    }
+
+    function validateBasicLot(data) {
+      return data.id is string && data.code is string && data.wineName is string && data.vintage is number && data.vintage > 1900 && data.vintage <= 2030 && data.currentVolume is number && data.currentVolume >= 0;
+    }
+
+    function validateBasicTransfer(data) {
+      return data.id is string && data.date is string && data.sourceTankId is string && data.destTankId is string && data.lotId is string && data.volume is number && data.volume > 0;
+    }
+
+    // Match patterns per collection
+    match /wineries/{wineryId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && validateBasicWinery(incoming());
+      allow delete: if false; // Deletion of winery node is forbidden
+
+      // Tanks Collection
+      match /tanks/{tankId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(tankId) && validateBasicTank(incoming());
+        allow update: if isSignedIn() && validateBasicTank(incoming());
+        allow delete: if isSignedIn();
+      }
+
+      // Lots Collection
+      match /lots/{lotId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(lotId) && validateBasicLot(incoming());
+        allow update: if isSignedIn() && validateBasicLot(incoming());
+        allow delete: if isSignedIn();
+      }
+
+      // Transfers Collection
+      match /transfers/{transferId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(transferId) && validateBasicTransfer(incoming());
+        allow update: if false; // Transfers are immutable historical records
+        allow delete: if false;
+      }
+
+      // Fermentation Collection
+      match /fermentations/{fermentationId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(fermentationId);
+        allow delete: if isSignedIn();
+
+        match /logs/{logId} {
+          allow read: if isSignedIn();
+          allow create, update: if isSignedIn() && isValidId(logId);
+          allow delete: if isSignedIn();
+        }
+      }
+
+      // Lab Results Collection
+      match /lab_results/{resultId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(resultId);
+        allow delete: if isSignedIn();
+      }
+
+      // Additives Collection
+      match /additives/{addId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(addId);
+        allow delete: if isSignedIn();
+      }
+
+      // Inventory Collection
+      match /inventory/{invId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(invId);
+        allow delete: if isSignedIn();
+      }
+
+      // Bottling Collection
+      match /bottling/{bottleId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(bottleId);
+        allow update: if false; // Bottling is historic/immutable
+        allow delete: if false;
+      }
+
+      // Barrels Collection
+      match /barrels/{barrelId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(barrelId);
+        allow delete: if isSignedIn();
+      }
+
+      // Qvevri Collection
+      match /qvevri/{qvevriId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(qvevriId);
+        allow delete: if isSignedIn();
+      }
+
+      // Cleaning Collection
+      match /cleaning/{cleanId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(cleanId);
+        allow delete: if isSignedIn();
+      }
+
+      // Tasks Collection
+      match /tasks/{taskId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(taskId);
+        allow delete: if isSignedIn();
+      }
+
+      // Audit Logs Collection
+      match /audit_logs/{auditId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidId(auditId);
+        allow update, delete: if false; // Audit logs must be immutable
+      }
+
+      // Suppliers Collection
+      match /suppliers/{supId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn() && isValidId(supId);
+        allow delete: if isSignedIn();
+      }
+    }
+  }
+}

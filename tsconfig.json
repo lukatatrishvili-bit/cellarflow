@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "lib/**/*.ts",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "server.ts",
+    "vite.config.ts",
+    "firebase-applet-config.json"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

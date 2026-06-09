@@ -1,0 +1,6 @@
+{
+  "name": "VINEA",
+  "description": "Premium vineyard and winery management platform connecting viticulture (Vazi) & winemaking (Gvino) into one unified system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
