@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { translations, Language } from '../lib/i18n';
+import { authenticate, DEMO_PASSCODE } from '../lib/auth';
 import {
   initialVessels,
   initialLots,
@@ -147,6 +148,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isClient, setIsClient] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   useEffect(() => {
     if (toastMessage) {
@@ -798,34 +800,63 @@ export default function App() {
 
             <form onSubmit={(e) => {
               e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const profile = authenticate(
+                String(fd.get('identifier') || ''),
+                String(fd.get('passcode') || '')
+              );
+              if (!profile) {
+                setLoginError(lang === 'ka'
+                  ? 'არასწორი მომხმარებელი ან კოდი. გამოიყენეთ ქვემოთ მითითებული სადემონსტრაციო კოდი.'
+                  : 'Invalid username or passcode. Use the demo passcode below.');
+                return;
+              }
+              setLoginError(null);
+              setCurrentUser(profile);
               setIsLoggedIn(true);
               setActiveModule('portal');
             }} className="space-y-4">
               <div>
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_username || 'Account Username / Email'}</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
+                  name="identifier"
                   defaultValue="luka_winemaker"
+                  autoComplete="username"
+                  onChange={() => loginError && setLoginError(null)}
                   className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
                   required
                 />
               </div>
               <div>
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_passcode || 'Passcode'}</label>
-                <input 
-                  type="password" 
-                  defaultValue="••••••••"
+                <input
+                  type="password"
+                  name="passcode"
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  onChange={() => loginError && setLoginError(null)}
                   className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none font-bold focus:border-stone-400 transition-colors text-stone-900"
                   required
                 />
               </div>
 
-              <button 
+              {loginError && (
+                <p className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {loginError}
+                </p>
+              )}
+
+              <button
                 type="submit"
                 className="w-full bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase tracking-widest py-3 rounded-xl cursor-pointer shadow-sm transition-all duration-155 text-xs mt-2"
               >
                 {t.signin_btn || 'Secure Portal Login'}
               </button>
+
+              <p className="text-center text-[9px] font-mono text-stone-400 tracking-wide">
+                {lang === 'ka' ? 'სადემონსტრაციო კოდი' : 'Demo passcode'}: <span className="font-bold text-[#4e0e15] select-all">{DEMO_PASSCODE}</span>
+              </p>
             </form>
 
             <div className="relative flex py-2 items-center">

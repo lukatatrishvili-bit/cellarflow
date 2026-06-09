@@ -23,8 +23,7 @@
     "components/**/*.ts",
     "components/**/*.tsx",
     "server.ts",
-    "vite.config.ts",
-    "firebase-applet-config.json"
+    "vite.config.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
