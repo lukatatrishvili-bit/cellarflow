@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { translations, Language } from '../lib/i18n';
 import { authenticate, DEMO_PASSCODE } from '../lib/auth';
+import { computeAlerts, Alert } from '../lib/alerts';
+import NotificationCenter from '../components/NotificationCenter';
 import {
   initialVessels,
   initialLots,
@@ -506,6 +508,28 @@ export default function App() {
     return lotId;
   };
 
+  // Derived live alert feed for the notification center. Memoized so the
+  // per-second clock tick does not recompute it. Declared before the early
+  // return below to satisfy the rules of hooks.
+  const alerts = useMemo(
+    () => computeAlerts({ vessels, lots, fermLogs, labLogs, inventory, tasks }),
+    [vessels, lots, fermLogs, labLogs, inventory, tasks]
+  );
+
+  const handleSelectAlert = (a: Alert) => {
+    const tabByCategory: Record<Alert['category'], string> = {
+      so2: 'labs',
+      va: 'labs',
+      fermentation: 'fermentation',
+      temperature: 'vessels',
+      cleaning: 'vessels',
+      task: 'tasks',
+      inventory: 'inventory',
+    };
+    setActiveModule('gvino');
+    setActiveTab(tabByCategory[a.category]);
+  };
+
   if (!isClient) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#FAF8F5] text-[#2c241e]">
@@ -741,6 +765,7 @@ export default function App() {
 
         {/* Configuration Utilities & User Widget */}
         <div className="flex items-center gap-3 justify-between md:justify-end">
+          {isLoggedIn && <NotificationCenter alerts={alerts} onSelect={handleSelectAlert} />}
           <div className="flex items-center gap-1.5 p-1 bg-gradient-to-r from-stone-50 to-stone-100 border border-stone-200/90 rounded-xl shadow-2xs">
             <Languages className="w-3.5 h-3.5 text-[#4e0e15] ml-1.5 shrink-0" />
             <select
