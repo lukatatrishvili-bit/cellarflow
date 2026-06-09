@@ -718,7 +718,7 @@ export default function App() {
     <div className="min-h-screen bg-[#f8f6f2] flex flex-col font-sans relative">
       {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
       {toastMessage && (
-        <div className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-50 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs animate-pulse flex items-center gap-2">
+        <div className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-50 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-2 animate-fade-in">
           <span>🍇</span> {toastMessage}
         </div>
       )}
@@ -757,7 +757,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-serif tracking-[0.25em] text-[#1b1715] font-black">VINEA</h1>
               <span className="text-[8px] px-2 py-0.5 font-mono font-black bg-stone-100/90 text-[#4e0e15] border border-[#e8dfd5] rounded-sm uppercase tracking-widest flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
                 UNIFIED ERP
               </span>
             </div>
@@ -1413,68 +1413,59 @@ export default function App() {
       ) : (
         <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
           
-          {/* Sidebar Tabs */}
-          <aside className={`${isSidebarCollapsed ? 'w-full lg:w-20' : 'w-full lg:w-64'} transition-all duration-300 space-y-1.5 shrink-0 bg-white lg:bg-transparent p-4 lg:p-0 rounded-xl border border-[#e8dfd5] lg:border-none shadow-sm lg:shadow-none`}>
-          
-          {/* Header area with close/collapse button on desktop */}
-          <div className="hidden lg:flex items-center justify-between px-2.5 py-2 border-b border-[#e8dfd5]/60 mb-2">
-            {!isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-500 uppercase tracking-widest font-bold">Winery Menu</span>}
-            <button 
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="ml-auto p-1.5 text-[#4e0e15] hover:bg-stone-100 rounded-md transition-all cursor-pointer"
-              title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-            >
-              {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-            </button>
-          </div>
-          
-          {/* Mobile toggle helper */}
-          <div className="flex lg:hidden items-center justify-between border-b border-dashed border-[#e8dfd5]/60 pb-2 mb-2">
-            <span className="text-xs font-serif font-bold text-[#4e0e15]">Menu Options</span>
-            <button 
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-              className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-[#4e0e15] rounded text-[10px] font-mono font-bold"
-            >
-              {isSidebarCollapsed ? "Show Names" : "Icons Only"}
-            </button>
-          </div>
+          {/* Winery sub-navigation: clean sticky sidebar on desktop, horizontal scroll strip on mobile */}
+          <aside className={`shrink-0 w-full ${isSidebarCollapsed ? 'lg:w-20' : 'lg:w-60'} lg:self-start lg:sticky lg:top-24 transition-[width] duration-300`}>
 
-          {[
-            { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard },
-            { id: 'vessels', label: t.tanks, icon: Container },
-            { id: 'lots', label: t.wine_lots, icon: Wine },
-            { id: 'transfers', label: t.transfers, icon: GitCommit },
-            { id: 'fermentation', label: t.fermentation, icon: Activity },
-            { id: 'labs', label: t.lab_analysis, icon: TestTube },
-            { id: 'calculators', label: t.calculators, icon: TestTube }, 
-            { id: 'inventory', label: t.inventory, icon: Boxes },
-            { id: 'tasks', label: t.tasks, icon: ClipboardList },
-            { id: 'notes', label: t.notes, icon: FileText },
-            { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
+            {/* Desktop menu header + collapse toggle */}
+            <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70">
+              {!isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">Winery Menu</span>}
               <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                title={tab.label}
-                className={`w-full flex items-center px-3.5 py-2.5 rounded-lg text-xs font-semibold font-sans tracking-wide cursor-pointer transition-all ${
-                  isSidebarCollapsed ? 'justify-start lg:justify-center' : 'justify-start'
-                } ${
-                  isActive 
-                    ? 'bg-[#4e0e15] text-[#fbf9f6] shadow' 
-                    : 'bg-white hover:bg-[#f5efe9] text-stone-700 hover:text-stone-900 border border-[#e8dfd5]'
-                }`}
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                className="ml-auto p-1.5 text-stone-400 hover:text-[#4e0e15] hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
+                title={isSidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
               >
-                <Icon className={`w-4 h-4 shrink-0 ${isSidebarCollapsed ? 'lg:mr-0 mr-3' : 'mr-3'} ${isActive ? 'text-amber-400' : 'text-[#4e0e15]'}`} />
-                <span className={`${isSidebarCollapsed ? 'lg:hidden block' : 'block'}`}>
-                  {tab.label}
-                </span>
+                {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
               </button>
-            );
-          })}
-        </aside>
+            </div>
+
+            {/* Tab list — horizontal scroll on mobile, vertical on desktop */}
+            <div className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-visible no-scrollbar -mx-4 px-4 pb-1 lg:mx-0 lg:px-0 lg:pb-0">
+              {[
+                { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard },
+                { id: 'vessels', label: t.tanks, icon: Container },
+                { id: 'lots', label: t.wine_lots, icon: Wine },
+                { id: 'transfers', label: t.transfers, icon: GitCommit },
+                { id: 'fermentation', label: t.fermentation, icon: Activity },
+                { id: 'labs', label: t.lab_analysis, icon: TestTube },
+                { id: 'calculators', label: t.calculators, icon: TestTube },
+                { id: 'inventory', label: t.inventory, icon: Boxes },
+                { id: 'tasks', label: t.tasks, icon: ClipboardList },
+                { id: 'notes', label: t.notes, icon: FileText },
+                { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon }
+              ].map(tab => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    title={tab.label}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`group shrink-0 lg:w-full flex items-center gap-2.5 px-3.5 py-2 lg:py-2.5 rounded-lg text-xs font-semibold tracking-wide whitespace-nowrap cursor-pointer transition-colors ${
+                      isSidebarCollapsed ? 'lg:justify-center' : ''
+                    } ${
+                      isActive
+                        ? 'bg-[#4e0e15] text-[#fbf9f6] shadow-sm'
+                        : 'text-stone-600 hover:text-[#4e0e15] hover:bg-[#f5efe9]'
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-400' : 'text-[#4e0e15]/70 group-hover:text-[#4e0e15]'}`} />
+                    <span className={isSidebarCollapsed ? 'lg:hidden' : ''}>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
 
         {/* Content Tabs Area */}
         <section className="flex-1 min-w-0 space-y-4">
