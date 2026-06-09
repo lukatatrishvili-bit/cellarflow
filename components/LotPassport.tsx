@@ -1,4 +1,5 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { WineLot, DailyFermLog, LabAnalysis, CompanyProfile } from '../lib/wineryState';
 import { buildPassportHtml } from '../lib/lotPassport';
 import { X, Printer, FileText } from 'lucide-react';
@@ -14,10 +15,30 @@ interface Props {
 
 export default function LotPassport({ lot, fermLogs, labLogs, company, generatedBy, onClose }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+
+  const deepLink =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/?lot=${encodeURIComponent(lot.id)}`
+      : `/?lot=${encodeURIComponent(lot.id)}`;
+
+  useEffect(() => {
+    let active = true;
+    QRCode.toDataURL(deepLink, { margin: 1, width: 168, color: { dark: '#4e0e15', light: '#ffffffff' } })
+      .then((url) => {
+        if (active) setQrDataUrl(url);
+      })
+      .catch(() => {
+        /* QR is decorative; ignore failures */
+      });
+    return () => {
+      active = false;
+    };
+  }, [deepLink]);
 
   const html = useMemo(
-    () => buildPassportHtml({ lot, fermLogs, labLogs, company, generatedBy }),
-    [lot, fermLogs, labLogs, company, generatedBy]
+    () => buildPassportHtml({ lot, fermLogs, labLogs, company, generatedBy, qrDataUrl }),
+    [lot, fermLogs, labLogs, company, generatedBy, qrDataUrl]
   );
 
   useEffect(() => {

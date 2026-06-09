@@ -7,6 +7,8 @@ export interface PassportData {
   labLogs: LabAnalysis[];
   company: CompanyProfile;
   generatedBy: string;
+  /** Optional QR code (data URL) deep-linking back to this lot; rendered in the header. */
+  qrDataUrl?: string;
 }
 
 const ESCAPES: Record<string, string> = {
@@ -26,7 +28,7 @@ const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, (c) => E
  * source of truth for the layout.
  */
 export function buildPassportHtml(data: PassportData): string {
-  const { lot, fermLogs, labLogs, company, generatedBy } = data;
+  const { lot, fermLogs, labLogs, company, generatedBy, qrDataUrl } = data;
   const generatedAt = new Date().toLocaleString();
   const ferm = [...fermLogs].sort((a, b) => a.date.localeCompare(b.date));
   const labs = [...labLogs].sort((a, b) => a.date.localeCompare(b.date));
@@ -108,6 +110,8 @@ export function buildPassportHtml(data: PassportData): string {
   .foot { margin-top: 28px; border-top: 1px solid #eadfd5; padding-top: 10px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 10px; color: #8a7d72; font-family: Arial, Helvetica, sans-serif; }
   .sig { text-align: center; }
   .sig .line { width: 190px; border-top: 1px solid #2c241e; margin-bottom: 4px; height: 30px; }
+  .qr { width: 84px; height: 84px; margin-top: 8px; display: inline-block; }
+  .qr-cap { font-size: 8px; font-family: Arial, Helvetica, sans-serif; color: #a3998d; text-transform: uppercase; letter-spacing: .05em; }
   @page { margin: 16mm; }
   @media print { body { padding: 0; } h2.section, table, ul.timeline li, .foot { page-break-inside: avoid; } }
 </style>
@@ -123,6 +127,7 @@ export function buildPassportHtml(data: PassportData): string {
       <div style="text-align:right">
         <div class="code">${esc(lot.id)}</div>
         <div class="muted" style="margin-top:6px">Generated ${esc(generatedAt)}</div>
+        ${qrDataUrl ? `<div><img class="qr" src="${esc(qrDataUrl)}" alt="Scan for digital passport" /><div class="qr-cap">Scan to open</div></div>` : ''}
       </div>
     </div>
 

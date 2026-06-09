@@ -299,6 +299,23 @@ export default function App() {
     setIrrigationLogs(storedIrrig ? JSON.parse(storedIrrig) : initialIrrigationLogs);
     setFertilizerLogs(storedFert ? JSON.parse(storedFert) : initialFertilizerLogs);
     setAuditLogs(storedAudits ? JSON.parse(storedAudits) : initialVineaAuditLogs);
+
+    // Deep links (e.g. a QR code scanned on the cellar floor). Only honored for
+    // an already-signed-in session so the target survives hydration.
+    if (storedIsLoggedIn === 'true') {
+      const params = new URLSearchParams(window.location.search);
+      const lotParam = params.get('lot');
+      const tankParam = params.get('tank');
+      if (lotParam) {
+        setActiveModule('gvino');
+        setActiveTab('lots');
+        setPassportLotId(lotParam);
+      } else if (tankParam) {
+        setActiveModule('gvino');
+        setActiveTab('vessels');
+        setSelectedTankId(tankParam);
+      }
+    }
   }, []);
 
   // Sync back to client side standard key-value storage

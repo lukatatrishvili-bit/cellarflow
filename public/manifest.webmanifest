@@ -1,0 +1,19 @@
+{
+  "name": "VINEA — Unified Winery & Vineyard",
+  "short_name": "VINEA",
+  "description": "Unified vineyard (Vazi) and winery (Gvino) management — tanks, lots, fermentation, lab, and traceability.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f8f6f2",
+  "theme_color": "#4e0e15",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
