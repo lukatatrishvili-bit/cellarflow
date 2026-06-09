@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { translations, Language } from '../lib/i18n';
 import { authenticate, DEMO_PASSCODE } from '../lib/auth';
 import { computeAlerts, Alert } from '../lib/alerts';
 import NotificationCenter from '../components/NotificationCenter';
-import LotPassport from '../components/LotPassport';
+import LiveClock from '../components/LiveClock';
+// Heavy / route-specific components are code-split so they are not part of the
+// initial (login) bundle. See the lazy() declarations below.
+const LotPassport = lazy(() => import('../components/LotPassport'));
 import {
   initialVessels,
   initialLots,
@@ -44,7 +47,7 @@ import {
   initialVineaAuditLogs
 } from '../lib/wineryState';
 
-import VaziModule from '../components/VaziModule';
+const VaziModule = lazy(() => import('../components/VaziModule'));
 import {
   LineChart,
   Line,
@@ -58,8 +61,8 @@ import {
 import TanksVessels from '../components/TanksVessels';
 import WineLotsTrace from '../components/WineLotsTrace';
 import TransfersTab from '../components/TransfersTab';
-import EnoCalculators from '../components/EnoCalculators';
-import AiWinemaker from '../components/AiWinemaker';
+const EnoCalculators = lazy(() => import('../components/EnoCalculators'));
+const AiWinemaker = lazy(() => import('../components/AiWinemaker'));
 import FermentationCurveChart from '../components/FermentationCurveChart';
 import TankCapacityChart from '../components/TankCapacityChart';
 import InventoryTab from '../components/InventoryTab';
@@ -134,20 +137,17 @@ const initialCellarNotes: CellarNote[] = [
   }
 ];
 
+function ModuleLoader() {
+  return (
+    <div className="flex items-center justify-center p-16 w-full">
+      <Loader2 className="w-6 h-6 animate-spin text-[#4e0e15]" />
+    </div>
+  );
+}
+
 export default function App() {
   // 1. Language selector management
   const [lang, setLang] = useState<Language>('en');
-  const [currentUtcTime, setCurrentUtcTime] = useState('');
-
-  useEffect(() => {
-    const updateTime = () => {
-      const d = new Date();
-      setCurrentUtcTime(d.toUTCString().replace('GMT', 'UTC'));
-    };
-    updateTime();
-    const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
-  }, []);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isClient, setIsClient] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -728,14 +728,16 @@ export default function App() {
         const passportLot = lots.find(l => l.id === passportLotId);
         if (!passportLot) return null;
         return (
-          <LotPassport
-            lot={passportLot}
-            fermLogs={fermLogs.filter(f => f.lotId === passportLot.id)}
-            labLogs={labLogs.filter(l => l.lotId === passportLot.id)}
-            company={companyProfile}
-            generatedBy={currentUser.fullName}
-            onClose={() => setPassportLotId(null)}
-          />
+          <Suspense fallback={null}>
+            <LotPassport
+              lot={passportLot}
+              fermLogs={fermLogs.filter(f => f.lotId === passportLot.id)}
+              labLogs={labLogs.filter(l => l.lotId === passportLot.id)}
+              company={companyProfile}
+              generatedBy={currentUser.fullName}
+              onClose={() => setPassportLotId(null)}
+            />
+          </Suspense>
         );
       })()}
       {/* 1. Global Navigation Bar header */}
@@ -975,6 +977,7 @@ export default function App() {
         </div>
       ) : activeModule === 'vazi' ? (
         <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 flex flex-col">
+          <Suspense fallback={<ModuleLoader />}>
           <VaziModule
             lang={lang}
             currentUser={currentUser}
@@ -999,6 +1002,7 @@ export default function App() {
             onAddIrrigation={handleAddIrrigation}
             onAddFertilizer={handleAddFertilizer}
           />
+          </Suspense>
         </main>
       ) : activeModule === 'portal' ? (
          <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 flex flex-col space-y-6">
@@ -1022,9 +1026,7 @@ export default function App() {
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
                   Oenology Clock
                 </span>
-                <strong className="text-stone-850 block mt-1 font-mono font-bold text-[11px] text-[#4e0e15]">
-                  {currentUtcTime || 'LOADING UTC...'}
-                </strong>
+                <LiveClock className="text-stone-850 block mt-1 font-mono font-bold text-[11px] text-[#4e0e15]" />
               </div>
               <div className="bg-[#fcfbf9] border border-[#e8dfd5] px-4 py-2.5 rounded-xl text-left">
                 <span className="text-stone-400 block text-[8px] uppercase tracking-wider font-extrabold">{t.portal_appellation || 'Active Appellation'}</span>
@@ -1871,7 +1873,9 @@ export default function App() {
 
           {/* G. WINEMAKING CALCULATORS */}
           {activeTab === 'calculators' && (
-            <EnoCalculators lang={lang} />
+            <Suspense fallback={<ModuleLoader />}>
+              <EnoCalculators lang={lang} />
+            </Suspense>
           )}
 
           {/* H. RAW INVENTORY STOCK */}
@@ -1881,8 +1885,9 @@ export default function App() {
 
           {/* I. AI ASSISTANT WINEMAKER */}
           {activeTab === 'ai' && (
-            <AiWinemaker 
-              lang={lang} 
+            <Suspense fallback={<ModuleLoader />}>
+            <AiWinemaker
+              lang={lang}
               cellarState={{
                 tanksCount: totalTanksCount,
                 activeFermsCount,
@@ -1901,6 +1906,7 @@ export default function App() {
                 })
               }}
             />
+            </Suspense>
           )}
 
           {/* J. CELLAR TASKS */}
