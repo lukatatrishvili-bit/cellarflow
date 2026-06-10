@@ -13,6 +13,8 @@ import {
 } from '../lib/wineryState';
 import { Language } from '../lib/i18n';
 import WeatherTab from './WeatherTab';
+import LocationPicker from './LocationPicker';
+import IpmPhenoscheme from './IpmPhenoscheme';
 import { 
   Mountain, Wind, Droplet, Sun, Layers, Plus, 
   AlertTriangle, Check, Calendar, Thermometer, 
@@ -46,6 +48,11 @@ interface VaziModuleProps {
   onSendHarvestToGvino: (blockId: string, harvestedKg: number, variety: string, vintage: number, harvestedDate: string) => string; // Returns Gvino Lot ID
   onAddIrrigation: (rec: Omit<IrrigationRecord, 'id'>) => void;
   onAddFertilizer: (rec: Omit<FertilizationRecord, 'id'>) => void;
+  setActiveModule?: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
+  setActiveTab?: (tab: string) => void;
+  setPrefilledTaskTitle?: (title: string) => void;
+  setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
+  setPrefilledTaskDesc?: (desc: string) => void;
 }
 
 export default function VaziModule({
@@ -70,15 +77,22 @@ export default function VaziModule({
   onUpdateHarvestRecord,
   onSendHarvestToGvino,
   onAddIrrigation,
-  onAddFertilizer
+  onAddFertilizer,
+  setActiveModule,
+  setActiveTab,
+  setPrefilledTaskTitle,
+  setPrefilledTaskPriority,
+  setPrefilledTaskDesc
 }: VaziModuleProps) {
-  const [vaziTab, setVaziTab] = useState<'dashboard' | 'blocks' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather'>('dashboard');
+  const [vaziTab, setVaziTab] = useState<'dashboard' | 'blocks' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather' | 'ipm_pheno'>('dashboard');
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   
   // Adding state
   const [showAddBlockModal, setShowAddBlockModal] = useState(false);
   const [addBlockLat, setAddBlockLat] = useState<number>(41.9567);
   const [addBlockLng, setAddBlockLng] = useState<number>(45.4851);
+  const [addBlockLocName, setAddBlockLocName] = useState<string>('Kakheti, Georgia');
+  const [addBlockElev, setAddBlockElev] = useState<number>(350);
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   const [drawnPoints, setDrawnPoints] = useState<{ x: number; y: number }[]>([]);
 
@@ -318,6 +332,17 @@ export default function VaziModule({
               de: 'Schädlingsbeobachtung'
             }[lang] || 'Disease Scouting',
             icon: ShieldAlert
+          },
+          {
+            id: 'ipm_pheno',
+            label: {
+              en: 'IPM Phenoscheme',
+              ka: 'ინტეგრირებული დაცვა',
+              it: 'IPM Phenoscheme',
+              fr: 'IPM Phenoscheme',
+              de: 'IPM Phenoscheme'
+            }[lang] || 'IPM Phenoscheme',
+            icon: Sprout
           },
           {
             id: 'sampling',
@@ -1502,10 +1527,32 @@ export default function VaziModule({
       )}
 
       {/* ==========================================
+          TAB: IPM PHENOSCHEME
+          ========================================== */}
+      {vaziTab === 'ipm_pheno' && (
+        <IpmPhenoscheme 
+          lang={lang}
+          selectedBlock={selectedBlock}
+          sprays={sprays}
+          onAddSprayRecord={onAddSprayRecord}
+          currentUser={currentUser}
+          blockWeather={blockWeather}
+        />
+      )}
+
+      {/* ==========================================
           TAB 7: AGRO-WEATHER STATION
           ========================================== */}
       {vaziTab === 'weather' && (
-        <WeatherTab lang={lang} blocks={blocks} />
+        <WeatherTab 
+          lang={lang} 
+          blocks={blocks} 
+          setActiveModule={setActiveModule}
+          setActiveTab={setActiveTab}
+          setPrefilledTaskTitle={setPrefilledTaskTitle}
+          setPrefilledTaskPriority={setPrefilledTaskPriority}
+          setPrefilledTaskDesc={setPrefilledTaskDesc}
+        />
       )}
 
       {/* ==========================================
@@ -1577,10 +1624,23 @@ export default function VaziModule({
                 </div>
               </div>
 
-              {/* Coordinate Advisory */}
-              <div className="bg-[#fcf8f2] border border-[#eadaa6]/65 text-[#6c4c1d] p-3 rounded-lg text-[10px] leading-relaxed">
-                <span className="font-bold block text-[#6c4c1d] mb-0.5 font-mono text-[9px] uppercase">ⓘ Coordinates Calibration Tip</span>
-                Specify the exact coordinates or use default presets for your vineyard block. This calibration is used to configure macroclimate tracking parameters, real-world satellite coordinates, and dynamic pathogen risk indicators without external service dependencies.
+              {/* Location — search a real place (Open-Meteo geocoder) or fine-tune coordinates below */}
+              <div className="bg-emerald-50/50 border border-emerald-200/70 p-3 rounded-lg space-y-2">
+                <span className="font-bold block text-emerald-900 font-mono text-[9px] uppercase tracking-wider">📍 Block Location</span>
+                <p className="text-[10px] text-emerald-900/70 leading-relaxed">
+                  Search any place to set the block's coordinates — they drive the real-time weather station, satellite views, and disease-risk models. Fine-tune latitude/longitude manually below.
+                </p>
+                <LocationPicker
+                  latitude={addBlockLat}
+                  longitude={addBlockLng}
+                  showManual={false}
+                  onChange={(loc) => {
+                    setAddBlockLat(parseFloat(loc.latitude.toFixed(4)));
+                    setAddBlockLng(parseFloat(loc.longitude.toFixed(4)));
+                    if (loc.label) setAddBlockLocName(loc.label);
+                    if (typeof loc.elevation === 'number' && loc.elevation > 0) setAddBlockElev(Math.round(loc.elevation));
+                  }}
+                />
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -1615,11 +1675,11 @@ export default function VaziModule({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Elevation (Meters)</label>
-                  <input type="number" name="elevation" defaultValue="350" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
+                  <input type="number" name="elevation" value={addBlockElev} onChange={(e) => setAddBlockElev(parseInt(e.target.value) || 0)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Soil/Location Name</label>
-                  <input type="text" name="locationName" defaultValue="Kakheti, Georgia" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Location Name</label>
+                  <input type="text" name="locationName" value={addBlockLocName} onChange={(e) => setAddBlockLocName(e.target.value)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
               </div>
 

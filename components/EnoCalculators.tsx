@@ -17,11 +17,33 @@ import {
   Zap
 } from 'lucide-react';
 
+import { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
+
 interface Props {
   lang: Language;
+  lots?: WineLot[];
+  vessels?: Vessel[];
+  labLogs?: LabAnalysis[];
+  calculatorLotId?: string;
+  setCalculatorLotId?: (val: string) => void;
+  calculatorLotIdA?: string;
+  setCalculatorLotIdA?: (val: string) => void;
+  calculatorLotIdB?: string;
+  setCalculatorLotIdB?: (val: string) => void;
 }
 
-export default function EnoCalculators({ lang }: Props) {
+export default function EnoCalculators({
+  lang,
+  lots = [],
+  vessels = [],
+  labLogs = [],
+  calculatorLotId = '',
+  setCalculatorLotId = () => {},
+  calculatorLotIdA = '',
+  setCalculatorLotIdA = () => {},
+  calculatorLotIdB = '',
+  setCalculatorLotIdB = () => {}
+}: Props) {
   const t = translations[lang];
 
   // Active calculator tab in standard sub-navigation
@@ -48,6 +70,73 @@ export default function EnoCalculators({ lang }: Props) {
     warningStyle: 'danger' | 'marginal' | 'safe';
     warningMessage: string;
   } | null>(null);
+
+  // Pre-load SO2 Calculator inputs from lot data when a lot is selected
+  useEffect(() => {
+    if (!calculatorLotId) return;
+    const lot = lots.find(l => l.id === calculatorLotId);
+    if (!lot) return;
+    
+    const vessel = vessels.find(v => v.assignedLotId === lot.id);
+    const lotLabs = labLogs.filter(log => log.lotId === lot.id);
+    const latestLab = lotLabs[0];
+    
+    if (latestLab) {
+      setSo2CurrentFree(latestLab.freeSo2);
+      setSo2PH(latestLab.ph || 3.5);
+      setSo2ABV(latestLab.alcoholPct || 13.5);
+    }
+    
+    if (vessel) {
+      setSo2Volume(vessel.currentVolume);
+      setSo2Temp(vessel.temperature || 15.0);
+    } else {
+      setSo2Volume(lot.currentVolume);
+    }
+  }, [calculatorLotId, lots, vessels, labLogs]);
+
+  // Pre-load Blending Calculator inputs from lot data when Lot A or Lot B is selected
+  useEffect(() => {
+    if (!calculatorLotIdA) return;
+    const lot = lots.find(l => l.id === calculatorLotIdA);
+    if (!lot) return;
+    
+    const vessel = vessels.find(v => v.assignedLotId === lot.id);
+    const lotLabs = labLogs.filter(log => log.lotId === lot.id);
+    const latestLab = lotLabs[0];
+    
+    if (latestLab) {
+      setBlendParamA(latestLab.alcoholPct || 13.5);
+      setBlendPHA(latestLab.ph || 3.5);
+      setBlendTAA(latestLab.titratableAcidity || 6.0);
+    }
+    if (vessel) {
+      setBlendVolA(vessel.currentVolume);
+    } else {
+      setBlendVolA(lot.currentVolume);
+    }
+  }, [calculatorLotIdA, lots, vessels, labLogs]);
+
+  useEffect(() => {
+    if (!calculatorLotIdB) return;
+    const lot = lots.find(l => l.id === calculatorLotIdB);
+    if (!lot) return;
+    
+    const vessel = vessels.find(v => v.assignedLotId === lot.id);
+    const lotLabs = labLogs.filter(log => log.lotId === lot.id);
+    const latestLab = lotLabs[0];
+    
+    if (latestLab) {
+      setBlendParamB(latestLab.alcoholPct || 13.5);
+      setBlendPHB(latestLab.ph || 3.5);
+      setBlendTAB(latestLab.titratableAcidity || 6.0);
+    }
+    if (vessel) {
+      setBlendVolB(vessel.currentVolume);
+    } else {
+      setBlendVolB(lot.currentVolume);
+    }
+  }, [calculatorLotIdB, lots, vessels, labLogs]);
 
   useEffect(() => {
     // 1. Calculate temperature & alcohol adjusted pKa of SO2
@@ -473,6 +562,26 @@ export default function EnoCalculators({ lang }: Props) {
               Only molecular (non-dissociated) SO₂ gas penetrates microbe walls to inhibit spoilage. This calculator calculates ionic equilibrium based on temperature, ABV%, and pH.
             </p>
 
+            {lots && lots.length > 0 && (
+              <div className="bg-[#FAF8F5] p-3 border border-[#e8dfd5] rounded-xl space-y-1">
+                <label className="block text-[9px] font-mono font-bold uppercase text-[#4e0e15] tracking-wider">
+                  🍇 Sync Cellar State: Select Active Lot
+                </label>
+                <select
+                  value={calculatorLotId}
+                  onChange={(e) => setCalculatorLotId(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded-lg bg-white text-stone-850 font-semibold outline-none cursor-pointer hover:border-slate-350"
+                >
+                  <option value="">-- Manual Input / Select Lot --</option>
+                  {lots.map(l => (
+                    <option key={l.id} value={l.id}>
+                      {l.name} [{l.id}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
@@ -769,7 +878,21 @@ export default function EnoCalculators({ lang }: Props) {
 
             {/* Lot A */}
             <div className="space-y-2 p-3 bg-[#FCFAF8] border border-[#f0e6da]/70 rounded-lg">
-              <span className="text-[10px] font-mono font-black uppercase text-[#801323] block">Lot A Wine component</span>
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-mono font-black uppercase text-[#801323] block">Lot A Wine component</span>
+                {lots && lots.length > 0 && (
+                  <select
+                    value={calculatorLotIdA}
+                    onChange={(e) => setCalculatorLotIdA(e.target.value)}
+                    className="px-2 py-0.5 text-[10px] border border-stone-200 rounded bg-white text-stone-800 font-bold outline-none cursor-pointer"
+                  >
+                    <option value="">-- Populate A --</option>
+                    {lots.map(l => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <div className="grid grid-cols-4 gap-2">
                 <div className="col-span-2">
                   <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">Lot A Vol (L)</label>
@@ -805,7 +928,21 @@ export default function EnoCalculators({ lang }: Props) {
 
             {/* Lot B */}
             <div className="space-y-2 p-3 bg-[#FCFAF8] border border-[#f0e6da]/70 rounded-lg">
-              <span className="text-[10px] font-mono font-black uppercase text-[#d97706] block">Lot B Wine component</span>
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-mono font-black uppercase text-[#d97706] block">Lot B Wine component</span>
+                {lots && lots.length > 0 && (
+                  <select
+                    value={calculatorLotIdB}
+                    onChange={(e) => setCalculatorLotIdB(e.target.value)}
+                    className="px-2 py-0.5 text-[10px] border border-stone-200 rounded bg-white text-stone-800 font-bold outline-none cursor-pointer"
+                  >
+                    <option value="">-- Populate B --</option>
+                    {lots.map(l => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <div className="grid grid-cols-4 gap-2">
                 <div className="col-span-2">
                   <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">Lot B Vol (L)</label>

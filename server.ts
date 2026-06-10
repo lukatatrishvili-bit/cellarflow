@@ -137,7 +137,7 @@ if (isProd) {
   app.use(vite.middlewares);
 }
 
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 app.listen(PORT, () => {
   console.log(`Server is running in ${isProd ? 'production' : 'development'} on port ${PORT}`);
 });

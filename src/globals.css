@@ -12,6 +12,14 @@
   --background: #f8f6f2;
   --foreground: #1b1715;
   --card: #ffffff;
+  --border-custom: #e8dfd5;
+}
+
+:root.dark {
+  --background: #0d0b09;
+  --foreground: #f4efe9;
+  --card: #14120f;
+  --border-custom: #2c2520;
 }
 
 body {
@@ -21,10 +29,155 @@ body {
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Subtle entrance used when switching tabs/views. The app references
-   `animate-fade-in` throughout but the keyframe was never defined. */
+/* Midnight Cellar Premium Dark Mode Overrides */
+.dark body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+.dark .bg-white,
+.dark .bg-white\/95 {
+  background-color: var(--card) !important;
+}
+
+.dark .bg-\[\#f8f6f2\],
+.dark .bg-\[\#FAF8F5\],
+.dark .bg-\[\#FAF8F5\]\/85,
+.dark .bg-\[\#fbfaf8\],
+.dark .bg-\[\#fcfbf9\],
+.dark .bg-stone-50 {
+  background-color: var(--background) !important;
+}
+
+.dark .border-\[\#e8dfd5\],
+.dark .border-\[\#e8dfd5\]\/70,
+.dark .border-\[\#f0e6da\],
+.dark .border-stone-200,
+.dark .border-stone-200\/80,
+.dark .border-stone-200\/90,
+.dark .border-stone-100 {
+  border-color: var(--border-custom) !important;
+}
+
+/* High contrast text overrides for dark mode */
+.dark .text-stone-900,
+.dark .text-stone-850,
+.dark .text-stone-800,
+.dark .text-stone-700,
+.dark .text-stone-605,
+.dark .text-stone-600,
+.dark .text-stone-550,
+.dark .text-slate-900,
+.dark .text-slate-850,
+.dark .text-slate-805,
+.dark .text-slate-800,
+.dark .text-slate-700,
+.dark .text-slate-600 {
+  color: rgba(244, 239, 233, 0.95) !important;
+}
+
+.dark .text-stone-500,
+.dark .text-stone-450,
+.dark .text-stone-400,
+.dark .text-slate-500,
+.dark .text-slate-450,
+.dark .text-slate-400 {
+  color: rgba(244, 239, 233, 0.68) !important;
+}
+
+/* Specific text warning overrides */
+.dark .text-\[\#4e0e15\] {
+  color: #c5a059 !important; /* grape gold instead of dark burgundy */
+}
+.dark .text-emerald-950,
+.dark .text-emerald-900,
+.dark .text-emerald-850,
+.dark .text-emerald-800,
+.dark .text-emerald-750,
+.dark .text-emerald-700 {
+  color: #34d399 !important; /* light mint green for readability */
+}
+.dark .text-rose-950,
+.dark .text-rose-900,
+.dark .text-rose-800,
+.dark .text-rose-700 {
+  color: #fca5a5 !important; /* light rose */
+}
+.dark .text-amber-950,
+.dark .text-amber-900,
+.dark .text-amber-800,
+.dark .text-amber-700 {
+  color: #fde047 !important; /* bright amber */
+}
+
+/* Form controls accessibility */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: var(--background) !important;
+  color: var(--foreground) !important;
+  border-color: var(--border-custom) !important;
+}
+
+/* Accessibility: Scale up very small fonts to be highly readable */
+.text-\[9px\] {
+  font-size: 11.5px !important;
+  letter-spacing: 0.03em;
+}
+.text-\[10px\] {
+  font-size: 12.5px !important;
+}
+.text-\[11px\] {
+  font-size: 13px !important;
+}
+.text-xs {
+  font-size: 13.5px !important;
+}
+.text-\[8px\] {
+  font-size: 10.5px !important;
+}
+
+.dark header {
+  background-color: rgba(20, 18, 15, 0.95) !important;
+  border-color: var(--border-custom) !important;
+}
+
+.dark aside {
+  border-color: var(--border-custom) !important;
+}
+
+.dark .divide-stone-50 > * + * {
+  border-color: var(--border-custom) !important;
+}
+
+.dark tr.border-b {
+  border-color: var(--border-custom) !important;
+}
+
+.dark .hover\:bg-stone-50\/50:hover {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.dark .bg-[#f5efe9],
+.dark .hover\:bg-\[\#f5efe9\]:hover,
+.dark .hover\:bg-stone-100:hover {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  color: #c5a059 !important;
+}
+
+.dark .markdown-body {
+  color: var(--foreground);
+}
+
+.dark .markdown-body code {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #c5a059;
+}
+
+/* Subtle entrance used when switching tabs/views. */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -49,6 +202,77 @@ body {
   display: none;
 }
 
+/* Premium Design Extensions */
+
+/* Modern scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(78, 14, 21, 0.1) !important;
+  border-radius: 99px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(197, 160, 89, 0.2) !important;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(78, 14, 21, 0.25) !important;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(197, 160, 89, 0.35) !important;
+}
+
+/* Glassmorphism details */
+.glass-card {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(232, 223, 213, 0.45) !important;
+}
+.dark .glass-card {
+  background-color: rgba(20, 18, 15, 0.72) !important;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(44, 37, 32, 0.45) !important;
+}
+
+/* Micro-interaction lift transitions */
+.hover-lift {
+  transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.24s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.24s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -8px rgba(78, 14, 21, 0.08);
+}
+.dark .hover-lift:hover {
+  box-shadow: 0 16px 32px -10px rgba(0, 0, 0, 0.55);
+}
+
+.hover-glow {
+  transition: border-color 0.22s ease, box-shadow 0.22s ease;
+}
+.hover-glow:hover {
+  border-color: rgba(197, 160, 89, 0.45) !important;
+  box-shadow: 0 0 16px rgba(197, 160, 89, 0.12);
+}
+
+/* Background gradient glows */
+.bg-glow-sphere {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(130px);
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.035;
+}
+.dark .bg-glow-sphere {
+  opacity: 0.065;
+}
+
 /* Respect users who prefer reduced motion. */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in {
@@ -60,5 +284,6 @@ body {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    transition-delay: 0.001ms !important;
   }
 }

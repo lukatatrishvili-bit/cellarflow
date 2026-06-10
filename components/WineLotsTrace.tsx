@@ -2,21 +2,44 @@
 
 import React, { useState } from 'react';
 import { translations, Language } from '../lib/i18n';
-import { WineLot, WinemakingStage, WineClass } from '../lib/wineryState';
-import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText } from 'lucide-react';
+import { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis } from '../lib/wineryState';
+import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
 
 interface Props {
   lang: Language;
   lots: WineLot[];
   onUpdateLots: (newLots: WineLot[]) => void;
   onOpenPassport?: (lotId: string) => void;
+  vessels?: Vessel[];
+  labLogs?: LabAnalysis[];
+  setActiveTab?: (tab: string) => void;
+  setSelectedTankId?: (tankId: string | null) => void;
+  setCalculatorLotId?: (lotId: string) => void;
+  setCalculatorLotIdA?: (lotId: string) => void;
 }
 
-export default function WineLotsTrace({ lang, lots, onUpdateLots, onOpenPassport }: Props) {
+export default function WineLotsTrace({
+  lang,
+  lots,
+  onUpdateLots,
+  onOpenPassport,
+  vessels = [],
+  labLogs = [],
+  setActiveTab,
+  setSelectedTankId,
+  setCalculatorLotId,
+  setCalculatorLotIdA
+}: Props) {
   const t = translations[lang];
   const [selectedLotId, setSelectedLotId] = useState<string | null>(lots[0]?.id || null);
   const [filterClass, setFilterClass] = useState<string>('all');
   const [filterVintage, setFilterVintage] = useState<string>('all');
+
+  // Stage transition states
+  const [showTransitionForm, setShowTransitionForm] = useState(false);
+  const [transitionTarget, setTransitionTarget] = useState<WinemakingStage>('crushing');
+  const [transitionOperator, setTransitionOperator] = useState('Luka Tatrishvili');
+  const [transitionNotes, setTransitionNotes] = useState('');
 
   // Add Lot State
   const [showAddForm, setShowAddForm] = useState(false);
@@ -374,6 +397,318 @@ export default function WineLotsTrace({ lang, lots, onUpdateLots, onOpenPassport
                 <strong className="text-slate-700 font-bold text-xs">{selectedLot.currentVolume} Liters</strong>
               </div>
             </div>
+
+            {/* Live Location and Chemistry Metrics card */}
+            {(() => {
+              const containingVessels = vessels.filter(v => v.assignedLotId === selectedLot.id);
+              const lotLabs = labLogs.filter(log => log.lotId === selectedLot.id);
+              const latestLab = lotLabs[0];
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border border-stone-200 bg-[#FCFAF8] p-4 rounded-xl shadow-2xs dark:bg-stone-900/50 dark:border-stone-800">
+                  {/* Left Column: Containing Vessel info */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
+                      <MapPin className="w-4 h-4 text-[#801323]" /> Live Location Containment
+                    </h4>
+                    
+                    {containingVessels.length > 0 ? (
+                      <div className="space-y-2">
+                        {containingVessels.map(v => (
+                          <div key={v.id} className="p-3 bg-white border border-stone-200 rounded-lg flex items-center justify-between shadow-3xs dark:bg-stone-950 dark:border-stone-850">
+                            <div>
+                              <strong className="text-xs font-sans text-stone-900 block dark:text-amber-100">{v.id} ({v.type.replace('_', ' ')})</strong>
+                              <span className="text-[10px] text-slate-400 block font-mono">Temp: {v.temperature}°C • Vol: {v.currentVolume} L</span>
+                            </div>
+                            {setSelectedTankId && (
+                              <button
+                                onClick={() => setSelectedTankId(v.id)}
+                                className="px-2 py-1 text-[9px] font-bold text-white bg-[#4e0e15] hover:bg-[#801323] rounded transition-colors cursor-pointer"
+                              >
+                                View Drawer
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-450 italic font-mono py-2">
+                        Liquid is currently unallocated to specific cellar vessels (bulk dry storage).
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Right Column: Latest Chemistry */}
+                  <div className="space-y-3 border-t md:border-t-0 md:border-l border-stone-200/80 pt-3 md:pt-0 md:pl-4 dark:border-stone-800">
+                    <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
+                      <Activity className="w-4 h-4 text-[#801323]" /> Latest Laboratory Chemistry
+                    </h4>
+
+                    {latestLab ? (
+                      <div className="space-y-2.5">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-semibold text-slate-700 dark:text-stone-300 font-mono">
+                          <div className="flex justify-between border-b pb-1 border-stone-100 dark:border-stone-850">
+                            <span className="text-slate-400 font-normal">ABV:</span>
+                            <span>{latestLab.alcoholPct}%</span>
+                          </div>
+                          <div className="flex justify-between border-b pb-1 border-stone-100 dark:border-stone-850">
+                            <span className="text-slate-400 font-normal">pH:</span>
+                            <span>{latestLab.ph || '--'}</span>
+                          </div>
+                          <div className="flex justify-between border-b pb-1 border-stone-100 dark:border-stone-850">
+                            <span className="text-slate-400 font-normal">Free SO₂:</span>
+                            <span className={latestLab.freeSo2 < 15 ? 'text-red-700 font-bold' : ''}>{latestLab.freeSo2} mg/L</span>
+                          </div>
+                          <div className="flex justify-between border-b pb-1 border-stone-100 dark:border-stone-850">
+                            <span className="text-slate-400 font-normal">VA Level:</span>
+                            <span className={latestLab.volatileAcid > 0.8 ? 'text-red-700 font-bold' : ''}>{latestLab.volatileAcid} g/L</span>
+                          </div>
+                        </div>
+
+                        {/* Integration buttons */}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {setActiveTab && (
+                            <button
+                              onClick={() => {
+                                setActiveTab('labs');
+                              }}
+                              className="px-2 py-1 bg-white border border-stone-200 text-stone-700 hover:border-[#4e0e15] hover:text-[#4e0e15] text-[9.5px] font-bold rounded transition-colors cursor-pointer dark:bg-stone-950 dark:border-stone-850 dark:text-stone-300 dark:hover:border-amber-400"
+                            >
+                              🧬 Log Lab panel
+                            </button>
+                          )}
+                          {setActiveTab && setCalculatorLotId && (
+                            <button
+                              onClick={() => {
+                                setCalculatorLotId(selectedLot.id);
+                                setActiveTab('calculators');
+                              }}
+                              className="px-2 py-1 bg-white border border-stone-200 text-stone-700 hover:border-[#4e0e15] hover:text-[#4e0e15] text-[9.5px] font-bold rounded transition-colors cursor-pointer dark:bg-stone-950 dark:border-stone-850 dark:text-stone-300 dark:hover:border-amber-400"
+                            >
+                              🧪 SO₂ Calculator
+                            </button>
+                          )}
+                          {setActiveTab && setCalculatorLotIdA && (
+                            <button
+                              onClick={() => {
+                                setCalculatorLotIdA(selectedLot.id);
+                                setActiveTab('calculators');
+                              }}
+                              className="px-2 py-1 bg-white border border-stone-200 text-stone-700 hover:border-[#4e0e15] hover:text-[#4e0e15] text-[9.5px] font-bold rounded transition-colors cursor-pointer dark:bg-stone-950 dark:border-stone-850 dark:text-stone-300 dark:hover:border-amber-400"
+                            >
+                              ⚖ Blending Simulation
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 text-center py-2">
+                        <p className="text-xs text-slate-455 italic font-mono">
+                          No lab measurements logged for this lot code.
+                        </p>
+                        {setActiveTab && (
+                          <button
+                            onClick={() => setActiveTab('labs')}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-white bg-[#4e0e15] hover:bg-[#801323] rounded transition-colors cursor-pointer"
+                          >
+                            ➕ Initialize Chemistry Panel
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Stage Progress Stepper */}
+            {(() => {
+              const stagesOrdered: WinemakingStage[] = [
+                'crushing',
+                'fermenting',
+                'maceration',
+                'pressing',
+                'aging',
+                'stabilization',
+                'filtration',
+                'bottled',
+                'sold'
+              ];
+
+              const stageLabelsEn: Record<WinemakingStage, string> = {
+                crushing: 'Crushing',
+                fermenting: 'Fermenting',
+                maceration: 'Maceration',
+                pressing: 'Pressing',
+                aging: 'Aging',
+                stabilization: 'Stabilization',
+                filtration: 'Filtration',
+                bottled: 'Bottled',
+                sold: 'Sold'
+              };
+
+              const stageLabelsKa: Record<WinemakingStage, string> = {
+                crushing: 'დაწურვა',
+                fermenting: 'ფერმენტაცია',
+                maceration: 'მაცერაცია',
+                pressing: 'დაწნეხვა',
+                aging: 'დავარგება',
+                stabilization: 'სტაბილიზაცია',
+                filtration: 'ფილტრაცია',
+                bottled: 'ჩამოსხმა',
+                sold: 'გაყიდვა'
+              };
+
+              return (
+                <div className="space-y-4 border border-stone-200/80 bg-stone-50/50 p-4 rounded-xl dark:bg-stone-900/50 dark:border-stone-800">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
+                      🍇 Winemaking Stage Workflow
+                    </h4>
+                    <button
+                      onClick={() => {
+                        const currentIndex = stagesOrdered.indexOf(selectedLot.stage);
+                        const nextIndex = Math.min(stagesOrdered.length - 1, currentIndex + 1);
+                        setTransitionTarget(stagesOrdered[nextIndex]);
+                        setTransitionOperator('Luka Tatrishvili');
+                        setTransitionNotes('');
+                        setShowTransitionForm(true);
+                      }}
+                      className="px-2 py-1 text-[10px] font-bold text-white bg-[#801323] hover:bg-[#4e0e15] rounded transition-all cursor-pointer shadow-2xs"
+                    >
+                      Advance / Modify Stage
+                    </button>
+                  </div>
+
+                  {/* Stage Progress Stepper (Flex row) */}
+                  <div className="overflow-x-auto pb-2 -mx-2 px-2 no-scrollbar">
+                    <div className="flex items-center justify-between min-w-[700px] relative py-2">
+                      {/* Connection Line */}
+                      <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-stone-200 z-0 -translate-y-1/2 dark:bg-stone-800" />
+                      
+                      {stagesOrdered.map((st, idx) => {
+                        const currentStageIndex = stagesOrdered.indexOf(selectedLot.stage);
+                        const isCompleted = idx < currentStageIndex;
+                        const isActive = idx === currentStageIndex;
+                        const label = lang === 'ka' ? stageLabelsKa[st] : stageLabelsEn[st];
+
+                        return (
+                          <div key={st} className="flex flex-col items-center z-10 relative">
+                            <div 
+                              className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-mono font-bold transition-all duration-300 ${
+                                isCompleted 
+                                  ? 'bg-emerald-600 text-white ring-4 ring-emerald-50 border border-white dark:ring-emerald-950/20' 
+                                  : isActive 
+                                  ? 'bg-[#4e0e15] text-white ring-4 ring-rose-100 border border-white scale-110 animate-pulse dark:ring-rose-950/30' 
+                                  : 'bg-stone-200 text-stone-400 border border-white dark:bg-stone-800 dark:text-stone-600'
+                              }`}
+                              title={st}
+                            >
+                              {isCompleted ? '✓' : idx + 1}
+                            </div>
+                            <span className={`text-[9.5px] font-medium mt-1.5 tracking-tight ${
+                              isActive ? 'text-[#4e0e15] font-black dark:text-amber-100' : isCompleted ? 'text-emerald-700' : 'text-stone-400 dark:text-stone-500'
+                            }`}>
+                              {label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Transition form drawer */}
+                  {showTransitionForm && (
+                    <div className="bg-white border border-stone-200 p-4 rounded-xl space-y-3.5 shadow-2xs text-xs dark:bg-stone-950 dark:border-stone-800">
+                      <h5 className="font-bold text-[#4e0e15] border-b border-stone-100 pb-1.5 uppercase text-[10px] tracking-wide dark:text-amber-100 dark:border-stone-850">
+                        Log Stage Transition
+                      </h5>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">Target Stage</label>
+                          <select
+                            value={transitionTarget}
+                            onChange={(e) => setTransitionTarget(e.target.value as WinemakingStage)}
+                            className="w-full bg-[#FAF8F5] border border-stone-200 px-2 py-1.5 rounded outline-none text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
+                          >
+                            {stagesOrdered.map(st => (
+                              <option key={st} value={st}>
+                                {lang === 'ka' ? stageLabelsKa[st] : stageLabelsEn[st]}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">Operator / Cellarer</label>
+                          <input
+                            type="text"
+                            value={transitionOperator}
+                            onChange={(e) => setTransitionOperator(e.target.value)}
+                            className="w-full bg-[#FAF8F5] border border-stone-200 px-2 py-1.5 rounded outline-none text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
+                            placeholder="e.g. Sophia Rossi"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">Transition Operation Log notes</label>
+                        <textarea
+                          value={transitionNotes}
+                          onChange={(e) => setTransitionNotes(e.target.value)}
+                          className="w-full bg-[#FAF8F5] border border-stone-200 p-2 rounded outline-none h-16 text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
+                          placeholder="Describe action: racking, dynamic skin maceration, sulfur adjustment, or filtration check..."
+                          required
+                        />
+                      </div>
+
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowTransitionForm(false)}
+                          className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded hover:bg-stone-200 cursor-pointer dark:bg-stone-900 dark:text-stone-400 dark:hover:bg-stone-850"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (transitionOperator.trim() && transitionNotes.trim()) {
+                              const updatedLots = lots.map(l => {
+                                if (l.id === selectedLot.id) {
+                                  return {
+                                    ...l,
+                                    stage: transitionTarget,
+                                    history: [
+                                      {
+                                        date: new Date().toISOString().split('T')[0],
+                                        type: `Stage Transition: to ${transitionTarget}`,
+                                        description: transitionNotes,
+                                        operator: transitionOperator
+                                      },
+                                      ...l.history
+                                    ]
+                                  };
+                                }
+                                return l;
+                              });
+                              onUpdateLots(updatedLots);
+                              setShowTransitionForm(false);
+                            } else {
+                              alert('Please provide Operator name and Transition notes.');
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-emerald-705 text-white rounded hover:bg-emerald-800 cursor-pointer"
+                        >
+                          Confirm Transition
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Traceability chronological timeline sequence (THE SYSTEM MUST DISPLAY HISTORIC TIMELINE AS MAPPED) */}
             <div className="space-y-4">

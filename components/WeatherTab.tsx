@@ -12,10 +12,16 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { VineyardBlock } from '../lib/wineryState';
 import { Language } from '../lib/i18n';
+import WeatherExplorer from './WeatherExplorer';
 
 interface WeatherTabProps {
   lang: Language;
   blocks: VineyardBlock[];
+  setActiveModule?: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
+  setActiveTab?: (tab: string) => void;
+  setPrefilledTaskTitle?: (title: string) => void;
+  setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
+  setPrefilledTaskDesc?: (desc: string) => void;
 }
 
 interface WeatherData {
@@ -231,9 +237,33 @@ const dict = {
   }
 };
 
-export default function WeatherTab({ lang, blocks }: WeatherTabProps) {
+export default function WeatherTab({ 
+  lang, 
+  blocks,
+  setActiveModule,
+  setActiveTab,
+  setPrefilledTaskTitle,
+  setPrefilledTaskPriority,
+  setPrefilledTaskDesc
+}: WeatherTabProps) {
   const currentLang = (lang === 'ka' || lang === 'it' || lang === 'fr' || lang === 'de') ? lang : 'en';
   const t = dict[currentLang];
+
+  const scheduleSprayingLabel = {
+    en: 'Schedule Spraying',
+    ka: 'წამლობის დაგეგმვა',
+    it: 'Pianifica Irrorazione',
+    fr: 'Planifier la Pulvérisation',
+    de: 'Spritzen Planen'
+  }[currentLang] || 'Schedule Spraying';
+
+  const scheduleHarvestLabel = {
+    en: 'Schedule Harvest',
+    ka: 'კრეფის დაგეგმვა',
+    it: 'Pianifica Vendemmia',
+    fr: 'Planifier la Vendange',
+    de: 'Ernte Planen'
+  }[currentLang] || 'Schedule Harvest';
 
   const [selectedBlockId, setSelectedBlockId] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
@@ -242,6 +272,174 @@ export default function WeatherTab({ lang, blocks }: WeatherTabProps) {
 
   // Advanced Agronometrics and AI Insight states
   const [selectedVariety, setSelectedVariety] = useState<string>('');
+  const [selectedPhenology, setSelectedPhenology] = useState<string>('fruit_set');
+
+  const phenologyPhases = useMemo(() => [
+    {
+      id: 'dormancy',
+      label: {
+        en: 'Dormancy / Winter Rest',
+        ka: 'მოსვენების პერიოდი / ზამთარი',
+        it: 'Dormienza / Riposo Invernale',
+        fr: 'Dormance / Repos Hivernal',
+        de: 'Dormanz / Winterruhe'
+      },
+      detail: {
+        en: 'Inactive sap flow',
+        ka: 'წვენის მოძრაობის გარეშე',
+        it: 'Flusso di linfa inattivo',
+        fr: 'Flux de sève inactif',
+        de: 'Inaktiver Saftfluss'
+      }
+    },
+    {
+      id: 'budburst',
+      label: {
+        en: 'Budburst / Bud Break',
+        ka: 'კვირტის გაშლა / გაღვიძება',
+        it: 'Germogliamento',
+        fr: 'Débourrement',
+        de: 'Knospenaufbruch'
+      },
+      detail: {
+        en: 'First green tips visible',
+        ka: 'პირველი მწვანე ყლორტები',
+        it: 'Prime punte verdi visibili',
+        fr: 'Premières pointes vertes',
+        de: 'Erste grüne Spitzen sichtbar'
+      }
+    },
+    {
+      id: 'shoot_dev',
+      label: {
+        en: 'Shoot & Leaf Development',
+        ka: 'ყლორტებისა და ფოთლების ზრდა',
+        it: 'Sviluppo dei Germogli e Foglie',
+        fr: 'Développement des Rameaux et Feuilles',
+        de: 'Trieb- und Blattentwicklung'
+      },
+      detail: {
+        en: 'Rapid vegetative growth',
+        ka: 'ვეგეტატიური მასის სწრაფი ზრდა',
+        it: 'Rapida crescita vegetativa',
+        fr: 'Croissance végétative rapide',
+        de: 'Schnelles vegetatives Wachstum'
+      }
+    },
+    {
+      id: 'flowering',
+      label: {
+        en: 'Flowering / Bloom Stage',
+        ka: 'ყვავილობის ეტაპი',
+        it: 'Fioritura',
+        fr: 'Floraison',
+        de: 'Blütezeit'
+      },
+      detail: {
+        en: 'Pollination and cap fall',
+        ka: 'ყვავილების დამტვერვა',
+        it: 'Impollinazione e caduta della caliptra',
+        fr: 'Pollinisation et chute des capuchons',
+        de: 'Bestäubung und Abwurf der Käppchen'
+      }
+    },
+    {
+      id: 'fruit_set',
+      label: {
+        en: 'Post-Flowering / Fruit Set',
+        ka: 'ყვავილობის შემდგომი / გამონასკვა',
+        it: 'Allegagione / Post-Fioritura',
+        fr: 'Nouaison / Post-Floraison',
+        de: 'Fruchtansatz / Nachblüte'
+      },
+      detail: {
+        en: 'Early canopy expansion',
+        ka: 'ფოთლოვანი საფარის სწრაფი ზრდა',
+        it: 'Espansione precoce della chioma',
+        fr: 'Expansion précoce de la canopée',
+        de: 'Frühe Kronenentwicklung'
+      }
+    },
+    {
+      id: 'berry_dev',
+      label: {
+        en: 'Berry Development / Pea Size',
+        ka: 'მარცვლის ზრდა / ბარდის ხელა ზომა',
+        it: 'Accrescimento degli Acini',
+        fr: 'Grossissement des Baies',
+        de: 'Beerenwachstum'
+      },
+      detail: {
+        en: 'Acid synthesis and cell division',
+        ka: 'მჟავების სინთეზი და უჯრედების დაყოფა',
+        it: 'Sintesi acida e divisione cellulare',
+        fr: 'Synthèse d\'acide et division cellulaire',
+        de: 'Säuresynthese und Zellteilung'
+      }
+    },
+    {
+      id: 'veraison',
+      label: {
+        en: 'Veraison (Color & Sugar Shift)',
+        ka: 'შეფერადება / შაქრიანობის მატება',
+        it: 'Invaiatura',
+        fr: 'Véraison',
+        de: 'Reifebeginn (Veraison)'
+      },
+      detail: {
+        en: 'Berries soften and pigment',
+        ka: 'კენკრა რბილდება და ფერადდება',
+        it: 'Gli acini si ammorbidiscono e si pigmentano',
+        fr: 'Les baies ramollissent et se colorent',
+        de: 'Beeren werden weich und färben sich'
+      }
+    },
+    {
+      id: 'ripening',
+      label: {
+        en: 'Harvest Maturity Phase',
+        ka: 'სიმწიფის / კრეფის წინა ეტაპი',
+        it: 'Maturità di Raccolta',
+        fr: 'Maturité de Récolte',
+        de: 'Erntereife'
+      },
+      detail: {
+        en: 'Phenolic maturity window',
+        ka: 'ფენოლური სიმწიფის ფანჯარა',
+        it: 'Finestra di maturità fenolica',
+        fr: 'Fenêtre de maturité phénolique',
+        de: 'Phenolisches Reifefenster'
+      }
+    },
+    {
+      id: 'post_harvest',
+      label: {
+        en: 'Post-Harvest / Leaf Fall',
+        ka: 'მოსავლის შემდგომი / ფოთოლცვენა',
+        it: 'Post-Vendemmia / Caduta Foglie',
+        fr: 'Post-Récolte / Chute des Feuilles',
+        de: 'Nachernte / Blattfall'
+      },
+      detail: {
+        en: 'Nutrient reserve mobilization',
+        ka: 'საკვები ნივთიერებების რეზერვირება',
+        it: 'Mobilitazione delle riserve di nutrienti',
+        fr: 'Mobilisation des réserves de nutriments',
+        de: 'Mobilisierung von Nährstoffreserven'
+      }
+    }
+  ], []);
+
+  const activePhenologyConfig = useMemo(() => {
+    return phenologyPhases.find(p => p.id === selectedPhenology) || phenologyPhases[4];
+  }, [selectedPhenology, phenologyPhases]);
+
+  const [apiCumulativeGdd, setApiCumulativeGdd] = useState<number | null>(null);
+  const [apiCompareData, setApiCompareData] = useState<any[] | null>(null);
+  const [apiMonthlyData, setApiMonthlyData] = useState<any[] | null>(null);
+  const [histLoading, setHistLoading] = useState<boolean>(false);
+  const [histError, setHistError] = useState<boolean>(false);
+  const [histViewMode, setHistViewMode] = useState<'ytd' | 'monthly'>('ytd');
 
   const [aiLoading, setAiLoading] = useState<boolean>(false);
   const [aiAdvice, setAiAdvice] = useState<string | null>(null);
@@ -307,6 +505,41 @@ export default function WeatherTab({ lang, blocks }: WeatherTabProps) {
       }
     ];
   }, [cumulativeGdd, weatherData]);
+
+  const finalCumulativeGdd = apiCumulativeGdd !== null ? apiCumulativeGdd : cumulativeGdd;
+  const finalCompareData = apiCompareData !== null ? apiCompareData : historicalCompareData;
+
+  const mockMonthlyData = useMemo(() => {
+    const months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
+    return months.map((m, idx) => {
+      const gdd24 = [150, 240, 310, 380, 280, 180, 95][idx];
+      const gdd25 = [180, 260, 340, 410, 300, 190, 105][idx];
+      const gdd26 = idx <= 2 ? [160, 250, 60][idx] : null;
+
+      const rain24 = [45, 55, 30, 15, 10, 25, 40][idx];
+      const rain25 = [60, 70, 45, 20, 15, 35, 55][idx];
+      const rain26 = idx <= 2 ? [50, 62, 10][idx] : null;
+
+      const temp24 = [13.2, 16.5, 21.0, 24.5, 23.8, 18.2, 12.5][idx];
+      const temp25 = [14.0, 17.2, 22.1, 25.0, 24.2, 19.0, 13.1][idx];
+      const temp26 = idx <= 2 ? [13.5, 16.8, 18.6][idx] : null;
+
+      return {
+        month: m,
+        '2024_gdd': gdd24,
+        '2025_gdd': gdd25,
+        '2026_gdd': gdd26,
+        '2024_rain': rain24,
+        '2025_rain': rain25,
+        '2026_rain': rain26,
+        '2024_temp': temp24,
+        '2025_temp': temp25,
+        '2026_temp': temp26,
+      };
+    });
+  }, []);
+
+  const finalMonthlyData = apiMonthlyData !== null ? apiMonthlyData : mockMonthlyData;
 
   const activeMetricLabel = useMemo(() => {
     switch(histMetric) {
@@ -403,6 +636,163 @@ export default function WeatherTab({ lang, blocks }: WeatherTabProps) {
     }
   };
 
+  const fetchHistoricalData = async (lat: number, lng: number) => {
+    setHistLoading(true);
+    setHistError(false);
+    try {
+      const today = new Date();
+      const twoDaysAgo = new Date();
+      twoDaysAgo.setDate(today.getDate() - 3);
+      const formatDate = (d: Date) => d.toISOString().split('T')[0];
+      
+      const end2026 = formatDate(twoDaysAgo);
+      const start2026 = '2026-04-01';
+      
+      const url2024 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=2024-04-01&end_date=2024-10-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
+      const url2025 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=2025-04-01&end_date=2025-10-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
+      const url2026 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=${start2026}&end_date=${end2026}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
+
+      const [res24, res25, res26] = await Promise.all([
+        fetch(url2024).then(r => {
+          if (!r.ok) throw new Error('2024 failed');
+          return r.json();
+        }),
+        fetch(url2025).then(r => {
+          if (!r.ok) throw new Error('2025 failed');
+          return r.json();
+        }),
+        fetch(url2026).then(r => {
+          if (!r.ok) throw new Error('2026 failed');
+          return r.json();
+        })
+      ]);
+
+      const processYearData = (data: any, year: number) => {
+        if (!data || !data.daily || !data.daily.time) return [];
+        return data.daily.time.map((timeStr: string, idx: number) => {
+          const maxTemp = data.daily.temperature_2m_max[idx] ?? 18;
+          const minTemp = data.daily.temperature_2m_min[idx] ?? 8;
+          const precip = data.daily.precipitation_sum[idx] ?? 0;
+          const avgTemp = (maxTemp + minTemp) / 2;
+          const gdd = Math.max(0, avgTemp - 10);
+          const date = new Date(timeStr);
+          return {
+            dateStr: timeStr,
+            year,
+            month: date.getMonth(),
+            gdd,
+            precip,
+            avgTemp
+          };
+        });
+      };
+
+      const daily2024 = processYearData(res24, 2024);
+      const daily2025 = processYearData(res25, 2025);
+      const daily2026 = processYearData(res26, 2026);
+
+      const todayMonth = today.getMonth();
+      const todayDay = today.getDate();
+
+      const isYtd = (item: any) => {
+        const d = new Date(item.dateStr);
+        const m = d.getMonth();
+        const day = d.getDate();
+        if (m < 3) return false;
+        if (m > todayMonth) return false;
+        if (m === todayMonth && day > todayDay) return false;
+        return true;
+      };
+
+      const calcYtdStats = (dailyList: any[]) => {
+        const ytdItems = dailyList.filter(isYtd);
+        const totalGdd = Math.round(ytdItems.reduce((acc, item) => acc + item.gdd, 0));
+        const totalRain = Math.round(ytdItems.reduce((acc, item) => acc + item.precip, 0));
+        const meanTemp = ytdItems.length > 0 
+          ? Number((ytdItems.reduce((acc, item) => acc + item.avgTemp, 0) / ytdItems.length).toFixed(1))
+          : 18.0;
+        return { gdd: totalGdd, rain: totalRain, temp: meanTemp };
+      };
+
+      const stats2024 = calcYtdStats(daily2024);
+      const stats2025 = calcYtdStats(daily2025);
+      const stats2026 = calcYtdStats(daily2026);
+
+      setApiCumulativeGdd(stats2026.gdd);
+
+      const compareData = [
+        {
+          year: '2024 Past Vintage',
+          gdd: stats2024.gdd,
+          rain: stats2024.rain,
+          temp: stats2024.temp,
+          color: '#d97706'
+        },
+        {
+          year: '2025 Past Vintage',
+          gdd: stats2025.gdd,
+          rain: stats2025.rain,
+          temp: stats2025.temp,
+          color: '#059669'
+        },
+        {
+          year: '2026 Current Vintage',
+          gdd: stats2026.gdd,
+          rain: stats2026.rain,
+          temp: stats2026.temp,
+          color: '#4e0e15'
+        }
+      ];
+      setApiCompareData(compareData);
+
+      const monthKeys = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
+      const monthNames: Record<number, string> = {
+        3: 'Apr', 4: 'May', 5: 'Jun', 6: 'Jul', 7: 'Aug', 8: 'Sep', 9: 'Oct'
+      };
+
+      const monthlyBreakdown = monthKeys.map(mName => {
+        const filterByMonthName = (dailyList: any[], mIndex: number) => {
+          return dailyList.filter(item => item.month === mIndex);
+        };
+
+        const mIdxNum = Number(Object.keys(monthNames).find(k => monthNames[Number(k)] === mName));
+
+        const items24 = filterByMonthName(daily2024, mIdxNum);
+        const items25 = filterByMonthName(daily2025, mIdxNum);
+        const items26 = filterByMonthName(daily2026, mIdxNum);
+
+        const sumGdd = (items: any[]) => Math.round(items.reduce((acc, item) => acc + item.gdd, 0));
+        const sumRain = (items: any[]) => Math.round(items.reduce((acc, item) => acc + item.precip, 0));
+        const avgTemp = (items: any[]) => items.length > 0 
+          ? Number((items.reduce((acc, item) => acc + item.avgTemp, 0) / items.length).toFixed(1))
+          : 0;
+
+        const hasData26 = mIdxNum <= todayMonth;
+
+        return {
+          month: mName,
+          '2024_gdd': sumGdd(items24),
+          '2025_gdd': sumGdd(items25),
+          '2026_gdd': hasData26 ? sumGdd(items26) : null,
+          '2024_rain': sumRain(items24),
+          '2025_rain': sumRain(items25),
+          '2026_rain': hasData26 ? sumRain(items26) : null,
+          '2024_temp': avgTemp(items24),
+          '2025_temp': avgTemp(items25),
+          '2026_temp': hasData26 ? avgTemp(items26) : null
+        };
+      });
+
+      setApiMonthlyData(monthlyBreakdown);
+
+    } catch (err) {
+      console.error("Historical fetch error:", err);
+      setHistError(true);
+    } finally {
+      setHistLoading(false);
+    }
+  };
+
   const generateMockWeatherData = (block: VineyardBlock) => {
     const latFactor = Math.sin(block.latitude * 10) * 5;
     const temp = Math.round(26.5 + latFactor);
@@ -467,11 +857,11 @@ export default function WeatherTab({ lang, blocks }: WeatherTabProps) {
 
   // Calculate ripeness estimate (how many days of avg GDD growth is remaining)
   const daysToRipeness = useMemo(() => {
-    const remainingGdd = activeVarietyConfig.requiredGdd - cumulativeGdd;
+    const remainingGdd = activeVarietyConfig.requiredGdd - finalCumulativeGdd;
     if (remainingGdd <= 0) return 0; // Already ripe/harvestable!
     const avgDailyGdd = forecastGddSum > 0 ? (forecastGddSum / 5) : 8; // fallback to 8 GDD/day
     return Math.max(1, Math.round(remainingGdd / avgDailyGdd));
-  }, [cumulativeGdd, activeVarietyConfig, forecastGddSum]);
+  }, [finalCumulativeGdd, activeVarietyConfig, forecastGddSum]);
 
   // Advanced Infection Indices calculation
   const infectionMetrics = useMemo(() => {
@@ -509,13 +899,24 @@ export default function WeatherTab({ lang, blocks }: WeatherTabProps) {
     return { downyRisk, powderyRisk, botrytisRisk };
   }, [weatherData]);
 
+  // Combined Disease pressure index (Mildew progression risk)
+  const diseasePressureIndex = useMemo(() => {
+    if (!weatherData) return 'low';
+    const h = weatherData.currentHumidity;
+    const t = weatherData.currentTemp;
+    if (h > 75 && t > 18 && t < 28) return 'high';
+    if (h > 60 && t > 15) return 'medium';
+    return 'low';
+  }, [weatherData]);
+
   // Call Gemini AI Viticulturalist engine
   const handleGetAiReport = async () => {
     setAiLoading(true);
     setAiAdvice(null);
     try {
-      const gddInfo = `Accumulated GDD: ${cumulativeGdd}°C, Required GDD for ${selectedVariety}: ${activeVarietyConfig.requiredGdd}°C. Predicted days to physiological maturity: ${daysToRipeness} days.`;
+      const gddInfo = `Accumulated GDD: ${finalCumulativeGdd}°C, Required GDD for ${selectedVariety}: ${activeVarietyConfig.requiredGdd}°C. Predicted days to physiological maturity: ${daysToRipeness} days.`;
       const currentStats = `REAL-TIME TELEMETRY STATUS: Temp ${weatherData?.currentTemp}°C, Humidity ${weatherData?.currentHumidity}%, Wind: ${weatherData?.currentWind} km/h, Precipitation Code: ${weatherData?.weatherCode}.`;
+      const phenologyInfo = `OBSERVED PHENOLOGICAL PHASE: ${activePhenologyConfig.label.en} (${activePhenologyConfig.detail.en}).`;
       
       const forecastSummary = weatherData 
         ? `Upcoming 5-day forecast limits: ${weatherData.daily.map(d => `${d.date}: Max ${d.tempMax}°C / Min ${d.tempMin}°C, Rain chance ${d.popMax}%`).join('; ')}`
@@ -526,6 +927,7 @@ Provide a professional, highly specific agronomic assessment for vineyard block:
 
 ${currentStats}
 ${gddInfo}
+${phenologyInfo}
 ${forecastSummary}
 
 Calculated disease infection indices:
@@ -561,6 +963,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
   useEffect(() => {
     if (activeBlock) {
       fetchWeatherData(activeBlock.latitude, activeBlock.longitude);
+      fetchHistoricalData(activeBlock.latitude, activeBlock.longitude);
     }
   }, [activeBlock]);
 
@@ -638,11 +1041,32 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
     const { currentTemp, currentHumidity } = weatherData;
     const { daily } = weatherData;
 
+    // Check if harvest is in season. Harvest is inactive if it's before August (month < 7)
+    // AND GDD has not reached at least 85% of variety requirements (unless manually overridden by phenology phase).
+    const currentMonth = new Date().getMonth(); // 0-indexed: June is 5, August is 7
+    const isHarvestSeason = (currentMonth >= 7) || (finalCumulativeGdd >= activeVarietyConfig.requiredGdd * 0.85) || (selectedPhenology === 'ripening');
+
+    if (!isHarvestSeason) {
+      const labelText = ({
+        en: 'Growth / Vegetative Phase',
+        ka: 'ზრდის / ვეგეტაციის ფაზა',
+        it: 'Fase Vegetativa / Crescita',
+        fr: 'Phase Végétative / Croissance',
+        de: 'Wachstums- / Vegetationsphase'
+      })[lang] || 'Growth / Vegetative Phase';
+
+      const message = currentLang === 'ka'
+        ? `მოსავლის აღების სეზონი არ არის აქტიური. ვაზი ამჟამად ზრდა-განვითარების ფაზაშია (GDD: ${finalCumulativeGdd}°C, მიზნობრივი: ${activeVarietyConfig.requiredGdd}°C). ამ ეტაპზე ნალექები არ ახდენს გავლენას კრეფის განრიგზე.`
+        : `Harvest season is inactive. Vines are currently in the growth/fruiting phase (GDD: ${finalCumulativeGdd}°C of ${activeVarietyConfig.requiredGdd}°C target). Microclimatic risks like rain do not affect harvest schedules at this stage.`;
+
+      return { status: 'inactive' as const, labelText, message };
+    }
+
     // Estimate if next 3 days are dry
     const incomingRain = daily.slice(0, 3).some(d => d.popMax > 40);
     const rainNow = weatherData.currentPrecip > 0;
 
-    let status: 'optimal' | 'caution' | 'danger' = 'optimal';
+    let status: 'optimal' | 'caution' | 'danger' | 'inactive' = 'optimal';
     let labelText = t.harvest_optimal;
     let message = '';
 
@@ -677,72 +1101,12 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
     }
 
     return { status, labelText, message };
-  }, [weatherData, t, currentLang]);
-
-  // Combined Disease pressure index (Mildew progression risk)
-  const diseasePressureIndex = useMemo(() => {
-    if (!weatherData) return 'low';
-    const h = weatherData.currentHumidity;
-    const t = weatherData.currentTemp;
-    if (h > 75 && t > 18 && t < 28) return 'high';
-    if (h > 60 && t > 15) return 'medium';
-    return 'low';
-  }, [weatherData]);
-
-  if (!activeBlock) {
-    return (
-      <div className="bg-stone-50 border border-dashed border-[#e8dfd5] text-center p-12 rounded-2xl">
-        <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto mb-3" />
-        <p className="text-stone-605 font-bold">{t.no_blocks}</p>
-      </div>
-    );
-  }
+  }, [weatherData, t, currentLang, finalCumulativeGdd, activeVarietyConfig, lang, selectedPhenology]);
 
   const weatherDeco = weatherData ? weatherIconAndText(weatherData.weatherCode) : { icon: <Sun className="w-8 h-8 text-amber-500" />, text: '' };
 
   return (
     <div className="space-y-6">
-      
-      {/* 1. Header Card */}
-      <div className="bg-white border border-[#e8dfd5] rounded-3xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-        <div className="space-y-1">
-          <span className="text-[10px] uppercase tracking-widest bg-emerald-50 text-emerald-800 border border-emerald-100 px-3 py-1 rounded-full font-bold inline-block">
-            {t.weather_station}
-          </span>
-          <h2 className="text-xl font-serif font-black text-stone-900 uppercase">
-            {t.weather_station} ({activeBlock.name})
-          </h2>
-          <p className="text-xs text-stone-500 font-medium">
-            {t.station_desc}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-          {/* Block Select Dropdown */}
-          <div className="flex-grow md:flex-grow-0">
-            <label className="text-[9px] uppercase font-mono text-slate-400 block mb-1 font-bold">{t.select_block}</label>
-            <select
-              value={selectedBlockId}
-              onChange={(e) => setSelectedBlockId(e.target.value)}
-              className="bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold text-stone-705 outline-none cursor-pointer hover:bg-stone-100 min-w-44"
-            >
-              {blocks.map(b => (
-                <option key={b.id} value={b.id}>{b.name} ({b.grapeVariety})</option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={() => fetchWeatherData(activeBlock.latitude, activeBlock.longitude)}
-            disabled={loading}
-            className="self-end px-4 py-2 bg-[#4e0e15] hover:bg-[#801323] text-white rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors h-[38px]"
-          >
-            <RotateCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? t.updating : t.refresh}
-          </button>
-        </div>
-      </div>
-
       {loading && !weatherData ? (
         <div className="bg-white border border-[#e8dfd5] rounded-3xl p-12 text-center text-stone-600 font-medium animate-pulse flex flex-col items-center gap-3">
           <RotateCw className="w-10 h-10 text-emerald-800 animate-spin" />
@@ -753,24 +1117,27 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
             {/* LIVE DATA CARD */}
-            <div className="lg:col-span-1 bg-white border border-[#e8dfd5] rounded-3xl p-6 shadow-xs flex flex-col justify-between space-y-6 relative overflow-hidden">
+            <div className="lg:col-span-1 bg-gradient-to-br from-white to-stone-50/20 border border-[#e8dfd5]/65 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.03)] hover:shadow-[0_12px_40px_rgb(0,0,0,0.06)] flex flex-col justify-between space-y-6 relative overflow-hidden transition-all duration-300 hover:scale-[1.01]">
               <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#801323] to-[#4e0e15]" />
+              <div className="absolute -right-10 -bottom-10 w-24 h-24 bg-[#801323]/5 rounded-full blur-2xl pointer-events-none" />
               
-              <div className="space-y-4">
+              <div className="space-y-4 relative z-10">
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="text-stone-900 font-serif font-black text-sm uppercase tracking-wide">{t.current_conditions}</h3>
                     <p className="text-[9px] font-mono text-slate-400 mt-0.5">{activeBlock.vineyardName}</p>
                   </div>
                   <div className="text-right">
-                    <span className="text-[9px] font-mono bg-stone-50 border border-stone-200 text-stone-500 px-2.5 py-1 rounded-sm uppercase inline-block">
+                    <span className="text-[9px] font-mono bg-stone-100 border border-stone-250/60 text-stone-600 px-2.5 py-1 rounded font-bold uppercase inline-block">
                       {weatherDeco.text}
                     </span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-4 py-2 border-b border-stone-100">
-                  {weatherDeco.icon}
+                  <div className="p-2 bg-stone-50 rounded-2xl border border-stone-100 shadow-3xs animate-pulse" style={{ animationDuration: '4s' }}>
+                    {weatherDeco.icon}
+                  </div>
                   <div>
                     <div className="flex items-baseline">
                       <span className="text-4xl font-serif font-black text-stone-900 tracking-tight">{weatherData.currentTemp}°C</span>
@@ -781,14 +1148,14 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                 {/* Grid stats */}
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-100">
+                  <div className="p-3 bg-stone-50/80 rounded-2xl border border-stone-200/40 shadow-3xs hover:border-emerald-250/30 hover:bg-emerald-50/10 transition-all duration-200">
                     <span className="text-[9px] font-mono text-slate-450 uppercase block font-bold">{t.wind}</span>
                     <div className="flex items-center gap-1.5 mt-1">
                       <Wind className="w-4 h-4 text-emerald-750" />
                       <strong className="text-sm font-serif font-black text-stone-850">{weatherData.currentWind} km/h</strong>
                     </div>
                   </div>
-                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-100">
+                  <div className="p-3 bg-stone-50/80 rounded-2xl border border-stone-200/40 shadow-3xs hover:border-sky-250/30 hover:bg-sky-50/10 transition-all duration-200">
                     <span className="text-[9px] font-mono text-slate-450 uppercase block font-bold">{t.humidity}</span>
                     <div className="flex items-center gap-1.5 mt-1">
                       <Droplets className="w-4 h-4 text-sky-600" />
@@ -798,12 +1165,12 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                 </div>
 
                 {/* Vineyard Coordinate Details */}
-                <div className="p-3.5 bg-emerald-50/40 border border-emerald-100 rounded-2xl rounded-r-3xl space-y-1.5 text-[11px]">
+                <div className="p-3.5 bg-gradient-to-br from-emerald-50/60 to-teal-50/20 border border-emerald-100/55 rounded-2xl shadow-3xs space-y-1.5 text-[11px] hover:border-emerald-300/40 transition-all duration-200">
                   <div className="flex items-center gap-1.5 font-mono text-[9px] text-emerald-800 font-bold">
-                    <MapPin className="w-3 h-3" />
+                    <MapPin className="w-3 h-3 animate-bounce" style={{ animationDuration: '3s' }} />
                     <span>{t.coordinates}</span>
                   </div>
-                  <div className="flex justify-between font-mono text-[10px] text-stone-605 border-b border-stone-100 pb-1">
+                  <div className="flex justify-between font-mono text-[10px] text-stone-605 border-b border-stone-150/40 pb-1">
                     <span>Lat / Lng:</span>
                     <span className="font-bold text-stone-800">{activeBlock.latitude.toFixed(4)}, {activeBlock.longitude.toFixed(4)}</span>
                   </div>
@@ -849,12 +1216,12 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                 {/* Spraying decision Card */}
                 {sprayingAnalysis && (
-                  <div className={`p-5 rounded-3xl border shadow-2xs flex flex-col justify-between space-y-3.5 ${
+                  <div className={`p-5 rounded-3xl border flex flex-col justify-between space-y-3.5 transition-all duration-300 hover:scale-[1.015] ${
                     sprayingAnalysis.status === 'optimal' 
-                      ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950' 
+                      ? 'bg-gradient-to-br from-emerald-50/70 to-emerald-50/20 border-emerald-250/60 shadow-[0_8px_30px_rgba(16,185,129,0.04)] hover:shadow-[0_12px_35px_rgba(16,185,129,0.08)] hover:border-emerald-300 text-emerald-950' 
                       : sprayingAnalysis.status === 'caution'
-                      ? 'bg-amber-50/50 border-amber-200 text-amber-950'
-                      : 'bg-rose-50/50 border-rose-200 text-rose-950'
+                      ? 'bg-gradient-to-br from-amber-50/70 to-amber-50/20 border-amber-250/60 shadow-[0_8px_30px_rgba(245,158,11,0.04)] hover:shadow-[0_12px_35px_rgba(245,158,11,0.08)] hover:border-amber-300 text-amber-950'
+                      : 'bg-gradient-to-br from-rose-50/70 to-rose-50/20 border-rose-250/60 shadow-[0_8px_30px_rgba(239,68,68,0.04)] hover:shadow-[0_12px_35px_rgba(239,68,68,0.08)] hover:border-rose-300 text-rose-950'
                   }`}>
                     <div>
                       <div className="flex justify-between items-center border-b border-black/5 pb-2">
@@ -866,6 +1233,36 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                         </span>
                       </div>
                       <p className="text-xs font-semibold leading-relaxed mt-3">{sprayingAnalysis.message}</p>
+                      
+                      {sprayingAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
+                        <button
+                          onClick={() => {
+                            const blockName = activeBlock?.name || '';
+                            const variety = activeBlock?.grapeVariety || '';
+                            const temp = weatherData?.currentTemp ?? '';
+                            const wind = weatherData?.currentWind ?? '';
+                            const hum = weatherData?.currentHumidity ?? '';
+                            
+                            const title = currentLang === 'ka' 
+                              ? `ფუნგიციდებით წამლობა - ${blockName}`
+                              : `Spray Fungicide Campaign - ${blockName}`;
+                            
+                            const desc = currentLang === 'ka'
+                              ? `წამლობის კამპანია დაგეგმილია აგრო-მეტეო ტელემეტრიის საფუძველზე. ნაკვეთი: ${blockName} (${variety}). მიმდინარე მიკროკლიმატური პირობები: ტემპერატურა ${temp}°C, ქარი ${wind} კმ/სთ, ტენიანობა ${hum}%. დაავადების რისკის წნევაა: ${diseasePressureIndex === 'high' ? 'მაღალი' : diseasePressureIndex === 'medium' ? 'საშუალო' : 'დაბალი'}.`
+                              : `Spraying campaign scheduled based on agro-weather telemetry. Block: ${blockName} (${variety}). Current Conditions: Temp ${temp}°C, Wind ${wind} km/h, Humidity ${hum}%. Disease risk pressure is ${diseasePressureIndex.toUpperCase()}.`;
+
+                            setPrefilledTaskTitle(title);
+                            setPrefilledTaskPriority('medium');
+                            setPrefilledTaskDesc(desc);
+                            setActiveModule('gvino');
+                            setActiveTab('tasks');
+                          }}
+                          className="w-full mt-4 py-2 px-3 text-[10px] font-sans font-extrabold uppercase tracking-wider text-white bg-gradient-to-r from-emerald-800 to-teal-850 hover:from-emerald-900 hover:to-teal-900 active:scale-98 rounded-xl transition-all duration-150 flex items-center justify-center gap-1.5 cursor-pointer shadow-md hover:shadow-lg border border-transparent"
+                        >
+                          <Calendar className="w-3.5 h-3.5 animate-pulse" />
+                          {scheduleSprayingLabel}
+                        </button>
+                      )}
                     </div>
 
                     <div className="space-y-1 pt-1">
@@ -881,23 +1278,60 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                 {/* Harvesting decision Card */}
                 {harvestAnalysis && (
-                  <div className={`p-5 rounded-3xl border shadow-2xs flex flex-col justify-between space-y-3.5 ${
+                  <div className={`p-5 rounded-3xl border flex flex-col justify-between space-y-3.5 transition-all duration-300 hover:scale-[1.015] ${
                     harvestAnalysis.status === 'optimal' 
-                      ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950' 
+                      ? 'bg-gradient-to-br from-emerald-50/70 to-emerald-50/20 border-emerald-250/60 shadow-[0_8px_30px_rgba(16,185,129,0.04)] hover:shadow-[0_12px_35px_rgba(16,185,129,0.08)] hover:border-emerald-300 text-emerald-950' 
                       : harvestAnalysis.status === 'caution'
-                      ? 'bg-amber-50/50 border-amber-200 text-amber-950'
-                      : 'bg-rose-50/50 border-rose-200 text-rose-950'
+                      ? 'bg-gradient-to-br from-amber-50/70 to-amber-50/20 border-amber-250/60 shadow-[0_8px_30px_rgba(245,158,11,0.04)] hover:shadow-[0_12px_35px_rgba(245,158,11,0.08)] hover:border-amber-300 text-amber-950'
+                      : harvestAnalysis.status === 'inactive'
+                      ? 'bg-gradient-to-br from-stone-50/80 to-stone-50/30 border-stone-200 shadow-[0_8px_30px_rgba(120,113,108,0.02)] hover:shadow-[0_12px_35px_rgba(120,113,108,0.05)] hover:border-stone-300 text-stone-700'
+                      : 'bg-gradient-to-br from-rose-50/70 to-rose-50/20 border-rose-250/60 shadow-[0_8px_30px_rgba(239,68,68,0.04)] hover:shadow-[0_12px_35px_rgba(239,68,68,0.08)] hover:border-rose-300 text-rose-950'
                   }`}>
                     <div>
                       <div className="flex justify-between items-center border-b border-black/5 pb-2">
                         <h4 className="text-[10.5px] font-mono uppercase font-black text-stone-605">{t.harvest_decision}</h4>
                         <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-black uppercase text-white shadow-3xs ${
-                          harvestAnalysis.status === 'optimal' ? 'bg-emerald-800' : harvestAnalysis.status === 'caution' ? 'bg-amber-600' : 'bg-red-700'
+                          harvestAnalysis.status === 'optimal' 
+                            ? 'bg-emerald-800' 
+                            : harvestAnalysis.status === 'caution' 
+                            ? 'bg-amber-600' 
+                            : harvestAnalysis.status === 'inactive' 
+                            ? 'bg-stone-500' 
+                            : 'bg-red-700'
                         }`}>
                           {harvestAnalysis.labelText}
                         </span>
                       </div>
                       <p className="text-xs font-semibold leading-relaxed mt-3">{harvestAnalysis.message}</p>
+                      
+                      {harvestAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
+                        <button
+                          onClick={() => {
+                            const blockName = activeBlock?.name || '';
+                            const variety = activeBlock?.grapeVariety || '';
+                            const temp = weatherData?.currentTemp ?? '';
+                            const hum = weatherData?.currentHumidity ?? '';
+                            
+                            const title = currentLang === 'ka'
+                              ? `ყურძნის კრეფა - ${blockName}`
+                              : `Harvest Picking - ${blockName}`;
+                            
+                            const desc = currentLang === 'ka'
+                              ? `მოსავლის კრეფის კამპანია დაგეგმილია აგრო-კლიმატური პარამეტრების საფუძველზე. ნაკვეთი: ${blockName} (${variety}). ჯიში: ${selectedVariety} (${activeVarietyConfig.type === 'red' ? 'წითელი' : activeVarietyConfig.type === 'white' ? 'თეთრი' : 'ქარვისფერი'}). მიმდინარე აქტიური ტემპერატურების ჯამი (GDD): ${finalCumulativeGdd}°C (მიზნობრივი ზღვარი: ${activeVarietyConfig.requiredGdd}°C GDD). მეტეო პარამეტრები: ტემპერატურა ${temp}°C, ტენიანობა ${hum}%.`
+                              : `Harvest campaign scheduled based on viticultural agro-meteorological metrics. Block: ${blockName} (${variety}). Variety: ${selectedVariety} (${activeVarietyConfig.type}). Current heat sum: ${finalCumulativeGdd}°C GDD vs Target threshold: ${activeVarietyConfig.requiredGdd}°C GDD. Telemetry: Temp ${temp}°C, Humidity ${hum}%.`;
+
+                            setPrefilledTaskTitle(title);
+                            setPrefilledTaskPriority('high');
+                            setPrefilledTaskDesc(desc);
+                            setActiveModule('gvino');
+                            setActiveTab('tasks');
+                          }}
+                          className="w-full mt-4 py-2 px-3 text-[10px] font-sans font-extrabold uppercase tracking-wider text-white bg-gradient-to-r from-emerald-800 to-teal-850 hover:from-emerald-900 hover:to-teal-900 active:scale-98 rounded-xl transition-all duration-150 flex items-center justify-center gap-1.5 cursor-pointer shadow-md hover:shadow-lg border border-transparent"
+                        >
+                          <Calendar className="w-3.5 h-3.5 animate-pulse" />
+                          {scheduleHarvestLabel}
+                        </button>
+                      )}
                     </div>
 
                     <div className="space-y-1 pt-1">
@@ -940,7 +1374,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
               {/* PRECISION VARIETY GDD & RIPENESS WINDOW FORECASTER */}
               <div className="bg-white border border-[#e8dfd5] p-6 rounded-3xl shadow-xs space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-stone-100 pb-3">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-stone-100 pb-3">
                   <div>
                     <span className="text-[10px] font-mono uppercase bg-[#4e0e15]/5 text-[#4e0e15] border border-[#4e0e15]/10 px-2 rounded font-bold">
                       {({
@@ -962,16 +1396,37 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       })[lang] || 'GDD & Cultivar Ripeness Forecaster'}
                     </h4>
                   </div>
-                  <div>
-                    <select
-                      value={selectedVariety}
-                      onChange={(e) => setSelectedVariety(e.target.value)}
-                      className="bg-stone-50 border border-stone-200 px-3 py-1.5 rounded-xl text-xs font-bold text-stone-750 cursor-pointer text-right outline-none"
-                    >
-                      {varietyPresets.map(v => (
-                        <option key={v.name} value={v.name}>{v.name} ({({ en: 'GDD Target', ka: 'GDD მიზანი', it: 'Target GDD', fr: 'Cible GDD', de: 'GDD-Ziel' })[lang] || 'GDD Target'}: {v.requiredGdd}°C)</option>
-                      ))}
-                    </select>
+                  <div className="flex flex-wrap items-center gap-3 self-stretch md:self-auto w-full md:w-auto">
+                    {/* Cultivar Selector */}
+                    <div className="flex-1 md:flex-none">
+                      <span className="text-[8px] font-mono uppercase text-stone-400 block mb-1 font-bold text-left md:text-right">
+                        {lang === 'ka' ? 'ვაზის ჯიში' : 'Cultivar / Variety'}
+                      </span>
+                      <select
+                        value={selectedVariety}
+                        onChange={(e) => setSelectedVariety(e.target.value)}
+                        className="w-full md:w-auto bg-stone-50 border border-stone-200 px-3 py-1.5 rounded-xl text-xs font-bold text-stone-750 cursor-pointer outline-none text-right"
+                      >
+                        {varietyPresets.map(v => (
+                          <option key={v.name} value={v.name}>{v.name} ({({ en: 'Target', ka: 'მიზანი', it: 'Target', fr: 'Cible', de: 'Ziel' })[lang] || 'Target'}: {v.requiredGdd}°C)</option>
+                        ))}
+                      </select>
+                    </div>
+                    {/* Phenology Selector */}
+                    <div className="flex-1 md:flex-none">
+                      <span className="text-[8px] font-mono uppercase text-stone-400 block mb-1 font-bold text-left md:text-right">
+                        {lang === 'ka' ? 'ფენოლოგიური ფაზა' : 'Phenology Phase'}
+                      </span>
+                      <select
+                        value={selectedPhenology}
+                        onChange={(e) => setSelectedPhenology(e.target.value)}
+                        className="w-full md:w-auto bg-stone-50 border border-stone-200 px-3 py-1.5 rounded-xl text-xs font-bold text-stone-750 cursor-pointer outline-none text-right"
+                      >
+                        {phenologyPhases.map(p => (
+                          <option key={p.id} value={p.id}>{p.label[currentLang] || p.label.en}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -996,7 +1451,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                         de: 'Saisonale Wärmesumme'
                       })[lang] || 'Seasonal Heat Sum'}
                     </span>
-                    <strong className="text-xl font-serif font-black text-stone-900 block mt-1">{cumulativeGdd} °C</strong>
+                    <strong className="text-xl font-serif font-black text-stone-900 block mt-1">{finalCumulativeGdd} °C</strong>
                     <span className="text-[9.5px] text-slate-500 font-mono font-medium">
                       {({
                         en: 'Accumulated GDD (YTD)',
@@ -1069,33 +1524,30 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                         de: 'Fortschritt der Reifekurve'
                       })[lang] || 'Maturity Curve Progress'}
                     </span>
-                    <span>{Math.min(100, Math.round((cumulativeGdd / activeVarietyConfig.requiredGdd) * 100))}% {({ en: 'reached', ka: 'მიღწეულია', it: 'raggiunto', fr: 'atteint', de: 'erreicht' })[lang] || 'reached'}</span>
+                    <span>{Math.min(100, Math.round((finalCumulativeGdd / activeVarietyConfig.requiredGdd) * 100))}% {({ en: 'reached', ka: 'მიღწეულია', it: 'raggiunto', fr: 'atteint', de: 'erreicht' })[lang] || 'reached'}</span>
                   </div>
-                  <div className="w-full h-2.5 bg-stone-100 rounded-full overflow-hidden border border-stone-200/45">
+                  <div className="w-full h-3 bg-stone-100/60 rounded-full overflow-hidden border border-stone-200/50 shadow-inner">
                     <div 
-                      className={`h-full transition-all duration-500 rounded-full ${
-                        cumulativeGdd >= activeVarietyConfig.requiredGdd 
-                          ? 'bg-emerald-650' 
-                          : 'bg-gradient-to-r from-amber-500 to-emerald-600'
+                      className={`h-full transition-all duration-500 rounded-full relative overflow-hidden bg-gradient-to-r ${
+                        finalCumulativeGdd >= activeVarietyConfig.requiredGdd 
+                          ? 'from-emerald-500 to-emerald-700' 
+                          : 'from-amber-450 via-emerald-500 to-emerald-650'
                       }`}
-                      style={{ width: `${Math.min(100, (cumulativeGdd / activeVarietyConfig.requiredGdd) * 100)}%` }}
-                    />
+                      style={{ width: `${Math.min(100, (finalCumulativeGdd / activeVarietyConfig.requiredGdd) * 100)}%` }}
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent animate-pulse" style={{ animationDuration: '2.5s' }} />
+                    </div>
                   </div>
                   
-                  {/* Late May Growth Phase Label */}
+                  {/* Manual Phenology Phase Label */}
                   <div className="flex items-center gap-1.5 pt-1 text-[10px] text-stone-500">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     <span className="font-semibold text-stone-700">
-                      {({
-                        en: 'Current Phenological Phase (Late May): Post-Flowering / Fruit Set Stage',
-                        ka: 'მიმდინარე ფენოლოგიური ფაზა (მაისის ბოლო): ყვავილობის შემდგომი / გამონასკვის ეტაპი',
-                        it: 'Fase Fenologica Corrente (Fine Maggio): Post-Fioritura / Allegagione',
-                        fr: 'Phase Phénologique Actuelle (Fin Mai) : Post-Floraison / Nouaison',
-                        de: 'Aktuelle Phänologische Phase (Ende Mai): Nachblüte / Fruchtansatz'
-                      })[lang] || 'Current Phenological Phase (Late May): Post-Flowering / Fruit Set Stage'}
+                      {(lang === 'ka' ? 'მიმდინარე ფენოლოგიური ფაზა: ' : 'Current Phenological Phase: ')}
+                      <strong className="text-stone-850 font-extrabold">{activePhenologyConfig.label[currentLang] || activePhenologyConfig.label.en}</strong>
                     </span>
                     <span className="font-mono text-[9px] text-[#4e0e15] ml-auto">
-                      ({lang === 'ka' ? 'ფოთლოვანი საფარის სწრაფი ზრდა' : 'Early canopy expansion'})
+                      ({activePhenologyConfig.detail[currentLang] || activePhenologyConfig.detail.en})
                     </span>
                   </div>
                 </div>
@@ -1144,12 +1596,12 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
                   
                   {/* Downy Mildew Risk Gauge */}
-                  <div className={`p-4 rounded-2xl border ${
+                  <div className={`p-4 rounded-2xl border transition-all duration-300 hover:scale-[1.02] ${
                     infectionMetrics.downyRisk > 60 
-                      ? 'bg-rose-50/60 border-rose-200 text-rose-950 font-semibold' 
+                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]' 
                       : infectionMetrics.downyRisk > 30 
-                      ? 'bg-amber-50/60 border-amber-200 text-amber-950' 
-                      : 'bg-emerald-50/60 border-emerald-100 text-emerald-950'
+                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]' 
+                      : 'bg-gradient-to-br from-emerald-50/60 to-emerald-50/10 border-emerald-100 text-emerald-950 shadow-[0_4px_15px_rgba(16,185,129,0.03)]'
                   }`}>
                     <span className="text-[9px] font-mono uppercase text-stone-550 block font-bold">Downy Mildew</span>
                     <div className="flex items-baseline justify-between mt-1">
@@ -1158,18 +1610,18 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                         {infectionMetrics.downyRisk > 60 ? 'Severe' : infectionMetrics.downyRisk > 30 ? 'Moderate' : 'Safe'}
                       </span>
                     </div>
-                    <div className="w-full bg-stone-200/60 h-1 rounded-full overflow-hidden mt-1.5">
-                      <div className={`h-full ${infectionMetrics.downyRisk > 60 ? 'bg-red-600' : infectionMetrics.downyRisk > 30 ? 'bg-amber-500' : 'bg-emerald-600'}`} style={{ width: `${infectionMetrics.downyRisk}%` }} />
+                    <div className="w-full bg-stone-200/50 h-2 rounded-full overflow-hidden mt-2 border border-stone-300/20 shadow-inner">
+                      <div className={`h-full rounded-full transition-all duration-300 bg-gradient-to-r ${infectionMetrics.downyRisk > 60 ? 'from-rose-500 to-red-600' : infectionMetrics.downyRisk > 30 ? 'from-amber-450 to-orange-500' : 'from-emerald-400 to-teal-500'}`} style={{ width: `${infectionMetrics.downyRisk}%` }} />
                     </div>
                   </div>
 
                   {/* Powdery Mildew Risk Gauge */}
-                  <div className={`p-4 rounded-2xl border ${
+                  <div className={`p-4 rounded-2xl border transition-all duration-300 hover:scale-[1.02] ${
                     infectionMetrics.powderyRisk > 60 
-                      ? 'bg-rose-50/60 border-rose-200 text-rose-950 font-semibold' 
+                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]' 
                       : infectionMetrics.powderyRisk > 30 
-                      ? 'bg-amber-50/60 border-amber-200 text-amber-950' 
-                      : 'bg-emerald-50/60 border-emerald-100 text-emerald-950'
+                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]' 
+                      : 'bg-gradient-to-br from-emerald-50/60 to-emerald-50/10 border-emerald-100 text-emerald-950 shadow-[0_4px_15px_rgba(16,185,129,0.03)]'
                   }`}>
                     <span className="text-[9px] font-mono uppercase text-stone-550 block font-bold">Powdery Mildew</span>
                     <div className="flex items-baseline justify-between mt-1">
@@ -1178,18 +1630,18 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                         {infectionMetrics.powderyRisk > 60 ? 'Severe' : infectionMetrics.powderyRisk > 30 ? 'Moderate' : 'Safe'}
                       </span>
                     </div>
-                    <div className="w-full bg-stone-200/60 h-1 rounded-full overflow-hidden mt-1.5">
-                      <div className={`h-full ${infectionMetrics.powderyRisk > 60 ? 'bg-red-600' : infectionMetrics.powderyRisk > 30 ? 'bg-amber-500' : 'bg-emerald-600'}`} style={{ width: `${infectionMetrics.powderyRisk}%` }} />
+                    <div className="w-full bg-stone-200/50 h-2 rounded-full overflow-hidden mt-2 border border-stone-300/20 shadow-inner">
+                      <div className={`h-full rounded-full transition-all duration-300 bg-gradient-to-r ${infectionMetrics.powderyRisk > 60 ? 'from-rose-500 to-red-600' : infectionMetrics.powderyRisk > 30 ? 'from-amber-450 to-orange-500' : 'from-emerald-400 to-teal-500'}`} style={{ width: `${infectionMetrics.powderyRisk}%` }} />
                     </div>
                   </div>
 
                   {/* Botrytis bunch rot */}
-                  <div className={`p-4 rounded-2xl border ${
+                  <div className={`p-4 rounded-2xl border transition-all duration-300 hover:scale-[1.02] ${
                     infectionMetrics.botrytisRisk > 60 
-                      ? 'bg-rose-50/60 border-rose-200 text-rose-950 font-semibold' 
+                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]' 
                       : infectionMetrics.botrytisRisk > 30 
-                      ? 'bg-amber-50/60 border-amber-200 text-amber-950' 
-                      : 'bg-emerald-50/60 border-emerald-100 text-emerald-950'
+                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]' 
+                      : 'bg-gradient-to-br from-emerald-50/60 to-emerald-50/10 border-emerald-100 text-emerald-950 shadow-[0_4px_15px_rgba(16,185,129,0.03)]'
                   }`}>
                     <span className="text-[9px] font-mono uppercase text-stone-550 block font-bold">Botrytis Rot</span>
                     <div className="flex items-baseline justify-between mt-1">
@@ -1198,8 +1650,8 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                         {infectionMetrics.botrytisRisk > 60 ? 'Severe' : infectionMetrics.botrytisRisk > 30 ? 'Moderate' : 'Safe'}
                       </span>
                     </div>
-                    <div className="w-full bg-stone-200/60 h-1 rounded-full overflow-hidden mt-1.5">
-                      <div className={`h-full ${infectionMetrics.botrytisRisk > 60 ? 'bg-red-600' : infectionMetrics.botrytisRisk > 30 ? 'bg-amber-500' : 'bg-emerald-600'}`} style={{ width: `${infectionMetrics.botrytisRisk}%` }} />
+                    <div className="w-full bg-stone-200/50 h-2 rounded-full overflow-hidden mt-2 border border-stone-300/20 shadow-inner">
+                      <div className={`h-full rounded-full transition-all duration-300 bg-gradient-to-r ${infectionMetrics.botrytisRisk > 60 ? 'from-rose-500 to-red-600' : infectionMetrics.botrytisRisk > 30 ? 'from-amber-450 to-orange-500' : 'from-emerald-400 to-teal-500'}`} style={{ width: `${infectionMetrics.botrytisRisk}%` }} />
                     </div>
                   </div>
 
@@ -1207,21 +1659,24 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
               </div>
 
               {/* CONVERGED GEMINI AI AGRO-CLIMATIC INTELLIGENCE PANEL */}
-              <div className="bg-[#FAF8F5] border border-[#e8dfd5] p-6 rounded-3xl shadow-sm space-y-4 relative">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#e8dfd5] pb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="p-2 bg-[#4e0e15] text-white rounded-xl">
-                      <Bot className="w-4 h-4 text-amber-300" />
+              <div className="bg-gradient-to-br from-[#1c080b] to-[#0c0304] border border-[#4e0e15]/30 p-6 rounded-3xl shadow-xl space-y-4 relative overflow-hidden">
+                <div className="absolute -right-16 -top-16 w-36 h-36 bg-[#801323]/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -left-16 -bottom-16 w-36 h-36 bg-[#c2185b]/5 rounded-full blur-3xl pointer-events-none" />
+                
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#4e0e15]/20 pb-3 relative z-10">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2.5 bg-[#4e0e15] border border-[#801323]/35 text-white rounded-xl shadow-md">
+                      <Bot className="w-4 h-4 text-amber-400 animate-pulse" />
                     </div>
                     <div>
-                      <h4 className="font-serif font-black text-xs text-stone-900 uppercase">AI Agronomy & Canopy Intelligent Advisor</h4>
-                      <p className="text-[10px] text-stone-400 mt-0.5">Gemini-Powered Viticultural Risks & Ripeness Predictions</p>
+                      <h4 className="font-serif font-black text-xs text-white uppercase tracking-wide">AI Agronomy & Canopy Intelligent Advisor</h4>
+                      <p className="text-[10px] text-[#cca5a9] mt-0.5">Gemini-Powered Viticultural Risks & Ripeness Predictions</p>
                     </div>
                   </div>
                   <button
                     onClick={handleGetAiReport}
                     disabled={aiLoading}
-                    className="w-full sm:w-auto px-4 py-2 bg-[#4e0e15] hover:bg-[#801323] text-white rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-colors shadow-2xs"
+                    className="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-amber-600 to-[#801323] hover:from-amber-500 hover:to-[#a01a2d] active:scale-95 text-white rounded-xl text-xs font-mono font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-md duration-200 border border-amber-500/20"
                   >
                     {aiLoading ? (
                       <>
@@ -1238,13 +1693,15 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                 </div>
 
                 {aiAdvice ? (
-                  <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl text-xs text-[#2c241e] leading-relaxed max-h-[350px] overflow-y-auto shadow-inner prose prose-stone max-w-none">
+                  <div className="bg-black/35 border border-[#4e0e15]/15 p-5 rounded-2xl text-[11px] text-stone-200 leading-relaxed max-h-[350px] overflow-y-auto shadow-inner prose prose-invert max-w-none scrollbar-thin scrollbar-thumb-stone-800">
                     <ReactMarkdown>{aiAdvice}</ReactMarkdown>
                   </div>
                 ) : (
-                  <div className="p-12 text-center text-stone-450 flex flex-col items-center gap-2">
-                    <Sparkles className="w-8 h-8 text-[#4e0e15]/20" />
-                    <p className="text-xs font-bold leading-relaxed max-w-md text-stone-500">
+                  <div className="p-12 text-center text-[#cca5a9] flex flex-col items-center gap-2.5 relative z-10">
+                    <div className="w-12 h-12 rounded-full bg-[#4e0e15]/30 border border-[#801323]/20 flex items-center justify-center">
+                      <Sparkles className="w-5 h-5 text-amber-300/40" />
+                    </div>
+                    <p className="text-xs font-bold leading-relaxed max-w-md text-[#d7b2b6] font-sans">
                       Click the analysis button to transmit cumulative seasonal GDD numbers, local elevations, variety profile attributes, and current infection potentials directly to the AI Core.
                     </p>
                   </div>
@@ -1296,29 +1753,30 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                 {weatherData.daily.map((day, i) => {
                   const dayDeco = weatherIconAndText(day.weatherCode);
                   return (
-                    <div key={i} className="bg-white border border-[#e8dfd5] rounded-2xl p-4 text-center flex flex-col justify-between space-y-2 hover:shadow-2xs transition-all relative">
+                    <div key={i} className="bg-gradient-to-b from-white to-stone-50/40 border border-[#e8dfd5]/60 rounded-2xl p-4 text-center flex flex-col justify-between space-y-2 hover:shadow-md hover:scale-[1.03] transition-all duration-300 relative overflow-hidden group">
+                      <div className="absolute top-0 left-0 right-0 h-[3px] bg-stone-100 group-hover:bg-[#801323] transition-all duration-300" />
                       <span className="text-[10px] font-mono text-slate-400 font-bold block">{day.date}</span>
                       
-                      <div className="mx-auto py-1">
+                      <div className="mx-auto py-1 transition-transform duration-300 group-hover:scale-110">
                         {dayDeco.icon}
                       </div>
 
                       <div className="space-y-0.5 text-xs">
                         <div className="flex justify-center gap-2 font-serif">
-                          <strong className="text-stone-900 font-black">{day.tempMax}°C</strong>
+                          <strong className="text-stone-900 font-black text-sm tracking-tight">{day.tempMax}°C</strong>
                           <span className="text-stone-400">{day.tempMin}°C</span>
                         </div>
-                        <span className="text-[9.5px] font-sans font-medium text-stone-550 block">{dayDeco.text}</span>
+                        <span className="text-[9.5px] font-sans font-semibold text-stone-550 block leading-tight">{dayDeco.text}</span>
                       </div>
 
-                      <div className="border-t border-stone-100 pt-2 grid grid-cols-2 text-[9px] font-mono text-slate-450 text-stone-500 font-bold mt-1">
-                        <div>
-                          <span className="block text-[8px] uppercase tracking-wide font-normal">Rain</span>
-                          <span className="text-cyan-705 block font-serif font-black text-stone-850">{day.popMax}%</span>
+                      <div className="border-t border-stone-100 pt-2.5 grid grid-cols-2 text-[9px] font-mono text-stone-500 font-bold mt-1">
+                        <div className="border-r border-stone-100 pr-1">
+                          <span className="block text-[8px] uppercase tracking-wide font-normal text-stone-400">Rain</span>
+                          <span className="text-sky-600 block font-serif font-black">{day.popMax}%</span>
                         </div>
-                        <div>
-                          <span className="block text-[8px] uppercase tracking-wide font-normal">Wind</span>
-                          <span className="text-stone-750 block font-serif font-black text-stone-850">{day.windMax} km/h</span>
+                        <div className="pl-1">
+                          <span className="block text-[8px] uppercase tracking-wide font-normal text-stone-400">Wind</span>
+                          <span className="text-emerald-700 block font-serif font-black">{day.windMax} km/h</span>
                         </div>
                       </div>
                     </div>
@@ -1340,48 +1798,106 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                   </p>
                 </div>
 
-                {/* Switcher tabs */}
-                <div className="flex bg-stone-100 p-1 rounded-xl self-stretch sm:self-auto gap-1">
-                  <button 
-                    type="button"
-                    onClick={() => setHistMetric('gdd')}
-                    className={`px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg transition-all cursor-pointer ${histMetric === 'gdd' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
-                  >
-                    GDD Heat Sum
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setHistMetric('rain')}
-                    className={`px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg transition-all cursor-pointer ${histMetric === 'rain' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
-                  >
-                    Spring Rain (mm)
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setHistMetric('temp')}
-                    className={`px-2.5 py-1 text-[10px] font-mono font-bold rounded-lg transition-all cursor-pointer ${histMetric === 'temp' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
-                  >
-                    Mean Growth Temp
-                  </button>
+                {/* Switchers (View Mode & Metric) */}
+                <div className="flex flex-wrap items-center gap-3 self-stretch sm:self-auto">
+                  {/* View Mode Toggle */}
+                  <div className="flex bg-stone-100 p-0.5 rounded-lg border border-stone-200">
+                    <button
+                      type="button"
+                      onClick={() => setHistViewMode('ytd')}
+                      className={`px-2.5 py-1 text-[9px] font-sans font-bold rounded-md transition-all cursor-pointer ${
+                        histViewMode === 'ytd' 
+                          ? 'bg-white text-stone-800 shadow-2xs font-extrabold' 
+                          : 'text-stone-500 hover:text-stone-850'
+                      }`}
+                    >
+                      {lang === 'ka' ? 'ჯამური (YTD)' : 'YTD Sum'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHistViewMode('monthly')}
+                      className={`px-2.5 py-1 text-[9px] font-sans font-bold rounded-md transition-all cursor-pointer ${
+                        histViewMode === 'monthly' 
+                          ? 'bg-white text-stone-800 shadow-2xs font-extrabold' 
+                          : 'text-stone-500 hover:text-stone-855'
+                      }`}
+                    >
+                      {lang === 'ka' ? 'ყოველთვიური' : 'Monthly'}
+                    </button>
+                  </div>
+
+                  {/* Metric Switcher */}
+                  <div className="flex bg-stone-100 p-0.5 rounded-lg border border-stone-200">
+                    <button 
+                      type="button"
+                      onClick={() => setHistMetric('gdd')}
+                      className={`px-2 py-1 text-[9px] font-mono font-bold rounded-md transition-all cursor-pointer ${histMetric === 'gdd' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
+                    >
+                      GDD
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setHistMetric('rain')}
+                      className={`px-2 py-1 text-[9px] font-mono font-bold rounded-md transition-all cursor-pointer ${histMetric === 'rain' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
+                    >
+                      Rain
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setHistMetric('temp')}
+                      className={`px-2 py-1 text-[9px] font-mono font-bold rounded-md transition-all cursor-pointer ${histMetric === 'temp' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
+                    >
+                      Temp
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
                 {/* Visual Chart */}
                 <div className="lg:col-span-2 h-56 w-full font-mono text-[9px] pt-2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={historicalCompareData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3ebe3" />
-                      <XAxis dataKey="year" stroke="#a8a29e" fontSize={10} />
-                      <YAxis stroke="#888" fontSize={9} />
-                      <Tooltip contentStyle={{ background: '#FAF8F5', border: '1px solid #e8dfd5', borderRadius: '12px', fontSize: '10px' }} />
-                      <Bar dataKey={histMetric} name={activeMetricLabel?.title || 'Value'} radius={[6, 6, 0, 0]}>
-                        {historicalCompareData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                  {histLoading ? (
+                    <div className="h-full w-full flex flex-col items-center justify-center bg-stone-50 border border-stone-100 rounded-2xl p-4 animate-pulse">
+                      <RotateCw className="w-6 h-6 text-[#801323] animate-spin" />
+                      <span className="text-[10px] text-stone-500 font-mono font-bold mt-2">
+                        {lang === 'ka' ? 'მიმდინარეობს სატელიტური არქივის სინქრონიზაცია...' : 'Syncing satellite weather archive...'}
+                      </span>
+                    </div>
+                  ) : histError ? (
+                    <div className="h-full w-full flex flex-col items-center justify-center bg-amber-50/50 border border-amber-100 rounded-2xl p-4">
+                      <AlertTriangle className="w-6 h-6 text-amber-600" />
+                      <span className="text-[9.5px] text-amber-900 font-bold mt-2 text-center">
+                        {lang === 'ka' ? 'კავშირი ვერ დამყარდა. ნაჩვენებია სარეზერვო ტელემეტრია.' : 'Connection failed. Showing backup calibrated telemetry.'}
+                      </span>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      {histViewMode === 'ytd' ? (
+                        <BarChart data={finalCompareData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3ebe3" />
+                          <XAxis dataKey="year" stroke="#a8a29e" fontSize={10} />
+                          <YAxis stroke="#888" fontSize={9} />
+                          <Tooltip contentStyle={{ background: '#FAF8F5', border: '1px solid #e8dfd5', borderRadius: '12px', fontSize: '10px' }} />
+                          <Bar dataKey={histMetric} name={activeMetricLabel?.title || 'Value'} radius={[6, 6, 0, 0]}>
+                            {finalCompareData.map((entry: any, index: number) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      ) : (
+                        <BarChart data={finalMonthlyData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3ebe3" />
+                          <XAxis dataKey="month" stroke="#a8a29e" fontSize={10} />
+                          <YAxis stroke="#888" fontSize={9} />
+                          <Tooltip contentStyle={{ background: '#FAF8F5', border: '1px solid #e8dfd5', borderRadius: '12px', fontSize: '10px' }} />
+                          <Legend wrapperStyle={{ fontSize: '10px', marginTop: '10px' }} />
+                          <Bar dataKey={`2024_${histMetric}`} name="2024" fill="#d97706" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey={`2025_${histMetric}`} name="2025" fill="#059669" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey={`2026_${histMetric}`} name="2026" fill="#4e0e15" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      )}
+                    </ResponsiveContainer>
+                  )}
                 </div>
 
                 {/* Explanatory notes & satellite verification */}
@@ -1413,6 +1929,11 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* 5. WEATHER EXPLORER — real data for any date & location (Open-Meteo) */}
+            <div className="lg:col-span-3">
+              <WeatherExplorer lang={lang} blocks={blocks} />
             </div>
 
           </div>
