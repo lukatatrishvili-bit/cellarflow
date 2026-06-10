@@ -847,17 +847,56 @@ export default function App() {
 
       {/* 2. Main Shell Layout */}
       {!isLoggedIn ? (
-        <div className="flex-1 flex items-center justify-center p-6 bg-[#f8f6f2] min-h-[75vh]">
-          <div className="w-full max-w-md bg-white border border-stone-200/90 rounded-2xl p-8 shadow-[0_4px_24px_rgba(27,23,21,0.03)] space-y-6 relative overflow-hidden text-stone-600">
-            {/* Top design element decorative line */}
-            <div className="absolute top-0 left-0 right-0 h-1 bg-[#4e0e15]" />
-            
-            <div className="text-center space-y-2 pt-2">
-              <div className="w-12 h-12 bg-[#31070b]/95 text-amber-100 rounded-full flex items-center justify-center shadow-md font-serif font-black text-xl mx-auto border border-[#4e0e15]">
-                🍇
+        <div className="flex-1 flex items-stretch justify-center p-4 sm:p-6 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh]">
+          <div className="w-full max-w-4xl my-auto grid lg:grid-cols-[1.05fr_1fr] rounded-3xl overflow-hidden shadow-[0_30px_80px_-30px_rgba(78,14,21,0.35)] border border-stone-200/70 bg-white animate-fade-in">
+
+            {/* Brand hero — desktop only */}
+            <div className="relative hidden lg:flex flex-col justify-between p-10 bg-gradient-to-br from-[#5a1019] via-[#3a0a0f] to-[#1b0203] text-amber-50 overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#801323] via-[#c5a059] to-[#801323]" />
+              <div className="absolute -right-12 -bottom-16 text-[260px] leading-none opacity-[0.06] select-none pointer-events-none">🍇</div>
+
+              <div className="relative">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-2xl">🍇</div>
+                  <div>
+                    <div className="font-serif font-black tracking-[0.3em] text-lg">VINEA</div>
+                    <div className="text-[9px] font-mono uppercase tracking-[0.25em] text-amber-200/70">Unified Estate ERP</div>
+                  </div>
+                </div>
+
+                <h2 className="mt-10 text-3xl font-serif font-black leading-[1.15]">Vineyard to bottle,<br />in one cellar book.</h2>
+                <p className="mt-3 text-[13px] text-amber-100/70 font-serif italic leading-relaxed max-w-xs">
+                  {t.signin_subtitle || 'Unified Vineyard (Vazi) & Winery (Gvino) management.'}
+                </p>
+
+                <ul className="mt-8 space-y-2.5 text-[12px] text-amber-50/90">
+                  {['Block-to-bottle traceability', 'Lab panels & molecular SO₂ guardrails', 'Live fermentation & cellar alerts', 'AI winemaker assistant'].map(feat => (
+                    <li key={feat} className="flex items-center gap-2.5">
+                      <CheckCircle2 className="w-4 h-4 text-[#c5a059] shrink-0" />
+                      <span>{feat}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <h2 className="text-lg font-serif font-black tracking-widest text-[#1b1715] uppercase mt-3">{t.signin_title || 'VINEA UNIFIED SIGN IN'}</h2>
-              <p className="text-[11px] text-stone-400 font-serif italic leading-relaxed">{t.signin_subtitle || 'Unified Vineyard (Vazi) & Winery (Gvino) Cloud Management'}</p>
+
+              <div className="relative mt-10 pt-5 border-t border-white/10 text-[10px] font-mono uppercase tracking-[0.2em] text-amber-200/60 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                {companyProfile.region || 'Kakheti'}, {companyProfile.country || 'Georgia'}
+              </div>
+            </div>
+          <div className="p-7 sm:p-10 flex flex-col justify-center bg-white text-stone-600 space-y-5">
+            {/* Compact brand for mobile */}
+            <div className="lg:hidden flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-xl bg-[#31070b] text-amber-100 flex items-center justify-center text-xl border border-[#4e0e15]">🍇</div>
+              <div>
+                <div className="font-serif font-black tracking-[0.25em] text-[#1b1715]">VINEA</div>
+                <div className="text-[8px] font-mono uppercase tracking-[0.2em] text-[#c5a059]">Unified Estate ERP</div>
+              </div>
+            </div>
+            
+            <div>
+              <h2 className="text-xl font-serif font-black tracking-wide text-[#1b1715]">{t.signin_title || 'VINEA Unified Sign In'}</h2>
+              <p className="text-[12px] text-stone-400 mt-1">{lang === 'ka' ? 'შედით თქვენს მართვის სივრცეში.' : 'Sign in to your estate workspace.'}</p>
             </div>
 
             <form onSubmit={(e) => {
@@ -973,6 +1012,7 @@ export default function App() {
                 </div>
               </button>
             </div>
+          </div>
           </div>
         </div>
       ) : activeModule === 'vazi' ? (
