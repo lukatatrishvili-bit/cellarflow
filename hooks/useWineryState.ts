@@ -346,6 +346,93 @@ export function useWineryState() {
     }
   };
 
+  const clearAllData = async () => {
+    const emptyProfile = {
+      companyName: '',
+      wineryName: '',
+      country: '',
+      region: '',
+      municipality: '',
+      address: '',
+      contactEmail: '',
+      phone: '',
+      website: '',
+      measurementUnits: 'metric' as const,
+      latitude: 41.9056,
+      longitude: 45.4740
+    };
+
+    setVessels([]);
+    setLots([]);
+    setFermLogs([]);
+    setLabLogs([]);
+    setInventory([]);
+    setTasks([]);
+    setNotesList([]);
+    setBlocks([]);
+    setPhenologyLogs([]);
+    setSprays([]);
+    setScoutings([]);
+    setSoilRecords([]);
+    setSamplings([]);
+    setHarvests([]);
+    setIrrigationLogs([]);
+    setFertilizerLogs([]);
+    setAuditLogs([]);
+    setCompanyProfile(emptyProfile);
+
+    localStorage.removeItem('cf_vessels');
+    localStorage.removeItem('cf_lots');
+    localStorage.removeItem('cf_fermlogs');
+    localStorage.removeItem('cf_lablogs');
+    localStorage.removeItem('cf_inventory');
+    localStorage.removeItem('cf_tasks');
+    localStorage.removeItem('cf_notes');
+    localStorage.removeItem('vinea_blocks');
+    localStorage.removeItem('vinea_phenology');
+    localStorage.removeItem('vinea_sprays');
+    localStorage.removeItem('vinea_scoutings');
+    localStorage.removeItem('vinea_soil');
+    localStorage.removeItem('vinea_samplings');
+    localStorage.removeItem('vinea_harvests');
+    localStorage.removeItem('vinea_irrigation');
+    localStorage.removeItem('vinea_fertilizer');
+    localStorage.removeItem('vinea_audit_logs');
+    localStorage.removeItem('vinea_company_profile');
+    localStorage.removeItem('vinea_deleted_ids');
+
+    await SyncQueueManager.clearOfflineQueue();
+
+    const allKeys = [
+      'vessels', 'lots', 'fermLogs', 'labLogs', 'inventory', 'tasks', 'notesList',
+      'blocks', 'phenologyLogs', 'sprays', 'scoutings', 'soilRecords',
+      'samplings', 'harvests', 'irrigationLogs', 'fertilizerLogs', 'auditLogs',
+      'companyProfile'
+    ];
+    allKeys.forEach(k => SyncQueueManager.markDirty(k));
+
+    await triggerSync({
+      vessels: [],
+      lots: [],
+      fermLogs: [],
+      labLogs: [],
+      inventory: [],
+      tasks: [],
+      notesList: [],
+      blocks: [],
+      phenologyLogs: [],
+      sprays: [],
+      scoutings: [],
+      soilRecords: [],
+      samplings: [],
+      harvests: [],
+      irrigationLogs: [],
+      fertilizerLogs: [],
+      auditLogs: [],
+      companyProfile: emptyProfile
+    });
+  };
+
   // Unified Hydration
   useEffect(() => {
     setIsClient(true);
@@ -1101,6 +1188,7 @@ export function useWineryState() {
     resolveConflict,
     lastSyncError,
     setLastSyncError,
-    discardLocalUnsyncedChanges
+    discardLocalUnsyncedChanges,
+    clearAllData
   };
 }

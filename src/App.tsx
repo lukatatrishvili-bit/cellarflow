@@ -806,6 +806,7 @@ export default function App() {
           companyProfile={state.companyProfile}
           setCompanyProfile={state.setCompanyProfile}
           setToastMessage={state.setToastMessage}
+          onClearAllData={state.clearAllData}
         />
       ) : state.activeModule === 'audit' ? (
         <AuditTrailTab

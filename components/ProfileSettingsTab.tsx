@@ -9,6 +9,7 @@ interface ProfileSettingsTabProps {
   companyProfile: CompanyProfile;
   setCompanyProfile: (val: CompanyProfile) => void;
   setToastMessage: (val: string | null) => void;
+  onClearAllData?: () => void;
 }
 
 export default function ProfileSettingsTab({
@@ -17,7 +18,8 @@ export default function ProfileSettingsTab({
   setCurrentUser,
   companyProfile,
   setCompanyProfile,
-  setToastMessage
+  setToastMessage,
+  onClearAllData
 }: ProfileSettingsTabProps) {
   const t = translations[lang];
 
@@ -181,6 +183,36 @@ export default function ProfileSettingsTab({
           </button>
         </form>
       </div>
+
+      {onClearAllData && (
+        <div className="bg-rose-50/50 border border-rose-200 p-6 rounded-2xl shadow-sm space-y-4">
+          <div>
+            <h4 className="text-md font-serif font-black text-rose-800 uppercase tracking-wide">
+              ⚠️ {lang === 'ka' ? 'დემო მონაცემების გასუფთავება' : 'Initialize Clean Estate (Erase Demo Data)'}
+            </h4>
+            <p className="text-[10px] text-rose-700/80 mt-1">
+              {lang === 'ka' 
+                ? 'წაშლის ყველა სადემონსტრაციო ჭურჭელს, პარტიას, ჟურნალებსა და დავალებებს, რათა დაიწყოთ მუშაობა სუფთა ფურცლიდან.' 
+                : 'Permanently deletes all demo vessels, wine lots, fermentation history, viticulture blocks, and tasks so you can start with a clean slate.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const confirmText = lang === 'ka' 
+                ? 'დარწმუნებული ხართ, რომ გსურთ ყველა მონაცემის წაშლა? ამ მოქმედების გაუქმება შეუძლებელია.'
+                : 'Are you sure you want to erase all demo data? This action is permanent and cannot be undone.';
+              if (window.confirm(confirmText)) {
+                onClearAllData();
+                setToastMessage(lang === 'ka' ? 'მონაცემები წარმატებით გასუფთავდა!' : 'Estate reset complete! Ready for custom data.');
+              }
+            }}
+            className="w-full bg-rose-700 hover:bg-rose-850 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors"
+          >
+            {lang === 'ka' ? 'ყველა სადემონსტრაციო მონაცემის წაშლა' : 'Clear All Demo/Seeded Data'}
+          </button>
+        </div>
+      )}
     </main>
   );
 }
