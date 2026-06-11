@@ -24,7 +24,9 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DB_PATH = path.resolve(__dirname, '../db.json');
+const DB_PATH = process.env.DATABASE_PATH 
+  ? path.resolve(process.env.DATABASE_PATH)
+  : path.resolve(__dirname, '../db.json');
 
 // Memory cache
 let dbData: any = null;

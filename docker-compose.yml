@@ -11,7 +11,8 @@ services:
       - NODE_ENV=production
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - PORT=3000
+      - DATABASE_PATH=/app/data/db.json
     volumes:
-      # Mount a local db.json to the container to ensure data persistence
-      - ./db.json:/app/db.json
+      # Mount a data directory to allow safe file write/rename cycles inside the container
+      - ./data:/app/data
     restart: unless-stopped

@@ -1,5 +1,5 @@
-# Use Node.js LTS image as base
-FROM node:20-alpine
+# Use Node.js LTS Debian-slim image as base (contains glibc for full native dependency safety)
+FROM node:20-slim
 
 # Set working directory inside the container
 WORKDIR /app
@@ -13,15 +13,19 @@ RUN npm ci
 # Copy the remaining project files
 COPY . .
 
-# Build the React + Vite frontend assets
-RUN npm run build
+# Ensure the database data directory exists
+RUN mkdir -p /app/data
+
+# If db.json exists, copy it to the persistent data folder
+RUN if [ -f db.json ]; then cp db.json /app/data/db.json; fi
 
 # Expose port 3000 for the Express server
 EXPOSE 3000
 
-# Set default production environment variables
+# Set production environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV DATABASE_PATH=/app/data/db.json
 
 # Start the application using tsx to run the TypeScript server
 CMD ["npx", "tsx", "server.ts"]
