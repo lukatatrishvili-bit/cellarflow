@@ -87,6 +87,35 @@ export default function VaziModule({
   const [vaziTab, setVaziTab] = useState<'dashboard' | 'blocks' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather' | 'ipm_pheno'>('dashboard');
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   
+  const [mapOverlay, setMapOverlay] = useState<'mildew' | 'moisture' | 'phenology'>('mildew');
+  const [mapHoveredBlock, setMapHoveredBlock] = useState<string | null>(null);
+
+  const getBlockColor = (blockId: string) => {
+    const b = blocks.find(x => x.id === blockId);
+    if (!b) return '#e2e8f0';
+    const name = b.name.toLowerCase();
+    
+    if (mapOverlay === 'mildew') {
+      if (name.includes('ridge') || blockId === 'block-1') return '#eab308'; // Moderate (Yellow)
+      if (name.includes('kondoli') || blockId === 'block-2') return '#10b981'; // Low (Green)
+      if (name.includes('mukuzani') || blockId === 'block-3') return '#ef4444'; // High (Red)
+      return '#10b981';
+    }
+    if (mapOverlay === 'moisture') {
+      if (name.includes('ridge') || blockId === 'block-1') return '#ef4444'; // Dry (Red)
+      if (name.includes('kondoli') || blockId === 'block-2') return '#10b981'; // Optimum (Green)
+      if (name.includes('mukuzani') || blockId === 'block-3') return '#3b82f6'; // Wet (Blue)
+      return '#10b981';
+    }
+    if (mapOverlay === 'phenology') {
+      if (b.currentPhenology.toLowerCase().includes('veraison')) return '#8b5cf6'; // Veraison (Purple)
+      if (b.currentPhenology.toLowerCase().includes('ripening')) return '#f43f5e'; // Ripening (Rose)
+      if (b.currentPhenology.toLowerCase().includes('fruit set')) return '#10b981'; // Fruit Set (Green)
+      return '#6ee7b7'; // Default / Flowering
+    }
+    return '#cbd5e1';
+  };
+
   // Adding state
   const [showAddBlockModal, setShowAddBlockModal] = useState(false);
   const [addBlockLat, setAddBlockLat] = useState<number>(41.9567);
@@ -444,159 +473,189 @@ export default function VaziModule({
               </div>
             </div>
 
-            {/* Weather Station Forecast Dashboard */}
-            <div className="lg:col-span-2 bg-stone-50/70 border border-[#e8dfd5] rounded-2xl p-5 shadow-inner space-y-5">
-              <div className="flex items-center justify-between">
+            {/* GIS block map & Weather Station Forecast */}
+            <div className="lg:col-span-2 bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-stone-150 pb-2.5 gap-2">
                 <div>
                   <h3 className="text-sm font-serif font-black text-emerald-950 flex items-center gap-1.5">
-                    <Wind className="w-4 h-4 text-sky-600" />
-                    {{
-                      en: 'Winery-Integrated Microclimate Station',
-                      ka: 'ინტეგრირებული მიკროკლიმატის სადგური',
-                      it: 'Stazione Microclimatica Integrata',
-                      fr: 'Station Microclimatique Intégrée',
-                      de: 'Integrierte Mikroklimastation'
-                    }[lang] || 'Winery-Integrated Microclimate Station'}
+                    <Layers className="w-4 h-4 text-emerald-700" />
+                    {lang === 'ka' ? 'ვენახის ინტერაქტიული რუკა და მიკროკლიმატი' : 'Interactive Estate Block Map & Microclimate'}
                   </h3>
                   <p className="text-[10px] text-slate-400 mt-0.5">
-                    {{
-                      en: 'Dual GPS coordinate-based weather forecast and farming risk analyst',
-                      ka: 'GPS კოორდინატებზე დაფუძნებული მეტეო პროგნოზი და აგრო-რისკების ანალიზი',
-                      it: 'Previsioni meteo basate su coordinate GPS e analisi dei rischi agricoli',
-                      fr: 'Prévisions météo par coordonnées GPS et analyse des risques agricoles',
-                      de: 'GPS-basierte Wettervorhersage und landwirtschaftliche Risikoanalyse'
-                    }[lang] || 'Dual GPS coordinate-based weather forecast and farming risk analyst'}
+                    {lang === 'ka' ? 'აგრონომიული რუკის ფენები და კავშირი საველე მეტეო სადგურებთან' : 'Interactive block layers & real-time field weather parameters'}
                   </p>
                 </div>
-                <div className="text-[9px] font-mono font-bold bg-sky-50 text-sky-800 px-2.5 py-1 rounded-sm uppercase">
-                  {{
-                    en: 'Active GPS Fed',
-                    ka: 'აქტიური GPS',
-                    it: 'GPS Attivo',
-                    fr: 'GPS Actif',
-                    de: 'Aktives GPS'
-                  }[lang] || 'Active GPS Fed'}
+
+                {/* Overlay layer control button group */}
+                <div className="flex gap-1 bg-stone-50 border border-stone-200 p-0.5 rounded-lg text-[10px]">
+                  {[
+                    { id: 'mildew', label: lang === 'ka' ? 'ჭრაქი (IPM)' : 'Mildew Risk' },
+                    { id: 'moisture', label: lang === 'ka' ? 'ტენიანობა' : 'Soil Moisture' },
+                    { id: 'phenology', label: lang === 'ka' ? 'ფენოლოგია' : 'Phenology' }
+                  ].map(layer => (
+                    <button
+                      key={layer.id}
+                      type="button"
+                      onClick={() => setMapOverlay(layer.id as any)}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                        mapOverlay === layer.id 
+                          ? 'bg-[#1e2f23] text-stone-100 shadow-2xs' 
+                          : 'text-stone-650 hover:bg-stone-200/50'
+                      }`}
+                    >
+                      {layer.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Grid of Weather parameters */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="p-3.5 bg-white border border-[#e8dfd5] rounded-xl shadow-xs">
-                  <span className="text-[9px] font-mono text-slate-400 uppercase block font-semibold">
-                    {{
-                      en: 'Average Temperature',
-                      ka: 'საშუალო ტემპერატურა',
-                      it: 'Temperatura Media',
-                      fr: 'Température Moyenne',
-                      de: 'Mittlere Temperatur'
-                    }[lang] || 'Average Temperature'}
-                  </span>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-xl font-serif font-black text-emerald-950">28°C</span>
-                    <span className="text-[10px] text-orange-600 block">
-                      {{
-                        en: '(Dry)',
-                        ka: '(მშრალი)',
-                        it: '(Secco)',
-                        fr: '(Sec)',
-                        de: '(Trocken)'
-                      }[lang] || '(Dry)'}
-                    </span>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
+                {/* SVG Estate Map Column */}
+                <div className="md:col-span-5 bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col justify-between relative overflow-hidden h-60">
+                  <div className="text-[9px] font-mono font-bold text-emerald-800 uppercase tracking-widest flex items-center gap-1">
+                    🛰️ {lang === 'ka' ? 'ვენახის სატელიტური სქემა' : 'Estate GIS Layout'}
                   </div>
-                </div>
-                <div className="p-3.5 bg-white border border-[#e8dfd5] rounded-xl shadow-xs">
-                  <span className="text-[9px] font-mono text-slate-400 uppercase block font-semibold">
-                    {{
-                      en: 'Precipitation Prob',
-                      ka: 'ნალექის ალბათობა',
-                      it: 'Probabilità Precipitazioni',
-                      fr: 'Probabilité de Précipitations',
-                      de: 'Niederschlagswahrscheinlichkeit'
-                    }[lang] || 'Precipitation Prob'}
-                  </span>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-xl font-serif font-black text-emerald-950">12%</span>
-                    <span className="text-[10px] text-stone-400 block font-semibold">
-                      {{
-                        en: 'Low Risk',
-                        ka: 'დაბალი რისკი',
-                        it: 'Basso Rischio',
-                        fr: 'Faible Risque',
-                        de: 'Geringes Risiko'
-                      }[lang] || 'Low Risk'}
-                    </span>
-                  </div>
-                </div>
-                <div className="p-3.5 bg-white border border-[#e8dfd5] rounded-xl shadow-xs">
-                  <span className="text-[9px] font-mono text-slate-400 uppercase block font-semibold">
-                    {{
-                      en: 'Wind Speed Max',
-                      ka: 'ქარის მაქს. სიჩქარე',
-                      it: 'Velocità Max Vento',
-                      fr: 'Vitesse Max du Vent',
-                      de: 'Max. Windgeschwindigkeit'
-                    }[lang] || 'Wind Speed Max'}
-                  </span>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-xl font-serif font-black text-emerald-950">8.5 km/h</span>
-                    <span className="text-[10px] text-emerald-600 block font-bold">
-                      {{
-                        en: 'Safe Spray',
-                        ka: 'უსაფრთხო წამლობა',
-                        it: 'Irrorazione Sicura',
-                        fr: 'Traitement Sûr',
-                        de: 'Spritzen Sicher'
-                      }[lang] || 'Safe Spray'}
-                    </span>
-                  </div>
-                </div>
-                <div className="p-3.5 bg-white border border-[#e8dfd5] rounded-xl shadow-xs">
-                  <span className="text-[9px] font-mono text-slate-400 uppercase block font-semibold">
-                    {{
-                      en: 'Relative Humidity',
-                      ka: 'ფარდობითი ტენიანობა',
-                      it: 'Umidità Relativa',
-                      fr: 'Humidité Relative',
-                      de: 'Relative Luftfeuchtigkeit'
-                    }[lang] || 'Relative Humidity'}
-                  </span>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <span className="text-xl font-serif font-black text-emerald-950">48%</span>
-                    <span className="text-[10px] text-emerald-600 block font-semibold">
-                      {{
-                        en: 'Dry Leaf',
-                        ka: 'მშრალი ფოთოლი',
-                        it: 'Foglia Asciutta',
-                        fr: 'Feuille Sèche',
-                        de: 'Trockenes Blatt'
-                      }[lang] || 'Dry Leaf'}
-                    </span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Direct Vineyard Warnings */}
-              <div className="bg-amber-50/65 border border-amber-200/60 p-4 rounded-xl flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-900 space-y-1">
-                  <h4 className="font-bold font-serif leading-none">
-                    {{
-                      en: 'Viticultural Alert: Veraison Moisture Retention',
-                      ka: 'აგრონომიული ალერტი: შეთვალებისას ტენიანობის შენარჩუნება',
-                      it: 'Allerta Viticola: Ritenzione Idrica Invaiatura',
-                      fr: 'Alerte Viticole: Rétention d’Humidité en Véraison',
-                      de: 'Weinbau-Warnung: Feuchtigkeitserhalt bei Reifebeginn'
-                    }[lang] || 'Viticultural Alert: Veraison Moisture Retention'}
-                  </h4>
-                  <p className="leading-relaxed">
-                    {{
-                      en: 'Saperavi block is at critical veraison stage with cumulative Growing Degree Days (GDD) at 980. High transpiration rates. Soil moisture is currently 18%. Minimal drip irrigation of 3 hours recommended to avoid berry splitting or heat-induced berry shrivel.',
-                      ka: 'საფერავის ნაკვეთი არის შეთვალების კრიტიკულ ფაზაში, აქტიური დაგროვილი ტემპერატურებით (GDD) 980. მაღალი ტრანსპირაციის კოეფიციენტი. ნიადაგის ტენიანობა 18%-ია. berry splitting-ის ან თერმული სტრესის თავიდან ასაცილებლად რეკომენდებულია 3-საათიანი მორწყვა წვეთოვანი სისტემით.',
-                      it: 'La parcella di Saperavi è nella fase critica dell’invaiatura con gradi giorno di crescita (GDD) cumulativi a 980. Tassi di traspirazione elevati. L’umidità del suolo è attualmente del 18%. Si raccomanda un’irrigazione a goccia minima di 3 ore per evitare lo spacco delle bacche.',
-                      fr: 'La parcelle Saperavi est au stade critique de la véraison avec des degrés-jours de croissance cumulés (GDD) à 980. Taux de transpiration élevés. L’humidité du sol est actuellement de 18 %. Une irrigation goutte-à-goutte minimale de 3 heures est recommandée pour éviter l’éclatement des baies.',
-                      de: 'Die Saperavi-Parzelle befindet sich in der kritischen Phase des Reifebeginns mit kumulierten Wachstumsgradtagen (GDD) von 980. Hohe Transpirationsraten. Die Bodenfeuchtigkeit beträgt derzeit 18 %. Eine minimale Tröpfchenbewässerung von 3 Stunden wird empfohlen, um Beerenplatzen zu vermeiden.'
-                    }[lang] || 'Saperavi block is at critical veraison stage with cumulative Growing Degree Days (GDD) at 980. High transpiration rates. Soil moisture is currently 18%. Minimal drip irrigation of 3 hours recommended to avoid berry splitting or heat-induced berry shrivel.'}
-                  </p>
+                  <svg className="w-full h-36 mt-2 select-none overflow-visible">
+                    {/* SVG shapes for blocks */}
+                    {blocks.map((b) => {
+                      const isActive = b.id === selectedBlockId;
+                      // Represent blocks with custom points
+                      const points = b.id === 'block-1' ? '10,10 110,10 95,65 20,65' : 
+                                     b.id === 'block-2' ? '120,10 220,10 235,65 105,65' :
+                                     b.id === 'block-3' ? '10,75 110,75 95,130 20,130' :
+                                     '120,75 220,75 235,130 105,130';
+                      
+                      const labelX = b.id === 'block-1' ? 55 :
+                                     b.id === 'block-2' ? 165 :
+                                     b.id === 'block-3' ? 55 : 165;
+                      
+                      const labelY = b.id === 'block-1' ? 40 :
+                                     b.id === 'block-2' ? 40 :
+                                     b.id === 'block-3' ? 105 : 105;
+
+                      const fillColor = getBlockColor(b.id);
+                      return (
+                        <g 
+                          key={b.id}
+                          className="cursor-pointer group"
+                          onClick={() => setSelectedBlockId(b.id)}
+                          onMouseEnter={() => setMapHoveredBlock(b.id)}
+                          onMouseLeave={() => setMapHoveredBlock(null)}
+                        >
+                          <polygon
+                            points={points}
+                            fill={fillColor}
+                            fillOpacity={isActive ? 0.95 : 0.7}
+                            stroke={isActive ? '#4e0e15' : '#78716c'}
+                            strokeWidth={isActive ? 2.5 : 1.2}
+                            className="transition-all duration-250 hover:fill-opacity-100"
+                          />
+                          <text
+                            x={labelX}
+                            y={labelY}
+                            textAnchor="middle"
+                            fill={isActive ? '#ffffff' : '#231f1d'}
+                            className="text-[9px] font-bold font-mono select-none pointer-events-none drop-shadow-md"
+                          >
+                            {b.name.split(' ')[0]}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {/* Micro legend */}
+                  <div className="flex items-center gap-3 text-[9px] font-mono text-stone-500 border-t border-stone-200/60 pt-1.5 mt-1 shrink-0">
+                    <span className="font-bold uppercase tracking-wider">{lang === 'ka' ? 'ლეგენდა:' : 'Legend:'}</span>
+                    {mapOverlay === 'mildew' && (
+                      <div className="flex gap-2">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Low</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" />Mod</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />High</span>
+                      </div>
+                    )}
+                    {mapOverlay === 'moisture' && (
+                      <div className="flex gap-2">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />Dry</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Opt</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />Wet</span>
+                      </div>
+                    )}
+                    {mapOverlay === 'phenology' && (
+                      <div className="flex gap-2">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" />Ver</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" />Rip</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Set</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Weather Station Forecast Column */}
+                <div className="md:col-span-7 bg-stone-50/70 border border-[#e8dfd5] rounded-xl p-4 shadow-inner flex flex-col justify-between h-60">
+                  {(() => {
+                    const block = blocks.find(x => x.id === selectedBlockId) || blocks[0];
+                    if (!block) return null;
+                    
+                    const latFactor = Math.sin(block.latitude * 10) * 5;
+                    const temp = Math.round(24.5 + latFactor);
+                    const rainProb = Math.round(Math.abs(Math.cos(block.longitude * 5)) * 100);
+                    const wind = Math.round(8.5 + Math.abs(latFactor));
+                    const humidity = Math.round(55 + latFactor * 3);
+                    const diseasePressure = humidity > 75 && temp > 18 ? 'High (Downy Mildew Risk)' : 'Low';
+                    
+                    // Base Base-10 growing degree days heat units accumulation
+                    const baseTemp = 10;
+                    const daysSinceApril = 58; // Late May mocked
+                    const avgDailyTemp = temp;
+                    const blockGDD = Math.round(Math.max(0, (avgDailyTemp - baseTemp) * daysSinceApril));
+
+                    return (
+                      <div className="flex flex-col justify-between h-full space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <strong className="text-xs font-serif font-black text-emerald-950 block">{block.name} Forecast</strong>
+                            <span className="text-[9px] text-stone-500 font-mono">GPS: {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)} • GDD: {blockGDD}</span>
+                          </div>
+                          <span className="text-[9px] font-mono font-bold bg-sky-50 text-sky-800 px-2 py-0.5 rounded border border-sky-200">
+                            {lang === 'ka' ? 'ტელემეტრია' : 'TELEMETRY LIVE'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-stone-850">
+                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
+                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Temperature</span>
+                            <strong className="text-sm font-black mt-0.5 block">{temp}°C</strong>
+                          </div>
+                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
+                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Rain Prob</span>
+                            <strong className="text-sm font-black mt-0.5 block">{rainProb}%</strong>
+                          </div>
+                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
+                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Wind Max</span>
+                            <strong className="text-sm font-black mt-0.5 block">{wind} km/h</strong>
+                          </div>
+                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
+                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Humidity</span>
+                            <strong className="text-sm font-black mt-0.5 block">{humidity}%</strong>
+                          </div>
+                        </div>
+
+                        {/* Disease Pressure Warning */}
+                        <div className="p-2.5 bg-amber-50/75 border border-amber-200 text-amber-900 rounded-lg flex items-start gap-2 text-[10px] leading-snug">
+                          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold block text-[10px] leading-none mb-0.5">Agro-Alert: {block.grapeVariety} block</span>
+                            {diseasePressure.includes('High') || humidity > 70
+                              ? `Pathogen pressure is high! Foliar humidity is at ${humidity}%, offering mildew propagation vectors. Spray recommended.`
+                              : `Canopy conditions optimal. Heat indices are moderate. Soil moisture stands at ${block.id === 'block-1' ? '18%' : '28%'}. Drip line calibrated.`
+                            }
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
@@ -873,9 +932,33 @@ export default function VaziModule({
                       <span className="text-[9px] text-slate-400 uppercase block font-sans">Accumulated GDD Heat</span>
                       <strong className="text-base text-emerald-950 block mt-0.5">{computedGDD} °C-Days</strong>
                     </div>
-                    <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
+                    <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono flex flex-col justify-between items-center">
                       <span className="text-[9px] text-slate-400 uppercase block font-sans">Estimated Canopy Stage</span>
-                      <strong className="text-base text-amber-700 font-serif block mt-0.5">{selectedBlock.currentPhenology}</strong>
+                      <select
+                        value={selectedBlock.currentPhenology}
+                        onChange={(e) => onUpdateBlock(selectedBlock.id, { currentPhenology: e.target.value })}
+                        className="text-xs font-serif font-bold text-amber-700 text-center bg-transparent border border-amber-200/50 rounded-lg px-2.5 py-1 outline-none cursor-pointer mt-1.5 hover:text-amber-950 hover:border-amber-400 transition-all font-semibold max-w-full"
+                      >
+                        {[
+                          'Dormancy / before bud swelling',
+                          'Budburst',
+                          'Budburst / early shoot growth',
+                          '4-6 leaves / inflorescences visible',
+                          'Pre-flowering',
+                          'Flowering',
+                          'Fruit set',
+                          'Post-flowering / fruit set',
+                          'Pea-size berry / berry growth',
+                          'Bunch closure',
+                          'Veraison',
+                          'Ripening',
+                          'Pre-harvest / ripening'
+                        ].map((stage) => (
+                          <option key={stage} value={stage} className="text-stone-800 bg-white">
+                            {stage}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
                       <span className="text-[9px] text-slate-450 uppercase block font-sans">Confidence Index</span>

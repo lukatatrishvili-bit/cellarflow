@@ -362,6 +362,224 @@ export default function TransfersTab({
     alert('Vessel liquid volume was safely restored to original pre-transfer baseline. Cleaning logs annotated.');
   };
 
+  // 1. Global Recommendations (Idle state)
+  const globalRecommendations = React.useMemo(() => {
+    const recs: Array<{
+      id: string;
+      title: string;
+      titleKa: string;
+      desc: string;
+      descKa: string;
+      sourceId: string;
+      destId: string;
+      volume: number;
+      badge: string;
+      badgeKa: string;
+    }> = [];
+
+    // Heuristic A: Oxidation Headspace Protection (Ullage Control)
+    // Find occupied tanks that are underfilled (between 40% and 85% full)
+    const underfilled = vessels.filter(v => v.currentVolume > 0 && (v.currentVolume / v.capacity) >= 0.4 && (v.currentVolume / v.capacity) <= 0.85);
+    underfilled.forEach(v => {
+      const lot = lots.find(l => l.id === v.assignedLotId);
+      if (!lot) return;
+      
+      // Look for a smaller vessel (like a barrel) with the same lot to top it off
+      const potentialTopper = vessels.find(s => s.id !== v.id && s.assignedLotId === v.assignedLotId && s.currentVolume > 0 && s.currentVolume < (v.capacity - v.currentVolume));
+      if (potentialTopper) {
+        recs.push({
+          id: `opt-top-${v.id}-${potentialTopper.id}`,
+          title: `Headspace Topping: Eliminate Oxidation Risk`,
+          titleKa: `თავისუფალი სივრცის შევსება: ჟანგვის რისკის თავიდან აცილება`,
+          desc: `Transfer ${potentialTopper.currentVolume}L from ${potentialTopper.id} into ${v.id} to minimize headspace/ullage and secure Lot ${lot.name}.`,
+          descKa: `გადაიტანეთ ${potentialTopper.currentVolume}ლ ჭურჭლიდან ${potentialTopper.id} ჭურჭელში ${v.id} თავისუფალი სივრცის შესამცირებლად და ${lot.name} პარტიის დასაცავად.`,
+          sourceId: potentialTopper.id,
+          destId: v.id,
+          volume: potentialTopper.currentVolume,
+          badge: 'Oxidation Alert',
+          badgeKa: 'ჟანგვის საფრთხე'
+        });
+      }
+    });
+
+    // Heuristic B: Post-Fermentation Lees Racking
+    // Find dirty tanks containing dry lots (stage: aging)
+    const needsRacking = vessels.filter(v => v.currentVolume > 0 && v.cleaningStatus === 'dirty');
+    needsRacking.forEach(v => {
+      const lot = lots.find(l => l.id === v.assignedLotId);
+      if (!lot || lot.stage !== 'aging') return;
+
+      // Find an empty clean or sterilized tank that can fit the full volume
+      const cleanDest = vessels.find(d => d.currentVolume === 0 && d.cleaningStatus === 'clean' && d.capacity >= v.currentVolume);
+      if (cleanDest) {
+        recs.push({
+          id: `opt-rack-${v.id}-${cleanDest.id}`,
+          title: `Rack Off post-fermentation lees`,
+          titleKa: `ლექიდან მოხსნა (დეკანტაცია)`,
+          desc: `Move ${v.currentVolume}L of ${lot.name} from dirty ${v.id} to empty clean ${cleanDest.id} to prevent sulfur off-odors.`,
+          descKa: `გადაიტანეთ ${v.currentVolume}ლ (${lot.name}) ჭუჭყიანი ${v.id}-დან სუფთა ${cleanDest.id}-ში გოგირდოვანი სუნის თავიდან ასაცილებლად.`,
+          sourceId: v.id,
+          destId: cleanDest.id,
+          volume: v.currentVolume,
+          badge: 'Lees Racking',
+          badgeKa: 'ლექიდან მოხსნა'
+        });
+      }
+    });
+
+    // Heuristic C: Free Small Cooperage (Consolidation)
+    // Find two vessels containing matching lots that can combine
+    const occupied = vessels.filter(v => v.currentVolume > 0);
+    for (let i = 0; i < occupied.length; i++) {
+      const v1 = occupied[i];
+      const lot1 = lots.find(l => l.id === v1.assignedLotId);
+      if (!lot1) continue;
+      
+      for (let j = i + 1; j < occupied.length; j++) {
+        const v2 = occupied[j];
+        if (v1.assignedLotId === v2.assignedLotId) {
+          const totalVol = v1.currentVolume + v2.currentVolume;
+          // Find if there is a larger empty tank or if one of the tanks can hold the total
+          if (v1.capacity >= totalVol) {
+            recs.push({
+              id: `opt-merge-${v2.id}-${v1.id}`,
+              title: `Consolidate matching Lot into single tank`,
+              titleKa: `პარტიების გაერთიანება ერთ ჭურჭელში`,
+              desc: `Consolidate ${v2.currentVolume}L from ${v2.id} into ${v1.id} (total ${totalVol}L) to free up empty cooperage.`,
+              descKa: `გააერთიანეთ ${v2.currentVolume}ლ ${v2.id}-დან ${v1.id}-ში (სულ ${totalVol}ლ) სხვა ოპერაციებისთვის ჭურჭლის გამოსათავისუფლებლად.`,
+              sourceId: v2.id,
+              destId: v1.id,
+              volume: v2.currentVolume,
+              badge: 'Consolidation',
+              badgeKa: 'გაერთიანება'
+            });
+          }
+        }
+      }
+    }
+
+    // Default mock recommendations if none of the rules triggered
+    if (recs.length === 0) {
+      const sourceWithVolume = vessels.find(v => v.currentVolume > 0);
+      const cleanEmpty = vessels.find(v => v.currentVolume === 0 && v.cleaningStatus === 'clean');
+      if (sourceWithVolume && cleanEmpty) {
+        recs.push({
+          id: 'opt-mock-racking',
+          title: 'Routine Racking: Clean to Sterilized Tank',
+          titleKa: 'გეგმიური გადაღება: სტერილურ ჭურჭელში',
+          desc: `Rack ${sourceWithVolume.currentVolume}L of wine from ${sourceWithVolume.id} to clean empty ${cleanEmpty.id} to assist clarity.`,
+          descKa: `გადაიღეთ ${sourceWithVolume.currentVolume}ლ ღვინო ${sourceWithVolume.id}-დან სუფთა ${cleanEmpty.id}-ში სიკაშკაშის გასაუმჯობესებლად.`,
+          sourceId: sourceWithVolume.id,
+          destId: cleanEmpty.id,
+          volume: sourceWithVolume.currentVolume,
+          badge: 'Clarification',
+          badgeKa: 'გაფილტვრა'
+        });
+      }
+    }
+
+    return recs.slice(0, 3);
+  }, [vessels, lots]);
+
+  // 2. Contextual Recommendations (when sourceId is chosen)
+  const destinationScores = React.useMemo(() => {
+    if (!sourceId || !sourceVessel) return [];
+    const sourceLot = lots.find(l => l.id === sourceVessel.assignedLotId);
+    
+    return vessels
+      .filter(v => v.id !== sourceId)
+      .map(v => {
+        const lot = lots.find(l => l.id === v.assignedLotId);
+        const freeSpace = v.capacity - v.currentVolume;
+        
+        let score = 50; // base score
+        const reasons: string[] = [];
+        const reasonsKa: string[] = [];
+
+        // Check if destination has enough capacity for at least a significant portion
+        if (freeSpace <= 0) return null;
+
+        if (v.currentVolume === 0) {
+          // Empty tank heuristics
+          score += 10;
+          reasons.push('Vessel is completely empty.');
+          reasonsKa.push('ჭურჭელი სრულიად ცარიელია.');
+
+          if (v.cleaningStatus === 'clean') {
+            score += 15;
+            reasons.push('Sanitized & Clean status.');
+            reasonsKa.push('სუფთა და დეზინფიცირებული მდგომარეობა.');
+          } else if (v.cleaningStatus === 'dirty') {
+            score -= 20;
+            reasons.push('Requires CIP sanitation before filling.');
+            reasonsKa.push('ავსებამდე საჭიროებს CIP რეცხვას.');
+          }
+
+          // Volume capacity matching
+          const fillRatio = sourceVessel.currentVolume / v.capacity;
+          if (fillRatio > 1) {
+            score -= 10;
+            reasons.push(`Partial fill (requires splitting ${sourceVessel.currentVolume - v.capacity}L).`);
+            reasonsKa.push(`ნაწილობრივი შევსება (საჭიროა ${sourceVessel.currentVolume - v.capacity}ლ-ის გაყოფა).`);
+          } else {
+            if (fillRatio >= 0.90 && fillRatio <= 0.98) {
+              score += 25;
+              reasons.push('Ideal capacity match (90-98% filled, minimizing oxidation headspace).');
+              reasonsKa.push('იდეალური ტევადობა (90-98% შევსება, ჟანგვის მინიმალური რისკი).');
+            } else if (fillRatio >= 0.70) {
+              score += 15;
+              reasons.push('Good capacity match (moderate fill level).');
+              reasonsKa.push('კარგი ტევადობა (ზომიერი შევსების დონე).');
+            } else {
+              score -= 15;
+              reasons.push(`High headspace / oxidation risk (${Math.round((1 - fillRatio)*100)}% empty space).`);
+              reasonsKa.push(`ჟანგვის მაღალი რისკი (${Math.round((1 - fillRatio)*100)}% თავისუფალი სივრცე).`);
+            }
+          }
+        } else {
+          // Occupied tank: Blend/Consolidation heuristics
+          if (sourceLot && lot) {
+            if (sourceLot.id === lot.id) {
+              score += 30;
+              reasons.push('Identical Wine Lot (Direct consolidation blend).');
+              reasonsKa.push('იდენტური ღვინის პარტია (პირდაპირი გაერთიანება).');
+            } else if (sourceLot.variety === lot.variety && sourceLot.vintage === lot.vintage) {
+              score += 20;
+              reasons.push('Matching variety & vintage (assembly blend).');
+              reasonsKa.push('თავსებადი ჯიში და მოსავლის წელი.');
+            } else if (sourceLot.wineClass === lot.wineClass) {
+              score += 5;
+              reasons.push('Same wine class (requires assembly blend logic).');
+              reasonsKa.push('ერთნაირი კლასის ღვინო (საჭიროებს ასამბლაჟის გაანგარიშებას).');
+            } else {
+              score -= 40;
+              reasons.push('Incompatible class / variety mismatch.');
+              reasonsKa.push('შეუთავსებელი ჯიში ან ღვინის კლასი.');
+            }
+          }
+
+          if (sourceVessel.currentVolume > freeSpace) {
+            score -= 15;
+            reasons.push(`Insufficient headroom (can only receive ${freeSpace}L of ${sourceVessel.currentVolume}L).`);
+            reasonsKa.push(`არასაკმარისი თავისუფალი ადგილი (ეტევა მხოლოდ ${freeSpace}ლ ${sourceVessel.currentVolume}ლ-დან).`);
+          } else {
+            score += 10;
+            reasons.push('Total volume fits inside current headroom.');
+            reasonsKa.push('სრული მოცულობა თავისუფლად ეტევა.');
+          }
+        }
+
+        return {
+          vessel: v,
+          score: Math.max(0, Math.min(100, score)),
+          reasons,
+          reasonsKa
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => b.score - a.score);
+  }, [sourceId, sourceVessel, vessels, lots]);
+
   return (
     <div className="space-y-6 text-stone-850">
       
@@ -528,6 +746,118 @@ export default function TransfersTab({
 
         {/* Right Columns: Racking Form, Safety Checklist & Predictions */}
         <div className="lg:col-span-8 space-y-6">
+
+          {/* 🔮 SMART TRANSFER ADVISOR */}
+          <div className="bg-[#FAF8F5] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-850 rounded-xl p-4 space-y-3.5 shadow-2xs relative overflow-hidden text-stone-850 dark:text-stone-100">
+            <div className="absolute -right-6 -bottom-6 text-4xl opacity-[0.06] select-none pointer-events-none">🔮</div>
+            
+            <div className="flex items-center justify-between border-b border-[#e8dfd5]/60 dark:border-stone-800 pb-2">
+              <h3 className="text-xs font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-1.5 uppercase">
+                <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                {lang === 'ka' ? 'ღვინის გადაღების ჭკვიანი მრჩეველი' : 'AI Cellar Transfer Recommender'}
+              </h3>
+              <span className="text-[9px] font-mono text-amber-700 dark:text-amber-455 font-extrabold bg-amber-50 dark:bg-[#140d0e] px-2 py-0.5 rounded border border-amber-200 dark:border-stone-800">
+                {sourceId ? (lang === 'ka' ? 'თავსებადი ჭურჭელი' : 'BEST DESTINATIONS') : (lang === 'ka' ? 'გეგმიური ოპერაციები' : 'RECOMMENDED OPERATIONS')}
+              </span>
+            </div>
+
+            {!sourceId ? (
+              /* Idle Recommendations */
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {globalRecommendations.map((rec) => (
+                  <button
+                    key={rec.id}
+                    type="button"
+                    onClick={() => {
+                      setSourceId(rec.sourceId);
+                      setDestId(rec.destId);
+                      setTransferVol(rec.volume);
+                    }}
+                    className="p-3 bg-white hover:bg-stone-50 dark:bg-[#140d0e] dark:hover:bg-stone-950 border border-[#e8dfd5] dark:border-stone-800 hover:border-[#801323] dark:hover:border-amber-400 rounded-xl text-left transition-all cursor-pointer shadow-3xs flex flex-col justify-between space-y-2 h-full group"
+                  >
+                    <div className="space-y-1 w-full text-left">
+                      <div className="flex justify-between items-center w-full">
+                        <span className="text-[8.5px] font-mono font-black text-[#801323] dark:text-amber-400 uppercase bg-rose-50 dark:bg-stone-900 border border-rose-100 dark:border-stone-800 px-2 py-0.5 rounded">
+                          {lang === 'ka' ? rec.badgeKa : rec.badge}
+                        </span>
+                        <span className="text-[9px] text-slate-400 font-bold font-mono group-hover:text-[#801323]">Autofill ⚡</span>
+                      </div>
+                      <h4 className="text-[11px] font-bold text-stone-900 dark:text-amber-100 leading-tight">
+                        {lang === 'ka' ? rec.titleKa : rec.title}
+                      </h4>
+                      <p className="text-[10px] text-slate-500 dark:text-stone-455 leading-relaxed font-serif">
+                        {lang === 'ka' ? rec.descKa : rec.desc}
+                      </p>
+                    </div>
+                    <div className="pt-2 border-t border-stone-100 dark:border-stone-800 w-full flex justify-between items-center text-[9px] font-mono font-bold text-stone-700 dark:text-stone-300">
+                      <span>{rec.sourceId}</span>
+                      <ArrowRight className="w-3 h-3 text-slate-400" />
+                      <span>{rec.destId}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              /* Contextual Destination Scores */
+              <div className="space-y-2.5">
+                <p className="text-[10.5px] text-slate-550 dark:text-stone-400 italic leading-normal text-left font-medium">
+                  {lang === 'ka' 
+                    ? `მონაცემების ანალიზი ჭურჭლისთვის ${sourceId} (${sourceVessel?.currentVolume}ლ). აირჩიეთ მიმღები ჭურჭელი მაღალი თავსებადობით:` 
+                    : `Analyzing best recipients for ${sourceId} holding ${sourceVessel?.currentVolume}L. Select a recommended destination:`}
+                </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {destinationScores.slice(0, 4).map(({ vessel, score, reasons, reasonsKa }) => {
+                    const isSelected = destId === vessel.id;
+                    const scoreColor = score >= 80 ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200' :
+                                       score >= 50 ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/20 border-amber-200' :
+                                       'text-rose-600 bg-rose-50 dark:bg-rose-950/20 border-rose-200';
+                    
+                    return (
+                      <button
+                        key={vessel.id}
+                        type="button"
+                        onClick={() => setDestId(vessel.id)}
+                        className={`p-3 bg-white hover:bg-stone-50 dark:bg-[#140d0e] dark:hover:bg-stone-950 border rounded-xl text-left transition-all cursor-pointer shadow-3xs flex flex-col justify-between h-full group ${
+                          isSelected 
+                            ? 'border-[#4e0e15] dark:border-amber-450 ring-2 ring-[#4e0e15]/10 dark:ring-amber-400/10' 
+                            : 'border-[#e8dfd5] dark:border-stone-800 hover:border-slate-350'
+                        }`}
+                      >
+                        <div className="space-y-2 w-full text-left">
+                          <div className="flex justify-between items-center w-full">
+                            <strong className="text-xs font-sans text-stone-900 dark:text-amber-100">{vessel.id}</strong>
+                            <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded border uppercase ${scoreColor}`}>
+                              {score}% Match
+                            </span>
+                          </div>
+                          
+                          <div className="space-y-1">
+                            {(lang === 'ka' ? reasonsKa : reasons).slice(0, 2).map((reason, idx) => (
+                              <div key={idx} className="flex items-start gap-1 text-[9.5px] leading-relaxed text-stone-600 dark:text-stone-400 font-serif">
+                                <span className="text-amber-600">•</span>
+                                <span>{reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        <div className="pt-2.5 mt-2 border-t border-stone-100 dark:border-stone-800 w-full flex justify-between items-center text-[9px] font-mono font-semibold text-slate-400">
+                          <span>Cap: {vessel.capacity}L</span>
+                          <span>{vessel.capacity - vessel.currentVolume}L free</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {destinationScores.length === 0 && (
+                    <p className="col-span-2 text-xs text-stone-400 dark:text-stone-550 italic text-center py-4">
+                      {lang === 'ka' ? 'თავსებადი ჭურჭელი არ მოიძებნა. გთხოვთ გაათავისუფლოთ ან გარეცხოთ ჭურჭელი.' : 'No compatible recipient vessels found with remaining headroom.'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
             

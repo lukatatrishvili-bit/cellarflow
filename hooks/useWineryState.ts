@@ -179,7 +179,7 @@ export function useWineryState() {
   const isSyncing = useRef(false);
   const hasHydrated = useRef(false);
   const pendingSync = useRef<{ payload: any } | null>(null);
-  const lastSyncError = useRef<string | null>(null);
+  const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const lastServerState = useRef<Record<string, string>>({});
 
   const updateAllStates = (data: any) => {
@@ -238,20 +238,16 @@ export function useWineryState() {
         } else if (response.syncError) {
           // The server rejected the whole sync — keep data dirty for retry,
           // but tell the user instead of failing silently.
-          if (lastSyncError.current !== response.syncError) {
-            lastSyncError.current = response.syncError;
-            setToastMessage(`⚠️ ${lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected'}: ${response.syncError}`);
-          }
+          setLastSyncError(response.syncError);
+          setToastMessage(`⚠️ ${lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected'}: ${response.syncError}`);
         } else {
           updateAllStates(response);
           if (Array.isArray(response.syncErrors) && response.syncErrors.length > 0) {
             // Partial success: some collections were rejected and stay dirty.
-            if (lastSyncError.current !== response.syncErrors[0]) {
-              lastSyncError.current = response.syncErrors[0];
-              setToastMessage(`⚠️ ${lang === 'ka' ? 'ზოგიერთი ცვლილება უარყოფილია' : 'Some changes were rejected'}: ${response.syncErrors[0]}`);
-            }
+            setLastSyncError(response.syncErrors[0]);
+            setToastMessage(`⚠️ ${lang === 'ka' ? 'ზოგიერთი ცვლილება უარყოფილია' : 'Some changes were rejected'}: ${response.syncErrors[0]}`);
           } else {
-            lastSyncError.current = null;
+            setLastSyncError(null);
           }
         }
       }
@@ -264,6 +260,20 @@ export function useWineryState() {
         pendingSync.current = null;
         triggerSync(payload);
       }
+    }
+  };
+
+  const discardLocalUnsyncedChanges = async () => {
+    try {
+      await SyncQueueManager.clearOfflineQueue();
+      const dbData = await SyncQueueManager.sync({});
+      if (dbData) {
+        updateAllStates(dbData);
+      }
+      setLastSyncError(null);
+      setToastMessage(lang === 'ka' ? 'ლოკალური ცვლილებები გაუქმებულია. სინქრონიზირებულია სერვერთან.' : 'Local changes discarded. Synchronized with server state.');
+    } catch (err) {
+      console.error('Discard local changes error:', err);
     }
   };
 
@@ -1088,6 +1098,9 @@ export function useWineryState() {
     handleAuthRegister,
     syncConflicts,
     setSyncConflicts,
-    resolveConflict
+    resolveConflict,
+    lastSyncError,
+    setLastSyncError,
+    discardLocalUnsyncedChanges
   };
 }

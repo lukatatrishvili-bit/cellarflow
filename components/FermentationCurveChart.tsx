@@ -21,6 +21,52 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
     .filter((log) => log.lotId === selectedLotId)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
+  // Calculate forecast metrics
+  const latestLog = activeLogs[activeLogs.length - 1];
+  let forecastInfo = null;
+
+  if (latestLog) {
+    let slope = -0.008; // default
+    let isStuck = false;
+    let slopeValForDisplay = 0.008;
+
+    if (activeLogs.length >= 2) {
+      const logsForSlope = activeLogs.slice(-3);
+      const first = logsForSlope[0];
+      const last = logsForSlope[logsForSlope.length - 1];
+      const timeDiffDays = (new Date(last.date).getTime() - new Date(first.date).getTime()) / (24 * 60 * 60 * 1000);
+      if (timeDiffDays > 0) {
+        const calcSlope = (last.density - first.density) / timeDiffDays;
+        slopeValForDisplay = Math.abs(calcSlope);
+        if (calcSlope < 0) {
+          slope = calcSlope;
+        } else {
+          isStuck = true;
+        }
+      }
+    }
+
+    let daysToDryVal = 0;
+    if (latestLog.density <= 0.990) {
+      daysToDryVal = 0;
+    } else if (!isStuck) {
+      daysToDryVal = (latestLog.density - 0.990) / Math.abs(slope);
+    }
+
+    const dryDate = new Date(new Date(latestLog.date).getTime() + daysToDryVal * 24 * 60 * 60 * 1000);
+    const dateOptions: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+    const dateStr = dryDate.toLocaleDateString('en-US', dateOptions);
+
+    forecastInfo = {
+      isStuck,
+      days: daysToDryVal.toFixed(1),
+      dateStr,
+      slopeText: `-${slopeValForDisplay.toFixed(4)}`,
+      latestDensity: latestLog.density,
+      daysToDryVal
+    };
+  }
+
   // Listen to window / container sizing
   useEffect(() => {
     if (!containerRef.current) return;
@@ -79,14 +125,51 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       };
     });
 
+    // Calculate forecast metrics for D3 drawing
+    const latestLog = activeLogs[activeLogs.length - 1];
+    let slope = -0.008; // default
+    let isStuck = false;
+    let slopeValForDisplay = 0.008;
+
+    if (activeLogs.length >= 2) {
+      const logsForSlope = activeLogs.slice(-3);
+      const first = logsForSlope[0];
+      const last = logsForSlope[logsForSlope.length - 1];
+      const timeDiffDays = (new Date(last.date).getTime() - new Date(first.date).getTime()) / (24 * 60 * 60 * 1000);
+      if (timeDiffDays > 0) {
+        const calcSlope = (last.density - first.density) / timeDiffDays;
+        slopeValForDisplay = Math.abs(calcSlope);
+        if (calcSlope < 0) {
+          slope = calcSlope;
+        } else {
+          isStuck = true;
+        }
+      }
+    }
+
+    let daysToDryVal = 0;
+    if (latestLog && latestLog.density > 0.990 && !isStuck) {
+      daysToDryVal = (latestLog.density - 0.990) / Math.abs(slope);
+    }
+
+    const dryDate = new Date(new Date(latestLog ? latestLog.date : Date.now()).getTime() + daysToDryVal * 24 * 60 * 60 * 1000);
+
     // Scales
     // X Scale: Time
     const dateExtent = d3.extent(formattedData, (d) => d.parsedDate) as [Date, Date];
+    let endDomainDate = d3.timeDay.offset(dateExtent[1], 0.2);
+    
+    // Extend xDomain to forecasted dryDate if within reasonable limits (e.g. 25 days)
+    const showForecastLine = !isStuck && daysToDryVal > 0 && latestLog && latestLog.density > 0.990 && daysToDryVal <= 25;
+    if (showForecastLine) {
+      endDomainDate = d3.timeDay.offset(dryDate, 0.5);
+    }
+
     // Add tiny pad to ends
     const xScale = d3.scaleTime()
       .domain([
         d3.timeDay.offset(dateExtent[0], -0.2),
-        d3.timeDay.offset(dateExtent[1], 0.2),
+        endDomainDate,
       ])
       .range([0, width]);
 
@@ -183,6 +266,46 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       .duration(1200)
       .ease(d3.easeCubicOut)
       .attr('stroke-dashoffset', 0);
+
+    // Draw Forecast Projection Line (Dotted)
+    if (showForecastLine && latestLog) {
+      const forecastPoints = [
+        { parsedDate: new Date(latestLog.date), density: latestLog.density },
+        { parsedDate: dryDate, density: 0.990 }
+      ];
+
+      const forecastLineGen = d3.line<any>()
+        .x((d) => xScale(d.parsedDate))
+        .y((d) => yDensityScale(d.density));
+
+      g.append('path')
+        .datum(forecastPoints)
+        .attr('fill', 'none')
+        .attr('stroke', '#d97706')
+        .attr('stroke-width', 2)
+        .attr('stroke-dasharray', '3, 4')
+        .attr('d', forecastLineGen);
+
+      // Add a small node at the dry point
+      g.append('circle')
+        .attr('cx', xScale(dryDate))
+        .attr('cy', yDensityScale(0.990))
+        .attr('r', 4.5)
+        .style('fill', '#ffffff')
+        .style('stroke', '#d97706')
+        .style('stroke-width', 2);
+
+      // Add a text label above the dry point
+      g.append('text')
+        .attr('x', xScale(dryDate))
+        .attr('y', yDensityScale(0.990) - 10)
+        .attr('text-anchor', 'middle')
+        .style('font-family', 'var(--font-mono), monospace')
+        .style('font-size', '8px')
+        .style('fill', '#d97706')
+        .style('font-weight', 'bold')
+        .text('Est. Dry');
+    }
 
     // Draw Axes
     // X-Axis (Date)
@@ -291,7 +414,29 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
           <p className="text-[10px] mt-1">Select an active fermenting lot or post a Daily Log to trace curves.</p>
         </div>
       ) : (
-        <div ref={containerRef} className="w-full bg-[#FCFAF8] border border-[#f0e6da] rounded-xl p-3">
+        <div ref={containerRef} className="w-full bg-[#FCFAF8] border border-[#f0e6da] rounded-xl p-3 relative pt-14">
+          {/* Overlay forecast badge */}
+          {forecastInfo && (
+            <div className="absolute top-3 left-3 flex items-center gap-2 z-10 animate-fade-in">
+              {forecastInfo.latestDensity <= 0.990 ? (
+                <div className="bg-emerald-950/90 text-emerald-300 text-[10px] font-mono px-3 py-1.5 rounded-xl border border-emerald-800 shadow-md backdrop-blur-xs flex items-center gap-2 font-bold">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                  <span>Lot is Dry (SG ≤ 0.990)</span>
+                </div>
+              ) : forecastInfo.isStuck ? (
+                <div className="bg-rose-950/90 text-rose-300 text-[10px] font-mono px-3 py-1.5 rounded-xl border border-rose-800 shadow-md backdrop-blur-xs flex items-center gap-2 font-bold animate-pulse">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                  <span>Fermentation Stuck / Flatline (Slope: {forecastInfo.slopeText} SG/day)</span>
+                </div>
+              ) : (
+                <div className="bg-[#1e2f23]/95 text-emerald-250 text-[10px] font-mono px-3 py-1.5 rounded-xl border border-emerald-900 shadow-md backdrop-blur-xs flex items-center gap-2 font-bold">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span>Projected Dry: {forecastInfo.days} days ({forecastInfo.dateStr}) | Rate: {forecastInfo.slopeText} SG/day</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <svg 
             ref={svgRef} 
             width={dimensions.width} 

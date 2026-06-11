@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Thermometer, RefreshCw } from 'lucide-react';
 import { Language } from '../lib/i18n';
@@ -35,6 +35,51 @@ export default function VesselDrawer({
   const tankLogs = selectedTankId 
     ? fermLogs.filter(log => log.tankId === selectedTankId) 
     : [];
+
+  const [aiInsights, setAiInsights] = useState<string>('');
+  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!selectedTankId || !selectedVessel) {
+      setAiInsights('');
+      return;
+    }
+
+    const fetchInsights = async () => {
+      setIsAiLoading(true);
+      setAiInsights('');
+      try {
+        const lotInfo = selectedLot 
+          ? `holding ${selectedLot.name} (${selectedLot.variety}, vintage ${selectedLot.vintage}, stage ${selectedLot.stage})`
+          : 'vacant';
+        const promptMsg = `Vessel: ${selectedVessel.id} (${selectedVessel.type}, shape ${selectedVessel.shape}, capacity ${selectedVessel.capacity}L, volume ${selectedVessel.currentVolume}L).
+Assigned Lot: ${lotInfo}.
+Current Temperature: ${selectedVessel.temperature}°C, Sanitation Status: ${selectedVessel.cleaningStatus}.
+Provide a highly-precise two-bullet checklist of critical winemaking/cellaring next steps for this vessel. Focus on KMBS sulfur dioxide, headspace control, temp checks, or sanitizing needs. Respond ONLY with the two bullet points in markdown (bolding key terms).`;
+
+        const resp = await fetch('/api/gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: promptMsg })
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          setAiInsights(data.text);
+        } else {
+          setAiInsights('⚠️ Failed to load AI recommendations.');
+        }
+      } catch (err) {
+        setAiInsights('⚠️ AI Winemaker advisor is currently offline.');
+      } finally {
+        setIsAiLoading(false);
+      }
+    };
+
+    // Lightweight debounced delay to prevent spamming the API on rapid clicks
+    const timer = setTimeout(fetchInsights, 400);
+    return () => clearTimeout(timer);
+  }, [selectedTankId, selectedVessel?.currentVolume, selectedVessel?.temperature, selectedVessel?.cleaningStatus]);
 
   // Build 7-day temperature history
   const tempHistory = (() => {
@@ -315,6 +360,43 @@ export default function VesselDrawer({
                     {selectedVessel.cleaningStatus === 'clean' ? 'Flag: CIP Required' : '✓ Mark Sanitized Today'}
                   </button>
                 </div>
+              </div>
+
+              {/* Dynamic AI Winemaker Insights Card */}
+              <div className="p-4 bg-gradient-to-br from-white to-amber-50/10 border border-[#e8dfd5] rounded-xl space-y-2.5 shadow-2xs relative overflow-hidden">
+                {/* Embedded decorative bg orb */}
+                <div className="absolute -right-6 -bottom-6 text-4xl opacity-[0.07] select-none pointer-events-none">🔮</div>
+                
+                <div className="flex items-center justify-between border-b border-stone-200/50 pb-2">
+                  <h3 className="text-xs font-serif font-black text-[#4e0e15] flex items-center gap-1.5">
+                    <span className="animate-pulse">💡</span> AI Winemaker Insights
+                  </h3>
+                  <span className="text-[8px] font-mono text-amber-700 font-extrabold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    REAL-TIME ADVICE
+                  </span>
+                </div>
+
+                {isAiLoading ? (
+                  <div className="py-3 flex items-center justify-center gap-2 text-[10px] text-slate-400 font-mono">
+                    <span className="animate-spin h-3 w-3 border-2 border-[#4e0e15] border-t-transparent rounded-full"></span>
+                    Generating enological counsel...
+                  </div>
+                ) : aiInsights ? (
+                  <div className="text-xs text-stone-650 leading-relaxed font-sans">
+                    <div className="space-y-1">
+                      {aiInsights.split('\n').filter(l => l.trim()).map((line, idx) => (
+                        <p key={idx} className="flex items-start gap-1.5 text-[11px] text-[#2c241e]">
+                          <span className="text-amber-600 mt-0.5">•</span>
+                          <span dangerouslySetInnerHTML={{ 
+                            __html: line.replace(/^\s*[\-\*]\s*/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') 
+                          }} />
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-stone-400 font-mono italic">AI insights unavailable.</p>
+                )}
               </div>
 
               <div className="space-y-2">

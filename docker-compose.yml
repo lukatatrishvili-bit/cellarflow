@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  vinea-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PORT=3000
+    volumes:
+      # Mount a local db.json to the container to ensure data persistence
+      - ./db.json:/app/db.json
+    restart: unless-stopped

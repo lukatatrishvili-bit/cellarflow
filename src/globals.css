@@ -8,6 +8,59 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* Key Tailwind's dark: variant to the .dark class (set by the in-app toggle)
+   instead of the OS prefers-color-scheme media query. Without this, half the
+   UI followed the OS theme while the custom .dark CSS followed the toggle,
+   producing mixed light/dark screens. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* The codebase uses ~270 in-between color steps (stone-850, emerald-250, …)
+   that don't exist in Tailwind's palette, so those classes generated no CSS
+   at all — text/borders silently fell back to inherited colors. Defining the
+   steps as theme tokens makes every such utility real. Values interpolate
+   the two neighboring official shades. */
+@theme {
+  --color-stone-150: #f0efee;
+  --color-stone-250: #dedcda;
+  --color-stone-450: #908a85;
+  --color-stone-550: #686159;
+  --color-stone-605: #55514b;
+  --color-stone-650: #4e4a45;
+  --color-stone-705: #423e3a;
+  --color-stone-750: #373330;
+  --color-stone-850: #231f1d;
+  --color-stone-855: #221e1c;
+  --color-slate-250: #d7dee9;
+  --color-slate-350: #b0bcce;
+  --color-slate-450: #7c8ba1;
+  --color-slate-550: #56617a;
+  --color-slate-650: #3d4b5f;
+  --color-slate-705: #32404f;
+  --color-slate-750: #293548;
+  --color-slate-805: #1d2839;
+  --color-slate-850: #172033;
+  --color-emerald-150: #bcf7db;
+  --color-emerald-250: #8cefc4;
+  --color-emerald-450: #22cb95;
+  --color-emerald-650: #03805c;
+  --color-emerald-705: #04785a;
+  --color-emerald-750: #056b50;
+  --color-emerald-805: #06593f;
+  --color-emerald-850: #05543d;
+  --color-amber-150: #fdf0c9;
+  --color-amber-250: #fcde74;
+  --color-amber-350: #fcc94c;
+  --color-amber-450: #f8ae15;
+  --color-amber-550: #ea8e06;
+  --color-amber-805: #8f3d0e;
+  --color-amber-850: #853a0f;
+  --color-rose-250: #fdc0ca;
+  --color-rose-350: #fc8da1;
+  --color-rose-850: #921237;
+  --color-sky-250: #9bdcfc;
+  --color-sky-850: #06426e;
+}
+
 :root {
   --background: #fdfdfc;      /* Clean Bright Alabaster */
   --foreground: #1c1816;      /* Rich Espresso Charcoal */
@@ -32,6 +85,9 @@ body {
   background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+  /* Clip sideways overflow (background glow spheres) at the viewport level;
+     putting overflow on an inner wrapper would break sticky positioning. */
+  overflow-x: hidden;
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;

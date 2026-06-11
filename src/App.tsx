@@ -6,6 +6,7 @@ import { computeAlerts, Alert } from '../lib/alerts';
 import NotificationCenter from '../components/NotificationCenter';
 import LocationPicker, { PickedLocation } from '../components/LocationPicker';
 import { useWineryState } from '../hooks/useWineryState';
+import { IndexedDBQueue } from '../lib/syncQueue';
 
 // Heavy modules are code-split
 const LotPassport = lazy(() => import('../components/LotPassport'));
@@ -53,7 +54,8 @@ import {
   Sprout,
   Sun,
   Moon,
-  RefreshCw
+  RefreshCw,
+  QrCode
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -66,6 +68,9 @@ function ModuleLoader() {
 
 export default function App() {
   const state = useWineryState();
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
+  const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
 
   // Dark Mode State
   const [darkMode, setDarkMode] = useState(() => {
@@ -217,6 +222,7 @@ export default function App() {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         state.setSelectedTankId(null);
+        setIsAiDrawerOpen(false);
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
@@ -241,7 +247,9 @@ export default function App() {
   const occupiedTanksCount = state.vessels.filter(v => v.currentVolume > 0).length;
 
   return (
-    <div className="min-h-screen bg-[#f8f6f2] flex flex-col font-sans relative transition-colors duration-300 overflow-x-hidden">
+    // overflow-x clipping lives on <body> (globals.css): an overflow value
+    // on this wrapper would break position:sticky for the floating header
+    <div className="min-h-screen bg-[#f8f6f2] dark:bg-[#0a0607] flex flex-col font-sans relative transition-colors duration-300">
       
       {/* Ambient background glow spheres */}
       <div className="bg-glow-sphere top-[10%] left-[5%] w-[380px] h-[380px] bg-[#801323]" />
@@ -249,11 +257,31 @@ export default function App() {
       <div className="bg-glow-sphere bottom-[15%] left-[10%] w-[350px] h-[350px] bg-emerald-800" />
       
       {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
-      {state.toastMessage && (
-        <div className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-100 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-2 animate-fade-in">
-          <span>🍇</span> {state.toastMessage}
-        </div>
-      )}
+      {state.toastMessage && (() => {
+        const isSyncIssue = typeof state.toastMessage === 'string' && (
+          state.toastMessage.includes('Sync conflict') ||
+          state.toastMessage.includes('Sync rejected') ||
+          state.toastMessage.includes('rejected') ||
+          state.toastMessage.includes('კონფლიქტი') ||
+          state.toastMessage.includes('უარყოფილია')
+        );
+        return (
+          <div className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-100 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-3 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <span>🍇</span>
+              <span>{state.toastMessage}</span>
+            </div>
+            {isSyncIssue && (
+              <button
+                onClick={() => setShowSyncTroubleshooter(true)}
+                className="ml-2 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-[#4e0e15] rounded-lg text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+              >
+                ⚡ {state.lang === 'ka' ? 'მოგვარება' : 'Trace & Fix'}
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Lot Passport — traceability report modal */}
       {state.passportLotId && (() => {
@@ -273,10 +301,10 @@ export default function App() {
         );
       })()}
 
-      {/* 1. Global Navigation Bar header */}
-      <header className="px-6 md:px-8 py-3 bg-white/95 backdrop-blur-md border-b border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-0 z-40 shadow-[0_4px_30px_rgba(78,14,21,0.03)] transition-all duration-300">
+      {/* 1. Global Navigation Bar — floating glass pill */}
+      <header className="relative mx-3 md:mx-6 mt-3 px-5 md:px-7 py-3 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-3 z-40 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] transition-all duration-300 dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
         {/* Luxury Top Wine Edge Border */}
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-[#801323] via-[#4e0e15] to-[#c5a059]" />
+        <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-[#801323] via-[#4e0e15] to-[#c5a059]" />
 
         {/* Brand Crest */}
         <div className="flex items-center gap-3">
@@ -320,7 +348,7 @@ export default function App() {
                       state.setActiveTab('dashboard'); // reset winery tab
                     }
                   }}
-                  className={`px-3.5 py-1.8 rounded-xl flex items-center gap-1.5 cursor-pointer transition-all duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
+                  className={`px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-all duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
                     isActive 
                       ? 'bg-[#4e0e15] text-amber-50 shadow-md scale-105 ring-1 ring-[#801323]/20' 
                       : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 hover:scale-[1.02]'
@@ -345,6 +373,18 @@ export default function App() {
             <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
             <span>{isOnline ? (state.lang === 'ka' ? 'ონლაინ' : 'ONLINE') : (state.lang === 'ka' ? 'ოფლაინ' : 'OFFLINE')}</span>
           </div>
+
+          {/* QR Scanner Trigger */}
+          {state.isLoggedIn && (
+            <button
+              onClick={() => setShowQrModal(true)}
+              className="p-2 bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800 flex items-center justify-center shadow-2xs"
+              title="Simulate QR Code Scan"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {/* Language Switcher */}
           <div className="flex items-center gap-1 bg-stone-50 border border-stone-200 px-2.5 py-1 rounded-xl shadow-2xs dark:bg-stone-900 dark:border-stone-800">
             <Languages className="w-3.5 h-3.5 text-stone-550 shrink-0" />
@@ -391,7 +431,7 @@ export default function App() {
                   state.handleAuthLogout();
                   state.setActiveModule('portal');
                 }}
-                className="bg-[#faf8f6] hover:bg-rose-50/50 border border-stone-200 text-[#801323] px-3.5 py-1.8 text-[10px] font-mono font-extrabold rounded-xl cursor-pointer transition-all duration-150 uppercase tracking-wider shadow-2xs dark:bg-stone-900 dark:border-stone-800"
+                className="bg-[#faf8f6] hover:bg-rose-50/50 border border-stone-200 text-[#801323] px-3.5 py-2 text-[10px] font-mono font-extrabold rounded-xl cursor-pointer transition-all duration-150 uppercase tracking-wider shadow-2xs dark:bg-stone-900 dark:border-stone-800"
                 title="Log Out"
               >
                 {t.nav_logout || 'Logout'}
@@ -1029,6 +1069,7 @@ export default function App() {
                       };
                     })
                   }}
+                  onAddNewTask={state.handleAddNewTask}
                 />
               </Suspense>
             )}
@@ -1064,6 +1105,24 @@ export default function App() {
           </section>
 
         </main>
+      )}
+
+      {/* SYNC TROUBLESHOOTER DIAGNOSTICS & RESOLUTION MODAL */}
+      {showSyncTroubleshooter && (
+        <SyncTroubleshooterModal
+          lang={state.lang}
+          lastSyncError={state.lastSyncError}
+          syncConflicts={state.syncConflicts}
+          onClose={() => setShowSyncTroubleshooter(false)}
+          onDiscard={async () => {
+            await state.discardLocalUnsyncedChanges();
+            setShowSyncTroubleshooter(false);
+          }}
+          onRetry={async () => {
+            await state.triggerSync();
+            setShowSyncTroubleshooter(false);
+          }}
+        />
       )}
 
       {/* 2. CONFLICT RESOLUTION MODAL */}
@@ -1186,6 +1245,216 @@ export default function App() {
         onToggleCoolingJacket={state.handleToggleCoolingJacket}
       />
 
+      {/* OMNIPRESENT FLOATING AI WIDGET */}
+      {state.isLoggedIn && (
+        <>
+          {/* Glowing floating orb button (hidden when drawer is open) */}
+          <AnimatePresence>
+            {!isAiDrawerOpen && (
+              <motion.button
+                key="ai-floating-orb"
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0, opacity: 0 }}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setIsAiDrawerOpen(true)}
+                className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-gradient-to-tr from-[#4e0e15] to-[#801323] hover:from-[#801323] hover:to-[#c5a059] text-white rounded-full flex items-center justify-center shadow-[0_8px_30px_rgba(78,14,21,0.55)] border-2 border-[#c5a059]/50 dark:border-amber-400/50 cursor-pointer focus:outline-none transition-all duration-300 group"
+                title="Open AI Winemaker Assistant"
+              >
+                <div className="absolute inset-0 rounded-full bg-radial-gradient from-transparent to-[#c5a059]/10 animate-pulse" />
+                <span className="text-2xl filter drop-shadow-[0_2px_8px_rgba(255,255,255,0.4)]">🔮</span>
+                <span className="absolute -top-1 -right-1 bg-amber-500 text-[#4e0e15] border border-white text-[9px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-xs">
+                  AI
+                </span>
+              </motion.button>
+            )}
+          </AnimatePresence>
+
+          {/* Slide-out AI assistant drawer */}
+          <AnimatePresence>
+            {isAiDrawerOpen && (
+              <>
+                <motion.div
+                  key="ai-backdrop"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setIsAiDrawerOpen(false)}
+                  className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs z-50 transition-opacity"
+                />
+
+                <motion.div
+                  key="ai-drawer"
+                  initial={{ x: '100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '100%' }}
+                  transition={{ type: 'spring', damping: 24, stiffness: 200 }}
+                  className="fixed inset-y-0 right-0 z-50 w-full sm:w-[480px] bg-white dark:bg-[#140d0e] shadow-2xl border-l border-[#f0e6da] dark:border-[#2a191b] flex flex-col focus:outline-none text-stone-850 dark:text-stone-100"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-[#e8dfd5] dark:border-stone-800 bg-[#FAF8F5] dark:bg-stone-950/40 shrink-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">🔮</span>
+                      <div>
+                        <h2 className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 tracking-wide">
+                          AI Winemaker Assistant
+                        </h2>
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          Context: {state.activeModule === 'vazi' ? 'Vineyard (Vazi)' : `Winery (Gvino) - ${state.activeTab}`}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setIsAiDrawerOpen(false)}
+                      className="p-1.5 rounded-full hover:bg-stone-200/50 dark:hover:bg-stone-850 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 transition-colors cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Component Container */}
+                  <div className="flex-1 overflow-hidden">
+                    <Suspense fallback={
+                      <div className="flex items-center justify-center h-full">
+                        <Loader2 className="w-6 h-6 animate-spin text-[#4e0e15]" />
+                      </div>
+                    }>
+                      <AiWinemaker
+                        lang={state.lang}
+                        className="h-full border-0 rounded-none shadow-none"
+                        contextTab={state.activeTab}
+                        contextModule={state.activeModule}
+                        cellarState={{
+                          tanksCount: state.vessels.length,
+                          activeFermsCount,
+                          avgTemp: occupiedTanksCount > 0 
+                            ? parseFloat((state.vessels.reduce((acc, curr) => acc + (curr.temperature || 0), 0) / state.vessels.length).toFixed(1))
+                            : 15.0,
+                          lowSo2Count: alerts.filter(a => a.category === 'so2').length,
+                          highVaCount: alerts.filter(a => a.category === 'va').length,
+                          sampleData: state.vessels.filter(v => v.currentVolume > 0).map(v => {
+                            const lot = state.lots.find(l => l.id === v.assignedLotId);
+                            return {
+                              id: v.id,
+                              lotCode: v.assignedLotId || 'None',
+                              currentVolume: v.currentVolume,
+                              wineName: lot ? lot.name : 'Unknown',
+                              stage: lot ? lot.stage : 'None'
+                            };
+                          })
+                        }}
+                        onAddNewTask={state.handleAddNewTask}
+                      />
+                    </Suspense>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </>
+      )}
+
+      {/* QR CODE SCANNER SIMULATOR MODAL */}
+      {showQrModal && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#140d0e] max-w-md w-full rounded-2xl border border-stone-200 dark:border-[#2a191b] shadow-2xl overflow-hidden animate-scale-up text-stone-850 dark:text-stone-100 font-sans">
+            <div className="px-5 py-4 border-b border-stone-100 dark:border-stone-800 flex justify-between items-center bg-stone-50 dark:bg-stone-950/40">
+              <h3 className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-2">
+                <QrCode className="w-4 h-4 text-[#801323] dark:text-amber-400" />
+                Mobile QR Code Scanner Simulator
+              </h3>
+              <button
+                onClick={() => setShowQrModal(false)}
+                className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Viewfinder Framed Scanner Animation */}
+              <div className="relative w-48 h-48 mx-auto border-2 border-stone-300 dark:border-stone-700 rounded-xl overflow-hidden flex items-center justify-center bg-stone-50 dark:bg-stone-900 shadow-inner">
+                <div className="absolute top-2 left-2 w-4 h-4 border-t-2 border-l-2 border-[#801323] dark:border-amber-400"></div>
+                <div className="absolute top-2 right-2 w-4 h-4 border-t-2 border-r-2 border-[#801323] dark:border-amber-400"></div>
+                <div className="absolute bottom-2 left-2 w-4 h-4 border-b-2 border-l-2 border-[#801323] dark:border-amber-400"></div>
+                <div className="absolute bottom-2 right-2 w-4 h-4 border-b-2 border-r-2 border-[#801323] dark:border-amber-400"></div>
+                
+                <div className="absolute left-0 right-0 h-0.5 bg-emerald-500 shadow-[0_0_10px_#10b981] animate-bounce w-full" style={{ animationDuration: '2.5s' }}></div>
+
+                <div className="text-center p-3 select-none pointer-events-none">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-stone-400 block mb-1">Scanning...</span>
+                  <span className="text-2xl">📷</span>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-xs text-stone-500 dark:text-stone-450 leading-relaxed text-center font-semibold">
+                  Select a mockup asset barcode target to simulate scanning with a smartphone camera.
+                </p>
+
+                <div className="space-y-3.5 max-h-60 overflow-y-auto pr-1">
+                  <div>
+                    <h4 className="text-[10px] uppercase font-mono text-stone-400 dark:text-stone-500 tracking-wider font-extrabold mb-1.5">Vessels (Tank Drawers)</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {state.vessels.slice(0, 4).map(v => (
+                        <button
+                          key={v.id}
+                          onClick={() => {
+                            state.setSelectedTankId(v.id);
+                            state.setActiveModule('gvino');
+                            state.setActiveTab('vessels');
+                            setShowQrModal(false);
+                            state.setToastMessage(`Scanned QR for Vessel: ${v.id}`);
+                          }}
+                          className="p-2 text-left bg-stone-50 hover:bg-[#FAF8F5]/85 border border-stone-200 dark:bg-stone-900 dark:border-stone-850 rounded-xl hover:border-[#801323] transition-all cursor-pointer text-xs font-bold text-[#4e0e15] dark:text-amber-100 flex items-center justify-between group"
+                        >
+                          <span>{v.id}</span>
+                          <span className="text-[9px] font-mono text-stone-400 font-semibold group-hover:text-stone-600">Scan ⚡</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-[10px] uppercase font-mono text-stone-400 dark:text-stone-500 tracking-wider font-extrabold mb-1.5">Wine Lots (Passport Reports)</h4>
+                    <div className="space-y-2">
+                      {state.lots.slice(0, 3).map(l => (
+                        <button
+                          key={l.id}
+                          onClick={() => {
+                            state.setPassportLotId(l.id);
+                            state.setActiveModule('gvino');
+                            setShowQrModal(false);
+                            state.setToastMessage(`Scanned QR for Lot: ${l.name}`);
+                          }}
+                          className="w-full p-2.5 text-left bg-stone-50 hover:bg-[#FAF8F5]/85 border border-stone-200 dark:bg-stone-900 dark:border-[#2a191b] rounded-xl hover:border-[#801323] transition-all cursor-pointer text-xs font-bold flex items-center justify-between group"
+                        >
+                          <div>
+                            <span className="text-[#4e0e15] dark:text-amber-100 block font-serif">{l.name}</span>
+                            <span className="text-[9px] text-stone-450 block font-mono font-semibold">{l.id} • {l.variety} ({l.vintage})</span>
+                          </div>
+                          <span className="text-[9px] font-mono text-stone-400 font-semibold group-hover:text-stone-600">Scan ⚡</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-4 bg-stone-50 dark:bg-stone-950/40 border-t border-stone-100 dark:border-stone-800 flex justify-end">
+              <button
+                onClick={() => setShowQrModal(false)}
+                className="px-4 py-2 bg-stone-200 dark:bg-stone-800 hover:bg-stone-300 dark:hover:bg-stone-750 text-stone-700 dark:text-stone-200 text-xs font-mono font-bold rounded-xl transition-all cursor-pointer"
+              >
+                Close Scanner
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 3. Humble human-label footer */}
       <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-400 font-mono font-medium">
         Vinea ERP • Operational Winemaking Control Loop • European Union PDO Standards Verified
@@ -1209,5 +1478,136 @@ function BrainCircuitIcon(props: any) {
       <path d="M12 5V3M12 21v-2M5 12H3M21 12h-2M12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0 -6 0" />
       <path d="M18.4 5.6l-1.4 1.4M7 17l-1.4 1.4M18.4 18.4l-1.4-1.4M7 7L5.6 5.6" />
     </svg>
+  );
+}
+
+interface SyncTroubleshooterProps {
+  lang: string;
+  lastSyncError: string | null;
+  syncConflicts: any[] | null;
+  onClose: () => void;
+  onDiscard: () => void;
+  onRetry: () => void;
+}
+
+function SyncTroubleshooterModal({
+  lang,
+  lastSyncError,
+  syncConflicts,
+  onClose,
+  onDiscard,
+  onRetry
+}: SyncTroubleshooterProps) {
+  const [offlineMutCount, setOfflineMutCount] = useState<number>(0);
+  const dirtyCollections = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('vinea_dirty_collections') || '[]');
+    } catch {
+      return [];
+    }
+  })();
+
+  useEffect(() => {
+    IndexedDBQueue.getMutations().then(muts => setOfflineMutCount(muts.length)).catch(() => {});
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-[#140d0e] max-w-md w-full rounded-2xl border border-stone-200 dark:border-[#2a191b] shadow-2xl overflow-hidden animate-scale-up text-stone-850 dark:text-stone-100 font-sans">
+        
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-stone-100 dark:border-stone-800 flex justify-between items-center bg-stone-50 dark:bg-stone-950/40">
+          <h3 className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-[#801323] dark:text-amber-400 animate-spin" style={{ animationDuration: '3s' }} />
+            {lang === 'ka' ? 'სინქრონიზაციის შეცდომების დიაგნოსტიკა' : 'Sync Rejection Troubleshooter'}
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-5">
+          
+          {/* Error detail */}
+          <div className="p-4 bg-rose-50 dark:bg-rose-950/25 border border-rose-200/60 dark:border-rose-900/50 rounded-xl space-y-2">
+            <span className="text-[10px] font-mono uppercase text-rose-700 dark:text-rose-455 font-bold tracking-wider">
+              {lang === 'ka' ? 'სერვერის უარყოფის მიზეზი' : 'Server Rejection Reason'}
+            </span>
+            <p className="text-xs font-mono font-semibold text-rose-900 dark:text-rose-200 break-words leading-relaxed text-left">
+              {lastSyncError || (syncConflicts && syncConflicts.length > 0
+                ? (lang === 'ka' ? 'სინქრონიზაციის კონფლიქტი (მონაცემები შეიცვალა სერვერზე)' : 'Sync conflict (simultaneous modifications detected on server)')
+                : (lang === 'ka' ? 'დაუდგენელი შეცდომა' : 'Unspecified synchronization rejection error'))}
+            </p>
+          </div>
+
+          {/* Queue Stats */}
+          <div className="space-y-3.5">
+            <h4 className="text-[10px] uppercase font-mono text-stone-400 dark:text-stone-550 tracking-wider font-extrabold text-left">
+              {lang === 'ka' ? 'ლოკალური რიგის მდგომარეობა' : 'Pending Queue Diagnostics'}
+            </h4>
+
+            <div className="grid grid-cols-2 gap-2 text-center text-xs font-mono font-bold">
+              <div className="p-3 bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-850 rounded-xl">
+                <span className="text-[9px] uppercase text-stone-450 block mb-1">Unsaved Mutations</span>
+                <span className="text-sm text-[#4e0e15] dark:text-amber-300">{offlineMutCount} items</span>
+              </div>
+              <div className="p-3 bg-stone-50 dark:bg-stone-900 border border-stone-200 dark:border-stone-850 rounded-xl">
+                <span className="text-[9px] uppercase text-stone-450 block mb-1">Dirty Collections</span>
+                <span className="text-sm text-[#4e0e15] dark:text-amber-300">{dirtyCollections.length} tables</span>
+              </div>
+            </div>
+
+            {dirtyCollections.length > 0 && (
+              <div className="p-3 bg-amber-50/40 dark:bg-amber-950/10 border border-amber-200/50 dark:border-amber-900/35 rounded-xl text-left">
+                <span className="text-[9px] uppercase font-mono text-amber-700 dark:text-amber-455 font-bold block mb-1">Affected Collections</span>
+                <p className="text-[10px] font-mono text-stone-600 dark:text-stone-400 leading-normal">
+                  {dirtyCollections.join(', ')}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Warning message */}
+          <div className="p-3.5 bg-amber-50/50 dark:bg-amber-950/15 border border-amber-255/50 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 rounded-xl text-[11px] leading-relaxed flex gap-2 text-left">
+            <span className="text-base leading-none">⚠️</span>
+            <div>
+              <strong>{lang === 'ka' ? 'ყურადღება:' : 'Warning:'}</strong> {lang === 'ka' 
+                ? 'ლოკალური ცვლილებების გაუქმება სამუდამოდ წაშლის ყველა გაუსინქრონებელ ჩანაწერს და ჩამოტვირთავს სერვერის მიმდინარე ვერსიას.' 
+                : 'Discarding local changes will permanently erase all offline/unsynced mutations and overwrite local state with the server database.'}
+            </div>
+          </div>
+
+        </div>
+
+        {/* Footer Actions */}
+        <div className="px-5 py-4 bg-stone-50 dark:bg-stone-950/40 border-t border-stone-100 dark:border-stone-800 flex justify-end gap-2 shrink-0">
+          <button
+            onClick={onClose}
+            className="px-3.5 py-1.5 border border-stone-200 dark:border-stone-800 hover:bg-stone-150 dark:hover:bg-stone-850 text-stone-700 dark:text-stone-200 text-xs font-mono font-bold rounded-xl transition-all cursor-pointer"
+          >
+            {lang === 'ka' ? 'დახურვა' : 'Close'}
+          </button>
+
+          <button
+            onClick={onDiscard}
+            className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-mono font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+          >
+            🗑️ {lang === 'ka' ? 'გაუქმება' : 'Discard Local'}
+          </button>
+
+          <button
+            onClick={onRetry}
+            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-mono font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+          >
+            🔄 {lang === 'ka' ? 'სინქრონიზაცია' : 'Force Retry'}
+          </button>
+        </div>
+
+      </div>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
 import { getDB, saveDB } from './server/db';
@@ -10,9 +11,36 @@ import { applyDeletions, mergeCollections } from './server/sync';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Load .env manually if running locally and process.env.GEMINI_API_KEY is not set
+if (!process.env.GEMINI_API_KEY) {
+  try {
+    const envPath = path.resolve(__dirname, '.env');
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf8');
+      envContent.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const firstEqual = trimmed.indexOf('=');
+          if (firstEqual !== -1) {
+            const key = trimmed.slice(0, firstEqual).trim();
+            let val = trimmed.slice(firstEqual + 1).trim();
+            // remove surrounding quotes
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+              val = val.slice(1, -1);
+            }
+            process.env[key] = val;
+          }
+        }
+      });
+    }
+  } catch (err) {
+    console.warn("Could not load .env file manually:", err);
+  }
+}
+
 // Gemini model used for all Winemaker AI features. Centralized here so the
 // model can be swapped in a single place.
-const GEMINI_MODEL = "gemini-3.5-flash";
+const GEMINI_MODEL = "gemini-2.5-flash";
 
 const app = express();
 app.use(express.json());
