@@ -5,9 +5,10 @@ import { translations, Language } from '../lib/i18n';
 import { Vessel, VesselType, WineLot } from '../lib/wineryState';
 import { 
   ShieldAlert, CheckCircle, Flame, Snowflake, RotateCw, Plus, Trash2, Edit, 
-  Search, LayoutGrid, List, Sparkles, Database, Droplets, Thermometer, ShieldCheck
+  Search, LayoutGrid, List, Map, Sparkles, Database, Droplets, Thermometer, ShieldCheck
 } from 'lucide-react';
 import TankCapacityChart, { ChartTankData } from './TankCapacityChart';
+import CellarMap from './CellarMap';
 
 interface Props {
   lang: Language;
@@ -16,9 +17,15 @@ interface Props {
   onUpdateVessels: (newVessels: Vessel[]) => void;
   onSelectTank?: (tankId: string) => void;
   selectedTankId?: string | null;
+  setActiveTab?: (tab: string) => void;
+  setPrefilledSourceId?: (id: string) => void;
+  setPrefilledDestId?: (id: string) => void;
 }
 
-export default function TanksVessels({ lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId }: Props) {
+export default function TanksVessels({ 
+  lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
+  setActiveTab, setPrefilledSourceId, setPrefilledDestId
+}: Props) {
   const t = translations[lang];
   const lText = (obj: Partial<Record<Language, string>>, fallback: string): string => {
     return obj[lang] || fallback;
@@ -27,7 +34,7 @@ export default function TanksVessels({ lang, vessels, lots, onUpdateVessels, onS
   const [filterType, setFilterType] = useState<string>('all');
   
   // Custom view modes and search states for intuitive navigation
-  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'table' | 'map'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'empty' | 'occupied' | 'dirty' | 'cooling'>('all');
 
@@ -421,6 +428,7 @@ export default function TanksVessels({ lang, vessels, lots, onUpdateVessels, onS
             {/* Layout viewMode switches */}
             <div className="bg-slate-200/70 p-0.5 rounded-lg flex items-center">
               <button
+                type="button"
                 onClick={() => setViewMode('grid')}
                 className={`p-1.5 rounded-md cursor-pointer transition-colors ${
                   viewMode === 'grid' 
@@ -432,6 +440,7 @@ export default function TanksVessels({ lang, vessels, lots, onUpdateVessels, onS
                 <LayoutGrid className="w-3.5 h-3.5" />
               </button>
               <button
+                type="button"
                 onClick={() => setViewMode('table')}
                 className={`p-1.5 rounded-md cursor-pointer transition-colors ${
                   viewMode === 'table' 
@@ -441,6 +450,18 @@ export default function TanksVessels({ lang, vessels, lots, onUpdateVessels, onS
                 title="Compact Power-Winery Table"
               >
                 <List className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('map')}
+                className={`p-1.5 rounded-md cursor-pointer transition-colors ${
+                  viewMode === 'map' 
+                    ? 'bg-white text-[#4e0e15] shadow-xs' 
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="Interactive Cellar Floor Map"
+              >
+                <Map className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -581,6 +602,19 @@ export default function TanksVessels({ lang, vessels, lots, onUpdateVessels, onS
             {({ en: 'Clear Active Filters', ka: 'ფილტრების გასუფთავება', it: 'Azzera Filtri', fr: 'Effacer Filtres', de: 'Filter zurücksetzen' })[lang] || 'Clear Active Filters'}
           </button>
         </div>
+      ) : viewMode === 'map' ? (
+        /* Interactive 2D Cellar Map Floor Layout */
+        <CellarMap 
+          lang={lang}
+          vessels={vessels}
+          lots={lots}
+          onUpdateVessels={onUpdateVessels}
+          onSelectTank={onSelectTank}
+          selectedTankId={selectedTankId}
+          setActiveTab={setActiveTab}
+          setPrefilledSourceId={setPrefilledSourceId}
+          setPrefilledDestId={setPrefilledDestId}
+        />
       ) : viewMode === 'grid' ? (
         /* Original Premium Glass Cards Grid View */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">

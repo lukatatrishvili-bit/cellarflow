@@ -191,15 +191,16 @@ export default function FermentationTab({
   };
 
   // Math helper stats
-  const hotTanksCount = vessels.filter(v => v.currentVolume > 0 && v.temperature && v.temperature > 28).length;
-  const slowFermsCount = activeFerments.filter(l => {
-    const lLogs = fermLogs.filter(log => log.lotId === l.id);
+  const isSluggish = (lotId: string): boolean => {
+    const lLogs = fermLogs.filter(log => log.lotId === lotId);
     if (lLogs.length < 2) return false;
-    // Check if sugar hasn't changed much but still high
     const latest = lLogs[0];
     const prev = lLogs[1];
     return latest.sugar > 20 && Math.abs(latest.sugar - prev.sugar) < 2;
-  }).length;
+  };
+
+  const hotTanksCount = vessels.filter(v => v.currentVolume > 0 && v.temperature && v.temperature > 28).length;
+  const slowFermsCount = activeFerments.filter(l => isSluggish(l.id)).length;
 
   return (
     <div className="space-y-6 text-stone-850">
@@ -423,9 +424,16 @@ export default function FermentationTab({
                       </p>
                     </div>
 
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 font-bold bg-[#FAF8F5] text-[#801323] border border-red-105 rounded uppercase">
-                      🔬 {lot.wineClass} Wine
-                    </span>
+                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 font-bold bg-[#FAF8F5] text-[#801323] border border-red-105 rounded uppercase">
+                        🔬 {lot.wineClass} Wine
+                      </span>
+                      {isSluggish(lot.id) && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 font-black bg-rose-50 text-rose-700 border border-rose-200 rounded uppercase flex items-center gap-1 animate-pulse">
+                          ⚠️ Sluggish
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Chemistry overview widget */}

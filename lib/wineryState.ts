@@ -20,6 +20,14 @@ export interface WineLot {
     description: string;
     operator: string;
   }>;
+  sensoryProfile?: {
+    tannins: number; // 1-10
+    acidity: number; // 1-10
+    body: number;    // 1-10
+    aromatics: number; // 1-10
+    wood: number;    // 1-10
+    fruit: number;   // 1-10
+  };
 }
 
 export interface Vessel {
@@ -36,6 +44,8 @@ export interface Vessel {
   targetTemperature: number | null;
   lastOperation: string;
   locationDetails?: string; 
+  xGrid?: number; // 0-100 percentage layout position
+  yGrid?: number; // 0-100 percentage layout position
 }
 
 export interface DailyFermLog {
@@ -119,7 +129,9 @@ export const initialVessels: Vessel[] = [
     coolingJacketActive: true,
     targetTemperature: 16.0,
     lastOperation: 'Fermentation monitoring',
-    locationDetails: 'Main Fermentation Room, Row A'
+    locationDetails: 'Main Fermentation Room, Row A',
+    xGrid: 20,
+    yGrid: 30
   },
   {
     id: 'Tank T-2',
@@ -134,7 +146,9 @@ export const initialVessels: Vessel[] = [
     coolingJacketActive: false,
     targetTemperature: null,
     lastOperation: 'Full sterilization',
-    locationDetails: 'Main Fermentation Room, Row A'
+    locationDetails: 'Main Fermentation Room, Row A',
+    xGrid: 40,
+    yGrid: 30
   },
   {
     id: 'Qvevri Q-1',
@@ -149,7 +163,9 @@ export const initialVessels: Vessel[] = [
     coolingJacketActive: false,
     targetTemperature: null,
     lastOperation: 'Skin maceration sealing',
-    locationDetails: 'Lower Ancient Marani, East Bay'
+    locationDetails: 'Lower Ancient Marani, East Bay',
+    xGrid: 20,
+    yGrid: 70
   },
   {
     id: 'Qvevri Q-2',
@@ -164,7 +180,9 @@ export const initialVessels: Vessel[] = [
     coolingJacketActive: false,
     targetTemperature: null,
     lastOperation: 'Emptied and rinsed',
-    locationDetails: 'Lower Ancient Marani, West Bay'
+    locationDetails: 'Lower Ancient Marani, West Bay',
+    xGrid: 40,
+    yGrid: 70
   },
   {
     id: 'Barrel B-1',
@@ -179,7 +197,9 @@ export const initialVessels: Vessel[] = [
     coolingJacketActive: false,
     targetTemperature: null,
     lastOperation: 'Racking & Topping',
-    locationDetails: 'Aging Cellar, Back-row Rack 3'
+    locationDetails: 'Aging Cellar, Back-row Rack 3',
+    xGrid: 70,
+    yGrid: 30
   },
   {
     id: 'Barrel B-2',
@@ -194,7 +214,9 @@ export const initialVessels: Vessel[] = [
     coolingJacketActive: false,
     targetTemperature: null,
     lastOperation: 'Steam-treated',
-    locationDetails: 'Aging Cellar, Row 1 Rack 12'
+    locationDetails: 'Aging Cellar, Row 1 Rack 12',
+    xGrid: 70,
+    yGrid: 50
   }
 ];
 
@@ -214,7 +236,8 @@ export const initialLots: WineLot[] = [
     history: [
       { date: '2025-09-18', type: 'Crush', description: 'Crushed and destemmed. Initial Brix: 24.5.', operator: 'K. Eliashvili' },
       { date: '2025-09-20', type: 'Inoculation', description: 'Inoculated with Lalvin EC1118 yeast.', operator: 'K. Eliashvili' }
-    ]
+    ],
+    sensoryProfile: { tannins: 8, acidity: 7, body: 8, aromatics: 7, wood: 2, fruit: 8 }
   },
   {
     id: 'RK-2025-A2',
@@ -231,7 +254,8 @@ export const initialLots: WineLot[] = [
     history: [
       { date: '2025-09-22', type: 'Qvevri Fill', description: 'Loaded into clay Qvevri Q-1 with full skins and partial stems.', operator: 'L. Tatrishvili' },
       { date: '2025-10-10', type: 'Sealing', description: 'Qvevri sealed with clay, sand and lime.', operator: 'L. Tatrishvili' }
-    ]
+    ],
+    sensoryProfile: { tannins: 5, acidity: 6, body: 7, aromatics: 8, wood: 1, fruit: 6 }
   },
   {
     id: 'SAP-2024-S1',
@@ -248,7 +272,8 @@ export const initialLots: WineLot[] = [
     history: [
       { date: '2024-09-15', type: 'Harvest', description: 'Hand-picked, double sorted. Initial Baumé: 14.8.', operator: 'K. Eliashvili' },
       { date: '2024-11-04', type: 'Barrel Entry', description: 'Transferred into French oak Barrel B-1 after malolactic completion.', operator: 'L. Tatrishvili' }
-    ]
+    ],
+    sensoryProfile: { tannins: 9, acidity: 7, body: 9, aromatics: 8, wood: 6, fruit: 7 }
   }
 ];
 

@@ -1,48 +1,83 @@
-/* VINEA service worker — runtime caching for offline cellar use.
- * Network-first so the app stays fresh online, with a cache fallback so a
- * previously visited install keeps working without a connection. */
-const CACHE = 'vinea-runtime-v1';
+const CACHE_NAME = 'vinea-erp-cache-v1';
+const STATIC_ASSETS = [
+  '/',
+  '/index.html',
+  '/src/main.tsx',
+  '/src/globals.css',
+  '/src/App.tsx',
+  '/favicon.ico'
+];
 
-self.addEventListener('install', () => {
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(STATIC_ASSETS);
+    })
+  );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    (async () => {
-      const keys = await caches.keys();
-      await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
-      await self.clients.claim();
-    })()
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_NAME) {
+            return caches.delete(key);
+          }
+        })
+      );
+    })
   );
+  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
-  const req = event.request;
-  if (req.method !== 'GET') return;
+  const url = new URL(event.request.url);
 
-  const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // let cross-origin (fonts, maps) hit the network
-  if (url.pathname.startsWith('/api/')) return; // never cache API calls
+  // Skip WebSocket connections (like Vite HMR), POST requests, and Gemini AI endpoints
+  if (
+    event.request.method !== 'GET' ||
+    url.pathname.includes('/vite') ||
+    url.pathname.includes('/api/gemini')
+  ) {
+    return;
+  }
 
+  // Network-First for REST API endpoints
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, clone);
+          });
+          return response;
+        })
+        .catch(() => {
+          return caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  // Cache-First with Network Fallback for static assets
   event.respondWith(
-    (async () => {
-      try {
-        const res = await fetch(req);
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      } catch {
-        const cached = await caches.match(req);
-        if (cached) return cached;
-        if (req.mode === 'navigate') {
-          const shell = await caches.match('/');
-          if (shell) return shell;
-        }
-        throw new Error('offline and not cached');
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse;
       }
-    })()
+      return fetch(event.request).then((response) => {
+        if (!response || response.status !== 200 || response.type !== 'basic') {
+          return response;
+        }
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(event.request, clone);
+        });
+        return response;
+      });
+    })
   );
 });

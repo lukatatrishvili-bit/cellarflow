@@ -237,6 +237,40 @@ const dict = {
   }
 };
 
+function getDownyDirective(risk: number, lang: string): string {
+  const isKa = lang === 'ka';
+  if (risk > 60) {
+    return isKa
+      ? "მაღალი საფრთხე! სასწრაფოდ გამოიყენეთ სისტემური დამცავები. ქიმიური: CAA ჯგუფი (FRAC 40) ან ფენილამიდები (FRAC 4). ბიო: სპილენძის დამცავი ჯგუფი (FRAC M01) + ვარჯის აერაცია."
+      : "Severe threat! High infection risk. Apply systemic protectants immediately. Chemical: CAA group (FRAC 40) or Phenylamides (FRAC 4). Organic: Protectant Copper (FRAC M01) + canopy aeration.";
+  }
+  if (risk > 30) {
+    return isKa
+      ? "საშუალო საფრთხე. მოსალოდნელი წვიმის წინ რეკომენდებულია პრევენცია. ბიო: სპილენძის ნაერთები (FRAC M01). ქიმიური: ფოსფონატები (FRAC P07) ან CAA ჯგუფი (FRAC 40)."
+      : "Moderate threat. Preventative application advised before forecasted rain. Organic: Copper Compounds (FRAC M01). Chemical: Phosphonates (FRAC P07) or CAA group (FRAC 40).";
+  }
+  return isKa
+    ? "დაბალი საფრთხე. შესხურება არ არის საჭირო. განაგრძეთ ვარჯის ჩვეული მონიტორინგი."
+    : "Low threat. No immediate treatment needed. Continue routine monitoring of canopy and leaves.";
+}
+
+function getPowderyDirective(risk: number, lang: string): string {
+  const isKa = lang === 'ka';
+  if (risk > 60) {
+    return isKa
+      ? "მაღალი საფრთხე! სოკოს სწრაფი გამრავლების ფანჯარა! რეზისტენტობის თავიდან ასაცილებლად მოახდინეთ MoA-ს როტაცია. ქიმიური: SDHI ჯგუფი (FRAC 7) ან ქვინაზოლინონები (FRAC 13). ბიო: გოგირდი (FRAC M02) + ბიოკონტროლი."
+      : "Severe threat! Rapid fungal replication window. Rotate Mode of Action to manage resistance. Chemical: SDHI group (FRAC 7) or Quinazolinones (FRAC 13). Organic: Sulfur (FRAC M02) + systemic biocontrols.";
+  }
+  if (risk > 30) {
+    return isKa
+      ? "საშუალო საფრთხე. თბილი ამინდი და მაღალი ტენიანობა ხელს უწყობს გამრავლებას. ბიო: გოგირდი (FRAC M02) ან კალიუმის ბიკარბონატი. ქიმიური: DMI ტრიაზოლები (FRAC 3)."
+      : "Moderate threat. Warm temperatures and high humidity favor replication. Organic: Sulfur (FRAC M02) or Potassium Bicarbonate. Chemical: DMI Triazoles (FRAC 3).";
+  }
+  return isKa
+    ? "დაბალი საფრთხე. შესხურება არ არის საჭირო. განაგრძეთ ვარჯის ჩვეული მონიტორინგი."
+    : "Low threat. Safe weather windows. No immediate spray required. Continue routine monitoring.";
+}
+
 export default function WeatherTab({ 
   lang, 
   blocks,
@@ -444,6 +478,7 @@ export default function WeatherTab({
   const [aiLoading, setAiLoading] = useState<boolean>(false);
   const [aiAdvice, setAiAdvice] = useState<string | null>(null);
   const [histMetric, setHistMetric] = useState<'gdd' | 'rain' | 'temp'>('gdd');
+  const [selectedForecastIdx, setSelectedForecastIdx] = useState<number>(0);
 
   // Varieties and threshold targets
   const varietyPresets = useMemo(() => [
@@ -897,6 +932,32 @@ export default function WeatherTab({
     }
 
     return { downyRisk, powderyRisk, botrytisRisk };
+  }, [weatherData]);
+
+  // 5-Day Pathogen Projections
+  const forecastPathogenRisks = useMemo(() => {
+    if (!weatherData) return [];
+    return weatherData.daily.map(day => {
+      const avgTemp = (day.tempMax + day.tempMin) / 2;
+      
+      let downy = 10;
+      if (avgTemp > 10 && day.popMax > 25) {
+        downy = Math.min(100, Math.round(25 + (day.popMax - 25) * 0.9 + (10 - Math.abs(avgTemp - 20)) * 2.5));
+      } else if (avgTemp > 12) {
+        downy = 20;
+      }
+      
+      let powdery = 15;
+      if (avgTemp >= 15 && avgTemp <= 28) {
+        powdery = Math.min(100, Math.round(30 + (13 - Math.abs(avgTemp - 23)) * 4.5 - (day.popMax > 50 ? 15 : 0)));
+      }
+      
+      return {
+        date: day.date.split(',')[0],
+        downy,
+        powdery
+      };
+    });
   }, [weatherData]);
 
   // Combined Disease pressure index (Mildew progression risk)
@@ -1657,6 +1718,97 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                 </div>
               </div>
+
+              {weatherData && (
+                <div className="bg-white border border-[#e8dfd5] p-5 rounded-3xl shadow-3xs space-y-3">
+                  <div className="flex justify-between items-center border-b border-stone-150 pb-2">
+                    <span className="text-[10px] font-mono font-bold uppercase text-stone-550 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block animate-pulse" />
+                      {lang === 'ka' ? '5-დღიანი პათოგენური რისკის პროგნოზი' : '5-Day Disease Pressure Outlook'}
+                    </span>
+                    <span className="text-[9px] font-mono text-slate-400 font-bold uppercase">{lang === 'ka' ? 'ბიოკინეტიკური მოდელირება' : 'Bio-Kinetically Calibrated'}</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-5 gap-2 text-center">
+                    {forecastPathogenRisks.map((risk, idx) => {
+                      const maxRisk = Math.max(risk.downy, risk.powdery);
+                      const isSelected = selectedForecastIdx === idx;
+                      const riskColor = maxRisk > 60 
+                        ? (isSelected ? 'text-rose-900 bg-rose-100 border-rose-350 ring-2 ring-rose-400' : 'text-rose-700 bg-rose-50/50 border-rose-200') 
+                        : maxRisk > 30 
+                        ? (isSelected ? 'text-amber-900 bg-amber-100 border-amber-350 ring-2 ring-amber-450' : 'text-amber-700 bg-amber-50/50 border-amber-200') 
+                        : (isSelected ? 'text-emerald-950 bg-emerald-100 border-emerald-300 ring-2 ring-emerald-450' : 'text-emerald-800 bg-emerald-50/50 border-emerald-100');
+                      return (
+                        <div 
+                          key={idx} 
+                          onClick={() => setSelectedForecastIdx(idx)}
+                          onMouseEnter={() => setSelectedForecastIdx(idx)}
+                          className={`p-2.5 rounded-xl border flex flex-col justify-between space-y-1.5 transition-all duration-200 cursor-pointer hover:scale-103 ${riskColor}`}
+                        >
+                          <span className="text-[9.5px] font-mono font-extrabold">{risk.date}</span>
+                          <div className="space-y-0.5 font-mono text-[9px]">
+                            <div className="flex justify-between items-center gap-1">
+                              <span className="text-[8px] text-stone-400 font-normal">Downy:</span>
+                              <strong className="font-extrabold">{risk.downy}%</strong>
+                            </div>
+                            <div className="flex justify-between items-center gap-1">
+                              <span className="text-[8px] text-stone-400 font-normal">Powdery:</span>
+                              <strong className="font-extrabold">{risk.powdery}%</strong>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {forecastPathogenRisks[selectedForecastIdx] && (
+                    <div className="mt-3 p-4 rounded-2xl bg-stone-50 border border-stone-150 space-y-3 transition-all duration-300">
+                      <div className="flex justify-between items-center border-b border-stone-250 pb-2">
+                        <span className="text-[10px] font-mono font-extrabold text-stone-600 uppercase flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5 text-stone-500" />
+                          {lang === 'ka' ? 'რეკომენდაციები: ' : 'Directives for '} {forecastPathogenRisks[selectedForecastIdx].date}
+                        </span>
+                        <div className="flex gap-2">
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-emerald-100 text-emerald-800 border border-emerald-200 font-semibold">
+                            {lang === 'ka' ? 'ბიო/ორგანული' : 'Organic'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono bg-purple-100 text-purple-800 border border-purple-200 font-semibold">
+                            {lang === 'ka' ? 'ქიმიური/სისტემური' : 'Chemical'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Downy Mildew Directives */}
+                        <div className="p-3 bg-white rounded-xl border border-stone-200/60 space-y-2">
+                          <div className="flex items-center gap-1.5 border-b border-stone-100 pb-1.5">
+                            <span className={`w-2.5 h-2.5 rounded-full ${forecastPathogenRisks[selectedForecastIdx].downy > 60 ? 'bg-rose-500 animate-pulse' : forecastPathogenRisks[selectedForecastIdx].downy > 30 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                            <strong className="text-xs font-serif font-black text-stone-850">
+                              {lang === 'ka' ? 'ჭრაქი (Downy Mildew)' : 'Downy Mildew'} ({forecastPathogenRisks[selectedForecastIdx].downy}%)
+                            </strong>
+                          </div>
+                          <p className="text-[11px] text-stone-600 leading-relaxed font-semibold">
+                            {getDownyDirective(forecastPathogenRisks[selectedForecastIdx].downy, lang)}
+                          </p>
+                        </div>
+
+                        {/* Powdery Mildew Directives */}
+                        <div className="p-3 bg-white rounded-xl border border-stone-200/60 space-y-2">
+                          <div className="flex items-center gap-1.5 border-b border-stone-100 pb-1.5">
+                            <span className={`w-2.5 h-2.5 rounded-full ${forecastPathogenRisks[selectedForecastIdx].powdery > 60 ? 'bg-rose-500 animate-pulse' : forecastPathogenRisks[selectedForecastIdx].powdery > 30 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                            <strong className="text-xs font-serif font-black text-stone-850">
+                              {lang === 'ka' ? 'ნაცარი (Powdery Mildew)' : 'Powdery Mildew'} ({forecastPathogenRisks[selectedForecastIdx].powdery}%)
+                            </strong>
+                          </div>
+                          <p className="text-[11px] text-stone-600 leading-relaxed font-semibold">
+                            {getPowderyDirective(forecastPathogenRisks[selectedForecastIdx].powdery, lang)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* CONVERGED GEMINI AI AGRO-CLIMATIC INTELLIGENCE PANEL */}
               <div className="bg-gradient-to-br from-[#1c080b] to-[#0c0304] border border-[#4e0e15]/30 p-6 rounded-3xl shadow-xl space-y-4 relative overflow-hidden">

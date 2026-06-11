@@ -90,18 +90,105 @@ export default function App() {
   // Estate location chosen during registration (drives weather, maps, disease models)
   const [regLocation, setRegLocation] = useState<PickedLocation | null>(null);
 
+  // Network connection state
+  const [isOnline, setIsOnline] = useState(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      state.setToastMessage(state.lang === 'ka' ? 'ინტერნეტთან კავშირი აღდგა! ხდება სინქრონიზაცია...' : 'Connection restored! Synchronizing...');
+      state.triggerSync();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      state.setToastMessage(state.lang === 'ka' ? 'კავშირი გაწყდა. მუშაობა გრძელდება ოფლაინ რეჟიმში.' : 'Connection lost. Operating in offline mode.');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [state.lang]);
+
+  // Real-time telemetry state
+  const [activeTelemetry, setActiveTelemetry] = useState<any[]>([]);
+
+  // Conflict resolution choice state
+  const [resolutions, setResolutions] = useState<Record<string, 'local' | 'server'>>({});
+
+  // Periodically poll fermentation telemetry and run stuck fermentation detector
+  useEffect(() => {
+    if (!state.isLoggedIn) return;
+
+    const fetchTelemetry = async () => {
+      try {
+        const res = await fetch('/api/telemetry/active');
+        if (res.ok) {
+          const data = await res.json();
+          setActiveTelemetry(data);
+
+          // Slope Anomaly Detector
+          data.forEach((reading: any) => {
+            if (reading.dailySlope < 0.002 && reading.status === 'stuck') {
+              const taskTitle = `Diagnose stuck fermentation in ${reading.tankId} (Lot ${reading.lotId})`;
+              const hasTask = state.tasks.some(t => t.title === taskTitle);
+              if (!hasTask) {
+                state.handleAddNewTask(
+                  taskTitle,
+                  'high',
+                  new Date().toISOString().split('T')[0],
+                  `Stuck fermentation alert triggered by real-time IoT sensor. Temperature is ${reading.temperature}°C, density is ${reading.density} SG, and daily slope drop is ${reading.dailySlope} SG/day (< 0.002 SG/day threshold). Initiate warning restart procedures immediately.`
+                );
+                state.setToastMessage(`CRITICAL STUCK FERMENTATION DETECTED on ${reading.tankId}!`);
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.error('Failed to retrieve telemetry data:', err);
+      }
+    };
+
+    fetchTelemetry();
+    const interval = setInterval(fetchTelemetry, 15000);
+    return () => clearInterval(interval);
+  }, [state.isLoggedIn, state.tasks]);
+
   // Derived live alert feed for the notification center
-  const alerts = useMemo(
-    () => computeAlerts({
+  const alerts = useMemo(() => {
+    const baseAlerts = computeAlerts({
       vessels: state.vessels,
       lots: state.lots,
       fermLogs: state.fermLogs,
       labLogs: state.labLogs,
       inventory: state.inventory,
       tasks: state.tasks
-    }),
-    [state.vessels, state.lots, state.fermLogs, state.labLogs, state.inventory, state.tasks]
-  );
+    });
+
+    const telemetryAlerts: Alert[] = [];
+    activeTelemetry.forEach((t: any) => {
+      if (t.dailySlope < 0.002 && t.status === 'stuck') {
+        const lot = state.lots.find(l => l.id === t.lotId);
+        const name = lot ? lot.name : t.lotId;
+        telemetryAlerts.push({
+          id: `telemetry-stuck-${t.lotId}`,
+          severity: 'critical',
+          category: 'fermentation',
+          title: `Stuck fermentation — ${name} (Telemetry)`,
+          message: `Sensor detected gravity drop rate of ${t.dailySlope.toFixed(4)} SG/day (< 0.002 SG/day threshold). Current SG: ${t.density}. Temperature: ${t.temperature}°C.`,
+          relatedLotId: t.lotId,
+          relatedTankId: t.tankId
+        });
+      }
+    });
+
+    const combined = [...telemetryAlerts, ...baseAlerts];
+    const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
+    return combined.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
+  }, [state.vessels, state.lots, state.fermLogs, state.labLogs, state.inventory, state.tasks, activeTelemetry]);
 
   const handleSelectAlert = (a: Alert) => {
     const tabByCategory: Record<Alert['category'], string> = {
@@ -155,7 +242,7 @@ export default function App() {
       
       {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
       {state.toastMessage && (
-        <div className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-55 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-2 animate-fade-in">
+        <div className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-100 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-2 animate-fade-in">
           <span>🍇</span> {state.toastMessage}
         </div>
       )}
@@ -241,6 +328,15 @@ export default function App() {
 
         {/* Toolbar Controls: Language, Dark Mode, Notifications, and Profile */}
         <div className="flex items-center gap-3 justify-end">
+          {/* Connection Status Badge */}
+          <div className={`flex items-center gap-1.5 px-3 py-1 rounded-xl shadow-2xs text-[10px] font-mono font-bold tracking-wider border transition-all duration-300 ${
+            isOnline 
+              ? 'bg-emerald-50 border-emerald-250 text-emerald-800' 
+              : 'bg-amber-50 border-amber-250 text-amber-800 animate-pulse'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            <span>{isOnline ? (state.lang === 'ka' ? 'ონლაინ' : 'ONLINE') : (state.lang === 'ka' ? 'ოფლაინ' : 'OFFLINE')}</span>
+          </div>
           {/* Language Switcher */}
           <div className="flex items-center gap-1 bg-stone-50 border border-stone-200 px-2.5 py-1 rounded-xl shadow-2xs dark:bg-stone-900 dark:border-stone-800">
             <Languages className="w-3.5 h-3.5 text-stone-550 shrink-0" />
@@ -284,7 +380,7 @@ export default function App() {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => {
-                  state.setIsLoggedIn(false);
+                  state.handleAuthLogout();
                   state.setActiveModule('portal');
                 }}
                 className="bg-[#faf8f6] hover:bg-rose-50/50 border border-stone-200 text-[#801323] px-3.5 py-1.8 text-[10px] font-mono font-extrabold rounded-xl cursor-pointer transition-all duration-150 uppercase tracking-wider shadow-2xs dark:bg-stone-900 dark:border-stone-800"
@@ -303,7 +399,7 @@ export default function App() {
           <div className="w-full max-w-4xl my-auto grid lg:grid-cols-[1.05fr_1fr] rounded-3xl overflow-hidden shadow-[0_30px_80px_-30px_rgba(78,14,21,0.35)] border border-stone-200/70 bg-white animate-fade-in dark:border-stone-850 dark:bg-stone-950">
 
             {/* Brand hero — desktop only */}
-            <div className="relative hidden lg:flex flex-col justify-between p-10 bg-gradient-to-br from-[#5a1019] via-[#3a0a0f] to-[#1b0203] text-amber-55 overflow-hidden">
+            <div className="relative hidden lg:flex flex-col justify-between p-10 bg-gradient-to-br from-[#5a1019] via-[#3a0a0f] to-[#1b0203] text-amber-100 overflow-hidden">
               <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#801323] via-[#c5a059] to-[#801323]" />
               <div className="absolute -right-12 -bottom-16 text-[260px] leading-none opacity-[0.06] select-none pointer-events-none">🍇</div>
 
@@ -357,13 +453,14 @@ export default function App() {
                     </p>
                   </div>
 
-                  <form onSubmit={(e) => {
+                  <form onSubmit={async (e) => {
                     e.preventDefault();
                     const fd = new FormData(e.currentTarget);
                     const name = String(fd.get('fullName') || '');
                     const email = String(fd.get('email') || '');
                     const user = String(fd.get('username') || '');
                     const selectedRole = String(fd.get('role') || 'Viticulturist');
+                    const rememberMe = fd.get('rememberMe') === 'true';
                     
                     let mappedRole: 'Owner/Admin' | 'Viticulturist' | 'Winemaker' | 'Lab Technician' | 'Cellar Worker' | 'Read-Only' = 'Viticulturist';
                     if (selectedRole === 'Winemaker') {
@@ -374,13 +471,16 @@ export default function App() {
                       mappedRole = 'Owner/Admin';
                     }
 
-                    state.setCurrentUser({
-                      username: user.toLowerCase().replace(/\s+/g, '_'),
+                    const cleanUsername = user.toLowerCase().replace(/\s+/g, '_');
+                    await state.handleAuthRegister({
+                      username: cleanUsername,
                       email: email,
                       fullName: name,
                       role: mappedRole,
-                      language: state.lang === 'ka' ? 'ka' : 'en'
+                      language: state.lang === 'ka' ? 'ka' : 'en',
+                      rememberMe: rememberMe
                     });
+
                     if (regLocation) {
                       state.setCompanyProfile({
                         ...state.companyProfile,
@@ -389,7 +489,6 @@ export default function App() {
                         ...(regLocation.label ? { address: regLocation.label } : {})
                       });
                     }
-                    state.setIsLoggedIn(true);
                     if (mappedRole === 'Winemaker' || mappedRole === 'Cellar Worker') {
                       state.setActiveModule('gvino');
                     } else {
@@ -470,6 +569,19 @@ export default function App() {
                       </p>
                     </div>
 
+                    <div className="flex items-center">
+                      <label className="flex items-center gap-2 text-[10px] text-stone-600 dark:text-stone-400 font-bold font-sans select-none cursor-pointer">
+                        <input
+                          type="checkbox"
+                          name="rememberMe"
+                          defaultChecked
+                          value="true"
+                          className="w-3.5 h-3.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
+                        />
+                        <span>{state.lang === 'ka' ? 'დამიმახსოვრე შესული' : 'Keep me signed in'}</span>
+                      </label>
+                    </div>
+
                     <button
                       type="submit"
                       className="w-full bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase tracking-widest py-3 rounded-xl cursor-pointer shadow-sm transition-all duration-155 text-xs mt-2"
@@ -482,7 +594,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setIsRegistering(false)}
-                        className="text-[#4e0e15] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
+                        className="text-[#4e0e15] dark:text-[#c5a059] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
                       >
                         {state.lang === 'ka' ? 'შესვლა' : 'Sign In'}
                       </button>
@@ -496,23 +608,18 @@ export default function App() {
                     <p className="text-[12px] text-stone-400 mt-1">{state.lang === 'ka' ? 'შედით თქვენს მართვის სივრცეში.' : 'Sign in to your estate workspace.'}</p>
                   </div>
 
-                  <form onSubmit={(e) => {
+                  <form onSubmit={async (e) => {
                     e.preventDefault();
                     const fd = new FormData(e.currentTarget);
-                    const profile = authenticate(
+                    const rememberMe = fd.get('rememberMe') === 'true';
+                    const success = await state.handleAuthLogin(
                       String(fd.get('identifier') || ''),
-                      String(fd.get('passcode') || '')
+                      String(fd.get('passcode') || ''),
+                      rememberMe
                     );
-                    if (!profile) {
-                      state.setLoginError(state.lang === 'ka'
-                        ? 'არასწორი მომხმარებელი ან კოდი. გამოიყენეთ ქვემოთ მითითებული სადემონსტრაციო კოდი.'
-                        : 'Invalid username or passcode. Use the demo passcode below.');
-                      return;
+                    if (success) {
+                      state.setActiveModule('portal');
                     }
-                    state.setLoginError(null);
-                    state.setCurrentUser(profile);
-                    state.setIsLoggedIn(true);
-                    state.setActiveModule('portal');
                   }} className="space-y-4">
                     <div>
                       <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_username || 'Account Username / Email'}</label>
@@ -539,6 +646,19 @@ export default function App() {
                       />
                     </div>
 
+                    <div className="flex items-center">
+                      <label className="flex items-center gap-2 text-[10px] text-stone-600 dark:text-stone-400 font-bold font-sans select-none cursor-pointer">
+                        <input
+                          type="checkbox"
+                          name="rememberMe"
+                          defaultChecked
+                          value="true"
+                          className="w-3.5 h-3.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
+                        />
+                        <span>{state.lang === 'ka' ? 'დამიმახსოვრე შესული' : 'Keep me signed in'}</span>
+                      </label>
+                    </div>
+
                     {state.loginError && (
                       <p className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
                         <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {state.loginError}
@@ -557,14 +677,14 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setIsRegistering(true)}
-                        className="text-[#4e0e15] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
+                        className="text-[#4e0e15] dark:text-[#c5a059] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
                       >
                         {state.lang === 'ka' ? 'დარეგისტრირდით' : 'Register Now'}
                       </button>
                     </p>
 
                     <p className="text-center text-[9px] font-mono text-stone-400 tracking-wide">
-                      {state.lang === 'ka' ? 'სადემონსტრაციო კოდი' : 'Demo passcode'}: <span className="font-bold text-[#4e0e15] select-all">{DEMO_PASSCODE}</span>
+                      {state.lang === 'ka' ? 'სადემონსტრაციო კოდი' : 'Demo passcode'}: <span className="font-bold text-[#4e0e15] dark:text-[#c5a059] select-all">{DEMO_PASSCODE}</span>
                     </p>
                   </form>
                 </>
@@ -580,47 +700,37 @@ export default function App() {
               <div className="grid grid-cols-2 gap-3.5 text-center">
                 <button
                   type="button"
-                  onClick={() => {
-                    state.setCurrentUser({
-                      username: 'luka_viticulture',
-                      email: 'luka.t@vinea.com',
-                      fullName: 'Luka Tatrishvili',
-                      role: 'Viticulturist',
-                      language: 'en'
-                    });
-                    state.setIsLoggedIn(true);
+                onClick={async () => {
+                  const success = await state.handleAuthLogin('luka_viticulture', 'vinea2026');
+                  if (success) {
                     state.setActiveModule('vazi');
-                  }}
-                  className="p-4 bg-[#fbfbf8] hover:bg-stone-50 hover:shadow-xs border border-stone-200/80 rounded-xl cursor-pointer text-left duration-150 flex flex-col justify-between group transition-all"
-                >
-                  <div className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-sm group-hover:scale-105 duration-100">🚜</div>
-                  <div className="mt-3 text-left">
-                    <strong className="text-[11px] font-bold block text-stone-850">{t.signin_role_viticulturist || 'Lead Viticulturist'}</strong>
-                    <span className="text-[9px] font-mono text-stone-400 font-bold block mt-0.5">Luka Tatrishvili</span>
-                  </div>
-                </button>
+                  }
+                }}
+                className="p-4 bg-[#fbfbf8] hover:bg-stone-50 hover:shadow-xs border border-stone-200/80 rounded-xl cursor-pointer text-left duration-150 flex flex-col justify-between group transition-all"
+              >
+                <div className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-sm group-hover:scale-105 duration-100">🚜</div>
+                <div className="mt-3 text-left">
+                  <strong className="text-[11px] font-bold block text-stone-850">{t.signin_role_viticulturist || 'Lead Viticulturist'}</strong>
+                  <span className="text-[9px] font-mono text-stone-400 font-bold block mt-0.5">Luka Tatrishvili</span>
+                </div>
+              </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    state.setCurrentUser({
-                      username: 'sophia_enology',
-                      email: 's.rossi@vinea.com',
-                      fullName: 'Sophia Rossi',
-                      role: 'Winemaker',
-                      language: 'en'
-                    });
-                    state.setIsLoggedIn(true);
+              <button
+                type="button"
+                onClick={async () => {
+                  const success = await state.handleAuthLogin('sophia_enology', 'vinea2026');
+                  if (success) {
                     state.setActiveModule('gvino');
-                  }}
-                  className="p-4 bg-[#fbfbf8] hover:bg-stone-50 hover:shadow-xs border border-stone-200/80 rounded-xl cursor-pointer text-left duration-150 flex flex-col justify-between group transition-all"
-                >
-                  <div className="w-8 h-8 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-sm group-hover:scale-105 duration-100">🍷</div>
-                  <div className="mt-3 text-left">
-                    <strong className="text-[11px] font-bold block text-stone-850">{t.signin_role_winemaker || 'Head Winemaker'}</strong>
-                    <span className="text-[9px] font-mono text-stone-400 font-bold block mt-0.5">Sophia Rossi</span>
-                  </div>
-                </button>
+                  }
+                }}
+                className="p-4 bg-[#fbfbf8] hover:bg-stone-50 hover:shadow-xs border border-stone-200/80 rounded-xl cursor-pointer text-left duration-150 flex flex-col justify-between group transition-all"
+              >
+                <div className="w-8 h-8 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-sm group-hover:scale-105 duration-100">🍷</div>
+                <div className="mt-3 text-left">
+                  <strong className="text-[11px] font-bold block text-stone-850">{t.signin_role_winemaker || 'Head Winemaker'}</strong>
+                  <span className="text-[9px] font-mono text-stone-400 font-bold block mt-0.5">Sophia Rossi</span>
+                </div>
+              </button>
               </div>
             </div>
           </div>
@@ -776,6 +886,9 @@ export default function App() {
                   onUpdateVessels={state.setVessels} 
                   onSelectTank={state.setSelectedTankId} 
                   selectedTankId={state.selectedTankId} 
+                  setActiveTab={state.setActiveTab}
+                  setPrefilledSourceId={state.setPrefilledSourceId}
+                  setPrefilledDestId={state.setPrefilledDestId}
                 />
               </div>
             )}
@@ -804,6 +917,12 @@ export default function App() {
                 lots={state.lots} 
                 onUpdateVessels={state.setVessels} 
                 onUpdateLots={state.setLots} 
+                prefilledSourceId={state.prefilledSourceId}
+                prefilledDestId={state.prefilledDestId}
+                clearPrefilled={() => {
+                  state.setPrefilledSourceId('');
+                  state.setPrefilledDestId('');
+                }}
               />
             )}
 
@@ -937,6 +1056,113 @@ export default function App() {
           </section>
 
         </main>
+      )}
+
+      {/* 2. CONFLICT RESOLUTION MODAL */}
+      {state.syncConflicts && state.syncConflicts.length > 0 && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white max-w-3xl w-full max-h-[85vh] rounded-2xl border border-stone-200 shadow-2xl flex flex-col overflow-hidden animate-scale-up">
+            <div className="px-6 py-4 border-b border-stone-200 bg-stone-50">
+              <h3 className="text-base font-serif font-black text-[#4e0e15]">
+                {state.lang === 'ka' ? 'სინქრონიზაციის კონფლიქტების მოგვარება' : 'Sync Conflict Resolution'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                {state.lang === 'ka'
+                  ? 'შემდეგი ჩანაწერები შეიცვალა როგორც ოფლაინ რეჟიმში, ასევე სერვერზე. გთხოვთ აირჩიოთ სასურველი ვერსია თითოეულისთვის:'
+                  : 'The following items were modified concurrently both offline and on the server. Select which version to preserve:'
+                }
+              </p>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1 font-sans">
+              {state.syncConflicts.map((conflict, idx) => {
+                const key = `${conflict.collection}-${conflict.recordId}`;
+                const currentChoice = resolutions[key] || 'server';
+                const diffKeys = (() => {
+                  const local = conflict.local || {};
+                  const server = conflict.server || {};
+                  const allKeys = new Set([...Object.keys(local), ...Object.keys(server)]);
+                  return Array.from(allKeys).filter(k => {
+                    if (k === 'lastModified' || k === 'history' || k === 'notesList') return false;
+                    return JSON.stringify(local[k]) !== JSON.stringify(server[k]);
+                  });
+                })();
+
+                return (
+                  <div key={idx} className="border border-stone-200 rounded-xl overflow-hidden shadow-xs bg-white text-stone-850">
+                    <div className="bg-stone-50 px-4 py-2 border-b border-stone-200 flex justify-between items-center text-xs font-mono font-bold text-stone-700">
+                      <span>{state.lang === 'ka' ? 'კოლექცია:' : 'Collection:'} {conflict.collection}</span>
+                      <span>ID: {conflict.recordId}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-stone-200">
+                      {/* Local/Offline */}
+                      <div 
+                        onClick={() => setResolutions(prev => ({ ...prev, [key]: 'local' }))}
+                        className={`p-4 cursor-pointer transition-all ${
+                          currentChoice === 'local' ? 'bg-emerald-50/50 ring-2 ring-emerald-600 ring-inset' : 'hover:bg-stone-50/50'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center mb-3">
+                          <span className="text-xs uppercase tracking-wider font-bold text-slate-500">
+                            {state.lang === 'ka' ? 'ლოკალური ვერსია (ოფლაინ)' : 'Local Version (Offline)'}
+                          </span>
+                          {currentChoice === 'local' && <span className="text-emerald-700 text-xs font-black">✓ Selected</span>}
+                        </div>
+                        
+                        <div className="space-y-1.5 text-xs font-mono">
+                          {diffKeys.map(k => (
+                            <div key={k} className="flex justify-between border-b pb-0.5 border-stone-100">
+                              <span className="text-slate-450">{k}:</span>
+                              <span className="font-semibold text-stone-800">{JSON.stringify(conflict.local?.[k])}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Server/Online */}
+                      <div 
+                        onClick={() => setResolutions(prev => ({ ...prev, [key]: 'server' }))}
+                        className={`p-4 cursor-pointer transition-all ${
+                          currentChoice === 'server' ? 'bg-emerald-50/50 ring-2 ring-emerald-600 ring-inset' : 'hover:bg-stone-50/50'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center mb-3">
+                          <span className="text-xs uppercase tracking-wider font-bold text-slate-500">
+                            {state.lang === 'ka' ? 'სერვერის ვერსია (ახალი)' : 'Server Version (Remote)'}
+                          </span>
+                          {currentChoice === 'server' && <span className="text-emerald-700 text-xs font-black">✓ Selected</span>}
+                        </div>
+
+                        <div className="space-y-1.5 text-xs font-mono">
+                          {diffKeys.map(k => (
+                            <div key={k} className="flex justify-between border-b pb-0.5 border-stone-100">
+                              <span className="text-slate-450">{k}:</span>
+                              <span className="font-semibold text-stone-800">{JSON.stringify(conflict.server?.[k])}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  state.resolveConflict(resolutions);
+                  setResolutions({});
+                }}
+                className="px-4 py-2 bg-[#4e0e15] hover:bg-[#801323] text-white text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs"
+              >
+                {state.lang === 'ka' ? 'შენახვა და შერწყმა' : 'Apply and Resolve Merge'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* SLIDE-OUT PANEL FOR SELECTED VESSEL DETAILED METRICS */}

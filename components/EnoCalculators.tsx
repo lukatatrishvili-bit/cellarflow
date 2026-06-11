@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Zap
 } from 'lucide-react';
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
 
 import { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
 
@@ -95,48 +96,7 @@ export default function EnoCalculators({
     }
   }, [calculatorLotId, lots, vessels, labLogs]);
 
-  // Pre-load Blending Calculator inputs from lot data when Lot A or Lot B is selected
-  useEffect(() => {
-    if (!calculatorLotIdA) return;
-    const lot = lots.find(l => l.id === calculatorLotIdA);
-    if (!lot) return;
-    
-    const vessel = vessels.find(v => v.assignedLotId === lot.id);
-    const lotLabs = labLogs.filter(log => log.lotId === lot.id);
-    const latestLab = lotLabs[0];
-    
-    if (latestLab) {
-      setBlendParamA(latestLab.alcoholPct || 13.5);
-      setBlendPHA(latestLab.ph || 3.5);
-      setBlendTAA(latestLab.titratableAcidity || 6.0);
-    }
-    if (vessel) {
-      setBlendVolA(vessel.currentVolume);
-    } else {
-      setBlendVolA(lot.currentVolume);
-    }
-  }, [calculatorLotIdA, lots, vessels, labLogs]);
-
-  useEffect(() => {
-    if (!calculatorLotIdB) return;
-    const lot = lots.find(l => l.id === calculatorLotIdB);
-    if (!lot) return;
-    
-    const vessel = vessels.find(v => v.assignedLotId === lot.id);
-    const lotLabs = labLogs.filter(log => log.lotId === lot.id);
-    const latestLab = lotLabs[0];
-    
-    if (latestLab) {
-      setBlendParamB(latestLab.alcoholPct || 13.5);
-      setBlendPHB(latestLab.ph || 3.5);
-      setBlendTAB(latestLab.titratableAcidity || 6.0);
-    }
-    if (vessel) {
-      setBlendVolB(vessel.currentVolume);
-    } else {
-      setBlendVolB(lot.currentVolume);
-    }
-  }, [calculatorLotIdB, lots, vessels, labLogs]);
+  // Selected lot states are synchronized to blendLot1 and blendLot2 in the multi-lot blend simulator below.
 
   useEffect(() => {
     // 1. Calculate temperature & alcohol adjusted pKa of SO2
@@ -194,83 +154,132 @@ export default function EnoCalculators({
   }, [so2CurrentFree, so2PH, so2Temp, so2ABV, so2Volume, so2TargetMolMode, so2CustomTargetMol, kmbsPurity]);
 
 
-  // --- CALCULATOR 2: LOGARITHMIC BLEND & PEARSON'S SQUARE ---
-  const [blendVolA, setBlendVolA] = useState<number>(3000);
-  const [blendParamA, setBlendParamA] = useState<number>(13.5); // ABV
-  const [blendPHA, setBlendPHA] = useState<number>(3.35); // pH logarithmic
-  const [blendTAA, setBlendTAA] = useState<number>(6.2); // TA g/L
+  // --- CALCULATOR 2: MULTI-LOT BLENDING SIMULATOR ---
+  const [blendLot1, setBlendLot1] = useState<string>('CS-2025-01');
+  const [blendPct1, setBlendPct1] = useState<number>(50);
+  
+  const [blendLot2, setBlendLot2] = useState<string>('RK-2025-A2');
+  const [blendPct2, setBlendPct2] = useState<number>(30);
+  
+  const [blendLot3, setBlendLot3] = useState<string>('SAP-2024-S1');
+  const [blendPct3, setBlendPct3] = useState<number>(20);
+  
+  const [blendLot4, setBlendLot4] = useState<string>('');
+  const [blendPct4, setBlendPct4] = useState<number>(0);
 
-  const [blendVolB, setBlendVolB] = useState<number>(1500);
-  const [blendParamB, setBlendParamB] = useState<number>(14.8); // ABV
-  const [blendPHB, setBlendPHB] = useState<number>(3.85); // pH logarithmic
-  const [blendTAB, setBlendTAB] = useState<number>(4.8); // TA g/L
+  const [blendTotalVol, setBlendTotalVol] = useState<number>(1000); // Blend scale in liters
 
-  // Pearson's Square helper inputs
-  const [pearsonsTarget, setPearsonsTarget] = useState<number>(13.9); // Target ABV
-  const [pearsonsTotalVol, setPearsonsTotalVol] = useState<number>(4500); // Desired blend volume
-
-  const [blendOutput, setBlendOutput] = useState<{
+  const [multiBlendOutput, setMultiBlendOutput] = useState<{
     totalVolume: number;
     finalABV: number;
     finalTA: number;
     finalPH: number;
-    pearsonsRatioA: number;
-    pearsonsRatioB: number;
-    pearsonsVolA: number;
-    pearsonsVolB: number;
-    isPearsonsFeasible: boolean;
+    finalCost: number;
+    finalTannins: number;
+    finalAcidity: number;
+    finalBody: number;
+    finalAromatics: number;
+    finalWood: number;
+    finalFruit: number;
+    lotBreakdown: Array<{ id: string; name: string; pct: number; volume: number }>;
   } | null>(null);
 
+  // Sync inputs from redirection props
   useEffect(() => {
-    const totalVolume = blendVolA + blendVolB;
-    if (totalVolume <= 0) return;
+    if (calculatorLotIdA) {
+      setBlendLot1(calculatorLotIdA);
+    }
+  }, [calculatorLotIdA]);
 
-    // Linear weighted parameters (ABV & TA)
-    const finalABV = ((blendVolA * blendParamA) + (blendVolB * blendParamB)) / totalVolume;
-    const finalTA = ((blendVolA * blendTAA) + (blendVolB * blendTAB)) / totalVolume;
+  useEffect(() => {
+    if (calculatorLotIdB) {
+      setBlendLot2(calculatorLotIdB);
+    }
+  }, [calculatorLotIdB]);
 
-    // LOGARITHMIC pH Blending: [H+] = 10^-pH
-    const hConcA = Math.pow(10, -blendPHA);
-    const hConcB = Math.pow(10, -blendPHB);
-    const blendedHConc = ((blendVolA * hConcA) + (blendVolB * hConcB)) / totalVolume;
-    const finalPH = -Math.log10(blendedHConc);
+  useEffect(() => {
+    // 1. Gather all active components
+    const componentSpecs = [
+      { id: blendLot1, pct: blendPct1 },
+      { id: blendLot2, pct: blendPct2 },
+      { id: blendLot3, pct: blendPct3 },
+      { id: blendLot4, pct: blendPct4 }
+    ];
 
-    // Pearson's Square proportionality targeting ABV (blendParamA vs blendParamB towards target)
-    const minParam = Math.min(blendParamA, blendParamB);
-    const maxParam = Math.max(blendParamA, blendParamB);
-    const isPearsonsFeasible = pearsonsTarget > minParam && pearsonsTarget < maxParam;
+    const activeSpecs = componentSpecs.filter(c => c.id && c.pct > 0);
+    const sumPct = activeSpecs.reduce((sum, c) => sum + c.pct, 0);
 
-    let pearsonsRatioA = 0;
-    let pearsonsRatioB = 0;
-    let pearsonsVolA = 0;
-    let pearsonsVolB = 0;
-
-    if (isPearsonsFeasible) {
-      // Parts of A = Absolute difference of B and Target
-      const partsA = Math.abs(blendParamB - pearsonsTarget);
-      // Parts of B = Absolute difference of A and Target
-      const partsB = Math.abs(blendParamA - pearsonsTarget);
-      const totalParts = partsA + partsB;
-
-      pearsonsRatioA = partsA / totalParts;
-      pearsonsRatioB = partsB / totalParts;
-
-      pearsonsVolA = pearsonsTotalVol * pearsonsRatioA;
-      pearsonsVolB = pearsonsTotalVol * pearsonsRatioB;
+    if (activeSpecs.length === 0 || sumPct <= 0) {
+      setMultiBlendOutput(null);
+      return;
     }
 
-    setBlendOutput({
-      totalVolume,
-      finalABV,
-      finalTA,
-      finalPH,
-      pearsonsRatioA,
-      pearsonsRatioB,
-      pearsonsVolA,
-      pearsonsVolB,
-      isPearsonsFeasible
+    let weightedABV = 0;
+    let weightedTA = 0;
+    let blendedHConc = 0;
+    let weightedCost = 0;
+
+    let weightedTannins = 0;
+    let weightedAcidity = 0;
+    let weightedBody = 0;
+    let weightedAromatics = 0;
+    let weightedWood = 0;
+    let weightedFruit = 0;
+
+    const breakdown = activeSpecs.map(spec => {
+      const lot = lots.find(l => l.id === spec.id);
+      const name = lot ? lot.name : spec.id;
+      const lotLabs = labLogs.filter(log => log.lotId === spec.id);
+      const latestLab = lotLabs[0];
+
+      // Proportional ratio within the active components sum
+      const ratio = spec.pct / sumPct;
+
+      const abv = latestLab ? latestLab.alcoholPct : 13.5;
+      const ph = latestLab ? latestLab.ph : 3.5;
+      const ta = latestLab ? latestLab.titratableAcidity : 6.0;
+      const cost = 6.5; // typical default cost per L
+
+      // Sensory profile mapping
+      const sensory = lot?.sensoryProfile || { tannins: 5, acidity: 5, body: 5, aromatics: 5, wood: 2, fruit: 5 };
+
+      weightedABV += abv * ratio;
+      weightedTA += ta * ratio;
+      blendedHConc += Math.pow(10, -ph) * ratio;
+      weightedCost += cost * ratio;
+
+      weightedTannins += (sensory.tannins ?? 5) * ratio;
+      weightedAcidity += (sensory.acidity ?? 5) * ratio;
+      weightedBody += (sensory.body ?? 5) * ratio;
+      weightedAromatics += (sensory.aromatics ?? 5) * ratio;
+      weightedWood += (sensory.wood ?? 2) * ratio;
+      weightedFruit += (sensory.fruit ?? 5) * ratio;
+
+      return {
+        id: spec.id,
+        name,
+        pct: (spec.pct / sumPct) * 100,
+        volume: blendTotalVol * ratio
+      };
     });
-  }, [blendVolA, blendParamA, blendPHA, blendTAA, blendVolB, blendParamB, blendPHB, blendTAB, pearsonsTarget, pearsonsTotalVol]);
+
+    const finalPH = -Math.log10(blendedHConc);
+
+    setMultiBlendOutput({
+      totalVolume: blendTotalVol,
+      finalABV: weightedABV,
+      finalTA: weightedTA,
+      finalPH,
+      finalCost: weightedCost,
+      finalTannins: weightedTannins,
+      finalAcidity: weightedAcidity,
+      finalBody: weightedBody,
+      finalAromatics: weightedAromatics,
+      finalWood: weightedWood,
+      finalFruit: weightedFruit,
+      lotBreakdown: breakdown
+    });
+  }, [blendLot1, blendPct1, blendLot2, blendPct2, blendLot3, blendPct3, blendLot4, blendPct4, blendTotalVol, lots, labLogs]);
 
 
   // --- CALCULATOR 3: ADVANCED ALCOHOL & FERMENTATION ATTENUATOR ---
@@ -865,230 +874,291 @@ export default function EnoCalculators({
           )}
         </div>
       )}
-
-      {/* --- TAB 2 DETAILED CONTENT: LOGARITHMIC BLEND & PEARSONS SQUARE --- */}
+        {/* --- TAB 2 DETAILED CONTENT: MULTI-LOT BLENDING SANDBOX & SENSORY RADAR --- */}
       {activeSubTab === 'blend' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Blend specifications */}
           <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <Droplets className="w-4.5 h-4.5 text-[#801323]" />
-              Double Lot Assembly & Pearson′s Proportioner
+              {lang === 'ka' ? 'მრავალ-ლოტიანი კუპაჟირების სიმულატორი' : 'Multi-Lot Blending Sandbox'}
             </h3>
+            <p className="text-xs text-slate-500">
+              {lang === 'ka' 
+                ? 'შეურიეთ 4-მდე სხვადასხვა ღვინის პარტია პროპორციების რეგულირებით. სისტემა დაითვლის ფიზიკურ-ქიმიურ პარამეტრებს და იწინასწარმეტყველებს ორგანოლეპტიკურ პროფილს.'
+                : 'Simulate blending up to 4 distinct wine lots. Adjust proportions dynamically to calculate predicted chemistry parameters and visualize the projected sensory profile.'
+              }
+            </p>
 
-            {/* Lot A */}
-            <div className="space-y-2 p-3 bg-[#FCFAF8] border border-[#f0e6da]/70 rounded-lg">
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-mono font-black uppercase text-[#801323] block">Lot A Wine component</span>
-                {lots && lots.length > 0 && (
-                  <select
-                    value={calculatorLotIdA}
-                    onChange={(e) => setCalculatorLotIdA(e.target.value)}
-                    className="px-2 py-0.5 text-[10px] border border-stone-200 rounded bg-white text-stone-800 font-bold outline-none cursor-pointer"
-                  >
-                    <option value="">-- Populate A --</option>
-                    {lots.map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <div className="col-span-2">
-                  <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">Lot A Vol (L)</label>
-                  <input 
-                    type="number"
-                    value={blendVolA}
-                    onChange={(e) => setBlendVolA(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">ABV (%)</label>
-                  <input 
-                    type="number"
-                    step="0.05"
-                    value={blendParamA}
-                    onChange={(e) => setBlendParamA(parseFloat(e.target.value) || 0)}
-                    className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">Wine pH</label>
-                  <input 
-                    type="number"
-                    step="0.01"
-                    value={blendPHA}
-                    onChange={(e) => setBlendPHA(parseFloat(e.target.value) || 3.5)}
-                    className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded font-mono"
-                  />
-                </div>
-              </div>
+            <div className="space-y-3">
+              {[
+                { id: blendLot1, setLot: setBlendLot1, pct: blendPct1, setPct: setBlendPct1, color: 'text-rose-800', label: lang === 'ka' ? 'ლოტი 1' : 'Lot 1 Component' },
+                { id: blendLot2, setLot: setBlendLot2, pct: blendPct2, setPct: setBlendPct2, color: 'text-amber-700', label: lang === 'ka' ? 'Lot 2 Component' : 'Lot 2 Component' },
+                { id: blendLot3, setLot: setBlendLot3, pct: blendPct3, setPct: setBlendPct3, color: 'text-emerald-700', label: lang === 'ka' ? 'Lot 3 Component' : 'Lot 3 Component' },
+                { id: blendLot4, setLot: setBlendLot4, pct: blendPct4, setPct: setBlendPct4, color: 'text-indigo-700', label: lang === 'ka' ? 'Lot 4 Component' : 'Lot 4 Component' }
+              ].map((item, index) => {
+                const selectedLot = lots.find(l => l.id === item.id);
+                return (
+                  <div key={index} className="p-3 bg-[#FCFAF8] border border-[#f0e6da]/70 rounded-lg space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className={`text-[10px] font-mono font-black uppercase ${item.color} block`}>
+                        {lang === 'ka' ? `კომპონენტი ${index + 1}` : item.label}
+                      </span>
+                      <select
+                        value={item.id}
+                        onChange={(e) => {
+                          item.setLot(e.target.value);
+                          if (!e.target.value) item.setPct(0);
+                          else if (item.pct === 0) item.setPct(25);
+                        }}
+                        className="px-2 py-0.5 text-[11px] border border-stone-200 rounded bg-white text-stone-850 font-bold outline-none cursor-pointer"
+                      >
+                        <option value="">{lang === 'ka' ? '-- ცარიელი --' : '-- Empty / None --'}</option>
+                        {lots.map(l => (
+                          <option key={l.id} value={l.id}>{l.name} ({l.id})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {item.id && (
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={item.pct}
+                            onChange={(e) => item.setPct(parseInt(e.target.value) || 0)}
+                            className="flex-1 accent-[#801323] cursor-pointer h-1.5"
+                          />
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={item.pct}
+                              onChange={(e) => item.setPct(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                              className="w-12 text-center text-xs font-mono font-bold border border-stone-200 rounded px-1 py-0.5"
+                            />
+                            <span className="text-xs font-mono text-stone-500">%</span>
+                          </div>
+                        </div>
+                        {selectedLot && (
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-stone-500 font-mono">
+                            <span>{lang === 'ka' ? 'მოცულობა:' : 'Available:'} {selectedLot.currentVolume}L</span>
+                            {labLogs.filter(log => log.lotId === item.id)[0] && (
+                              <>
+                                <span>ABV: {labLogs.filter(log => log.lotId === item.id)[0].alcoholPct}%</span>
+                                <span>pH: {labLogs.filter(log => log.lotId === item.id)[0].ph}</span>
+                                <span>TA: {labLogs.filter(log => log.lotId === item.id)[0].titratableAcidity}g/L</span>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Lot B */}
-            <div className="space-y-2 p-3 bg-[#FCFAF8] border border-[#f0e6da]/70 rounded-lg">
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-mono font-black uppercase text-[#d97706] block">Lot B Wine component</span>
-                {lots && lots.length > 0 && (
-                  <select
-                    value={calculatorLotIdB}
-                    onChange={(e) => setCalculatorLotIdB(e.target.value)}
-                    className="px-2 py-0.5 text-[10px] border border-stone-200 rounded bg-white text-stone-800 font-bold outline-none cursor-pointer"
+            {/* Total volume scale and auto normalize */}
+            <div className="p-3.5 border border-stone-200 bg-[#FCFAF8] rounded-lg space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                    {lang === 'ka' ? 'სამიზნე მოცულობა (L)' : 'Total Blend Target (L)'}
+                  </label>
+                  <input
+                    type="number"
+                    value={blendTotalVol}
+                    onChange={(e) => setBlendTotalVol(Math.max(1, parseInt(e.target.value) || 100))}
+                    className="w-full px-2.5 py-1.5 bg-white border border-stone-250 text-xs rounded font-bold outline-none text-stone-800"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const activePcts = [
+                        { id: blendLot1, pct: blendPct1, set: setBlendPct1 },
+                        { id: blendLot2, pct: blendPct2, set: setBlendPct2 },
+                        { id: blendLot3, pct: blendPct3, set: setBlendPct3 },
+                        { id: blendLot4, pct: blendPct4, set: setBlendPct4 }
+                      ].filter(item => item.id);
+                      
+                      const totalActive = activePcts.reduce((sum, item) => sum + item.pct, 0);
+                      if (totalActive === 0) {
+                        const count = activePcts.length;
+                        if (count > 0) {
+                          const even = Math.floor(100 / count);
+                          activePcts.forEach((item, index) => {
+                            item.set(index === count - 1 ? 100 - even * (count - 1) : even);
+                          });
+                        }
+                        return;
+                      }
+                      let runningSum = 0;
+                      activePcts.forEach((item, index) => {
+                        if (index === activePcts.length - 1) {
+                          item.set(100 - runningSum);
+                        } else {
+                          const norm = Math.round((item.pct / totalActive) * 100);
+                          item.set(norm);
+                          runningSum += norm;
+                        }
+                      });
+                    }}
+                    className="w-full px-3 py-1.5 bg-[#4e0e15] hover:bg-[#801323] text-white text-xs font-bold rounded-lg transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1"
                   >
-                    <option value="">-- Populate B --</option>
-                    {lots.map(l => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <div className="col-span-2">
-                  <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">Lot B Vol (L)</label>
-                  <input 
-                    type="number"
-                    value={blendVolB}
-                    onChange={(e) => setBlendVolB(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">ABV (%)</label>
-                  <input 
-                    type="number"
-                    step="0.05"
-                    value={blendParamB}
-                    onChange={(e) => setBlendParamB(parseFloat(e.target.value) || 0)}
-                    className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] font-mono text-slate-450 uppercase block mb-1">Wine pH</label>
-                  <input 
-                    type="number"
-                    step="0.01"
-                    value={blendPHB}
-                    onChange={(e) => setBlendPHB(parseFloat(e.target.value) || 3.5)}
-                    className="w-full px-2 py-1 text-xs bg-white border border-slate-200 rounded font-mono"
-                  />
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>{lang === 'ka' ? 'ავტო-ნორმალიზება' : 'Auto-Normalize to 100%'}</span>
+                  </button>
                 </div>
               </div>
-            </div>
 
-            {/* Pearson's Target Panel */}
-            <div className="p-3 border border-indigo-100 bg-indigo-50/40 rounded-lg space-y-2.5">
-              <span className="text-[10px] font-mono font-black uppercase text-indigo-900 flex items-center gap-1">
-                <Compass className="w-3.5 h-3.5" />
-                Active Target blend Optimizer (Pearson′s square)
-              </span>
-              <p className="text-[10.5px] text-indigo-950">
-                Determine the exact ratios of Lot A and Lot B dynamically. Input desired target alcohol concentration and target size:
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">Target ABV (%)</label>
-                  <input 
-                    type="number"
-                    step="0.05"
-                    value={pearsonsTarget}
-                    onChange={(e) => setPearsonsTarget(parseFloat(e.target.value) || 12.0)}
-                    className="w-full px-2 py-1 bg-white border border-indigo-200 text-xs rounded font-bold text-indigo-900 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] font-bold text-slate-500 uppercase block mb-0.5">Target total Volume (L)</label>
-                  <input 
-                    type="number"
-                    value={pearsonsTotalVol}
-                    onChange={(e) => setPearsonsTotalVol(Math.max(1, parseInt(e.target.value) || 100))}
-                    className="w-full px-2 py-1 bg-white border border-indigo-200 text-xs rounded font-bold text-indigo-900 outline-none"
-                  />
-                </div>
-              </div>
+              {/* Percentage validation warning */}
+              {(() => {
+                const totalPct = [
+                  blendLot1 ? blendPct1 : 0,
+                  blendLot2 ? blendPct2 : 0,
+                  blendLot3 ? blendPct3 : 0,
+                  blendLot4 ? blendPct4 : 0
+                ].reduce((a, b) => a + b, 0);
+
+                if (totalPct !== 100 && totalPct > 0) {
+                  return (
+                    <div className="p-2 border border-amber-250 bg-amber-50 text-amber-950 rounded text-xs flex items-center gap-1.5">
+                      <TriangleAlert className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>
+                        {lang === 'ka'
+                          ? `ყურადღება: პროპორციების ჯამი არის ${totalPct}%. კალკულაციებისთვის მნიშვნელობები ნორმალიზდება 100%-მდე.`
+                          : `Warning: Proportions sum up to ${totalPct}%. Values will be normalized to 100% for chemistry predictions.`
+                        }
+                      </span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
           </div>
 
-          {/* Blend output */}
-          {blendOutput && (
-            <div className="lg:col-span-5 space-y-4">
-              {/* Core blend outputs */}
-              <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
-                <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2 flex items-center gap-1.5">
-                  <Droplets className="w-4 h-4 text-rose-800" />
-                  Calculated Blend matrix
-                </h4>
+          {/* Predicted blend outputs and Radar sensory chart */}
+          <div className="lg:col-span-5 space-y-4">
+            {multiBlendOutput ? (
+              <>
+                {/* Predicted Chemistry Matrix */}
+                <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
+                  <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2 flex items-center gap-1.5">
+                    <Droplets className="w-4 h-4 text-rose-800" />
+                    {lang === 'ka' ? 'კუპაჟის ქიმიური პროგნოზი' : 'Predicted Blend Chemistry'}
+                  </h4>
 
-                <div className="space-y-2.5 text-xs">
-                  <div className="flex justify-between font-mono pb-1 border-b border-slate-100">
-                    <span className="text-slate-500">Total volume:</span>
-                    <strong className="text-stone-800 text-sm font-black">{blendOutput.totalVolume.toLocaleString()} Liters</strong>
-                  </div>
-                  
-                  <div className="flex justify-between font-mono pb-1 border-b border-slate-100">
-                    <span className="text-slate-500">Finished ABV%:</span>
-                    <strong className="text-stone-800 font-bold">{blendOutput.finalABV.toFixed(2)} % vol</strong>
-                  </div>
-
-                  {/* Logarithmic pH display */}
-                  <div className="p-2.5 bg-[#fdfaf7] border border-[#f0e6da] rounded">
-                    <div className="flex justify-between font-mono text-xs items-center">
-                      <span className="text-slate-500 flex items-center gap-1">
-                        Blended pH (Logarithmic):
-                        <span className="text-[8px] uppercase px-1.5 bg-rose-50 border border-stone-200 text-stone-605 rounded">Ion Model</span>
-                      </span>
-                      <strong className="text-[#801323] text-sm font-black">{blendOutput.finalPH.toFixed(2)}</strong>
+                  <div className="space-y-2.5 text-xs">
+                    <div className="flex justify-between font-mono pb-1 border-b border-slate-100">
+                      <span className="text-slate-500">{lang === 'ka' ? 'სულ მოცულობა:' : 'Total Volume:'}</span>
+                      <strong className="text-stone-800 text-sm font-black">{multiBlendOutput.totalVolume.toLocaleString()} L</strong>
                     </div>
-                    <span className="text-[9px] text-[#801323] font-serif italic block mt-1">
-                      Note: pH is logarithmic. Simply averaging values is incorrect; we model true hydrogen ion saturation.
-                    </span>
+
+                    <div className="flex justify-between font-mono pb-1 border-b border-slate-100">
+                      <span className="text-slate-500">{lang === 'ka' ? 'ალკოჰოლი (ABV):' : 'Finished ABV%:'}</span>
+                      <strong className="text-stone-800 font-bold">{multiBlendOutput.finalABV.toFixed(2)} % vol</strong>
+                    </div>
+
+                    <div className="flex justify-between font-mono pb-1 border-b border-slate-100">
+                      <span className="text-slate-500">{lang === 'ka' ? 'საერთო მჟავიანობა (TA):' : 'Titratable Acidity:'}</span>
+                      <strong className="text-stone-800 font-bold">{multiBlendOutput.finalTA.toFixed(2)} g/L</strong>
+                    </div>
+
+                    <div className="flex justify-between font-mono pb-1 border-b border-slate-100">
+                      <span className="text-slate-500">{lang === 'ka' ? 'თვითღირებულება:' : 'Estimated Cost:'}</span>
+                      <strong className="text-stone-800 font-bold">${multiBlendOutput.finalCost.toFixed(2)} / L</strong>
+                    </div>
+
+                    {/* Logarithmic pH display */}
+                    <div className="p-2.5 bg-[#fdfaf7] border border-[#f0e6da] rounded">
+                      <div className="flex justify-between font-mono text-xs items-center">
+                        <span className="text-slate-500 flex items-center gap-1">
+                          {lang === 'ka' ? 'აქტიური pH (ლოგარითმული):' : 'Blended pH (Logarithmic):'}
+                          <span className="text-[8px] uppercase px-1.5 bg-rose-50 border border-stone-200 text-stone-605 rounded">Ion Model</span>
+                        </span>
+                        <strong className="text-[#801323] text-sm font-black">{multiBlendOutput.finalPH.toFixed(2)}</strong>
+                      </div>
+                      <span className="text-[9px] text-[#801323] font-serif italic block mt-1 leading-normal">
+                        {lang === 'ka'
+                          ? 'შენიშვნა: pH არის ლოგარითმული. საშუალო არითმეტიკულის გამოთვლა არასწორია; ჩვენ ვიყენებთ წყალბადის იონების კონცენტრაციის ფიზიკურ მოდელს.'
+                          : 'Note: pH is logarithmic. Simple averaging is incorrect; we model chemical hydrogen ion concentrations.'
+                        }
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Pearson's optimization outputs */}
-              <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
-                <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2 flex items-center gap-1.5">
-                  <Compass className="w-4 h-4 text-indigo-700" />
-                  Pearson′s square results
-                </h4>
+                {/* Radar Chart sensory projection */}
+                <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-3 shadow-xs">
+                  <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2 flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-amber-500" />
+                    {lang === 'ka' ? 'სენსორული პროფილის პროექცია' : 'Sensory flavor projection'}
+                  </h4>
 
-                {blendOutput.isPearsonsFeasible ? (
-                  <div className="space-y-3 text-xs">
-                    <div className="flex items-center justify-between text-indigo-900 bg-indigo-50 px-2 py-1 rounded font-bold font-mono">
-                      <span>Proportions Achievable</span>
-                      <span>Target: {pearsonsTarget}%</span>
-                    </div>
-
-                    <div className="space-y-2 font-mono text-[11.5px]">
-                      <div className="flex justify-between border-b pb-1 border-stone-100">
-                        <span>Lot A Contribution:</span>
-                        <strong className="text-[#801323] font-black">{blendOutput.pearsonsVolA.toFixed(0)} Liters ({(blendOutput.pearsonsRatioA * 100).toFixed(1)}%)</strong>
-                      </div>
-                      <div className="flex justify-between border-b pb-1 border-stone-100">
-                        <span>Lot B Contribution:</span>
-                        <strong className="text-[#d97706] font-black">{blendOutput.pearsonsVolB.toFixed(0)} Liters ({(blendOutput.pearsonsRatioB * 100).toFixed(1)}%)</strong>
-                      </div>
-                    </div>
-
-                    <p className="text-[9.5px] italic text-slate-400 font-serif leading-relaxed">
-                      Pearson&#39;s limits require mixing {(blendOutput.pearsonsRatioA * 100).toFixed(1)}% of Lot A with {(blendOutput.pearsonsRatioB * 100).toFixed(1)}% of Lot B.
-                    </p>
+                  <div className="w-full flex justify-center py-2 bg-stone-50/50 rounded-lg">
+                    <ResponsiveContainer width="100%" height={230}>
+                      <RadarChart
+                        cx="50%"
+                        cy="50%"
+                        outerRadius="80%"
+                        data={[
+                          { subject: lang === 'ka' ? 'ტანინები' : 'Tannins', A: multiBlendOutput.finalTannins },
+                          { subject: lang === 'ka' ? 'მჟავიანობა' : 'Acidity', A: multiBlendOutput.finalAcidity },
+                          { subject: lang === 'ka' ? 'სხეული' : 'Body', A: multiBlendOutput.finalBody },
+                          { subject: lang === 'ka' ? 'არომატი' : 'Aromatics', A: multiBlendOutput.finalAromatics },
+                          { subject: lang === 'ka' ? 'მუხა' : 'Wood', A: multiBlendOutput.finalWood },
+                          { subject: lang === 'ka' ? 'ხილი' : 'Fruit', A: multiBlendOutput.finalFruit }
+                        ]}
+                      >
+                        <PolarGrid stroke="#e8dfd5" />
+                        <PolarAngleAxis dataKey="subject" tick={{ fill: '#4e0e15', fontSize: 10, fontWeight: 'semibold' }} />
+                        <Radar name="Predicted" dataKey="A" stroke="#801323" fill="#801323" fillOpacity={0.4} />
+                      </RadarChart>
+                    </ResponsiveContainer>
                   </div>
-                ) : (
-                  <div className="p-3 border border-red-200 bg-red-50 text-red-950 rounded text-xs space-y-1">
-                    <strong className="font-bold flex items-center gap-1">
-                      <TriangleAlert className="w-4 h-4 text-red-650" />
-                      Target Out of Ranges
-                    </strong>
-                    <p className="text-[10px]">
-                      The target ABV ({pearsonsTarget}%) can only be created by blending if it lies between current Lot A ({blendParamA}%) and Lot B ({blendParamB}%).
-                    </p>
-                  </div>
-                )}
+
+                  {/* Export Recipe Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = `Vinea Blending Recipe\n====================\nDate: ${new Date().toLocaleDateString()}\nTotal Blend Target: ${multiBlendOutput.totalVolume} L\n\nComposition:\n` + 
+                        multiBlendOutput.lotBreakdown.map(b => `- ${b.name} (${b.id}): ${b.pct.toFixed(1)}% (${b.volume.toFixed(0)} L)`).join('\n') +
+                        `\n\nPredicted Chemistry:\n- Finished ABV: ${multiBlendOutput.finalABV.toFixed(2)}%\n- Titratable Acidity: ${multiBlendOutput.finalTA.toFixed(2)} g/L\n- Blended pH: ${multiBlendOutput.finalPH.toFixed(2)}\n- Estimated Unit Cost: $${multiBlendOutput.finalCost.toFixed(2)}/L`;
+                      
+                      const blob = new Blob([text], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `blend-recipe-${new Date().toISOString().slice(0,10)}.txt`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="w-full py-2 bg-stone-100 hover:bg-stone-200 border border-stone-250 text-stone-800 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <span>{lang === 'ka' ? 'რეცეპტის ექსპორტი (TXT)' : 'Export Assembly Recipe (TXT)'}</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="bg-stone-50 p-8 text-center border border-dashed border-stone-200 rounded-xl">
+                <p className="text-xs text-stone-500 italic">
+                  {lang === 'ka'
+                    ? 'გთხოვთ აირჩიოთ კომპონენტები და მიუთითოთ პროპორციები კალკულაციისთვის.'
+                    : 'Select active wine components and input percentages to preview predicted properties.'
+                  }
+                </p>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 

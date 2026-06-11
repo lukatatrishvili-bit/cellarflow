@@ -60,13 +60,22 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       .append('g')
       .attr('transform', `translate(${margin.left}, ${margin.top})`);
 
-    // Parse Dates
+    // Parse Dates & calculate expected curve
     const parseTime = d3.timeParse('%Y-%m-%d');
+    const startTime = parseTime(activeLogs[0].date)?.getTime() || new Date(activeLogs[0].date).getTime();
+    const startDensity = activeLogs[0].density;
+
     const formattedData = activeLogs.map((d) => {
       const parsedDate = parseTime(d.date) || new Date(d.date);
+      const daysElapsed = (parsedDate.getTime() - startTime) / (24 * 60 * 60 * 1000);
+      const targetDuration = 14;
+      const f = 0.5 * (1 - Math.cos(Math.min(1, daysElapsed / targetDuration) * Math.PI));
+      const targetDensity = startDensity - (startDensity - 0.990) * f;
+      
       return {
         ...d,
         parsedDate,
+        targetDensity
       };
     });
 
@@ -150,6 +159,20 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       .attr('stroke-width', 2.5)
       .attr('stroke-dasharray', '5, 3') // Dashed to distinguish
       .attr('d', densityLineGen);
+
+    // Draw Target Reference Density Curve Path
+    const targetDensityLineGen = d3.line<any>()
+      .x((d) => xScale(d.parsedDate))
+      .y((d) => yDensityScale(d.targetDensity))
+      .curve(d3.curveMonotoneX);
+
+    g.append('path')
+      .datum(formattedData)
+      .attr('fill', 'none')
+      .attr('stroke', '#94a3b8') // Soft slate gray
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '2, 3')
+      .attr('d', targetDensityLineGen);
 
     const totalLengthDensity = densityPath.node() ? (densityPath.node() as SVGPathElement).getTotalLength() : 0;
     densityPath
@@ -288,6 +311,10 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
               <span className="w-2 h-2 rounded-full border border-[#d97706] bg-white inline-block -ml-3 mr-1"></span>
               <span className="text-[#d97706]">Alcohol Density (SG Gravity)</span>
             </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-0.5 bg-[#94a3b8] border-dashed inline-block"></span>
+              <span className="text-[#94a3b8]">Target Kinetic Profile (SG)</span>
+            </div>
           </div>
         </div>
       )}
@@ -309,7 +336,9 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
             </div>
             <div>
               <span className="text-stone-400 text-[10px] block">Density:</span>
-              <strong className="text-amber-400 font-mono font-bold">{hoveredPoint.density} SG</strong>
+              <strong className="text-amber-400 font-mono font-bold">
+                {hoveredPoint.density} SG <span className="text-stone-500 font-normal">({(hoveredPoint as any).targetDensity?.toFixed(3)} target)</span>
+              </strong>
             </div>
             <div>
               <span className="text-stone-400 text-[10px] block">Temperature:</span>

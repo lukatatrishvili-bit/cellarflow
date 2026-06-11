@@ -27,6 +27,9 @@ interface Props {
   lots: WineLot[];
   onUpdateVessels: (newVessels: Vessel[]) => void;
   onUpdateLots: (newLots: WineLot[]) => void;
+  prefilledSourceId?: string;
+  prefilledDestId?: string;
+  clearPrefilled?: () => void;
 }
 
 interface TransferRecord {
@@ -42,7 +45,10 @@ interface TransferRecord {
   details: string;
 }
 
-export default function TransfersTab({ lang, vessels, lots, onUpdateVessels, onUpdateLots }: Props) {
+export default function TransfersTab({ 
+  lang, vessels, lots, onUpdateVessels, onUpdateLots, 
+  prefilledSourceId, prefilledDestId, clearPrefilled 
+}: Props) {
   const t = translations[lang];
 
   // Transfer input states
@@ -54,6 +60,24 @@ export default function TransfersTab({ lang, vessels, lots, onUpdateVessels, onU
   const [operatorName, setOperatorName] = useState<string>('');
   const [reasonCategory, setReasonCategory] = useState<'racking' | 'blend' | 'filtration' | 'bottling'>('racking');
   const [operationReceipt, setOperationReceipt] = useState<string | null>(null);
+
+  // Apply prefilled values when redirected from map drop
+  useEffect(() => {
+    if (prefilledSourceId) {
+      setSourceId(prefilledSourceId);
+      // Auto-set transfer volume to source's volume as a sensible default
+      const srcVessel = vessels.find(v => v.id === prefilledSourceId);
+      if (srcVessel) {
+        setTransferVol(srcVessel.currentVolume);
+      }
+    }
+    if (prefilledDestId) {
+      setDestId(prefilledDestId);
+    }
+    if (prefilledSourceId || prefilledDestId) {
+      clearPrefilled?.();
+    }
+  }, [prefilledSourceId, prefilledDestId, vessels, clearPrefilled]);
 
   // Custom transfers list for persistence
   const [pastTransfers, setPastTransfers] = useState<TransferRecord[]>([]);

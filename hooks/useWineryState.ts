@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Language } from '../lib/i18n';
+import { SyncQueueManager, IndexedDBQueue } from '../lib/syncQueue';
 import {
   initialVessels,
   initialLots,
@@ -83,6 +84,8 @@ export function useWineryState() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [passportLotId, setPassportLotId] = useState<string | null>(null);
+  const [syncConflicts, setSyncConflicts] = useState<any[] | null>(null);
+  const [pendingServerDb, setPendingServerDb] = useState<any | null>(null);
 
   // Auth States
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -166,10 +169,146 @@ export function useWineryState() {
   const [calculatorLotIdA, setCalculatorLotIdA] = useState('');
   const [calculatorLotIdB, setCalculatorLotIdB] = useState('');
 
-  // Prefilled task parameters
   const [prefilledTaskTitle, setPrefilledTaskTitle] = useState('');
   const [prefilledTaskPriority, setPrefilledTaskPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [prefilledTaskDesc, setPrefilledTaskDesc] = useState('');
+  const [prefilledSourceId, setPrefilledSourceId] = useState('');
+  const [prefilledDestId, setPrefilledDestId] = useState('');
+
+  // Synchronization refs to manage server state & loop prevention
+  const isSyncing = useRef(false);
+  const hasHydrated = useRef(false);
+  const lastServerState = useRef<Record<string, string>>({});
+
+  const updateAllStates = (data: any) => {
+    isSyncing.current = true;
+    
+    const setSafe = (setter: any, val: any, key: string) => {
+      if (val !== undefined) {
+        setter(val);
+        lastServerState.current[key] = JSON.stringify(val);
+      }
+    };
+    
+    setSafe(setVessels, data.vessels, 'vessels');
+    setSafe(setLots, data.lots, 'lots');
+    setSafe(setFermLogs, data.fermlogs, 'fermLogs');
+    setSafe(setLabLogs, data.lablogs, 'labLogs');
+    setSafe(setInventory, data.inventory, 'inventory');
+    setSafe(setTasks, data.tasks, 'tasks');
+    setSafe(setNotesList, data.notes, 'notesList');
+    setSafe(setBlocks, data.blocks, 'blocks');
+    setSafe(setPhenologyLogs, data.phenologyLogs, 'phenologyLogs');
+    setSafe(setSprays, data.sprays, 'sprays');
+    setSafe(setScoutings, data.scoutings, 'scoutings');
+    setSafe(setSoilRecords, data.soilRecords, 'soilRecords');
+    setSafe(setSamplings, data.samplings, 'samplings');
+    setSafe(setHarvests, data.harvests, 'harvests');
+    setSafe(setIrrigationLogs, data.irrigationLogs, 'irrigationLogs');
+    setSafe(setFertilizerLogs, data.fertilizerLogs, 'fertilizerLogs');
+    setSafe(setAuditLogs, data.auditLogs, 'auditLogs');
+    setSafe(setCompanyProfile, data.companyProfile, 'companyProfile');
+    
+    isSyncing.current = false;
+  };
+
+  const triggerSync = async (forcePayload?: any) => {
+    if (isSyncing.current) return;
+    isSyncing.current = true;
+    
+    try {
+      const latestState = forcePayload || {
+        vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
+        blocks, phenologyLogs, sprays, scoutings, soilRecords,
+        samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
+        companyProfile
+      };
+      
+      const response = await SyncQueueManager.sync(latestState);
+      if (response) {
+        if (response.hasConflicts) {
+          setSyncConflicts(response.conflicts);
+          setPendingServerDb(response.serverDb);
+          setToastMessage(lang === 'ka' ? 'კონფლიქტი აღმოჩენილია სინქრონიზაციისას!' : 'Sync conflict detected! Review required.');
+        } else {
+          updateAllStates(response);
+        }
+      }
+    } catch (err) {
+      console.error('Trigger sync error:', err);
+    } finally {
+      isSyncing.current = false;
+    }
+  };
+
+  const handleAuthLogin = async (identifier: string, passcode: string, rememberMe?: boolean): Promise<boolean> => {
+    setLoginError(null);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier, passcode, rememberMe })
+      });
+      if (res.ok) {
+        const user = await res.json();
+        setCurrentUser(user);
+        setIsLoggedIn(true);
+        
+        // Sync database immediately
+        const dbData = await SyncQueueManager.sync({});
+        if (dbData) {
+          updateAllStates(dbData);
+        }
+        return true;
+      } else {
+        const err = await res.json();
+        setLoginError(err.error || 'Authentication failed');
+        return false;
+      }
+    } catch (err) {
+      setLoginError('Could not reach secure login gateway');
+      return false;
+    }
+  };
+
+  const handleAuthLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error('Logout request failed:', err);
+    }
+    setIsLoggedIn(false);
+    localStorage.removeItem('vinea_is_logged_in');
+    localStorage.removeItem('vinea_curr_user');
+  };
+
+  const handleAuthRegister = async (profileData: { username: string, email: string, fullName: string, role: string, language: string, rememberMe?: boolean }) => {
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileData)
+      });
+      if (res.ok) {
+        const user = await res.json();
+        setCurrentUser(user);
+        setIsLoggedIn(true);
+        
+        // Force full initial database save
+        const initialDB = await SyncQueueManager.sync({
+          vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
+          blocks, phenologyLogs, sprays, scoutings, soilRecords,
+          samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
+          companyProfile
+        });
+        if (initialDB) {
+          updateAllStates(initialDB);
+        }
+      }
+    } catch (err) {
+      console.error('Registration API error:', err);
+    }
+  };
 
   // Unified Hydration
   useEffect(() => {
@@ -187,6 +326,7 @@ export function useWineryState() {
       return initVal;
     };
 
+    // Initialize from local cache first to ensure smooth loading UI
     setVessels(parseOrInit('cf_vessels', initialVessels));
     setLots(parseOrInit('cf_lots', initialLots));
     setFermLogs(parseOrInit('cf_fermlogs', initialFermLogs));
@@ -219,6 +359,28 @@ export function useWineryState() {
     setFertilizerLogs(parseOrInit('vinea_fertilizer', initialFertilizerLogs));
     setAuditLogs(parseOrInit('vinea_audit_logs', initialVineaAuditLogs));
 
+    // Restore session and sync from server
+    const checkSessionAndSync = async () => {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const user = await res.json();
+          setCurrentUser(user);
+          setIsLoggedIn(true);
+          
+          const dbData = await SyncQueueManager.sync({});
+          if (dbData) {
+            updateAllStates(dbData);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to restore session:', err);
+      } finally {
+        hasHydrated.current = true;
+      }
+    };
+    checkSessionAndSync();
+
     // Deep link logic
     if (localStorage.getItem('vinea_is_logged_in') === 'true') {
       const params = new URLSearchParams(window.location.search);
@@ -236,14 +398,120 @@ export function useWineryState() {
     }
   }, []);
 
-  // Atomic sync to Local Storage
-  useEffect(() => { if (isClient) localStorage.setItem('cf_vessels', JSON.stringify(vessels)); }, [vessels, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_lots', JSON.stringify(lots)); }, [lots, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_fermlogs', JSON.stringify(fermLogs)); }, [fermLogs, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_lablogs', JSON.stringify(labLogs)); }, [labLogs, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_inventory', JSON.stringify(inventory)); }, [inventory, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_tasks', JSON.stringify(tasks)); }, [tasks, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_notes', JSON.stringify(notesList)); }, [notesList, isClient]);
+  // Atomic sync to Local Storage with Auto-API sync wrappers
+  const handleCollectionUpdate = (key: string, localKey: string, value: any) => {
+    if (!isClient) return;
+    
+    // Auto-inject lastModified timestamps for arrays of objects
+    let processedValue = value;
+    const modifiedOrAddedItems: Array<{ item: any; baselineTimestamp?: string }> = [];
+    
+    if (Array.isArray(value)) {
+      let prevList: any[] = [];
+      try {
+        const stored = localStorage.getItem(localKey);
+        if (stored) prevList = JSON.parse(stored);
+      } catch { /* ignore */ }
+      
+      const prevMap = new Map(prevList.map(item => [item.id, item]));
+      const nowStr = new Date().toISOString();
+      
+      processedValue = value.map(item => {
+        if (item && typeof item === 'object' && 'id' in item) {
+          const prevItem = prevMap.get(item.id);
+          if (!prevItem) {
+            // New item
+            const newItem = { ...item, lastModified: nowStr };
+            modifiedOrAddedItems.push({ item: newItem });
+            return newItem;
+          } else {
+            // Compare fields ignoring lastModified
+            const { lastModified: _, ...itemWithoutTs } = item;
+            const { lastModified: __, ...prevWithoutTs } = prevItem;
+            if (JSON.stringify(itemWithoutTs) !== JSON.stringify(prevWithoutTs)) {
+              // Modified item
+              const modifiedItem = { ...item, lastModified: nowStr };
+              modifiedOrAddedItems.push({ 
+                item: modifiedItem, 
+                baselineTimestamp: prevItem.lastModified 
+              });
+              return modifiedItem;
+            } else {
+              // Unchanged, preserve previous timestamp
+              return { ...item, lastModified: prevItem.lastModified || nowStr };
+            }
+          }
+        }
+        return item;
+      });
+    }
+
+    const setters: Record<string, any> = {
+      vessels: setVessels,
+      lots: setLots,
+      fermLogs: setFermLogs,
+      labLogs: setLabLogs,
+      inventory: setInventory,
+      tasks: setTasks,
+      notesList: setNotesList,
+      blocks: setBlocks,
+      phenologyLogs: setPhenologyLogs,
+      sprays: setSprays,
+      scoutings: setScoutings,
+      soilRecords: setSoilRecords,
+      samplings: setSamplings,
+      harvests: setHarvests,
+      irrigationLogs: setIrrigationLogs,
+      fertilizerLogs: setFertilizerLogs,
+      auditLogs: setAuditLogs
+    };
+
+    const setter = setters[key];
+    if (setter && JSON.stringify(processedValue) !== JSON.stringify(value)) {
+      setter(processedValue);
+      return;
+    }
+
+    localStorage.setItem(localKey, JSON.stringify(processedValue));
+    
+    const currentStr = JSON.stringify(processedValue);
+    if (hasHydrated.current && currentStr !== lastServerState.current[key]) {
+      SyncQueueManager.markDirty(key);
+      
+      // If offline, queue specific mutations in IndexedDB!
+      if (!SyncQueueManager.isOnline()) {
+        modifiedOrAddedItems.forEach(({ item, baselineTimestamp }) => {
+          IndexedDBQueue.addMutation({
+            action: 'put',
+            collection: key,
+            recordId: item.id,
+            data: item,
+            baselineTimestamp
+          });
+        });
+      }
+
+      const currentFullState = {
+        vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
+        blocks, phenologyLogs, sprays, scoutings, soilRecords,
+        samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
+        companyProfile
+      };
+      
+      triggerSync({
+        ...currentFullState,
+        [key]: processedValue
+      });
+    }
+  };
+
+  useEffect(() => { handleCollectionUpdate('vessels', 'cf_vessels', vessels); }, [vessels, isClient]);
+  useEffect(() => { handleCollectionUpdate('lots', 'cf_lots', lots); }, [lots, isClient]);
+  useEffect(() => { handleCollectionUpdate('fermLogs', 'cf_fermlogs', fermLogs); }, [fermLogs, isClient]);
+  useEffect(() => { handleCollectionUpdate('labLogs', 'cf_lablogs', labLogs); }, [labLogs, isClient]);
+  useEffect(() => { handleCollectionUpdate('inventory', 'cf_inventory', inventory); }, [inventory, isClient]);
+  useEffect(() => { handleCollectionUpdate('tasks', 'cf_tasks', tasks); }, [tasks, isClient]);
+  useEffect(() => { handleCollectionUpdate('notesList', 'cf_notes', notesList); }, [notesList, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
@@ -251,16 +519,16 @@ export function useWineryState() {
   useEffect(() => { if (isClient) localStorage.setItem('vinea_company_profile', JSON.stringify(companyProfile)); }, [companyProfile, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_active_module', activeModule); }, [activeModule, isClient]);
 
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_blocks', JSON.stringify(blocks)); }, [blocks, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_phenology', JSON.stringify(phenologyLogs)); }, [phenologyLogs, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_sprays', JSON.stringify(sprays)); }, [sprays, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_scoutings', JSON.stringify(scoutings)); }, [scoutings, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_soil', JSON.stringify(soilRecords)); }, [soilRecords, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_samplings', JSON.stringify(samplings)); }, [samplings, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_harvests', JSON.stringify(harvests)); }, [harvests, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_irrigation', JSON.stringify(irrigationLogs)); }, [irrigationLogs, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_fertilizer', JSON.stringify(fertilizerLogs)); }, [fertilizerLogs, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_audit_logs', JSON.stringify(auditLogs)); }, [auditLogs, isClient]);
+  useEffect(() => { handleCollectionUpdate('blocks', 'vinea_blocks', blocks); }, [blocks, isClient]);
+  useEffect(() => { handleCollectionUpdate('phenologyLogs', 'vinea_phenology', phenologyLogs); }, [phenologyLogs, isClient]);
+  useEffect(() => { handleCollectionUpdate('sprays', 'vinea_sprays', sprays); }, [sprays, isClient]);
+  useEffect(() => { handleCollectionUpdate('scoutings', 'vinea_scoutings', scoutings); }, [scoutings, isClient]);
+  useEffect(() => { handleCollectionUpdate('soilRecords', 'vinea_soil', soilRecords); }, [soilRecords, isClient]);
+  useEffect(() => { handleCollectionUpdate('samplings', 'vinea_samplings', samplings); }, [samplings, isClient]);
+  useEffect(() => { handleCollectionUpdate('harvests', 'vinea_harvests', harvests); }, [harvests, isClient]);
+  useEffect(() => { handleCollectionUpdate('irrigationLogs', 'vinea_irrigation', irrigationLogs); }, [irrigationLogs, isClient]);
+  useEffect(() => { handleCollectionUpdate('fertilizerLogs', 'vinea_fertilizer', fertilizerLogs); }, [fertilizerLogs, isClient]);
+  useEffect(() => { handleCollectionUpdate('auditLogs', 'vinea_audit_logs', auditLogs); }, [auditLogs, isClient]);
 
   // Input Sanitizer/Validator Helper for ID poisoning prevention
   const sanitizeId = (id: string): string => {
@@ -526,7 +794,25 @@ export function useWineryState() {
     setToastMessage(lang === 'ka' ? 'ახალი დავალება დაემატა!' : 'New task assigned successfully!');
   };
 
+  const recordDeletion = (id: string) => {
+    try {
+      const stored = localStorage.getItem('vinea_deleted_ids');
+      const list = stored ? JSON.parse(stored) : [];
+      list.push(id);
+      localStorage.setItem('vinea_deleted_ids', JSON.stringify(list));
+      
+      if (!SyncQueueManager.isOnline()) {
+        IndexedDBQueue.addMutation({
+          action: 'delete',
+          collection: 'any',
+          recordId: id
+        });
+      }
+    } catch { /* ignore */ }
+  };
+
   const handleDeleteTask = (taskId: string) => {
+    recordDeletion(taskId);
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setToastMessage(lang === 'ka' ? 'დავალება წაიშალა!' : 'Task deleted successfully!');
   };
@@ -546,6 +832,7 @@ export function useWineryState() {
   };
 
   const handleDeleteNote = (noteId: string) => {
+    recordDeletion(noteId);
     setNotesList(prev => prev.filter(n => n.id !== noteId));
     setToastMessage(lang === 'ka' ? 'შენიშვნა წაიშალა!' : 'Note removed successfully!');
   };
@@ -561,6 +848,79 @@ export function useWineryState() {
       return item;
     }));
     setToastMessage(lang === 'ka' ? 'მარაგი განახლდა!' : 'Inventory stock updated successfully!');
+  };
+
+  const resolveConflict = async (resolutions: Record<string, 'local' | 'server'>) => {
+    if (!syncConflicts || !pendingServerDb) return;
+    
+    const db = { ...pendingServerDb };
+    
+    syncConflicts.forEach(conflict => {
+      const choice = resolutions[`${conflict.collection}-${conflict.recordId}`] || 'server';
+      
+      // Map client-side collection names to server-side keys
+      let colKey = conflict.collection;
+      if (conflict.collection === 'notesList') colKey = 'notes';
+      if (conflict.collection === 'fermLogs') colKey = 'fermlogs';
+      if (conflict.collection === 'labLogs') colKey = 'lablogs';
+      
+      const list = db[colKey];
+      if (list) {
+        const index = list.findIndex((x: any) => x.id === conflict.recordId);
+        let resolvedItem = choice === 'local' ? { ...conflict.local } : { ...conflict.server };
+        
+        // If choosing local, bump lastModified to ensure server accepts it
+        if (choice === 'local') {
+          resolvedItem.lastModified = new Date().toISOString();
+        }
+        
+        if (index !== -1) {
+          list[index] = resolvedItem;
+        } else {
+          list.push(resolvedItem);
+        }
+      }
+    });
+
+    // Clear mutations queue from IndexedDB
+    await SyncQueueManager.clearOfflineQueue();
+
+    // Re-mark collections dirty so standard sync pushes modifications back
+    syncConflicts.forEach(conflict => {
+      SyncQueueManager.markDirty(conflict.collection);
+    });
+
+    setSyncConflicts(null);
+    setPendingServerDb(null);
+
+    // Apply the merged database to the client state
+    updateAllStates(db);
+
+    // Force trigger sync to push the resolved changes (with local versions) to the server
+    const currentFullState = {
+      vessels: db.vessels || vessels,
+      lots: db.lots || lots,
+      fermLogs: db.fermlogs || fermLogs,
+      labLogs: db.lablogs || labLogs,
+      inventory: db.inventory || inventory,
+      tasks: db.tasks || tasks,
+      notesList: db.notes || notesList,
+      blocks: db.blocks || blocks,
+      phenologyLogs: db.phenologyLogs || phenologyLogs,
+      sprays: db.sprays || sprays,
+      scoutings: db.scoutings || scoutings,
+      soilRecords: db.soilRecords || soilRecords,
+      samplings: db.samplings || samplings,
+      harvests: db.harvests || harvests,
+      irrigationLogs: db.irrigationLogs || irrigationLogs,
+      fertilizerLogs: db.fertilizerLogs || fertilizerLogs,
+      auditLogs: db.auditLogs || auditLogs,
+      companyProfile: db.companyProfile || companyProfile
+    };
+
+    triggerSync(currentFullState);
+    
+    setToastMessage(lang === 'ka' ? 'კონფლიქტები წარმატებით მოგვარდა!' : 'Conflicts resolved successfully!');
   };
 
   return {
@@ -627,9 +987,12 @@ export function useWineryState() {
     prefilledTaskTitle, setPrefilledTaskTitle,
     prefilledTaskPriority, setPrefilledTaskPriority,
     prefilledTaskDesc, setPrefilledTaskDesc,
+    prefilledSourceId, setPrefilledSourceId,
+    prefilledDestId, setPrefilledDestId,
 
     // Actions
     sanitizeId,
+    triggerSync,
     handleToggleCoolingJacket,
     handleAdjustTargetTemp,
     handleToggleSanitation,
@@ -651,6 +1014,12 @@ export function useWineryState() {
     handleDeleteTask,
     handleAddNewNote,
     handleDeleteNote,
-    handleAddInventory
+    handleAddInventory,
+    handleAuthLogin,
+    handleAuthLogout,
+    handleAuthRegister,
+    syncConflicts,
+    setSyncConflicts,
+    resolveConflict
   };
 }
