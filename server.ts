@@ -141,6 +141,57 @@ app.get('/api/auth/me', (req, res) => {
   });
 });
 
+// Administrative database reset endpoint
+app.post('/api/admin/reset', (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies['vinea_session'];
+  const session = verifySessionToken(token);
+  
+  if (!session) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (session.role !== 'Owner/Admin') {
+    return res.status(403).json({ error: 'Forbidden: Only Owner/Admin can reset the database.' });
+  }
+
+  const db = getDB();
+  db.vessels = [];
+  db.lots = [];
+  db.fermlogs = [];
+  db.lablogs = [];
+  db.inventory = [];
+  db.tasks = [];
+  db.notes = [];
+  db.blocks = [];
+  db.phenologyLogs = [];
+  db.sprays = [];
+  db.scoutings = [];
+  db.soilRecords = [];
+  db.samplings = [];
+  db.harvests = [];
+  db.irrigationLogs = [];
+  db.fertilizerLogs = [];
+  db.auditLogs = [];
+  db.companyProfile = {
+    companyName: '',
+    wineryName: '',
+    country: '',
+    region: '',
+    municipality: '',
+    address: '',
+    contactEmail: '',
+    phone: '',
+    website: '',
+    measurementUnits: 'metric',
+    latitude: 41.9056,
+    longitude: 45.4740
+  };
+
+  saveDB();
+  res.json(db);
+});
+
 // Helper to validate ID structure
 function isValidId(id: any): boolean {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[a-zA-Z0-9_\- ]+$/.test(id);
