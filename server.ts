@@ -60,7 +60,7 @@ function parseCookies(cookieHeader: string | undefined): Record<string, string> 
 
 // Authentication endpoints
 app.post('/api/auth/register', (req, res) => {
-  const { username, email, fullName, role, language, rememberMe } = req.body;
+  const { username, email, fullName, role, language, rememberMe, passcode } = req.body;
   const db = getDB();
   
   const cleanUsername = username.toLowerCase().replace(/\s+/g, '_');
@@ -73,7 +73,7 @@ app.post('/api/auth/register', (req, res) => {
       fullName,
       role,
       language: language || 'en',
-      passwordHash: hashPassword('vinea2026') // default passcode
+      passwordHash: hashPassword(passcode || 'vinea2026')
     };
     db.users.push(user);
     saveDB();
@@ -696,7 +696,7 @@ const server = http.createServer(app);
 if (isProd) {
   // Serve production build static files
   app.use(express.static(path.resolve(__dirname, 'dist')));
-  app.get('*', (req, res) => {
+  app.get('*any', (req, res) => {
     res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
   });
 } else {
@@ -713,6 +713,7 @@ if (isProd) {
 }
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-server.listen(PORT, () => {
-  console.log(`Server is running in ${isProd ? 'production' : 'development'} on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
 });
+

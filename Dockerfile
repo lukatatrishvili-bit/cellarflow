@@ -13,6 +13,9 @@ RUN npm ci
 # Copy the remaining project files
 COPY . .
 
+# Build the frontend assets
+RUN npm run build
+
 # Ensure the database data directory exists
 RUN mkdir -p /app/data
 

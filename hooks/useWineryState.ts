@@ -318,7 +318,7 @@ export function useWineryState() {
     localStorage.removeItem('vinea_curr_user');
   };
 
-  const handleAuthRegister = async (profileData: { username: string, email: string, fullName: string, role: string, language: string, rememberMe?: boolean }) => {
+  const handleAuthRegister = async (profileData: { username: string, email: string, fullName: string, role: string, language: string, rememberMe?: boolean, passcode: string }) => {
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',

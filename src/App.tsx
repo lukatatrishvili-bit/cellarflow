@@ -507,6 +507,7 @@ export default function App() {
                     const name = String(fd.get('fullName') || '');
                     const email = String(fd.get('email') || '');
                     const user = String(fd.get('username') || '');
+                    const passcode = String(fd.get('passcode') || '');
                     const selectedRole = String(fd.get('role') || 'Viticulturist');
                     const rememberMe = fd.get('rememberMe') === 'true';
                     
@@ -526,7 +527,8 @@ export default function App() {
                       fullName: name,
                       role: mappedRole,
                       language: state.lang === 'ka' ? 'ka' : 'en',
-                      rememberMe: rememberMe
+                      rememberMe: rememberMe,
+                      passcode: passcode
                     });
 
                     if (regLocation) {
@@ -576,6 +578,18 @@ export default function App() {
                         name="username"
                         placeholder={state.lang === 'ka' ? 'luka_mevenakhe' : 'luka_viticulture'}
                         className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                        {state.lang === 'ka' ? 'პაროლი (შესვლის კოდი)' : 'Passcode / Password'}
+                      </label>
+                      <input
+                        type="password"
+                        name="passcode"
+                        placeholder="••••••••"
+                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors font-sans"
                         required
                       />
                     </div>
@@ -674,7 +688,7 @@ export default function App() {
                       <input
                         type="text"
                         name="identifier"
-                        defaultValue="luka_winemaker"
+                        placeholder={state.lang === 'ka' ? 'მომხმარებელი ან ელ-ფოსტა' : 'username or email'}
                         autoComplete="username"
                         onChange={() => state.loginError && state.setLoginError(null)}
                         className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
@@ -730,56 +744,9 @@ export default function App() {
                         {state.lang === 'ka' ? 'დარეგისტრირდით' : 'Register Now'}
                       </button>
                     </p>
-
-                    <p className="text-center text-[9px] font-mono text-stone-400 tracking-wide">
-                      {state.lang === 'ka' ? 'სადემონსტრაციო კოდი' : 'Demo passcode'}: <span className="font-bold text-[#4e0e15] dark:text-[#c5a059] select-all">{DEMO_PASSCODE}</span>
-                    </p>
                   </form>
                 </>
               )}
-
-              <div className="relative flex py-2 items-center">
-                <div className="flex-grow border-t border-stone-150"></div>
-                <span className="flex-shrink mx-4 text-[9px] uppercase font-mono text-stone-400 font-extrabold tracking-widest">{t.signin_playgrounds || 'Quick Demo Playgrounds'}</span>
-                <div className="flex-grow border-t border-stone-150"></div>
-              </div>
-
-              {/* Quick Login Playground Buttons */}
-              <div className="grid grid-cols-2 gap-3.5 text-center">
-                <button
-                  type="button"
-                onClick={async () => {
-                  const success = await state.handleAuthLogin('luka_viticulture', 'vinea2026');
-                  if (success) {
-                    state.setActiveModule('vazi');
-                  }
-                }}
-                className="p-4 bg-[#fbfbf8] hover:bg-stone-50 hover:shadow-xs border border-stone-200/80 rounded-xl cursor-pointer text-left duration-150 flex flex-col justify-between group transition-all"
-              >
-                <div className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-sm group-hover:scale-105 duration-100">🚜</div>
-                <div className="mt-3 text-left">
-                  <strong className="text-[11px] font-bold block text-stone-850">{t.signin_role_viticulturist || 'Lead Viticulturist'}</strong>
-                  <span className="text-[9px] font-mono text-stone-400 font-bold block mt-0.5">Luka Tatrishvili</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={async () => {
-                  const success = await state.handleAuthLogin('sophia_enology', 'vinea2026');
-                  if (success) {
-                    state.setActiveModule('gvino');
-                  }
-                }}
-                className="p-4 bg-[#fbfbf8] hover:bg-stone-50 hover:shadow-xs border border-stone-200/80 rounded-xl cursor-pointer text-left duration-150 flex flex-col justify-between group transition-all"
-              >
-                <div className="w-8 h-8 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-sm group-hover:scale-105 duration-100">🍷</div>
-                <div className="mt-3 text-left">
-                  <strong className="text-[11px] font-bold block text-stone-850">{t.signin_role_winemaker || 'Head Winemaker'}</strong>
-                  <span className="text-[9px] font-mono text-stone-400 font-bold block mt-0.5">Sophia Rossi</span>
-                </div>
-              </button>
-              </div>
             </div>
           </div>
         </div>
