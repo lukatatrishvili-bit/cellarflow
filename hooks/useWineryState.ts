@@ -184,31 +184,32 @@ export function useWineryState() {
 
   const updateAllStates = (data: any) => {
 
-    const setSafe = (setter: any, val: any, key: string) => {
+    const setSafe = (setter: any, val: any, key: string, localKey: string) => {
       if (val !== undefined) {
         setter(val);
+        localStorage.setItem(localKey, JSON.stringify(val));
         lastServerState.current[key] = JSON.stringify(val);
       }
     };
     
-    setSafe(setVessels, data.vessels, 'vessels');
-    setSafe(setLots, data.lots, 'lots');
-    setSafe(setFermLogs, data.fermlogs, 'fermLogs');
-    setSafe(setLabLogs, data.lablogs, 'labLogs');
-    setSafe(setInventory, data.inventory, 'inventory');
-    setSafe(setTasks, data.tasks, 'tasks');
-    setSafe(setNotesList, data.notes, 'notesList');
-    setSafe(setBlocks, data.blocks, 'blocks');
-    setSafe(setPhenologyLogs, data.phenologyLogs, 'phenologyLogs');
-    setSafe(setSprays, data.sprays, 'sprays');
-    setSafe(setScoutings, data.scoutings, 'scoutings');
-    setSafe(setSoilRecords, data.soilRecords, 'soilRecords');
-    setSafe(setSamplings, data.samplings, 'samplings');
-    setSafe(setHarvests, data.harvests, 'harvests');
-    setSafe(setIrrigationLogs, data.irrigationLogs, 'irrigationLogs');
-    setSafe(setFertilizerLogs, data.fertilizerLogs, 'fertilizerLogs');
-    setSafe(setAuditLogs, data.auditLogs, 'auditLogs');
-    setSafe(setCompanyProfile, data.companyProfile, 'companyProfile');
+    setSafe(setVessels, data.vessels, 'vessels', 'cf_vessels');
+    setSafe(setLots, data.lots, 'lots', 'cf_lots');
+    setSafe(setFermLogs, data.fermlogs, 'fermLogs', 'cf_fermlogs');
+    setSafe(setLabLogs, data.lablogs, 'labLogs', 'cf_lablogs');
+    setSafe(setInventory, data.inventory, 'inventory', 'cf_inventory');
+    setSafe(setTasks, data.tasks, 'tasks', 'cf_tasks');
+    setSafe(setNotesList, data.notes, 'notesList', 'cf_notes');
+    setSafe(setBlocks, data.blocks, 'blocks', 'vinea_blocks');
+    setSafe(setPhenologyLogs, data.phenologyLogs, 'phenologyLogs', 'vinea_phenology');
+    setSafe(setSprays, data.sprays, 'sprays', 'vinea_sprays');
+    setSafe(setScoutings, data.scoutings, 'scoutings', 'vinea_scoutings');
+    setSafe(setSoilRecords, data.soilRecords, 'soilRecords', 'vinea_soil');
+    setSafe(setSamplings, data.samplings, 'samplings', 'vinea_samplings');
+    setSafe(setHarvests, data.harvests, 'harvests', 'vinea_harvests');
+    setSafe(setIrrigationLogs, data.irrigationLogs, 'irrigationLogs', 'vinea_irrigation');
+    setSafe(setFertilizerLogs, data.fertilizerLogs, 'fertilizerLogs', 'vinea_fertilizer');
+    setSafe(setAuditLogs, data.auditLogs, 'auditLogs', 'vinea_audit_logs');
+    setSafe(setCompanyProfile, data.companyProfile, 'companyProfile', 'vinea_company_profile');
   };
 
   const triggerSync = async (forcePayload?: any) => {
@@ -316,6 +317,44 @@ export function useWineryState() {
     setIsLoggedIn(false);
     localStorage.removeItem('vinea_is_logged_in');
     localStorage.removeItem('vinea_curr_user');
+    localStorage.removeItem('cf_vessels');
+    localStorage.removeItem('cf_lots');
+    localStorage.removeItem('cf_fermlogs');
+    localStorage.removeItem('cf_lablogs');
+    localStorage.removeItem('cf_inventory');
+    localStorage.removeItem('cf_tasks');
+    localStorage.removeItem('cf_notes');
+    localStorage.removeItem('vinea_blocks');
+    localStorage.removeItem('vinea_phenology');
+    localStorage.removeItem('vinea_sprays');
+    localStorage.removeItem('vinea_scoutings');
+    localStorage.removeItem('vinea_soil');
+    localStorage.removeItem('vinea_samplings');
+    localStorage.removeItem('vinea_harvests');
+    localStorage.removeItem('vinea_irrigation');
+    localStorage.removeItem('vinea_fertilizer');
+    localStorage.removeItem('vinea_audit_logs');
+    localStorage.removeItem('vinea_company_profile');
+    localStorage.removeItem('vinea_deleted_ids');
+    
+    // Reset React state variables to initial values (clean slate for logout view)
+    setVessels([]);
+    setLots([]);
+    setFermLogs([]);
+    setLabLogs([]);
+    setInventory([]);
+    setTasks([]);
+    setNotesList([]);
+    setBlocks([]);
+    setPhenologyLogs([]);
+    setSprays([]);
+    setScoutings([]);
+    setSoilRecords([]);
+    setSamplings([]);
+    setHarvests([]);
+    setIrrigationLogs([]);
+    setFertilizerLogs([]);
+    setAuditLogs([]);
   };
 
   const handleAuthRegister = async (profileData: { username: string, email: string, fullName: string, role: string, language: string, rememberMe?: boolean, passcode: string }) => {
@@ -330,13 +369,14 @@ export function useWineryState() {
         setCurrentUser(user);
         setIsLoggedIn(true);
         
-        // Force full initial database save
-        const initialDB = await SyncQueueManager.sync({
+        // Only force full upload if there are unsynced offline changes made as guest
+        const hasOfflineChanges = SyncQueueManager.getDirtyCollections().size > 0;
+        const initialDB = await SyncQueueManager.sync(hasOfflineChanges ? {
           vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
           blocks, phenologyLogs, sprays, scoutings, soilRecords,
           samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
           companyProfile
-        });
+        } : {});
         if (initialDB) {
           updateAllStates(initialDB);
         }
