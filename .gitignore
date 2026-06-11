@@ -5,3 +5,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local runtime database (seeded on first run, contains password hashes)
+db.json

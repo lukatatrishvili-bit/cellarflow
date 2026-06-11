@@ -178,11 +178,12 @@ export function useWineryState() {
   // Synchronization refs to manage server state & loop prevention
   const isSyncing = useRef(false);
   const hasHydrated = useRef(false);
+  const pendingSync = useRef<{ payload: any } | null>(null);
+  const lastSyncError = useRef<string | null>(null);
   const lastServerState = useRef<Record<string, string>>({});
 
   const updateAllStates = (data: any) => {
-    isSyncing.current = true;
-    
+
     const setSafe = (setter: any, val: any, key: string) => {
       if (val !== undefined) {
         setter(val);
@@ -208,14 +209,18 @@ export function useWineryState() {
     setSafe(setFertilizerLogs, data.fertilizerLogs, 'fertilizerLogs');
     setSafe(setAuditLogs, data.auditLogs, 'auditLogs');
     setSafe(setCompanyProfile, data.companyProfile, 'companyProfile');
-    
-    isSyncing.current = false;
   };
 
   const triggerSync = async (forcePayload?: any) => {
-    if (isSyncing.current) return;
+    if (isSyncing.current) {
+      // Don't drop syncs requested while one is in flight (the dropped data —
+      // e.g. a freshly added task — would be reverted by the in-flight
+      // response). Remember the latest request and run it afterwards.
+      pendingSync.current = { payload: forcePayload };
+      return;
+    }
     isSyncing.current = true;
-    
+
     try {
       const latestState = forcePayload || {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
@@ -223,21 +228,42 @@ export function useWineryState() {
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
         companyProfile
       };
-      
+
       const response = await SyncQueueManager.sync(latestState);
       if (response) {
         if (response.hasConflicts) {
           setSyncConflicts(response.conflicts);
           setPendingServerDb(response.serverDb);
           setToastMessage(lang === 'ka' ? 'კონფლიქტი აღმოჩენილია სინქრონიზაციისას!' : 'Sync conflict detected! Review required.');
+        } else if (response.syncError) {
+          // The server rejected the whole sync — keep data dirty for retry,
+          // but tell the user instead of failing silently.
+          if (lastSyncError.current !== response.syncError) {
+            lastSyncError.current = response.syncError;
+            setToastMessage(`⚠️ ${lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected'}: ${response.syncError}`);
+          }
         } else {
           updateAllStates(response);
+          if (Array.isArray(response.syncErrors) && response.syncErrors.length > 0) {
+            // Partial success: some collections were rejected and stay dirty.
+            if (lastSyncError.current !== response.syncErrors[0]) {
+              lastSyncError.current = response.syncErrors[0];
+              setToastMessage(`⚠️ ${lang === 'ka' ? 'ზოგიერთი ცვლილება უარყოფილია' : 'Some changes were rejected'}: ${response.syncErrors[0]}`);
+            }
+          } else {
+            lastSyncError.current = null;
+          }
         }
       }
     } catch (err) {
       console.error('Trigger sync error:', err);
     } finally {
       isSyncing.current = false;
+      if (pendingSync.current) {
+        const { payload } = pendingSync.current;
+        pendingSync.current = null;
+        triggerSync(payload);
+      }
     }
   };
 
@@ -412,10 +438,24 @@ export function useWineryState() {
         const stored = localStorage.getItem(localKey);
         if (stored) prevList = JSON.parse(stored);
       } catch { /* ignore */ }
-      
+
+      // Last server-acknowledged versions: the true baseline for conflict
+      // detection. Using the local previous timestamp instead would make
+      // chained local edits look like conflicts.
+      let serverMap = new Map<string, any>();
+      try {
+        const serverJson = lastServerState.current[key];
+        if (serverJson) {
+          const serverList = JSON.parse(serverJson);
+          if (Array.isArray(serverList)) {
+            serverMap = new Map(serverList.map((item: any) => [item.id, item]));
+          }
+        }
+      } catch { /* ignore */ }
+
       const prevMap = new Map(prevList.map(item => [item.id, item]));
       const nowStr = new Date().toISOString();
-      
+
       processedValue = value.map(item => {
         if (item && typeof item === 'object' && 'id' in item) {
           const prevItem = prevMap.get(item.id);
@@ -425,20 +465,27 @@ export function useWineryState() {
             modifiedOrAddedItems.push({ item: newItem });
             return newItem;
           } else {
-            // Compare fields ignoring lastModified
-            const { lastModified: _, ...itemWithoutTs } = item;
-            const { lastModified: __, ...prevWithoutTs } = prevItem;
+            // Compare fields ignoring sync metadata
+            const { lastModified: _, baselineTimestamp: _b, ...itemWithoutTs } = item;
+            const { lastModified: __, baselineTimestamp: _pb, ...prevWithoutTs } = prevItem;
             if (JSON.stringify(itemWithoutTs) !== JSON.stringify(prevWithoutTs)) {
-              // Modified item
-              const modifiedItem = { ...item, lastModified: nowStr };
-              modifiedOrAddedItems.push({ 
-                item: modifiedItem, 
-                baselineTimestamp: prevItem.lastModified 
+              // Modified item: carry the server baseline on the item so
+              // /api/sync can detect concurrent edits from other sessions.
+              const serverItem = serverMap.get(item.id);
+              const baselineTimestamp = item.baselineTimestamp ?? serverItem?.lastModified;
+              const modifiedItem = { ...item, lastModified: nowStr, ...(baselineTimestamp ? { baselineTimestamp } : {}) };
+              modifiedOrAddedItems.push({
+                item: modifiedItem,
+                baselineTimestamp
               });
               return modifiedItem;
             } else {
-              // Unchanged, preserve previous timestamp
-              return { ...item, lastModified: prevItem.lastModified || nowStr };
+              // Unchanged content: keep the incoming timestamp (server
+              // responses are authoritative). Preferring the local previous
+              // timestamp here left local/server timestamps permanently
+              // diverged, re-marking collections dirty after every sync —
+              // an endless sync/re-render loop.
+              return { ...item, lastModified: item.lastModified || prevItem.lastModified || nowStr };
             }
           }
         }
@@ -468,12 +515,31 @@ export function useWineryState() {
 
     const setter = setters[key];
     if (setter && JSON.stringify(processedValue) !== JSON.stringify(value)) {
+      // Persist BEFORE updating state: the effect re-runs after the setter,
+      // and must find storage already matching, or it re-stamps lastModified
+      // with a fresh timestamp on every pass — an infinite update loop that
+      // previously only terminated when two passes landed on the same
+      // millisecond. The re-run becomes a no-op and handles dirty-marking.
+      localStorage.setItem(localKey, JSON.stringify(processedValue));
+      // The re-run sees no modified items, so offline mutations (which carry
+      // the conflict baselines) must be queued on this first pass.
+      if (hasHydrated.current && !SyncQueueManager.isOnline()) {
+        modifiedOrAddedItems.forEach(({ item, baselineTimestamp }) => {
+          IndexedDBQueue.addMutation({
+            action: 'put',
+            collection: key,
+            recordId: item.id,
+            data: item,
+            baselineTimestamp
+          });
+        });
+      }
       setter(processedValue);
       return;
     }
 
     localStorage.setItem(localKey, JSON.stringify(processedValue));
-    
+
     const currentStr = JSON.stringify(processedValue);
     if (hasHydrated.current && currentStr !== lastServerState.current[key]) {
       SyncQueueManager.markDirty(key);
@@ -868,10 +934,12 @@ export function useWineryState() {
       if (list) {
         const index = list.findIndex((x: any) => x.id === conflict.recordId);
         let resolvedItem = choice === 'local' ? { ...conflict.local } : { ...conflict.server };
-        
-        // If choosing local, bump lastModified to ensure server accepts it
+
+        // If choosing local, bump lastModified and rebase onto the server
+        // version we just reviewed — otherwise the re-push would conflict again.
         if (choice === 'local') {
           resolvedItem.lastModified = new Date().toISOString();
+          resolvedItem.baselineTimestamp = conflict.server?.lastModified;
         }
         
         if (index !== -1) {

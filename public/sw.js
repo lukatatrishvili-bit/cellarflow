@@ -1,83 +1,111 @@
-const CACHE_NAME = 'vinea-erp-cache-v1';
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/src/main.tsx',
-  '/src/globals.css',
-  '/src/App.tsx',
-  '/favicon.ico'
-];
+// Bump the version to invalidate all caches on deploy of a new SW.
+const VERSION = 'v2';
+const SHELL_CACHE = `vinea-shell-${VERSION}`;
+const ASSET_CACHE = `vinea-assets-${VERSION}`;
+const API_CACHE = `vinea-api-${VERSION}`;
+const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE, API_CACHE];
+
+// Minimal shell precache. Each entry is added individually and failures are
+// tolerated, so a missing file can never block SW installation (cache.addAll
+// is atomic and previously failed in production where dev paths 404).
+const SHELL_URLS = ['/', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
+    caches.open(SHELL_CACHE).then((cache) =>
+      Promise.allSettled(SHELL_URLS.map((url) => cache.add(url)))
+    )
   );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
-        })
-      );
-    })
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((key) => !KNOWN_CACHES.includes(key)).map((key) => caches.delete(key)))
+    )
   );
   self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const request = event.request;
+  if (request.method !== 'GET') return;
 
-  // Skip WebSocket connections (like Vite HMR), POST requests, and Gemini AI endpoints
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  // Never intercept the AI stream or Vite dev-server internals.
   if (
-    event.request.method !== 'GET' ||
-    url.pathname.includes('/vite') ||
-    url.pathname.includes('/api/gemini')
+    url.pathname.startsWith('/api/gemini') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/node_modules/')
   ) {
     return;
   }
 
-  // Network-First for REST API endpoints
-  if (url.pathname.startsWith('/api/')) {
+  // Navigations (HTML): network-first so deploys reach users immediately;
+  // fall back to the cached shell when offline.
+  if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
+      fetch(request)
         .then((response) => {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, clone);
-          });
+          caches.open(SHELL_CACHE).then((cache) => cache.put('/', clone));
           return response;
         })
-        .catch(() => {
-          return caches.match(event.request);
-        })
+        .catch(() => caches.match('/', { cacheName: SHELL_CACHE }))
     );
     return;
   }
 
-  // Cache-First with Network Fallback for static assets
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((response) => {
-        if (!response || response.status !== 200 || response.type !== 'basic') {
+  // API reads: network-first with cached fallback for offline use.
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(API_CACHE).then((cache) => cache.put(request, clone));
+          }
           return response;
-        }
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, clone);
+        })
+        .catch(() => caches.match(request, { cacheName: API_CACHE }))
+    );
+    return;
+  }
+
+  // Hashed build assets are immutable: cache-first.
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(request, { cacheName: ASSET_CACHE }).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(ASSET_CACHE).then((cache) => cache.put(request, clone));
+          }
+          return response;
         });
-        return response;
-      });
+      })
+    );
+    return;
+  }
+
+  // Everything else (icons, manifest, fonts): stale-while-revalidate.
+  event.respondWith(
+    caches.match(request, { cacheName: SHELL_CACHE }).then((cached) => {
+      const refresh = fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(SHELL_CACHE).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        })
+        .catch(() => cached);
+      return cached || refresh;
     })
   );
 });

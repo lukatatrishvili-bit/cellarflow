@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { translations, Language } from '../lib/i18n';
 import { authenticate, DEMO_PASSCODE } from '../lib/auth';
@@ -119,6 +119,13 @@ export default function App() {
   // Conflict resolution choice state
   const [resolutions, setResolutions] = useState<Record<string, 'local' | 'server'>>({});
 
+  // Latest tasks are read through a ref so the poller below doesn't restart
+  // (and immediately re-fetch) every time the tasks array changes. Re-checking
+  // the ref each 15s poll also self-heals the startup race where login
+  // hydration overwrites a task created before the first server snapshot.
+  const tasksRef = useRef(state.tasks);
+  tasksRef.current = state.tasks;
+
   // Periodically poll fermentation telemetry and run stuck fermentation detector
   useEffect(() => {
     if (!state.isLoggedIn) return;
@@ -128,13 +135,14 @@ export default function App() {
         const res = await fetch('/api/telemetry/active');
         if (res.ok) {
           const data = await res.json();
-          setActiveTelemetry(data);
+          // Preserve identity when readings haven't changed to avoid re-renders.
+          setActiveTelemetry(prev => JSON.stringify(prev) === JSON.stringify(data) ? prev : data);
 
           // Slope Anomaly Detector
           data.forEach((reading: any) => {
             if (reading.dailySlope < 0.002 && reading.status === 'stuck') {
               const taskTitle = `Diagnose stuck fermentation in ${reading.tankId} (Lot ${reading.lotId})`;
-              const hasTask = state.tasks.some(t => t.title === taskTitle);
+              const hasTask = tasksRef.current.some(t => t.title === taskTitle);
               if (!hasTask) {
                 state.handleAddNewTask(
                   taskTitle,
@@ -155,7 +163,7 @@ export default function App() {
     fetchTelemetry();
     const interval = setInterval(fetchTelemetry, 15000);
     return () => clearInterval(interval);
-  }, [state.isLoggedIn, state.tasks]);
+  }, [state.isLoggedIn]);
 
   // Derived live alert feed for the notification center
   const alerts = useMemo(() => {

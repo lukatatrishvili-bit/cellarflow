@@ -105,6 +105,20 @@ export class SyncQueueManager {
     localStorage.removeItem(this.DIRTY_KEY);
   }
 
+  /**
+   * Clear only the given collections. Flags marked while a sync was in
+   * flight must survive it, or those changes would never be pushed.
+   */
+  static clearDirtyKeys(keys: Iterable<string>): void {
+    const dirty = this.getDirtyCollections();
+    for (const key of keys) dirty.delete(key);
+    if (dirty.size === 0) {
+      localStorage.removeItem(this.DIRTY_KEY);
+    } else {
+      localStorage.setItem(this.DIRTY_KEY, JSON.stringify(Array.from(dirty)));
+    }
+  }
+
   static isOnline(): boolean {
     return typeof navigator !== 'undefined' ? navigator.onLine : true;
   }
@@ -170,16 +184,19 @@ export class SyncQueueManager {
     // 3. Perform standard online synchronization
     const dirty = this.getDirtyCollections();
     const payload: any = {};
-    
+    // client dirty key per server payload key, for per-collection retries
+    const sentPairs: Array<{ clientKey: string; serverKey: string }> = [];
+
     if (dirty.size > 0) {
       dirty.forEach(col => {
         let serverKey = col;
         if (col === 'notesList') serverKey = 'notes';
         if (col === 'fermLogs') serverKey = 'fermlogs';
         if (col === 'labLogs') serverKey = 'lablogs';
-        
+
         if (currentState[col]) {
           payload[serverKey] = currentState[col];
+          sentPairs.push({ clientKey: col, serverKey });
         }
       });
     }
@@ -209,15 +226,91 @@ export class SyncQueueManager {
 
       const res = await fetch(endpoint, options);
       if (res.ok) {
-        this.clearDirty();
-        localStorage.removeItem('vinea_deleted_ids');
+        // Only clear what this request actually carried — collections marked
+        // dirty (or ids deleted) while the request was in flight still need
+        // a future sync.
+        this.clearDirtyKeys(dirty);
+        this.consumeDeletedIds(deletedIds);
         await IndexedDBQueue.clearMutations();
         const data = await res.json();
         return data;
+      }
+
+      // Server-side validation rejection: one bad record must not silently
+      // block every other change bundled in the same payload. Retry each
+      // collection separately so the good ones land, keep the bad ones dirty,
+      // and report what was rejected instead of swallowing it.
+      if (method === 'POST' && res.status >= 400 && res.status < 500) {
+        const firstErr = await res.json().catch(() => ({} as any));
+        if (sentPairs.length <= 1) {
+          return { syncError: firstErr.error || `Sync rejected (HTTP ${res.status})` };
+        }
+
+        let lastGood: any = null;
+        const conflicts: any[] = [];
+        const syncErrors: string[] = [];
+
+        for (const { clientKey, serverKey } of sentPairs) {
+          try {
+            const single: any = { [serverKey]: payload[serverKey] };
+            if (deletedIds.length > 0) single.deletedIds = deletedIds; // deletions are idempotent
+            const r = await fetch('/api/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(single)
+            });
+            if (r.ok) {
+              const data = await r.json();
+              if (data.hasConflicts) {
+                conflicts.push(...data.conflicts);
+                lastGood = data.serverDb;
+              } else {
+                lastGood = data;
+              }
+              this.clearDirtyKeys([clientKey]);
+            } else {
+              const e = await r.json().catch(() => ({} as any));
+              syncErrors.push(`${clientKey}: ${e.error || `HTTP ${r.status}`}`);
+            }
+          } catch {
+            syncErrors.push(`${clientKey}: network error`);
+          }
+        }
+
+        if (lastGood) {
+          this.consumeDeletedIds(deletedIds);
+          await IndexedDBQueue.clearMutations();
+        }
+        if (conflicts.length > 0) {
+          return { hasConflicts: true, conflicts, serverDb: lastGood, syncErrors: syncErrors.length ? syncErrors : undefined };
+        }
+        if (lastGood) {
+          return { ...lastGood, syncErrors: syncErrors.length ? syncErrors : undefined };
+        }
+        return { syncError: syncErrors[0] || firstErr.error || `Sync rejected (HTTP ${res.status})` };
       }
     } catch (err) {
       console.error('ERP Sync failed:', err);
     }
     return null;
+  }
+
+  /** Remove successfully-synced ids from the pending-deletions list, keeping ids added mid-flight. */
+  private static consumeDeletedIds(sent: string[]): void {
+    if (sent.length === 0) {
+      localStorage.removeItem('vinea_deleted_ids');
+      return;
+    }
+    let remaining: string[] = [];
+    try {
+      const stored = localStorage.getItem('vinea_deleted_ids');
+      const current: string[] = stored ? JSON.parse(stored) : [];
+      remaining = current.filter((id) => !sent.includes(id));
+    } catch { /* ignore */ }
+    if (remaining.length > 0) {
+      localStorage.setItem('vinea_deleted_ids', JSON.stringify(remaining));
+    } else {
+      localStorage.removeItem('vinea_deleted_ids');
+    }
   }
 }

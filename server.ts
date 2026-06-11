@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
 import { getDB, saveDB } from './server/db';
 import { verifySessionToken, createSessionToken, hashPassword, verifyPassword } from './server/auth';
+import { applyDeletions, mergeCollections } from './server/sync';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -447,53 +448,16 @@ app.post('/api/sync', (req, res) => {
     return res.status(400).json({ error: err.message || 'Validation error' });
   }
 
-  // Handle deletions first
-  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
-    const toDelete = new Set(deletedIds);
-    for (const key of Object.keys(db)) {
-      if (Array.isArray((db as any)[key])) {
-        (db as any)[key] = (db as any)[key].filter((item: any) => !item || !item.id || !toDelete.has(item.id));
-      }
-    }
-  }
+  // Apply deletions, then merge with optimistic-concurrency conflict
+  // detection. Conflicted items are not applied; everything else is.
+  applyDeletions(db, deletedIds);
+  const conflicts = mergeCollections(db, collections);
 
-  // Handle merging of collections
-  for (const key of Object.keys(collections)) {
-    if (key in db && key !== 'users') {
-      if (key === 'companyProfile') {
-        db.companyProfile = collections[key];
-      } else if (Array.isArray(collections[key])) {
-        // Merge arrays of objects
-        const existingList = (db as any)[key] || [];
-        const clientList = collections[key];
-        
-        const existingMap = new Map(existingList.map((item: any) => [item.id, item]));
-        
-        for (const clientItem of clientList) {
-          if (!clientItem || !clientItem.id) continue;
-          const existingItem = existingMap.get(clientItem.id);
-          
-          if (!existingItem) {
-            // New item from client
-            existingList.push(clientItem);
-          } else {
-            // Compare timestamps
-            const clientTS = (clientItem as any).lastModified ? new Date((clientItem as any).lastModified).getTime() : 0;
-            const serverTS = (existingItem as any).lastModified ? new Date((existingItem as any).lastModified).getTime() : 0;
-            
-            if (clientTS >= serverTS) {
-              // Client item is newer or equal, overwrite
-              Object.assign(existingItem, clientItem);
-            }
-          }
-        }
-        
-        (db as any)[key] = existingList;
-      }
-    }
-  }
-  
   saveDB();
+
+  if (conflicts.length > 0) {
+    return res.json({ hasConflicts: true, conflicts, serverDb: db });
+  }
   res.json(db);
 });
 
