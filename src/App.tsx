@@ -644,6 +644,12 @@ export default function App() {
                       </label>
                     </div>
 
+                    {state.loginError && (
+                      <p className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-1.5 mt-2">
+                        <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {state.loginError}
+                      </p>
+                    )}
+
                     <button
                       type="submit"
                       className="w-full bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase tracking-widest py-3 rounded-xl cursor-pointer shadow-sm transition-all duration-155 text-xs mt-2"
@@ -655,7 +661,10 @@ export default function App() {
                       {state.lang === 'ka' ? 'უკვე გაქვთ ანგარიში?' : 'Already have an account?'} {' '}
                       <button
                         type="button"
-                        onClick={() => setIsRegistering(false)}
+                        onClick={() => {
+                          setIsRegistering(false);
+                          state.setLoginError(null);
+                        }}
                         className="text-[#4e0e15] dark:text-[#c5a059] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
                       >
                         {state.lang === 'ka' ? 'შესვლა' : 'Sign In'}
@@ -738,7 +747,10 @@ export default function App() {
                       {state.lang === 'ka' ? 'არ გაქვთ ანგარიში?' : "Don't have an account?"} {' '}
                       <button
                         type="button"
-                        onClick={() => setIsRegistering(true)}
+                        onClick={() => {
+                          setIsRegistering(true);
+                          state.setLoginError(null);
+                        }}
                         className="text-[#4e0e15] dark:text-[#c5a059] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
                       >
                         {state.lang === 'ka' ? 'დარეგისტრირდით' : 'Register Now'}

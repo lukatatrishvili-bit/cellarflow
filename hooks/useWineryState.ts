@@ -48,34 +48,7 @@ export interface CellarNote {
   relatedLotId?: string;
 }
 
-const initialCellarNotes: CellarNote[] = [
-  {
-    id: 'note-1',
-    title: 'Saperavi Cap Management Protocol',
-    category: 'Enology',
-    content: 'Ensure 3x daily punchdowns for Lot S-2025-01 to maximize color and soft tannin extraction from grapes.',
-    date: '2026-05-27',
-    author: 'Luka Tatrishvili',
-    relatedLotId: 'S-2025-01'
-  },
-  {
-    id: 'note-2',
-    title: 'Rkatsiteli Malolactic Fermentation Check',
-    category: 'Enology',
-    content: 'MLF progress is slow but steady. VA level is stable at 0.35 g/L. Ambient temperature maintained at 18 degrees Celsius.',
-    date: '2026-05-25',
-    author: 'Sophia Rossi',
-    relatedLotId: 'R-2025-02'
-  },
-  {
-    id: 'note-3',
-    title: 'Post-stabilization organoleptic tasting review',
-    category: 'Tasting',
-    content: 'Full-bodied, clean. No reduction issues noticed. Sulfite levels are stable. Notes of blackberry and black pepper.',
-    date: '2026-05-20',
-    author: 'Luka Tatrishvili'
-  }
-];
+const initialCellarNotes: CellarNote[] = [];
 
 export function useWineryState() {
   const [lang, setLang] = useState<Language>('en');
@@ -358,6 +331,7 @@ export function useWineryState() {
   };
 
   const handleAuthRegister = async (profileData: { username: string, email: string, fullName: string, role: string, language: string, rememberMe?: boolean, passcode: string }) => {
+    setLoginError(null);
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -380,9 +354,12 @@ export function useWineryState() {
         if (initialDB) {
           updateAllStates(initialDB);
         }
+      } else {
+        const err = await res.json();
+        setLoginError(err.error || 'Registration failed');
       }
     } catch (err) {
-      console.error('Registration API error:', err);
+      setLoginError('Could not reach secure registration gateway');
     }
   };
 

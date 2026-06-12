@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
-import { getDB, saveDB } from './server/db';
+import { getDB, saveDB, createEmptyUserData } from './server/db';
 import { verifySessionToken, createSessionToken, hashPassword, verifyPassword } from './server/auth';
 import { applyDeletions, mergeCollections } from './server/sync';
 
@@ -66,18 +66,27 @@ app.post('/api/auth/register', (req, res) => {
   const cleanUsername = username.toLowerCase().replace(/\s+/g, '_');
   
   let user = db.users.find(u => u.username === cleanUsername);
-  if (!user) {
-    user = {
-      username: cleanUsername,
-      email,
-      fullName,
-      role,
-      language: language || 'en',
-      passwordHash: hashPassword(passcode || 'vinea2026')
-    };
-    db.users.push(user);
-    saveDB();
+  if (user) {
+    return res.status(400).json({ error: 'Username is already taken' });
   }
+  
+  user = {
+    username: cleanUsername,
+    email,
+    fullName,
+    role,
+    language: language || 'en',
+    passwordHash: hashPassword(passcode || 'vinea2026')
+  };
+  db.users.push(user);
+
+  // Initialize empty user-scoped data container
+  if (!db.userData) {
+    db.userData = {};
+  }
+  db.userData[cleanUsername] = createEmptyUserData();
+  
+  saveDB();
   
   const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
@@ -156,40 +165,11 @@ app.post('/api/admin/reset', (req, res) => {
   }
 
   const db = getDB();
-  db.vessels = [];
-  db.lots = [];
-  db.fermlogs = [];
-  db.lablogs = [];
-  db.inventory = [];
-  db.tasks = [];
-  db.notes = [];
-  db.blocks = [];
-  db.phenologyLogs = [];
-  db.sprays = [];
-  db.scoutings = [];
-  db.soilRecords = [];
-  db.samplings = [];
-  db.harvests = [];
-  db.irrigationLogs = [];
-  db.fertilizerLogs = [];
-  db.auditLogs = [];
-  db.companyProfile = {
-    companyName: '',
-    wineryName: '',
-    country: '',
-    region: '',
-    municipality: '',
-    address: '',
-    contactEmail: '',
-    phone: '',
-    website: '',
-    measurementUnits: 'metric',
-    latitude: 41.9056,
-    longitude: 45.4740
-  };
+  if (!db.userData) db.userData = {};
+  db.userData[session.username] = createEmptyUserData();
 
   saveDB();
-  res.json(db);
+  res.json(db.userData[session.username]);
 });
 
 // Helper to validate ID structure
@@ -212,6 +192,12 @@ app.post('/api/sync', (req, res) => {
   }
 
   const db = getDB();
+  if (!db.userData) db.userData = {};
+  if (!db.userData[session.username]) {
+    db.userData[session.username] = createEmptyUserData();
+  }
+  const userDb = db.userData[session.username];
+
   const { deletedIds, ...collections } = req.body;
 
   try {
@@ -225,12 +211,12 @@ app.post('/api/sync', (req, res) => {
           throw new Error(`Invalid deleted ID syntax: ${id}`);
         }
         // Volatile Content Lock
-        const existingLot = db.lots.find((l: any) => l.id === id);
+        const existingLot = userDb.lots.find((l: any) => l.id === id);
         if (existingLot && existingLot.stage === 'bottled') {
           throw new Error(`Volatile Content Lock: Bottled wine lot ${id} cannot be deleted.`);
         }
         // Audit Immutability
-        const existingAudit = db.auditLogs.find((l: any) => l.id === id);
+        const existingAudit = userDb.auditLogs.find((l: any) => l.id === id);
         if (existingAudit) {
           throw new Error(`Audit Immutability: Deletion of audit log ${id} is forbidden.`);
         }
@@ -269,7 +255,7 @@ app.post('/api/sync', (req, res) => {
           }
 
           // General Time Invariance / Immutable properties check
-          const existingItem = (db as any)[key]?.find((x: any) => x.id === item.id);
+          const existingItem = (userDb as any)[key]?.find((x: any) => x.id === item.id);
           if (existingItem) {
             if (item.createdAt !== undefined && item.createdAt !== existingItem.createdAt) {
               throw new Error(`Immortal Field Mutation: createdAt cannot be modified on item ${item.id}.`);
@@ -285,7 +271,7 @@ app.post('/api/sync', (req, res) => {
             if (!isValidId(item.blockId)) {
               throw new Error(`Item in ${key} has invalid referenced blockId.`);
             }
-            const blockExists = db.blocks.some((b: any) => b.id === item.blockId) || (collections.blocks && collections.blocks.some((b: any) => b.id === item.blockId));
+            const blockExists = userDb.blocks.some((b: any) => b.id === item.blockId) || (collections.blocks && collections.blocks.some((b: any) => b.id === item.blockId));
             const blockDeleted = deletedIds && deletedIds.includes(item.blockId);
             if (!blockExists || blockDeleted) {
               throw new Error(`Orphaned Reference: Item in ${key} references non-existent or deleted Block (${item.blockId}).`);
@@ -318,13 +304,13 @@ app.post('/api/sync', (req, res) => {
               if (!isValidId(assignedLotId)) {
                 throw new Error(`Vessel ${item.id} has invalid referenced assignedLotId.`);
               }
-              const lotExists = db.lots.some((l: any) => l.id === assignedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === assignedLotId));
+              const lotExists = userDb.lots.some((l: any) => l.id === assignedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === assignedLotId));
               const lotDeleted = deletedIds && deletedIds.includes(assignedLotId);
               if (!lotExists || lotDeleted) {
                 throw new Error(`Orphaned Reference: Vessel ${item.id} references non-existent or deleted Lot (${assignedLotId}).`);
               }
               
-              const lot = db.lots.find((l: any) => l.id === assignedLotId) || (collections.lots && collections.lots.find((l: any) => l.id === assignedLotId));
+              const lot = userDb.lots.find((l: any) => l.id === assignedLotId) || (collections.lots && collections.lots.find((l: any) => l.id === assignedLotId));
               if (lot && lot.stage === 'bottled') {
                 if (existingItem && currentVolume !== undefined && currentVolume < existingItem.currentVolume) {
                   throw new Error(`Volatile Content Lock: Vessel ${item.id} volume containing bottled lot cannot decrease.`);
@@ -362,9 +348,9 @@ app.post('/api/sync', (req, res) => {
             if (!isValidId(item.tankId) || !isValidId(item.lotId)) {
               throw new Error(`Fermentation log ${item.id} has invalid referenced IDs.`);
             }
-            const lotExists = (db.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
+            const lotExists = (userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
                               !(deletedIds && deletedIds.includes(item.lotId));
-            const tankExists = (db.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
+            const tankExists = (userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
                                !(deletedIds && deletedIds.includes(item.tankId));
             if (!lotExists || !tankExists) {
               throw new Error(`Orphaned Fermentation: Fermentation log ${item.id} references non-existent or deleted Lot (${item.lotId}) or Vessel (${item.tankId}).`);
@@ -387,9 +373,9 @@ app.post('/api/sync', (req, res) => {
             if (!isValidId(item.tankId) || !isValidId(item.lotId)) {
               throw new Error(`Lab analysis ${item.id} has invalid referenced IDs.`);
             }
-            const lotExists = (db.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
+            const lotExists = (userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
                               !(deletedIds && deletedIds.includes(item.lotId));
-            const tankExists = (db.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
+            const tankExists = (userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
                                !(deletedIds && deletedIds.includes(item.tankId));
             if (!lotExists || !tankExists) {
               throw new Error(`Orphaned Lab Log: Lab analysis ${item.id} references non-existent or deleted Lot (${item.lotId}) or Vessel (${item.tankId}).`);
@@ -506,7 +492,7 @@ app.post('/api/sync', (req, res) => {
               if (!isValidId(item.relatedLotId)) {
                 throw new Error(`Note ${item.id} has invalid referenced relatedLotId.`);
               }
-              const lotExists = db.lots.some((l: any) => l.id === item.relatedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.relatedLotId));
+              const lotExists = userDb.lots.some((l: any) => l.id === item.relatedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.relatedLotId));
               const lotDeleted = deletedIds && deletedIds.includes(item.relatedLotId);
               if (!lotExists || lotDeleted) {
                 throw new Error(`Orphaned Reference: Note ${item.id} references non-existent or deleted Lot (${item.relatedLotId}).`);
@@ -515,7 +501,7 @@ app.post('/api/sync', (req, res) => {
           }
 
           else if (key === 'auditLogs') {
-            const existingAudit = db.auditLogs.find((l: any) => l.id === item.id);
+            const existingAudit = userDb.auditLogs.find((l: any) => l.id === item.id);
             if (existingAudit) {
               throw new Error(`Audit Immutability: Modify log ${item.id} is forbidden.`);
             }
@@ -529,15 +515,15 @@ app.post('/api/sync', (req, res) => {
 
   // Apply deletions, then merge with optimistic-concurrency conflict
   // detection. Conflicted items are not applied; everything else is.
-  applyDeletions(db, deletedIds);
-  const conflicts = mergeCollections(db, collections);
+  applyDeletions(userDb, deletedIds);
+  const conflicts = mergeCollections(userDb, collections);
 
   saveDB();
 
   if (conflicts.length > 0) {
-    return res.json({ hasConflicts: true, conflicts, serverDb: db });
+    return res.json({ hasConflicts: true, conflicts, serverDb: userDb });
   }
-  res.json(db);
+  res.json(userDb);
 });
 
 // Load DB values initial route
@@ -551,8 +537,12 @@ app.get('/api/db', (req, res) => {
   }
 
   const db = getDB();
-  const { users, ...publicDB } = db;
-  res.json(publicDB);
+  if (!db.userData) db.userData = {};
+  if (!db.userData[session.username]) {
+    db.userData[session.username] = createEmptyUserData();
+    saveDB();
+  }
+  res.json(db.userData[session.username]);
 });
 
 // --- MOCK TELEMETRY ENGINE ---
@@ -568,37 +558,39 @@ interface TelemetryReading {
   status: 'active' | 'slow' | 'stuck' | 'finished';
 }
 
-let simulatedTelemetry: Record<string, TelemetryReading> = {};
+let simulatedTelemetry: Record<string, Record<string, TelemetryReading>> = {};
 
-function initTelemetry() {
-  const db = getDB();
-  if (!simulatedTelemetry['CS-2025-01']) {
-    simulatedTelemetry['CS-2025-01'] = {
-      lotId: 'CS-2025-01',
-      tankId: 'Tank T-1',
-      timestamp: new Date().toISOString(),
-      density: 1.012,
-      temperature: 21.8,
-      ph: 3.52,
-      dissolvedOxygen: 0.35,
-      dailySlope: 0.012,
-      status: 'active'
-    };
+function initTelemetry(username: string, userDb: any) {
+  const fermentingLots = userDb.lots.filter((l: any) => l.stage === 'fermenting');
+  if (!simulatedTelemetry[username]) {
+    simulatedTelemetry[username] = {};
   }
-
-  if (!simulatedTelemetry['ST-2025-02']) {
-    simulatedTelemetry['ST-2025-02'] = {
-      lotId: 'ST-2025-02',
-      tankId: 'Qvevri Q-1',
-      timestamp: new Date().toISOString(),
-      density: 1.024,
-      temperature: 15.5,
-      ph: 3.48,
-      dissolvedOxygen: 0.04,
-      dailySlope: 0.0008, // stuck fermentation: slope < 0.002
-      status: 'stuck'
-    };
+  const userSimulated = simulatedTelemetry[username];
+  const newTelemetry: Record<string, TelemetryReading> = {};
+  
+  for (const lot of fermentingLots) {
+    const vessel = userDb.vessels.find((v: any) => v.assignedLotId === lot.id);
+    if (!vessel) continue;
+    
+    if (userSimulated[lot.id]) {
+      newTelemetry[lot.id] = userSimulated[lot.id];
+      newTelemetry[lot.id].tankId = vessel.id;
+    } else {
+      const isStuck = lot.name.toLowerCase().includes('stuck') || lot.id.toLowerCase().includes('stuck');
+      newTelemetry[lot.id] = {
+        lotId: lot.id,
+        tankId: vessel.id,
+        timestamp: new Date().toISOString(),
+        density: isStuck ? 1.024 : 1.012,
+        temperature: isStuck ? 15.5 : 21.8,
+        ph: 3.5,
+        dissolvedOxygen: isStuck ? 0.04 : 0.35,
+        dailySlope: isStuck ? 0.0008 : 0.012,
+        status: isStuck ? 'stuck' : 'active'
+      };
+    }
   }
+  simulatedTelemetry[username] = newTelemetry;
 }
 
 app.get('/api/telemetry/active', (req, res) => {
@@ -610,10 +602,18 @@ app.get('/api/telemetry/active', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  initTelemetry();
+  const db = getDB();
+  if (!db.userData) db.userData = {};
+  if (!db.userData[session.username]) {
+    db.userData[session.username] = createEmptyUserData();
+  }
+  const userDb = db.userData[session.username];
 
-  Object.keys(simulatedTelemetry).forEach((lotId) => {
-    const t = simulatedTelemetry[lotId];
+  initTelemetry(session.username, userDb);
+
+  const userSimulated = simulatedTelemetry[session.username] || {};
+  Object.keys(userSimulated).forEach((lotId) => {
+    const t = userSimulated[lotId];
     t.timestamp = new Date().toISOString();
     
     if (t.status === 'stuck') {
@@ -632,7 +632,7 @@ app.get('/api/telemetry/active', (req, res) => {
     }
   });
 
-  res.json(Object.values(simulatedTelemetry));
+  res.json(Object.values(userSimulated));
 });
 
 let aiClient: GoogleGenAI | null = null;

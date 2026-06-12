@@ -52,10 +52,12 @@ Ensure all code (including the new `Dockerfile`, `.dockerignore`, and `package.j
    * `DATABASE_PATH` = `/app/data/db.json`
 5. Configure **Persistent Disk (Disks Section)**:
    * **Mount Path**: `/app/data` (Do NOT mount directly to a file like `/app/db.json` as it blocks write/rename execution).
-   * **Size**: `1 GiB` is plenty for JSON logs.
+   * **Size**: choose a size that fits your needs, e.g., `5 GiB` for larger datasets. Render allows you to increase the disk size later without redeploying.
+   * **Name** (optional): `cellarflow-data`.
 6. Click **Deploy Web Service**. Render will build the image and publish it.
 
 ---
+> **Free‑Tier Note**: Render’s free plan provides a **single 1 GiB persistent disk** and does not support resizing. If your `db.json` grows beyond this, consider upgrading to a paid plan or using an external database (e.g., Supabase, MongoDB Atlas) for larger storage.
 
 ## 3. Deploying to Railway (PaaS)
 Railway is another great PaaS that supports Docker configurations out of the box.
@@ -85,3 +87,36 @@ If you prefer cheap VPS hosting (e.g., DigitalOcean, Linode, Hetzner, AWS EC2):
    docker-compose up -d --build
    ```
 6. Setup a reverse proxy (e.g., Nginx) to route port 80/443 traffic to port 3000, and use **Certbot** to install SSL certificates.
+## 5. Free Alternative Hosting Options
+
+Below are some free‑tier services you can use to host the Vinea ERP app.
+
+### Fly.io (Free tier)
+* **Plan**: Free tier gives you 3 GB RAM, 1 vCPU, and a 1 GiB persistent volume.
+* **Setup**:
+  1. Install the Fly CLI: `curl -L https://fly.io/install.sh | sh`.
+  2. `fly launch` – choose Docker image, select a region, and accept the default settings.
+  3. When prompted for a volume, accept the default size (1 GiB) and mount it at `/app/data`.
+  4. Add environment variables (`GEMINI_API_KEY`, `NODE_ENV=production`, `PORT=3000`, `DATABASE_PATH=/app/data/db.json`) via `fly secrets set`.
+  5. Deploy: `fly deploy`.
+
+### Vercel (Free tier – Serverless Functions)
+* Good for the **frontend** (React/Vite) and simple API routes.
+* Create a `vercel.json` that proxies API requests to a serverless function.
+* Store the JSON DB in a **Vercel KV** (free tier up to 1 GiB) or use an external free DB like Supabase.
+
+### Supabase (Free tier – Hosted PostgreSQL)
+* Use Supabase as a fully‑managed PostgreSQL database (up to 500 MB storage for free).
+* Replace the local `db.json` with a tiny API layer that reads/writes to Supabase.
+* Deploy the API on Fly.io, Railway, or Render (free tier) and keep only the DB on Supabase.
+
+### GitHub Codespaces / GitHub Actions + GitHub Pages
+* Build the Docker image in a GitHub Action and push it to the GitHub Container Registry.
+* Use GitHub Pages (free) to host the static frontend; the backend can run as a **GitHub Action‑triggered** container on the free tier of **GitHub Packages**.
+
+### Railway (Free Tier – already listed)
+* Gives you a 500 MB volume; sufficient for small `db.json` files.
+
+> **Tip**: For any of these services, make sure the **mount path** is a directory (e.g., `/app/data`) and set `DATABASE_PATH` accordingly, as the app expects a writable folder.
+
+Feel free to pick the one that best fits your needs; I can help you modify the code or configuration for any of these platforms.
