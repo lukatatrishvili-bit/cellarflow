@@ -765,6 +765,12 @@ export default function App() {
                       </svg>
                       {state.lang === 'ka' ? 'Google-ით გაგრძელება' : 'Continue with Google'}
                     </button>
+                    <a
+                      href="/api/auth/google/login?reconfigure=true"
+                      className="text-[10px] text-stone-400 hover:text-stone-600 dark:text-stone-550 dark:hover:text-stone-400 font-sans mt-2 block text-center transition-colors hover:underline"
+                    >
+                      {state.lang === 'ka' ? '⚙️ Google-ის პარამეტრების მართვა' : '⚙️ Manage Google OAuth Credentials'}
+                    </a>
 
                     <p className="text-center text-[10px] font-sans text-stone-450 mt-3">
                       {state.lang === 'ka' ? 'არ გაქვთ ანგარიში?' : "Don't have an account?"} {' '}

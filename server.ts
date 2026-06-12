@@ -133,8 +133,13 @@ app.get('/api/auth/google/login', (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret;
   
-  if (!clientId || !clientSecret) {
-    res.status(400).send(`
+  const reconfigure = req.query.reset === 'true' || req.query.reconfigure === 'true';
+  
+  if (!clientId || !clientSecret || reconfigure) {
+    const displayClientId = db.googleConfig?.clientId || '';
+    const displayClientSecret = db.googleConfig?.clientSecret || '';
+
+    res.status(200).send(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -156,8 +161,13 @@ app.get('/api/auth/google/login', (req, res) => {
       </head>
       <body>
         <div class="card">
-          <h1>Google OAuth2 Credentials Missing</h1>
+          <h1>Google OAuth2 Credentials Setup</h1>
           <p>The application requires <strong>GOOGLE_CLIENT_ID</strong> and <strong>GOOGLE_CLIENT_SECRET</strong> to be configured for Google Sign-In to function.</p>
+          
+          <div style="background: #fef2f2; border: 1px solid #fee2e2; color: #991b1b; padding: 15px; border-radius: 12px; font-size: 13px; margin: 15px 0; line-height: 1.5; font-family: sans-serif;">
+            <strong>Warning:</strong> If you get a <code>401: invalid_client</code> error on the Google page, the Client ID is incorrect, has trailing spaces, or is not yet propagated in Google Cloud Console. Double check your settings below.
+          </div>
+
           <p>Please follow these setup steps:</p>
           <ol>
             <li>Go to the <a href="https://console.cloud.google.com/" target="_blank" style="color: #4e0e15; font-weight: bold; text-decoration: underline;">Google Cloud Console</a>.</li>
@@ -174,11 +184,11 @@ app.get('/api/auth/google/login', (req, res) => {
           <form action="/api/auth/google/configure" method="POST">
             <div class="form-group">
               <label>Google Client ID</label>
-              <input type="text" name="clientId" required placeholder="e.g. xxxxx.apps.googleusercontent.com" />
+              <input type="text" name="clientId" required value="${displayClientId}" placeholder="e.g. xxxxx.apps.googleusercontent.com" />
             </div>
             <div class="form-group">
               <label>Google Client Secret</label>
-              <input type="password" name="clientSecret" required placeholder="e.g. GOCSPX-xxxxx" />
+              <input type="password" name="clientSecret" required value="${displayClientSecret}" placeholder="e.g. GOCSPX-xxxxx" />
             </div>
             <div style="display: flex; gap: 15px; align-items: center; margin-top: 10px;">
               <button type="submit" class="btn">Save & Continue to Google</button>
