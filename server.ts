@@ -121,6 +121,39 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
+app.post('/api/auth/google', (req, res) => {
+  const db = getDB();
+  let user = db.users.find(u => u.username === 'google_user');
+  
+  if (!user) {
+    user = {
+      username: 'google_user',
+      email: 'google_user@vinea.com',
+      fullName: 'Google User',
+      role: 'Winemaker',
+      language: 'en',
+      passwordHash: ''
+    };
+    db.users.push(user);
+    
+    if (!db.userData) {
+      db.userData = {};
+    }
+    db.userData['google_user'] = createEmptyUserData();
+    saveDB();
+  }
+  
+  const token = createSessionToken({ username: user.username, role: user.role }, true);
+  res.setHeader('Set-Cookie', `vinea_session=${token}; Path=/; HttpOnly; Max-Age=2592000`);
+  res.json({
+    username: user.username,
+    email: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    language: user.language
+  });
+});
+
 app.post('/api/auth/logout', (req, res) => {
   res.setHeader('Set-Cookie', 'vinea_session=; Path=/; HttpOnly; Max-Age=0');
   res.json({ success: true });

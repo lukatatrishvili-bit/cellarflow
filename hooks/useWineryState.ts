@@ -59,7 +59,6 @@ export function useWineryState() {
   const [passportLotId, setPassportLotId] = useState<string | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<any[] | null>(null);
   const [pendingServerDb, setPendingServerDb] = useState<any | null>(null);
-
   // Auth States
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile>({
@@ -155,6 +154,16 @@ export function useWineryState() {
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const lastServerState = useRef<Record<string, string>>({});
 
+  // Auto-dismiss toast messages after 5 seconds
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
   const updateAllStates = (data: any) => {
 
     const setSafe = (setter: any, val: any, key: string, localKey: string) => {
@@ -212,14 +221,19 @@ export function useWineryState() {
         } else if (response.syncError) {
           // The server rejected the whole sync — keep data dirty for retry,
           // but tell the user instead of failing silently.
-          setLastSyncError(response.syncError);
-          setToastMessage(`⚠️ ${lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected'}: ${response.syncError}`);
+          if (response.syncError !== lastSyncError) {
+            setLastSyncError(response.syncError);
+            setToastMessage(`⚠️ ${lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected'}: ${response.syncError}`);
+          }
         } else {
           updateAllStates(response);
           if (Array.isArray(response.syncErrors) && response.syncErrors.length > 0) {
             // Partial success: some collections were rejected and stay dirty.
-            setLastSyncError(response.syncErrors[0]);
-            setToastMessage(`⚠️ ${lang === 'ka' ? 'ზოგიერთი ცვლილება უარყოფილია' : 'Some changes were rejected'}: ${response.syncErrors[0]}`);
+            const firstErr = response.syncErrors[0];
+            if (firstErr !== lastSyncError) {
+              setLastSyncError(firstErr);
+              setToastMessage(`⚠️ ${lang === 'ka' ? 'ზოგიერთი ცვლილება უარყოფილია' : 'Some changes were rejected'}: ${firstErr}`);
+            }
           } else {
             setLastSyncError(null);
           }
@@ -277,6 +291,34 @@ export function useWineryState() {
       }
     } catch (err) {
       setLoginError('Could not reach secure login gateway');
+      return false;
+    }
+  };
+
+  const handleGoogleLogin = async (): Promise<boolean> => {
+    setLoginError(null);
+    try {
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res.ok) {
+        const user = await res.json();
+        setCurrentUser(user);
+        setIsLoggedIn(true);
+        
+        // Sync database immediately
+        const dbData = await SyncQueueManager.sync({});
+        if (dbData) {
+          updateAllStates(dbData);
+        }
+        return true;
+      } else {
+        setLoginError('Google Authentication failed');
+        return false;
+      }
+    } catch (err) {
+      setLoginError('Could not reach Google authentication gateway');
       return false;
     }
   };
@@ -1154,6 +1196,7 @@ export function useWineryState() {
     handleDeleteNote,
     handleAddInventory,
     handleAuthLogin,
+    handleGoogleLogin,
     handleAuthLogout,
     handleAuthRegister,
     syncConflicts,
