@@ -740,11 +740,8 @@ export default function App() {
 
                     <button
                       type="button"
-                      onClick={async () => {
-                        const success = await state.handleGoogleLogin();
-                        if (success) {
-                          state.setActiveModule('portal');
-                        }
+                      onClick={() => {
+                        window.location.href = '/api/auth/google/login';
                       }}
                       className="w-full bg-white hover:bg-stone-50 text-stone-700 border border-stone-350/80 font-sans font-bold py-2.5 px-4 rounded-xl cursor-pointer shadow-xs transition-all duration-155 text-xs flex items-center justify-center gap-2.5 dark:bg-stone-800 dark:hover:bg-stone-750 dark:border-stone-700 dark:text-amber-100"
                     >

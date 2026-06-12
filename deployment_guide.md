@@ -120,3 +120,44 @@ Below are some free‑tier services you can use to host the Vinea ERP app.
 > **Tip**: For any of these services, make sure the **mount path** is a directory (e.g., `/app/data`) and set `DATABASE_PATH` accordingly, as the app expects a writable folder.
 
 Feel free to pick the one that best fits your needs; I can help you modify the code or configuration for any of these platforms.
+
+---
+
+## 6. Configuring Google OAuth2 (Google Sign-In)
+
+For the "Continue with Google" button to successfully authenticate users using their real Google accounts:
+
+### Step 6.1: Create Google OAuth Credentials
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a project (or select an existing one).
+3. Search for and open the **OAuth Consent Screen** page:
+   * Select **External** user type.
+   * Configure the App Information (app name, support email).
+   * In the **Scopes** step, add the following scopes:
+     * `.../auth/userinfo.email` (openid email)
+     * `.../auth/userinfo.profile` (openid profile)
+     * `openid`
+4. Search for and open the **Credentials** page:
+   * Click **Create Credentials** > **OAuth Client ID**.
+   * Select **Web Application** as the Application Type.
+   * Add **Authorized JavaScript Origins** (if running custom domains or testing):
+     * Local: `http://localhost:3000`
+     * Production: `https://cellarflow-app.fly.dev`
+   * Add **Authorized Redirect URIs**:
+     * Local: `http://localhost:3000/api/auth/google/callback`
+     * Production: `https://cellarflow-app.fly.dev/api/auth/google/callback`
+   * Click **Create** and copy the generated **Client ID** and **Client Secret**.
+
+### Step 6.2: Set Environment Variables
+Add the Client ID and Secret to your environment configurations:
+
+* **Locally**: Set them in your `.env` file:
+  ```env
+  GOOGLE_CLIENT_ID=your_client_id_here.apps.googleusercontent.com
+  GOOGLE_CLIENT_SECRET=GOCSPX-your_client_secret_here
+  ```
+* **On Fly.io**: Run the secrets command in your terminal:
+  ```powershell
+  fly secrets set GOOGLE_CLIENT_ID="your_client_id_here" GOOGLE_CLIENT_SECRET="your_client_secret_here"
+  ```
+

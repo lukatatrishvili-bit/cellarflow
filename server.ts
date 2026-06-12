@@ -44,6 +44,7 @@ const GEMINI_MODEL = "gemini-2.5-flash";
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Helper to parse cookies manually
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
@@ -121,37 +122,205 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
-app.post('/api/auth/google', (req, res) => {
-  const db = getDB();
-  let user = db.users.find(u => u.username === 'google_user');
+const getRedirectUri = (req: any) => {
+  const isLocal = req.headers.host.includes('localhost') || req.headers.host.includes('127.0.0.1');
+  const proto = isLocal ? 'http' : 'https';
+  return `${proto}://${req.headers.host}/api/auth/google/callback`;
+};
+
+app.get('/api/auth/google/login', (req, res) => {
+  const db = getDB() as any;
+  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret;
   
-  if (!user) {
-    user = {
-      username: 'google_user',
-      email: 'google_user@vinea.com',
-      fullName: 'Google User',
-      role: 'Winemaker',
-      language: 'en',
-      passwordHash: ''
-    };
-    db.users.push(user);
-    
-    if (!db.userData) {
-      db.userData = {};
-    }
-    db.userData['google_user'] = createEmptyUserData();
-    saveDB();
+  if (!clientId || !clientSecret) {
+    res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Google OAuth2 Setup Required</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f6f2; color: #1b1715; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+          .card { background: white; border: 1px solid #e8dfd5; padding: 40px; border-radius: 20px; max-width: 600px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.03); box-sizing: border-box; }
+          h1 { font-family: Georgia, serif; color: #4e0e15; margin-top: 0; }
+          pre { background: #f0ebe4; padding: 15px; border-radius: 10px; font-family: monospace; overflow-x: auto; font-size: 13px; margin: 15px 0; line-height: 1.5; }
+          ol { padding-left: 20px; line-height: 1.6; font-size: 14px; }
+          li { margin-bottom: 10px; }
+          .btn { display: inline-block; background: #4e0e15; color: white; text-decoration: none; padding: 12px 24px; border-radius: 10px; font-weight: bold; border: none; font-size: 13px; cursor: pointer; transition: background 0.2s; font-family: sans-serif; }
+          .btn:hover { background: #681820; }
+          .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; }
+          .form-group label { font-size: 11px; text-transform: uppercase; font-family: monospace; font-weight: bold; color: #8c7f76; }
+          .form-group input { padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; font-family: monospace; width: 100%; box-sizing: border-box; outline: none; background: #fcfbfa; }
+          .form-group input:focus { border-color: #4e0e15; background: white; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Google OAuth2 Credentials Missing</h1>
+          <p>The application requires <strong>GOOGLE_CLIENT_ID</strong> and <strong>GOOGLE_CLIENT_SECRET</strong> to be configured for Google Sign-In to function.</p>
+          <p>Please follow these setup steps:</p>
+          <ol>
+            <li>Go to the <a href="https://console.cloud.google.com/" target="_blank" style="color: #4e0e15; font-weight: bold; text-decoration: underline;">Google Cloud Console</a>.</li>
+            <li>Create a new project or select an existing one.</li>
+            <li>Configure the <strong>OAuth Consent Screen</strong> (scopes: <code>openid</code>, <code>email</code>, <code>profile</code>).</li>
+            <li>Go to <strong>Credentials > Create Credentials > OAuth client ID</strong> (Application type: <strong>Web application</strong>).</li>
+            <li>Add the following Authorized Redirect URIs:
+              <pre>http://localhost:3000/api/auth/google/callback<br>https://cellarflow-app.fly.dev/api/auth/google/callback</pre>
+            </li>
+          </ol>
+          
+          <h2 style="font-family: Georgia, serif; color: #4e0e15; margin-top: 30px; font-size: 18px; border-top: 1px solid #e8dfd5; padding-top: 25px; margin-bottom: 15px;">Configure & Save Credentials</h2>
+          <p style="font-size: 13px; color: #666; margin-bottom: 20px;">You can save your credentials directly to the local database file (<code>db.json</code>). They will be persisted securely across app updates and restarts.</p>
+          <form action="/api/auth/google/configure" method="POST">
+            <div class="form-group">
+              <label>Google Client ID</label>
+              <input type="text" name="clientId" required placeholder="e.g. xxxxx.apps.googleusercontent.com" />
+            </div>
+            <div class="form-group">
+              <label>Google Client Secret</label>
+              <input type="password" name="clientSecret" required placeholder="e.g. GOCSPX-xxxxx" />
+            </div>
+            <div style="display: flex; gap: 15px; align-items: center; margin-top: 10px;">
+              <button type="submit" class="btn">Save & Continue to Google</button>
+              <a href="/" style="color: #666; text-decoration: none; font-size: 13px; font-weight: bold; font-family: sans-serif;">Cancel</a>
+            </div>
+          </form>
+        </div>
+      </body>
+      </html>
+    `);
+    return;
   }
   
-  const token = createSessionToken({ username: user.username, role: user.role }, true);
-  res.setHeader('Set-Cookie', `vinea_session=${token}; Path=/; HttpOnly; Max-Age=2592000`);
-  res.json({
-    username: user.username,
-    email: user.email,
-    fullName: user.fullName,
-    role: user.role,
-    language: user.language
-  });
+  const redirectUri = getRedirectUri(req);
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
+    `response_type=code` +
+    `&client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&scope=openid%20email%20profile` +
+    `&access_type=offline` +
+    `&prompt=consent`;
+    
+  res.redirect(authUrl);
+});
+
+app.post('/api/auth/google/configure', (req, res) => {
+  const { clientId, clientSecret } = req.body;
+  if (!clientId || !clientSecret) {
+    return res.status(400).send('Client ID and Client Secret are required');
+  }
+  
+  const db = getDB() as any;
+  db.googleConfig = {
+    clientId: String(clientId).trim(),
+    clientSecret: String(clientSecret).trim()
+  };
+  saveDB();
+  
+  res.redirect('/api/auth/google/login');
+});
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) {
+    return res.status(400).send('Authorization code missing');
+  }
+  
+  const db = getDB() as any;
+  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret;
+  const redirectUri = getRedirectUri(req);
+  
+  try {
+    // 1. Exchange auth code for access token
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: clientId || '',
+        client_secret: clientSecret || '',
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code'
+      }).toString()
+    });
+    
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      console.error('Google token exchange failed:', errText);
+      return res.status(tokenRes.status).send(`Failed to exchange code: ${errText}`);
+    }
+    
+    const tokenData = await tokenRes.json() as any;
+    const accessToken = tokenData.access_token;
+    
+    // 2. Fetch user information using access token
+    const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    
+    if (!userinfoRes.ok) {
+      const errText = await userinfoRes.text();
+      console.error('Google userinfo fetch failed:', errText);
+      return res.status(userinfoRes.status).send(`Failed to fetch userinfo: ${errText}`);
+    }
+    
+    const userinfo = await userinfoRes.json() as any;
+    const email = userinfo.email;
+    const fullName = userinfo.name || 'Google User';
+    
+    if (!email) {
+      return res.status(400).send('Email not returned by Google');
+    }
+    
+    // 3. Find or register the user in the database
+    const db = getDB();
+    const cleanEmail = email.toLowerCase().trim();
+    let user = db.users.find(u => u.email.toLowerCase().trim() === cleanEmail);
+    
+    let username = '';
+    if (user) {
+      username = user.username;
+    } else {
+      // Create a unique username based on the email prefix
+      const emailPrefix = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
+      let baseUsername = emailPrefix || 'google_user';
+      username = baseUsername;
+      
+      let suffix = 1;
+      while (db.users.some(u => u.username === username)) {
+        username = `${baseUsername}_${suffix}`;
+        suffix++;
+      }
+      
+      user = {
+        username,
+        email: cleanEmail,
+        fullName,
+        role: 'Winemaker',
+        language: 'en',
+        passwordHash: ''
+      };
+      
+      db.users.push(user);
+      
+      if (!db.userData) {
+        db.userData = {};
+      }
+      db.userData[username] = createEmptyUserData();
+      saveDB();
+    }
+    
+    // 4. Create and set session cookie
+    const token = createSessionToken({ username: user.username, role: user.role }, true);
+    res.setHeader('Set-Cookie', `vinea_session=${token}; Path=/; HttpOnly; Max-Age=2592000`);
+    
+    // Redirect to main site
+    res.redirect('/');
+  } catch (err) {
+    console.error('OAuth2 callback error:', err);
+    res.status(500).send(`OAuth2 authentication failed: ${err}`);
+  }
 });
 
 app.post('/api/auth/logout', (req, res) => {

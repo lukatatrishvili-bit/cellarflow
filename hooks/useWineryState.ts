@@ -299,39 +299,6 @@ export function useWineryState() {
     }
   };
 
-  const handleGoogleLogin = async (): Promise<boolean> => {
-    setLoginError(null);
-    try {
-      const res = await fetch('/api/auth/google', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      if (res.ok) {
-        const user = await res.json();
-        setCurrentUser(user);
-        setIsLoggedIn(true);
-        
-        // Sync database immediately in background without blocking login on errors
-        try {
-          const dbData = await SyncQueueManager.sync({});
-          if (dbData) {
-            updateAllStates(dbData);
-          }
-        } catch (syncErr) {
-          console.error('Initial Google sync failed:', syncErr);
-        }
-        return true;
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setLoginError(err.error || 'Google Authentication failed');
-        return false;
-      }
-    } catch (err) {
-      setLoginError('Could not reach Google authentication gateway');
-      return false;
-    }
-  };
-
   const handleAuthLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
@@ -1205,7 +1172,6 @@ export function useWineryState() {
     handleDeleteNote,
     handleAddInventory,
     handleAuthLogin,
-    handleGoogleLogin,
     handleAuthLogout,
     handleAuthRegister,
     syncConflicts,
