@@ -470,11 +470,6 @@ export default function App() {
                   ))}
                 </ul>
               </div>
-
-              <div className="relative mt-10 pt-5 border-t border-white/10 text-[10px] font-mono uppercase tracking-[0.2em] text-amber-200/60 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                {state.companyProfile.region || 'Kakheti'}, {state.companyProfile.country || 'Georgia'}
-              </div>
             </div>
             <div className="p-7 sm:p-10 flex flex-col justify-center bg-white text-stone-600 space-y-5 dark:bg-stone-900">
               {/* Compact brand for mobile */}

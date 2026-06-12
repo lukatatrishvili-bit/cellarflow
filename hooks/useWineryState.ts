@@ -278,14 +278,18 @@ export function useWineryState() {
         setCurrentUser(user);
         setIsLoggedIn(true);
         
-        // Sync database immediately
-        const dbData = await SyncQueueManager.sync({});
-        if (dbData) {
-          updateAllStates(dbData);
+        // Sync database immediately in background without blocking login on errors
+        try {
+          const dbData = await SyncQueueManager.sync({});
+          if (dbData) {
+            updateAllStates(dbData);
+          }
+        } catch (syncErr) {
+          console.error('Initial login sync failed:', syncErr);
         }
         return true;
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         setLoginError(err.error || 'Authentication failed');
         return false;
       }
@@ -307,14 +311,19 @@ export function useWineryState() {
         setCurrentUser(user);
         setIsLoggedIn(true);
         
-        // Sync database immediately
-        const dbData = await SyncQueueManager.sync({});
-        if (dbData) {
-          updateAllStates(dbData);
+        // Sync database immediately in background without blocking login on errors
+        try {
+          const dbData = await SyncQueueManager.sync({});
+          if (dbData) {
+            updateAllStates(dbData);
+          }
+        } catch (syncErr) {
+          console.error('Initial Google sync failed:', syncErr);
         }
         return true;
       } else {
-        setLoginError('Google Authentication failed');
+        const err = await res.json().catch(() => ({}));
+        setLoginError(err.error || 'Google Authentication failed');
         return false;
       }
     } catch (err) {
