@@ -11,30 +11,78 @@ import { applyDeletions, mergeCollections } from './server/sync';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env manually if running locally and process.env.GEMINI_API_KEY is not set
-if (!process.env.GEMINI_API_KEY) {
-  try {
-    const envPath = path.resolve(__dirname, '.env');
-    if (fs.existsSync(envPath)) {
-      const envContent = fs.readFileSync(envPath, 'utf8');
-      envContent.split('\n').forEach(line => {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#')) {
-          const firstEqual = trimmed.indexOf('=');
-          if (firstEqual !== -1) {
-            const key = trimmed.slice(0, firstEqual).trim();
-            let val = trimmed.slice(firstEqual + 1).trim();
-            // remove surrounding quotes
-            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-              val = val.slice(1, -1);
-            }
+// Load .env manually if running locally
+try {
+  const envPath = path.resolve(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    envContent.split('\n').forEach(line => {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        const firstEqual = trimmed.indexOf('=');
+        if (firstEqual !== -1) {
+          const key = trimmed.slice(0, firstEqual).trim();
+          let val = trimmed.slice(firstEqual + 1).trim();
+          // remove surrounding quotes
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          // Only load if not already set in the environment
+          if (!process.env[key]) {
             process.env[key] = val;
           }
         }
-      });
+      }
+    });
+  }
+} catch (err) {
+  console.warn("Could not load .env file manually:", err);
+}
+
+// Helper to dynamically update the .env file with new credentials
+function updateEnvFile(updates: Record<string, string>) {
+  try {
+    const envPath = path.resolve(__dirname, '.env');
+    let envContent = '';
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, 'utf8');
     }
+    
+    const lines = envContent.split('\n');
+    const newLines: string[] = [];
+    const keysHandled = new Set<string>();
+    
+    lines.forEach(line => {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        const firstEqual = trimmed.indexOf('=');
+        if (firstEqual !== -1) {
+          const key = trimmed.slice(0, firstEqual).trim();
+          if (updates[key] !== undefined) {
+            newLines.push(`${key}="${updates[key]}"`);
+            keysHandled.add(key);
+            return;
+          }
+        }
+      }
+      newLines.push(line);
+    });
+    
+    // Add keys not present in original file
+    Object.keys(updates).forEach(key => {
+      if (!keysHandled.has(key)) {
+        newLines.push(`${key}="${updates[key]}"`);
+      }
+    });
+    
+    fs.writeFileSync(envPath, newLines.join('\n'), 'utf8');
+    
+    // Update process.env immediately
+    Object.keys(updates).forEach(key => {
+      process.env[key] = updates[key];
+    });
   } catch (err) {
-    console.warn("Could not load .env file manually:", err);
+    console.error("Failed to update .env file manually:", err);
   }
 }
 
@@ -175,6 +223,12 @@ app.get('/api/auth/google/login', (req, res) => {
             <strong>Warning:</strong> If you get a <code>401: invalid_client</code> error on the Google page, the Client ID is incorrect, has trailing spaces, or is not yet propagated in Google Cloud Console. Double check your settings below.
           </div>
 
+          <div style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; padding: 15px; border-radius: 12px; font-size: 13px; margin: 15px 0; line-height: 1.5; font-family: sans-serif;">
+            <strong>💡 Google Cloud Run (Stateless Deployment) Note:</strong> 
+            Since Cloud Run container storage is ephemeral, saving to <code>db.json</code> will be wiped whenever the container restarts or scales down. To save credentials permanently, configure them as environment variables in Cloud Run:
+            <pre style="background: #dbeafe; border: 1px solid #bfdbfe; padding: 10px; border-radius: 6px; font-family: monospace; overflow-x: auto; font-size: 11px; margin-top: 8px; font-weight: bold; white-space: pre-wrap; word-break: break-all;">gcloud run deploy cellarflow-app --set-env-vars GOOGLE_CLIENT_ID="YOUR_CLIENT_ID",GOOGLE_CLIENT_SECRET="YOUR_CLIENT_SECRET" --region europe-west1</pre>
+          </div>
+
           <p>Please follow these setup steps:</p>
           <ol>
             <li>Go to the <a href="https://console.cloud.google.com/" target="_blank" style="color: #4e0e15; font-weight: bold; text-decoration: underline;">Google Cloud Console</a>.</li>
@@ -187,7 +241,7 @@ app.get('/api/auth/google/login', (req, res) => {
           </ol>
           
           <h2 style="font-family: Georgia, serif; color: #4e0e15; margin-top: 30px; font-size: 18px; border-top: 1px solid #e8dfd5; padding-top: 25px; margin-bottom: 15px;">Configure & Save Credentials</h2>
-          <p style="font-size: 13px; color: #666; margin-bottom: 20px;">You can save your credentials directly to the local database file (<code>db.json</code>). They will be persisted securely across app updates and restarts.</p>
+          <p style="font-size: 13px; color: #666; margin-bottom: 20px;">You can save your credentials directly to the local database file (<code>db.json</code>) and local <code>.env</code> file. They will be persisted securely across app updates and restarts.</p>
           <form action="/api/auth/google/configure" method="POST">
             <div class="form-group">
               <label>Google Client ID</label>
@@ -226,12 +280,21 @@ app.post('/api/auth/google/configure', (req, res) => {
     return res.status(400).send('Client ID and Client Secret are required');
   }
   
+  const trimmedClientId = String(clientId).trim();
+  const trimmedClientSecret = String(clientSecret).trim();
+  
   const db = getDB() as any;
   db.googleConfig = {
-    clientId: String(clientId).trim(),
-    clientSecret: String(clientSecret).trim()
+    clientId: trimmedClientId,
+    clientSecret: trimmedClientSecret
   };
   saveDB();
+  
+  // Write to .env file as well to persist locally across restarts
+  updateEnvFile({
+    GOOGLE_CLIENT_ID: trimmedClientId,
+    GOOGLE_CLIENT_SECRET: trimmedClientSecret
+  });
   
   res.redirect('/api/auth/google/login');
 });
