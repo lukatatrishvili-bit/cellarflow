@@ -201,7 +201,7 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
       onAddNewTask(tk.title, tk.priority, taskDueDate, tk.desc);
     });
     setShowOrderModal(false);
-    alert(`Deployed ${selected.length} tasks successfully to Vinea checklist!`);
+    alert(`Deployed ${selected.length} tasks successfully to MaraniOS checklist!`);
   };
 
   const quickPrompts = useMemo(() => {

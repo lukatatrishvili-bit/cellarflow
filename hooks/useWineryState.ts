@@ -23,7 +23,7 @@ import {
   SoilAnalysisRecord,
   GrapeSamplingRecord,
   HarvestRecord,
-  VineaAuditLog,
+  MaraniOSAuditLog,
   UserProfile,
   CompanyProfile,
   initialVineyardBlocks,
@@ -35,7 +35,7 @@ import {
   initialHarvestRecords,
   initialIrrigationLogs,
   initialFertilizerLogs,
-  initialVineaAuditLogs
+  initialMaraniOSAuditLogs
 } from '../lib/wineryState';
 
 export interface CellarNote {
@@ -63,22 +63,22 @@ export function useWineryState() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile>({
     username: 'luka_winemaker',
-    email: 'luka@vinea.com',
+    email: 'luka@maranios.com',
     fullName: 'Luka Tatrishvili',
     role: 'Owner/Admin',
     language: 'en'
   });
 
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>({
-    companyName: 'Vinea Estates',
-    wineryName: 'Vinea Central Marani',
+    companyName: 'MaraniOS Estates',
+    wineryName: 'MaraniOS Central Marani',
     country: 'Georgia',
     region: 'Kakheti',
     municipality: 'Telavi',
     address: 'Kondoli Village Highway, Telavi, Kakheti, Georgia',
-    contactEmail: 'production@vinea.ge',
+    contactEmail: 'production@maranios.ge',
     phone: '+995 599 123 456',
-    website: 'www.vinea.ge',
+    website: 'www.maranios.ge',
     measurementUnits: 'metric',
     latitude: 41.9056,
     longitude: 45.4740
@@ -106,7 +106,7 @@ export function useWineryState() {
   const [harvests, setHarvests] = useState<HarvestRecord[]>([]);
   const [irrigationLogs, setIrrigationLogs] = useState<IrrigationRecord[]>([]);
   const [fertilizerLogs, setFertilizerLogs] = useState<FertilizationRecord[]>([]);
-  const [auditLogs, setAuditLogs] = useState<VineaAuditLog[]>([]);
+  const [auditLogs, setAuditLogs] = useState<MaraniOSAuditLog[]>([]);
 
   // Daily fermentation inputs
   const [logTankId, setLogTankId] = useState('');
@@ -471,7 +471,7 @@ export function useWineryState() {
     setHarvests(parseOrInit('vinea_harvests', initialHarvestRecords));
     setIrrigationLogs(parseOrInit('vinea_irrigation', initialIrrigationLogs));
     setFertilizerLogs(parseOrInit('vinea_fertilizer', initialFertilizerLogs));
-    setAuditLogs(parseOrInit('vinea_audit_logs', initialVineaAuditLogs));
+    setAuditLogs(parseOrInit('vinea_audit_logs', initialMaraniOSAuditLogs));
 
     // Restore session and sync from server
     const checkSessionAndSync = async () => {
@@ -835,11 +835,11 @@ export function useWineryState() {
     setFermLogs(prev => [...prev, firstDailyFermLog]);
 
     // Record system audit log
-    const audit: VineaAuditLog = {
+    const audit: MaraniOSAuditLog = {
       id: sanitizeId(`audit-${Date.now()}`),
       timestamp: new Date().toISOString(),
       user: currentUser.fullName,
-      module: 'VINEA',
+      module: 'MARANIOS',
       actionType: 'Traceability Dispatch',
       changedItem: 'WineLots & Harvest',
       oldValue: 'None (Agricultural)',

@@ -91,7 +91,7 @@ app.post('/api/auth/register', (req, res) => {
   
   const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
-  res.setHeader('Set-Cookie', `vinea_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
+  res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
   res.json({
     username: user.username,
     email: user.email,
@@ -112,7 +112,7 @@ app.post('/api/auth/login', (req, res) => {
   
   const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
-  res.setHeader('Set-Cookie', `vinea_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
+  res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
   res.json({
     username: user.username,
     email: user.email,
@@ -323,7 +323,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
     
     // 4. Create and set session cookie
     const token = createSessionToken({ username: user.username, role: user.role }, true);
-    res.setHeader('Set-Cookie', `vinea_session=${token}; Path=/; HttpOnly; Max-Age=2592000`);
+    res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=2592000`);
     
     // Redirect to main site
     res.redirect('/');
@@ -334,13 +334,13 @@ app.get('/api/auth/google/callback', async (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'vinea_session=; Path=/; HttpOnly; Max-Age=0');
+  res.setHeader('Set-Cookie', 'maranios_session=; Path=/; HttpOnly; Max-Age=0');
   res.json({ success: true });
 });
 
 app.get('/api/auth/me', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['vinea_session'];
+  const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
   
   if (!session) {
@@ -365,7 +365,7 @@ app.get('/api/auth/me', (req, res) => {
 // Administrative database reset endpoint
 app.post('/api/admin/reset', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['vinea_session'];
+  const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
   
   if (!session) {
@@ -392,7 +392,7 @@ function isValidId(id: any): boolean {
 // Sync endpoint
 app.post('/api/sync', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['vinea_session'];
+  const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
   
   if (!session) {
@@ -741,7 +741,7 @@ app.post('/api/sync', (req, res) => {
 // Load DB values initial route
 app.get('/api/db', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['vinea_session'];
+  const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
   
   if (!session) {
@@ -807,7 +807,7 @@ function initTelemetry(username: string, userDb: any) {
 
 app.get('/api/telemetry/active', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['vinea_session'];
+  const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
   
   if (!session) {
@@ -881,7 +881,7 @@ app.post('/api/gemini', async (req, res) => {
       });
     }
 
-    const SYSTEM_PROMPT = `You are the Vinea AI Winemaker Assistant, a world-class enological advisor, biochemist, and cellar processes expert.
+    const SYSTEM_PROMPT = `You are the MaraniOS AI Winemaker Assistant, a world-class enological advisor, biochemist, and cellar processes expert.
 You help winemakers worldwide with:
 1. Stuck and sluggish fermentation diagnostics (sugar curves, temperature, nitrogen, density) and restart protocols.
 2. Chemical additions and pH modeling: free SO2 calculations, potassium metabisulfite (KMBS) formulations, tartaric acid / calcium carbonate additions.

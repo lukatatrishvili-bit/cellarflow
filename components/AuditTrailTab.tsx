@@ -1,10 +1,10 @@
 import React from 'react';
 import { translations, Language } from '../lib/i18n';
-import { VineaAuditLog } from '../lib/wineryState';
+import { MaraniOSAuditLog } from '../lib/wineryState';
 
 interface AuditTrailTabProps {
   lang: Language;
-  auditLogs: VineaAuditLog[];
+  auditLogs: MaraniOSAuditLog[];
 }
 
 export default function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {

@@ -273,11 +273,11 @@ export interface HarvestRecord {
 }
 
 // Global Audit Log
-export interface VineaAuditLog {
+export interface MaraniOSAuditLog {
   id: string;
   timestamp: string;
   user: string;
-  module: 'VINEA' | 'VAZI' | 'GVINO';
+  module: 'MARANIOS' | 'VAZI' | 'GVINO';
   actionType: string; // e.g. "Create Block", "Full Transfer"
   changedItem: string;
   oldValue: string;
@@ -322,4 +322,4 @@ export const initialGrapeSamples: GrapeSamplingRecord[] = [];
 export const initialHarvestRecords: HarvestRecord[] = [];
 export const initialIrrigationLogs: IrrigationRecord[] = [];
 export const initialFertilizerLogs: FertilizationRecord[] = [];
-export const initialVineaAuditLogs: VineaAuditLog[] = [];
+export const initialMaraniOSAuditLogs: MaraniOSAuditLog[] = [];

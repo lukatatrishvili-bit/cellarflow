@@ -233,7 +233,7 @@ export default function App() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#FAF8F5] text-[#2c241e]">
         <Loader2 className="w-10 h-10 animate-spin text-emerald-800 mb-2" />
-        <span className="text-xs font-semibold tracking-wide uppercase font-serif">Powering up VINEA Unified Platform...</span>
+        <span className="text-xs font-semibold tracking-wide uppercase font-serif">Powering up MaraniOS Unified Platform...</span>
       </div>
     );
   }
@@ -315,7 +315,7 @@ export default function App() {
           </motion.div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-sm font-serif tracking-[0.25em] text-[#1b1715] font-black dark:text-amber-100">VINEA</h1>
+              <h1 className="text-sm font-serif tracking-[0.25em] text-[#1b1715] font-black dark:text-amber-100">MaraniOS</h1>
             </div>
             <p className="text-[10px] text-[#c5a059] font-mono tracking-widest font-extrabold uppercase mt-0.5">{state.companyProfile.companyName}</p>
           </div>
@@ -440,7 +440,7 @@ export default function App() {
                 <div className="flex items-center gap-2.5">
                   <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-2xl">🍇</div>
                   <div>
-                    <div className="font-serif font-black tracking-[0.3em] text-lg">VINEA</div>
+                    <div className="font-serif font-black tracking-[0.3em] text-lg">MaraniOS</div>
                     <div className="text-[9px] font-mono uppercase tracking-[0.25em] text-amber-200/70">Unified Estate ERP</div>
                   </div>
                 </div>
@@ -465,7 +465,7 @@ export default function App() {
               <div className="lg:hidden flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-xl bg-[#31070b] text-amber-100 flex items-center justify-center text-xl border border-[#4e0e15]">🍇</div>
                 <div>
-                  <div className="font-serif font-black tracking-[0.25em] text-[#1b1715] dark:text-amber-100">VINEA</div>
+                  <div className="font-serif font-black tracking-[0.25em] text-[#1b1715] dark:text-amber-100">MaraniOS</div>
                   <div className="text-[8px] font-mono uppercase tracking-[0.2em] text-[#c5a059]">Unified Estate ERP</div>
                 </div>
               </div>
@@ -1357,7 +1357,7 @@ export default function App() {
 
       {/* 3. Humble human-label footer */}
       <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-400 font-mono font-medium">
-        Vinea ERP • Operational Winemaking Control Loop • European Union PDO Standards Verified
+        MaraniOS • Operational Winemaking Control Loop • European Union PDO Standards Verified
       </footer>
     </div>
   );

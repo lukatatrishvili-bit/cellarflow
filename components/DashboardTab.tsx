@@ -9,7 +9,7 @@ import {
   WineLot, 
   Vessel, 
   Task, 
-  VineaAuditLog 
+  MaraniOSAuditLog 
 } from '../lib/wineryState';
 import { Wind, Sprout, AlertTriangle, FileText } from 'lucide-react';
 
@@ -21,7 +21,7 @@ interface DashboardTabProps {
   lots: WineLot[];
   vessels: Vessel[];
   tasks: Task[];
-  auditLogs: VineaAuditLog[];
+  auditLogs: MaraniOSAuditLog[];
   onToggleTaskStatus: (taskId: string) => void;
   setActiveModule: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
   setActiveTab: (tab: string) => void;
@@ -58,7 +58,7 @@ export default function DashboardTab({
           <span className="text-[9px] uppercase tracking-widest bg-[#fcf8f6] border border-[#e8dfd5] text-[#4e0e15] px-3.5 py-1 rounded-full font-black inline-block">
             📢 {t.portal_hq || 'Estate Headquarters'}
           </span>
-          <h2 className="text-2xl font-serif font-black text-stone-900 tracking-tight uppercase leading-none mt-1">{t.portal_welcome || 'Welcome to Vinea'}</h2>
+          <h2 className="text-2xl font-serif font-black text-stone-900 tracking-tight uppercase leading-none mt-1">{t.portal_welcome || 'Welcome to MaraniOS'}</h2>
           <p className="text-xs text-stone-550 font-sans mt-1.5">{t.portal_status_p || 'Real-time status indicators across your agricultural blocks & fermentation vats'}</p>
         </div>
         

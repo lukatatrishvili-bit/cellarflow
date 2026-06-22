@@ -3,7 +3,7 @@ export type Language = 'en' | 'ka' | 'it' | 'fr' | 'de';
 
 export const translations = {
   en: {
-    logo_title: 'Vinea',
+    logo_title: 'MaraniOS',
     subtitle: 'Winery ERP & Cellar Control',
     dashboard: 'Dashboard',
     tanks: 'Tanks & Vessels',
@@ -43,7 +43,7 @@ export const translations = {
     all: 'All',
     actions: 'Actions',
     submit: 'Submit',
-    loading: 'Loading Vinea...',
+    loading: 'Loading MaraniOS...',
     unknown: 'Unknown',
     warning: 'Warning',
     error: 'Error',
@@ -238,7 +238,7 @@ export const translations = {
     calc_acid_desc: 'Determine tartaric acid additions to decrease pH and adjust total acidity.',
 
     // AI Assistant
-    ai_desc: 'Receive immediate chemical corrections, Stuck Fermentation recovery strategies, and traditional Georgian Qvevri advice from the Vinea AI Assistant.',
+    ai_desc: 'Receive immediate chemical corrections, Stuck Fermentation recovery strategies, and traditional Georgian Qvevri advice from the MaraniOS AI Assistant.',
     ai_ask_placeholder: 'Ask about stuck fermentation, SO2 corrections, blending logic...',
     ai_thinking: 'Analyzing records & modeling chemistry...',
 
@@ -251,7 +251,7 @@ export const translations = {
     nav_logout: 'Logout',
     
     // Landing sign-in page
-    signin_title: 'VINEA Unified Sign In',
+    signin_title: 'MaraniOS Unified Sign In',
     signin_subtitle: 'Unified Vineyard (Vazi) & Winery (Gvino) Cloud Management',
     signin_username: 'Account Username / Email',
     signin_passcode: 'Passcode',
@@ -263,7 +263,7 @@ export const translations = {
 
     // Estate Portal dashboard
     portal_hq: 'Estate Headquarters',
-    portal_welcome: 'Welcome to VINEA',
+    portal_welcome: 'Welcome to MaraniOS',
     portal_status_p: 'Real-time status indicators across your agricultural blocks & fermentation vats',
     portal_appellation: 'Active Appellation',
     portal_role: 'Active Role',
@@ -315,7 +315,7 @@ export const translations = {
     audit_status_secured: 'Secured Log'
   },
   ka: {
-    logo_title: 'სელარფლოუ',
+    logo_title: 'MaraniOS',
     subtitle: 'ღვინის მარნის მართვის სისტემა',
     dashboard: 'მთავარი პანელი',
     tanks: 'რეზერვუარები',
@@ -550,7 +550,7 @@ export const translations = {
     calc_acid_desc: 'აღმოაჩინეთ ღვინისმჟავის (ტარტარიკის) საჭირო რაოდენობა pH-ის შესამცირებლად და საერთო მჟავიანობის ასამაღლებლად.',
 
     // AI Assistant
-    ai_desc: 'მიიღეთ მყისიერი რეკომენდაციები ქიმიურ კორექციებზე, დუღილის შეფერხების პრობლემების აღმოფხვრასა და ქვევრის მართვის ტრადიციულ მეთოდებზე Vinea AI მეღვინისგან (Gemini-ს ბაზაზე).',
+    ai_desc: 'მიიღეთ მყისიერი რეკომენდაციები ქიმიურ კორექციებზე, დუღილის შეფერხების პრობლემების აღმოფხვრასა და ქვევრის მართვის ტრადიციულ მეთოდებზე MaraniOS AI მეღვინისგან (Gemini-ს ბაზაზე).',
     ai_ask_placeholder: 'შეიყვანეთ კითხვა დუღილზე, გოგირდის კორექციაზე ან კუპაჟზე...',
     ai_thinking: 'მარნის მონაცემების გაანალიზება და ქიმიური მოდელირება...',
 
@@ -563,7 +563,7 @@ export const translations = {
     nav_logout: 'გამოსვლა',
     
     // Landing sign-in page
-    signin_title: 'VINEA - ავტორიზაცია',
+    signin_title: 'MaraniOS - ავტორიზაცია',
     signin_subtitle: 'ვენახების (ვაზი) და მარნის (ღვინო) ერთიანი მართვის სისტემა',
     signin_username: 'ანგარიშის სახელი / ელ-ფოსტა',
     signin_passcode: 'უსაფრთხოების კოდი',
@@ -575,7 +575,7 @@ export const translations = {
 
     // Estate Portal dashboard
     portal_hq: 'მარნის სათავო ოფისი',
-    portal_welcome: 'კეთილი იყოს თქვენი მობრძანება VINEA-ში',
+    portal_welcome: 'კეთილი იყოს თქვენი მობრძანება MaraniOS-ში',
     portal_status_p: 'რეალურ დროში ვენახის ნაკვეთებისა და მარნის რეზერვუარების მონიტორინგი',
     portal_appellation: 'აქტიური აპელაცია',
     portal_role: 'აქტიური როლი',
@@ -627,7 +627,7 @@ export const translations = {
     audit_status_secured: 'დაცული ლოგი'
   },
   it: {
-    logo_title: 'Vinea',
+    logo_title: 'MaraniOS',
     subtitle: 'ERP Cantina & Controllo Cantina',
     dashboard: 'Pannello di controllo',
     tanks: 'Serbatoi',
@@ -862,7 +862,7 @@ export const translations = {
     calc_acid_desc: 'Determina l\'acido tartarico per abbassare il pH e regolare l\'acidità.',
 
     // AI Assistant
-    ai_desc: 'Enologo IA di Vinea consiglia correzioni chimiche, interruzioni fermentative e metodi tradizionali enologici.',
+    ai_desc: 'Enologo IA di MaraniOS consiglia correzioni chimiche, interruzioni fermentative e metodi tradizionali enologici.',
     ai_ask_placeholder: 'Chiedi di arresti di fermentazione, correzioni di SO2, calcoli di assemblaggio...',
     ai_thinking: 'Analisi dei registri di cantina & modellazione chimica...',
 
@@ -875,7 +875,7 @@ export const translations = {
     nav_logout: 'Disconnetti',
     
     // Landing sign-in page
-    signin_title: 'Accesso Unificato VINEA',
+    signin_title: 'Accesso Unificato MaraniOS',
     signin_subtitle: 'Gestione Cloud integrata di Vigneti (Vazi) e Cantine (Gvino)',
     signin_username: 'Nome utente / E-mail',
     signin_passcode: 'Codice di sicurezza',
@@ -887,7 +887,7 @@ export const translations = {
 
     // Estate Portal dashboard
     portal_hq: 'Sede Centrale',
-    portal_welcome: 'Benvenuti su VINEA',
+    portal_welcome: 'Benvenuti su MaraniOS',
     portal_status_p: 'Indicatori in tempo reale dei settori agricoli e dei serbatoi di fermentazione',
     portal_appellation: 'Denominazione Attiva',
     portal_role: 'Ruolo Attivo',
@@ -939,7 +939,7 @@ export const translations = {
     audit_status_secured: 'Log Sicuro'
   },
   fr: {
-    logo_title: 'Vinea',
+    logo_title: 'MaraniOS',
     subtitle: 'ERP de Chai & Gestion OEnologique',
     dashboard: 'Tableau de bord',
     tanks: 'Cuves & Contenants',
@@ -1174,7 +1174,7 @@ export const translations = {
     calc_acid_desc: 'Déterminez l\'ajout d\'acide tartrique pour corriger le pH.',
 
     // AI Assistant
-    ai_desc: 'Obtenez des conseils en direct de l\'assistant œnologique Vinea IA pour les corrections chimiques, arrêts de fermentations et élevage en amphores.',
+    ai_desc: 'Obtenez des conseils en direct de l\'assistant œnologique MaraniOS IA pour les corrections chimiques, arrêts de fermentations et élevage en amphores.',
     ai_ask_placeholder: 'Saisir une question sur l\'arrêt de fermentation, le SO2, l\'assemblage...',
     ai_thinking: 'Analyse des données en cours...',
 
@@ -1187,7 +1187,7 @@ export const translations = {
     nav_logout: 'Déconnexion',
     
     // Landing sign-in page
-    signin_title: 'Connexion Unifiée VINEA',
+    signin_title: 'Connexion Unifiée MaraniOS',
     signin_subtitle: 'Gestion Cloud unifiée des vignobles (Vazi) et des caves (Gvino)',
     signin_username: 'Nom d\'utilisateur / E-mail',
     signin_passcode: 'Code d\'accès',
@@ -1199,7 +1199,7 @@ export const translations = {
 
     // Estate Portal dashboard
     portal_hq: 'Siège du Domaine',
-    portal_welcome: 'Bienvenue sur VINEA',
+    portal_welcome: 'Bienvenue sur MaraniOS',
     portal_status_p: 'Indicateurs en temps réel des parcelles agricoles et des cuves de fermentation',
     portal_appellation: 'Appellation Active',
     portal_role: 'Rôle Actif',
@@ -1251,7 +1251,7 @@ export const translations = {
     audit_status_secured: 'Log Sécurisé'
   },
   de: {
-    logo_title: 'Vinea',
+    logo_title: 'MaraniOS',
     subtitle: 'Winery ERP & Kellerkontrolle',
     dashboard: 'Dashboard',
     tanks: 'Tanks & Behälter',
@@ -1486,7 +1486,7 @@ export const translations = {
     calc_acid_desc: 'Ermitteln Sie Aufsäuerungen mit Weinsäure, um den pH-Wert zu senken und die Gesamtsäure zu steigern.',
 
     // AI Assistant
-    ai_desc: 'Der Vinea KI-Kellermeister berät Sie bei Gärstockungen, Schwefelkorrekturen und der traditionellen georgischen Quevri-Vinifikation.',
+    ai_desc: 'Der MaraniOS KI-Kellermeister berät Sie bei Gärstockungen, Schwefelkorrekturen und der traditionellen georgischen Quevri-Vinifikation.',
     ai_ask_placeholder: 'Stellen Sie Fragen zu Gärstockung, Schwefelung, Cuvée-Berechnung...',
     ai_thinking: 'Analyse läuft...',
 
@@ -1499,7 +1499,7 @@ export const translations = {
     nav_logout: 'Abmelden',
     
     // Landing sign-in page
-    signin_title: 'VINEA Zentrale Anmeldung',
+    signin_title: 'MaraniOS Zentrale Anmeldung',
     signin_subtitle: 'Integrierte Cloud-Verwaltung für Weinberge (Vazi) und Weinkeller (Gvino)',
     signin_username: 'Benutzername / E-Mail',
     signin_passcode: 'Sicherheitscode',
@@ -1511,7 +1511,7 @@ export const translations = {
 
     // Estate Portal dashboard
     portal_hq: 'Betriebszentrale',
-    portal_welcome: 'Willkommen bei VINEA',
+    portal_welcome: 'Willkommen bei MaraniOS',
     portal_status_p: 'Echtzeit-Indikatoren über Weinbergsparzellen und Gärtanks',
     portal_appellation: 'Aktive Appellation',
     portal_role: 'Aktive Rolle',
