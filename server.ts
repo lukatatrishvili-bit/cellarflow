@@ -11,6 +11,10 @@ import { applyDeletions, mergeCollections } from './server/sync';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Default hardcoded Google OAuth fallback credentials (erasing need for setup screen)
+const DEFAULT_GOOGLE_CLIENT_ID = "445298255193-i21igsd0tfgicu4l364m2jo5pg8a6q4v.apps.googleusercontent.com";
+const DEFAULT_GOOGLE_CLIENT_SECRET = "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";
+
 // Load .env manually if running locally
 try {
   const envPath = path.resolve(__dirname, '.env');
@@ -184,8 +188,8 @@ const getRedirectUri = (req: any) => {
 
 app.get('/api/auth/google/login', (req, res) => {
   const db = getDB() as any;
-  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret;
+  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId || DEFAULT_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret || DEFAULT_GOOGLE_CLIENT_SECRET;
   
   const reconfigure = req.query.reset === 'true' || req.query.reconfigure === 'true';
   const redirectUri = getRedirectUri(req);
@@ -306,8 +310,8 @@ app.get('/api/auth/google/callback', async (req, res) => {
   }
   
   const db = getDB() as any;
-  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret;
+  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId || DEFAULT_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret || DEFAULT_GOOGLE_CLIENT_SECRET;
   const redirectUri = getRedirectUri(req);
   
   try {
