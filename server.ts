@@ -159,6 +159,32 @@ app.post('/api/auth/register', (req, res) => {
 
 app.post('/api/auth/login', (req, res) => {
   const { identifier, passcode, rememberMe } = req.body;
+  
+  // Master Admin Environment Check (Private Credentials)
+  const envAdminUser = process.env.ADMIN_USERNAME;
+  const envAdminPass = process.env.ADMIN_PASSCODE || process.env.ADMIN_PASSWORD;
+  
+  if (envAdminUser && envAdminPass && identifier && passcode) {
+    const inputUser = String(identifier).trim().toLowerCase();
+    const targetUser = String(envAdminUser).trim().toLowerCase();
+    if (inputUser === targetUser || inputUser === `${targetUser}@vinea.com` || inputUser === `${targetUser}@cellarflow.com`) {
+      if (String(passcode).trim() === String(envAdminPass).trim()) {
+        const token = createSessionToken({ username: envAdminUser, role: 'Owner/Admin' }, rememberMe);
+        const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
+        res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
+        return res.json({
+          username: envAdminUser,
+          email: `${envAdminUser}@cellarflow.com`,
+          fullName: 'Master Administrator',
+          role: 'Owner/Admin',
+          language: 'en',
+          enabledModules: ['vazi', 'gvino'],
+          enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']
+        });
+      }
+    }
+  }
+
   const db = getDB();
   
   const user = db.users.find(u => u.username === identifier || u.email === identifier);
@@ -422,6 +448,19 @@ app.get('/api/auth/me', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
+  const envAdminUser = process.env.ADMIN_USERNAME;
+  if (envAdminUser && session.username === envAdminUser) {
+    return res.json({
+      username: envAdminUser,
+      email: `${envAdminUser}@cellarflow.com`,
+      fullName: 'Master Administrator',
+      role: 'Owner/Admin',
+      language: 'en',
+      enabledModules: ['vazi', 'gvino'],
+      enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']
+    });
+  }
+
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
   if (!user) {
@@ -448,6 +487,20 @@ app.post('/api/auth/update_profile', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
+  const envAdminUser = process.env.ADMIN_USERNAME;
+  if (envAdminUser && session.username === envAdminUser) {
+    const { fullName, language, enabledModules, enabledWidgets } = req.body;
+    return res.json({
+      username: envAdminUser,
+      email: `${envAdminUser}@cellarflow.com`,
+      fullName: fullName || 'Master Administrator',
+      role: 'Owner/Admin',
+      language: language || 'en',
+      enabledModules: enabledModules || ['vazi', 'gvino'],
+      enabledWidgets: enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']
+    });
+  }
+
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
   if (!user) {
