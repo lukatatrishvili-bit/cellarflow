@@ -46,6 +46,8 @@ export interface Vessel {
   locationDetails?: string; 
   xGrid?: number; // 0-100 percentage layout position
   yGrid?: number; // 0-100 percentage layout position
+  lastSealedDate?: string; // For Qvevri clay seals
+  soilTemperature?: number; // For Qvevri underground soil temps
 }
 
 export interface DailyFermLog {
@@ -292,6 +294,8 @@ export interface UserProfile {
   fullName: string;
   role: 'Owner/Admin' | 'Viticulturist' | 'Winemaker' | 'Lab Technician' | 'Cellar Worker' | 'Read-Only';
   language: 'en' | 'ka';
+  enabledModules?: string[];
+  enabledWidgets?: string[];
 }
 
 export interface CompanyProfile {

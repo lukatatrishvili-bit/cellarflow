@@ -77,7 +77,9 @@ app.post('/api/auth/register', (req, res) => {
     fullName,
     role,
     language: language || 'en',
-    passwordHash: hashPassword(passcode || 'vinea2026')
+    passwordHash: hashPassword(passcode || 'vinea2026'),
+    enabledModules: ['vazi', 'gvino'],
+    enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
   };
   db.users.push(user);
 
@@ -97,7 +99,9 @@ app.post('/api/auth/register', (req, res) => {
     email: user.email,
     fullName: user.fullName,
     role: user.role,
-    language: user.language
+    language: user.language,
+    enabledModules: (user as any).enabledModules,
+    enabledWidgets: (user as any).enabledWidgets
   });
 });
 
@@ -118,7 +122,9 @@ app.post('/api/auth/login', (req, res) => {
     email: user.email,
     fullName: user.fullName,
     role: user.role,
-    language: user.language
+    language: user.language,
+    enabledModules: (user as any).enabledModules || ['vazi', 'gvino'],
+    enabledWidgets: (user as any).enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
   });
 });
 
@@ -309,7 +315,9 @@ app.get('/api/auth/google/callback', async (req, res) => {
         fullName,
         role: 'Winemaker',
         language: 'en',
-        passwordHash: ''
+        passwordHash: '',
+        enabledModules: ['vazi', 'gvino'],
+        enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
       };
       
       db.users.push(user);
@@ -358,7 +366,44 @@ app.get('/api/auth/me', (req, res) => {
     email: user.email,
     fullName: user.fullName,
     role: user.role,
-    language: user.language
+    language: user.language,
+    enabledModules: (user as any).enabledModules || ['vazi', 'gvino'],
+    enabledWidgets: (user as any).enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
+  });
+});
+
+app.post('/api/auth/update_profile', (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies['maranios_session'];
+  const session = verifySessionToken(token);
+  
+  if (!session) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const db = getDB();
+  const user = db.users.find(u => u.username === session.username);
+  if (!user) {
+    return res.status(401).json({ error: 'User not found' });
+  }
+  
+  const { fullName, language, role, enabledModules, enabledWidgets } = req.body;
+  if (fullName !== undefined) user.fullName = fullName;
+  if (language !== undefined) user.language = language;
+  if (role !== undefined) user.role = role;
+  if (enabledModules !== undefined) (user as any).enabledModules = enabledModules;
+  if (enabledWidgets !== undefined) (user as any).enabledWidgets = enabledWidgets;
+  
+  saveDB();
+  
+  res.json({
+    username: user.username,
+    email: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    language: user.language,
+    enabledModules: (user as any).enabledModules || ['vazi', 'gvino'],
+    enabledWidgets: (user as any).enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
   });
 });
 

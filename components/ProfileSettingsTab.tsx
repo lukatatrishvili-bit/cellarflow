@@ -10,6 +10,7 @@ interface ProfileSettingsTabProps {
   setCompanyProfile: (val: CompanyProfile) => void;
   setToastMessage: (val: string | null) => void;
   onClearAllData?: () => void;
+  onUpdateProfile?: (updates: Partial<UserProfile>) => Promise<void>;
 }
 
 export default function ProfileSettingsTab({
@@ -19,7 +20,8 @@ export default function ProfileSettingsTab({
   companyProfile,
   setCompanyProfile,
   setToastMessage,
-  onClearAllData
+  onClearAllData,
+  onUpdateProfile
 }: ProfileSettingsTabProps) {
   const t = translations[lang];
 
@@ -52,6 +54,22 @@ export default function ProfileSettingsTab({
             latitude: parseFloat(fd.get('latitude') as string) || 41.9056,
             longitude: parseFloat(fd.get('longitude') as string) || 45.4740
           });
+          
+          const modules = fd.getAll('enabledModules') as string[];
+          const widgets = fd.getAll('enabledWidgets') as string[];
+          
+          if (modules.length === 0) {
+            alert(lang === 'ka' ? 'გთხოვთ აირჩიოთ მინიმუმ ერთი აქტიური მოდული.' : 'Please enable at least one active module.');
+            return;
+          }
+          
+          if (onUpdateProfile) {
+            onUpdateProfile({
+              enabledModules: modules,
+              enabledWidgets: widgets
+            });
+          }
+          
           setToastMessage(lang === 'ka' ? 'კონფიგურაცია წარმატებით შეინახა!' : 'Configurations saved successfully!');
         }} className="space-y-4">
           
@@ -174,6 +192,76 @@ export default function ProfileSettingsTab({
               </select>
             </div>
           </div>
+
+          <hr className="border-stone-100" />
+
+          <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#801323] pl-2 font-black tracking-wider text-slate-400">
+            {lang === 'ka' ? 'პლატფორმის აქტიური მოდულები' : 'Workspace Active Modules Selection'}
+          </h4>
+
+          <div className="grid grid-cols-2 gap-4">
+            <label className="flex items-start gap-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-xl cursor-pointer hover:border-emerald-500/50 transition-all select-none">
+              <input 
+                type="checkbox" 
+                name="enabledModules" 
+                value="vazi" 
+                defaultChecked={(currentUser.enabledModules || ['vazi', 'gvino']).includes('vazi')}
+                className="h-4.5 w-4.5 rounded border-stone-300 text-emerald-800 focus:ring-emerald-800 accent-emerald-800 cursor-pointer mt-0.5"
+              />
+              <div>
+                <span className="font-bold block text-stone-900">🚜 {lang === 'ka' ? 'მევენახეობა (ვაზი)' : 'Viticulture (Vazi / Vineyard)'}</span>
+                <span className="block text-[10px] text-slate-450 mt-0.5 leading-relaxed">
+                  {lang === 'ka' ? 'ვენახის ნაკვეთების, GDD ჯამებისა და ჭრაქის რისკების კონტროლი' : 'Track blocks, spray schedules, GDD heat summation, and downy mildew risk forecasts.'}
+                </span>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-xl cursor-pointer hover:border-[#801323]/50 transition-all select-none">
+              <input 
+                type="checkbox" 
+                name="enabledModules" 
+                value="gvino" 
+                defaultChecked={(currentUser.enabledModules || ['vazi', 'gvino']).includes('gvino')}
+                className="h-4.5 w-4.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer mt-0.5"
+              />
+              <div>
+                <span className="font-bold block text-stone-900">🍷 {lang === 'ka' ? 'მეღვინეობა (ღვინო)' : 'Winery (Gvino / Cellar)'}</span>
+                <span className="block text-[10px] text-slate-450 mt-0.5 leading-relaxed">
+                  {lang === 'ka' ? 'მარნის ჭურჭლის, ლაბორატორიისა და დუღილის ანალიზის მოდული' : 'Manage vessels, clay qvevris, wine lots, laboratory metrics, SO2 buffers, and the AI winemaker assistant.'}
+                </span>
+              </div>
+            </label>
+          </div>
+
+          <hr className="border-stone-100" />
+
+          <h4 className="text-[9px] uppercase font-mono border-l-2 border-amber-600 pl-2 font-black tracking-wider text-slate-400">
+            {lang === 'ka' ? 'მთავარი გვერდის პორტალის ვიჯეტები' : 'Dashboard Portal Widgets Customization'}
+          </h4>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {[
+              { id: 'chemistry', label: lang === 'ka' ? '⚠️ უსაფრთხოება და ქიმია' : '⚠️ Safety & Chemistry Alerts' },
+              { id: 'weather', label: lang === 'ka' ? '🌦️ მეტეო და ჭრაქის რისკი' : '🌦️ Weather Station & Mildew Forecasts' },
+              { id: 'fermentation', label: lang === 'ka' ? '🔥 დუღილის ტელემეტრია' : '🔥 Active Fermentations & Telemetry' },
+              { id: 'canopy', label: lang === 'ka' ? '🌿 ვენახის ფოთლის რადარი' : '🌿 Vineyard Canopy Status Radar' },
+              { id: 'tasks', label: lang === 'ka' ? '📋 დავალებების ჩეკლისტი' : '📋 Unified Operations Tasklist' },
+              { id: 'audit', label: lang === 'ka' ? '🛡️ აუდიტის ჟურნალი' : '🛡️ Immutable Audit Trail Ledger' }
+            ].map(widget => (
+              <label key={widget.id} className="flex items-center gap-2 p-3 bg-stone-50 border border-stone-150 rounded-xl hover:bg-stone-100/50 cursor-pointer select-none">
+                <input 
+                  type="checkbox" 
+                  name="enabledWidgets" 
+                  value={widget.id} 
+                  defaultChecked={(currentUser.enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']).includes(widget.id)}
+                  className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600 cursor-pointer"
+                />
+                <span className="font-bold text-stone-800 block text-[10.5px] leading-tight">{widget.label}</span>
+              </label>
+            ))}
+          </div>
+
+          <hr className="border-stone-100" />
 
           <button 
             type="submit"

@@ -69,6 +69,28 @@ export default function App() {
   const state = useWineryState();
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Onboarding wizard toggling
+  useEffect(() => {
+    if (state.isLoggedIn && !state.currentUser.enabledModules) {
+      setShowOnboarding(true);
+    } else {
+      setShowOnboarding(false);
+    }
+  }, [state.isLoggedIn, state.currentUser.enabledModules]);
+
+  // Redirect active module if disabled
+  useEffect(() => {
+    if (!state.isLoggedIn) return;
+    const enabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
+    if (state.activeModule === 'vazi' && !enabledModules.includes('vazi')) {
+      state.setActiveModule(enabledModules.includes('gvino') ? 'gvino' : 'portal');
+    }
+    if (state.activeModule === 'gvino' && !enabledModules.includes('gvino')) {
+      state.setActiveModule(enabledModules.includes('vazi') ? 'vazi' : 'portal');
+    }
+  }, [state.isLoggedIn, state.currentUser.enabledModules, state.activeModule]);
 
   // Dark Mode State
   const [darkMode, setDarkMode] = useState(() => {
@@ -330,7 +352,12 @@ export default function App() {
               { id: 'gvino', label: t.nav_gvino || 'Gvino (Winery)', icon: Wine },
               { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
               { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList }
-            ].map(mod => {
+            ].filter(mod => {
+              const enabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
+              if (mod.id === 'vazi' && !enabledModules.includes('vazi')) return false;
+              if (mod.id === 'gvino' && !enabledModules.includes('gvino')) return false;
+              return true;
+            }).map(mod => {
               const Icon = mod.icon;
               const isActive = state.activeModule === mod.id;
               return (
@@ -827,6 +854,7 @@ export default function App() {
           onToggleTaskStatus={state.handleToggleTaskStatus}
           setActiveModule={state.setActiveModule}
           setActiveTab={state.setActiveTab}
+          onOpenOnboarding={() => setShowOnboarding(true)}
         />
       ) : state.activeModule === 'settings' ? (
         <ProfileSettingsTab
@@ -837,6 +865,7 @@ export default function App() {
           setCompanyProfile={state.setCompanyProfile}
           setToastMessage={state.setToastMessage}
           onClearAllData={state.clearAllData}
+          onUpdateProfile={state.handleUpdateProfile}
         />
       ) : state.activeModule === 'audit' ? (
         <AuditTrailTab
@@ -1230,6 +1259,157 @@ export default function App() {
         </div>
       )}
 
+      {/* ONBOARDING CUSTOMIZATION WIZARD */}
+      {state.isLoggedIn && showOnboarding && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white/95 dark:bg-stone-950/95 border border-stone-200 dark:border-stone-850 max-w-2xl w-full max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-scale-up font-sans"
+          >
+            {/* Top decorative stripe */}
+            <div className="h-1.5 bg-gradient-to-r from-[#801323] via-[#c5a059] to-emerald-800" />
+            
+            <div className="px-8 py-6 border-b border-stone-200/80 dark:border-stone-850 bg-stone-50/50 dark:bg-stone-900/20">
+              <h3 className="text-xl font-serif font-black text-[#4e0e15] dark:text-amber-100 flex items-center gap-2">
+                🍇 {state.lang === 'ka' ? 'მოარგეთ MaraniOS თქვენს საჭიროებებს' : 'Tailor your MaraniOS Workspace'}
+              </h3>
+              <p className="text-xs text-slate-550 dark:text-stone-400 mt-1 leading-relaxed">
+                {state.lang === 'ka' 
+                  ? 'აირჩიეთ სასურველი მოდულები და მთავარი გვერდის ვიჯეტები თქვენი როლის შესაბამისად.' 
+                  : 'Choose which modules and home page widgets match your role.'
+                }
+              </p>
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const modules = fd.getAll('enabledModules') as string[];
+              const widgets = fd.getAll('enabledWidgets') as string[];
+              
+              if (modules.length === 0) {
+                alert(state.lang === 'ka' ? 'გთხოვთ აირჩიოთ მინიმუმ ერთი აქტიური მოდული.' : 'Please enable at least one active module.');
+                return;
+              }
+              
+              await state.handleUpdateProfile({
+                enabledModules: modules,
+                enabledWidgets: widgets
+              });
+              setShowOnboarding(false);
+            }} className="p-8 overflow-y-auto space-y-6 flex-1 text-xs text-stone-700 dark:text-stone-300">
+              
+              {/* Section 1: Modules Toggles */}
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-mono uppercase tracking-widest text-[#c5a059] font-black border-b border-stone-150 pb-1">
+                  📦 {state.lang === 'ka' ? 'აქტიური მოდულები' : 'Active Winemaking Modules'}
+                </h4>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Viticulture Module (Vazi) */}
+                  <label className="relative flex flex-col p-4 bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-800 rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all select-none">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-stone-900 dark:text-amber-100 flex items-center gap-1.5">
+                        🚜 {state.lang === 'ka' ? 'მევენახეობა (ვაზი)' : 'Viticulture (Vazi / Vineyard)'}
+                      </span>
+                      <input 
+                        type="checkbox" 
+                        name="enabledModules" 
+                        value="vazi" 
+                        defaultChecked 
+                        className="h-4.5 w-4.5 rounded border-stone-300 text-emerald-805 focus:ring-emerald-800 accent-emerald-800 cursor-pointer"
+                      />
+                    </div>
+                    <p className="mt-1.5 text-[10px] text-slate-500 leading-relaxed font-sans font-medium">
+                      {state.lang === 'ka'
+                        ? 'ნაკვეთები, წამლობის გრაფიკები, ფენოლოგია, GDD ტემპერატურული ჯამები და ჭრაქის პროგნოზები.'
+                        : 'Track blocks, spray schedules, phenology stages, GDD heat summation, and downy mildew risk forecasts.'
+                      }
+                    </p>
+                  </label>
+
+                  {/* Winery Module (Gvino) */}
+                  <label className="relative flex flex-col p-4 bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-800 rounded-2xl cursor-pointer hover:border-[#801323]/50 transition-all select-none">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-stone-900 dark:text-amber-100 flex items-center gap-1.5">
+                        🍷 {state.lang === 'ka' ? 'მეღვინეობა (ღვინო)' : 'Winery (Gvino / Cellar)'}
+                      </span>
+                      <input 
+                        type="checkbox" 
+                        name="enabledModules" 
+                        value="gvino" 
+                        defaultChecked 
+                        className="h-4.5 w-4.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
+                      />
+                    </div>
+                    <p className="mt-1.5 text-[10px] text-slate-500 leading-relaxed font-sans font-medium">
+                      {state.lang === 'ka'
+                        ? 'ჭურჭელი, ქვევრები, პარტიები, ლაბორატორია, SO₂ ბუფერი და ხელოვნური ინტელექტის მეღვინე.'
+                        : 'Manage vessels, clay qvevris, wine lots, laboratory metrics, SO2 buffers, and the AI winemaker assistant.'
+                      }
+                    </p>
+                  </label>
+                </div>
+              </div>
+
+              {/* Section 2: Widget Selections */}
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-mono uppercase tracking-widest text-[#c5a059] font-black border-b border-stone-150 pb-1">
+                  🏠 {state.lang === 'ka' ? 'მთავარი გვერდის ვიჯეტები' : 'Home Page Dashboard Widgets'}
+                </h4>
+                <p className="text-[10px] text-slate-400 font-sans">
+                  {state.lang === 'ka' 
+                    ? 'აირჩიეთ, თუ რომელი ბლოკები გამოჩნდეს მთავარ პორტალზე.' 
+                    : 'Choose what metrics appear on your main portal homepage.'
+                  }
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-stone-800 dark:text-stone-300">
+                  {[
+                    { id: 'chemistry', label: state.lang === 'ka' ? '⚠️ უსაფრთხოება და ქიმია' : '⚠️ Safety & Chemistry Alerts', module: 'gvino' },
+                    { id: 'weather', label: state.lang === 'ka' ? '🌦️ მეტეო პროგნოზები და რისკები' : '🌦️ Weather Station & Mildew Forecasts', module: 'vazi' },
+                    { id: 'fermentation', label: state.lang === 'ka' ? '🔥 აქტიური დუღილის ტელემეტრია' : '🔥 Active Fermentations & Telemetry', module: 'gvino' },
+                    { id: 'canopy', label: state.lang === 'ka' ? '🌿 ვენახის ფოთლის რადარი' : '🌿 Vineyard Canopy Status Radar', module: 'vazi' },
+                    { id: 'tasks', label: state.lang === 'ka' ? '📋 დავალებების ჩეკლისტი' : '📋 Unified Operations Tasklist Checklist', module: null },
+                    { id: 'audit', label: state.lang === 'ka' ? '🛡️ საქმიანობის აუდიტის ჟურნალი' : '🛡️ Immutable Audit Trail Ledger History', module: null }
+                  ].map(widget => (
+                    <label key={widget.id} className="flex items-center gap-2.5 p-3.5 bg-stone-50/70 dark:bg-stone-900/30 border border-stone-150 dark:border-stone-800 rounded-xl hover:bg-stone-100/50 cursor-pointer select-none">
+                      <input 
+                        type="checkbox" 
+                        name="enabledWidgets" 
+                        value={widget.id} 
+                        defaultChecked
+                        className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600 cursor-pointer"
+                      />
+                      <div>
+                        <span className="font-bold block text-stone-850 dark:text-amber-100">{widget.label}</span>
+                        {widget.module && (
+                          <span className="text-[8px] uppercase tracking-wider text-[#c5a059] font-black font-mono">
+                            {widget.module === 'vazi' ? (state.lang === 'ka' ? 'მევენახეობა' : 'Viticulture') : (state.lang === 'ka' ? 'მეღვინეობა' : 'Winery')}
+                          </span>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action */}
+              <div className="pt-4 flex justify-end gap-3.5">
+                <button
+                  type="submit"
+                  className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-mono font-bold uppercase tracking-widest py-3.5 rounded-xl cursor-pointer text-xs justify-center flex items-center shadow-md transition-all duration-200"
+                >
+                  ✨ {state.lang === 'ka' ? 'პარამეტრების შენახვა და დაწყება' : 'Configure & Start Cellaring'} →
+                </button>
+              </div>
+
+            </form>
+          </motion.div>
+        </div>
+      )}
+
       {/* SLIDE-OUT PANEL FOR SELECTED VESSEL DETAILED METRICS */}
       <VesselDrawer
         lang={state.lang}
@@ -1241,6 +1421,7 @@ export default function App() {
         onAdjustTargetTemp={state.handleAdjustTargetTemp}
         onToggleSanitation={state.handleToggleSanitation}
         onToggleCoolingJacket={state.handleToggleCoolingJacket}
+        onUpdateVessels={state.setVessels}
       />
 
       {/* OMNIPRESENT FLOATING AI WIDGET */}

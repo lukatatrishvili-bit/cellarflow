@@ -737,77 +737,116 @@ export default function TanksVessels({
 
                   {/* Temperature settings edit */}
                   <div className="text-xs flex items-center justify-between border-t border-dashed border-slate-100 pt-2" onClick={e => e.stopPropagation()}>
-                    <div>
-                      <span className="text-[9px] text-slate-400 block font-mono">
-                        {({
-                          en: 'Current Temp',
-                          ka: 'მიმდინარე ტემპ.',
-                          it: 'Temperatura Corrente',
-                          fr: 'Température Actuelle',
-                          de: 'Aktuelle Temp.'
-                        })[lang] || 'Current Temp'}
-                      </span>
-                      {editingTempId === v.id ? (
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <input 
-                            type="number" 
-                            step="0.1"
-                            value={tempInputValue}
-                            onChange={(e) => setTempInputValue(parseFloat(e.target.value) || 0)}
-                            className="w-14 px-1 py-0.5 bg-slate-50 border border-slate-200 rounded text-xs"
-                          />
+                    {v.type === 'qvevri' ? (
+                      <>
+                        <div>
+                          <span className="text-[9px] text-slate-400 block font-mono">
+                            {ka ? 'ქვევრის / ნიადაგის ტემპ.' : 'Qvevri / Soil Temp'}
+                          </span>
+                          <span className="font-bold flex items-center gap-1 mt-0.5 text-stone-750">
+                            <Thermometer className="w-3.5 h-3.5 text-emerald-600" />
+                            {v.temperature}°C / {(v.soilTemperature ?? (v.temperature - 2.5)).toFixed(1)}°C
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[9px] text-slate-400 block font-mono">
+                            {ka ? 'თიხის ლუქი' : 'Clay Seal Status'}
+                          </span>
+                          {(() => {
+                            const lastSealed = v.lastSealedDate ? new Date(v.lastSealedDate) : new Date(Date.now() - 45 * 86400000);
+                            const diffDays = Math.round((Date.now() - lastSealed.getTime()) / (1000 * 60 * 60 * 24));
+                            const needsReseal = diffDays > 120;
+                            const formattedDate = v.lastSealedDate || lastSealed.toISOString().split('T')[0];
+                            return (
+                              <span 
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold border mt-0.5 ${
+                                  needsReseal 
+                                    ? 'bg-red-50 text-red-750 border-red-200 animate-pulse' 
+                                    : 'bg-emerald-50 text-emerald-750 border-emerald-200'
+                                }`}
+                                title={needsReseal ? (ka ? 'საჭიროებს ხელახალ დალუქვას' : 'Requires beeswax resealing!') : (ka ? 'დალუქულია' : 'Sealed')}
+                              >
+                                {needsReseal ? (ka ? 'ლუქი გასაახლებელია' : 'Reseal Needed') : (ka ? 'დალუქულია' : 'Sealed')} ({formattedDate})
+                              </span>
+                            );
+                          })()}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <span className="text-[9px] text-slate-400 block font-mono">
+                            {({
+                              en: 'Current Temp',
+                              ka: 'მიმდინარე ტემპ.',
+                              it: 'Temperatura Corrente',
+                              fr: 'Température Actuelle',
+                              de: 'Aktuelle Temp.'
+                            })[lang] || 'Current Temp'}
+                          </span>
+                          {editingTempId === v.id ? (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <input 
+                                type="number" 
+                                step="0.1"
+                                value={tempInputValue}
+                                onChange={(e) => setTempInputValue(parseFloat(e.target.value) || 0)}
+                                className="w-14 px-1 py-0.5 bg-slate-50 border border-slate-200 rounded text-xs"
+                              />
+                              <button 
+                                onClick={() => handleSaveTemp(v.id)}
+                                className="px-1.5 py-0.5 text-[9px] bg-green-600 hover:bg-green-700 text-white rounded cursor-pointer"
+                              >
+                                {t.save || 'Save'}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="font-bold flex items-center gap-1 mt-0.5">
+                              {v.temperature}°C 
+                              <button 
+                                onClick={() => {
+                                  setEditingTempId(v.id);
+                                  setTempInputValue(v.temperature);
+                                }}
+                                className="p-0.5 text-slate-400 hover:text-[#4e0e15] cursor-pointer"
+                              >
+                                <Edit className="w-3 h-3" />
+                              </button>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Cooling options */}
+                        <div className="text-right">
+                          <span className="text-[9px] text-slate-400 block font-mono">
+                            {({
+                              en: 'Cooling Jacket',
+                              ka: 'გამაგრილებელი პერანგი',
+                              it: 'Giacca di Raffreddamento',
+                              fr: 'Double Enveloppe',
+                              de: 'Kühlmantel'
+                            })[lang] || 'Cooling Jacket'}
+                          </span>
                           <button 
-                            onClick={() => handleSaveTemp(v.id)}
-                            className="px-1.5 py-0.5 text-[9px] bg-green-600 hover:bg-green-700 text-white rounded cursor-pointer"
+                            onClick={() => handleToggleCooling(v.id)}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold transition-all border mt-0.5 cursor-pointer ${
+                              v.coolingJacketActive 
+                                ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] animate-pulse' 
+                                : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+                            }`}
                           >
-                            {t.save || 'Save'}
+                            {v.coolingJacketActive ? (
+                              <>
+                                <Snowflake className="w-2.5 h-2.5 text-[#0369a1] animate-spin" /> 
+                                {({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' })[lang] || 'Active'}
+                              </>
+                            ) : (
+                              ({ en: 'Inactive', ka: 'არააქტიური', it: 'Inattiva', fr: 'Inactive', de: 'Inaktiv' })[lang] || 'Inactive'
+                            )}
                           </button>
                         </div>
-                      ) : (
-                        <span className="font-bold flex items-center gap-1 mt-0.5">
-                          {v.temperature}°C 
-                          <button 
-                            onClick={() => {
-                              setEditingTempId(v.id);
-                              setTempInputValue(v.temperature);
-                            }}
-                            className="p-0.5 text-slate-400 hover:text-[#4e0e15] cursor-pointer"
-                          >
-                            <Edit className="w-3 h-3" />
-                          </button>
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Cooling options */}
-                    <div className="text-right">
-                      <span className="text-[9px] text-slate-400 block font-mono">
-                        {({
-                          en: 'Cooling Jacket',
-                          ka: 'გამაგრილებელი პერანგი',
-                          it: 'Giacca di Raffreddamento',
-                          fr: 'Double Enveloppe',
-                          de: 'Kühlmantel'
-                        })[lang] || 'Cooling Jacket'}
-                      </span>
-                      <button 
-                        onClick={() => handleToggleCooling(v.id)}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold transition-all border mt-0.5 cursor-pointer ${
-                          v.coolingJacketActive 
-                            ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] animate-pulse' 
-                            : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
-                        }`}
-                      >
-                        {v.coolingJacketActive ? (
-                          <>
-                            <Snowflake className="w-2.5 h-2.5 text-[#0369a1] animate-spin" /> 
-                            {({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' })[lang] || 'Active'}
-                          </>
-                        ) : (
-                          ({ en: 'Inactive', ka: 'არააქტიური', it: 'Inattiva', fr: 'Inactive', de: 'Inaktiv' })[lang] || 'Inactive'
-                        )}
-                      </button>
-                    </div>
+                      </>
+                    )}
                   </div>
 
                   {/* Cleaning / Operation Status */}

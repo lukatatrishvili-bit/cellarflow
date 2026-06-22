@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { translations, Language } from '../lib/i18n';
 import { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis } from '../lib/wineryState';
 import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
@@ -34,6 +34,29 @@ export default function WineLotsTrace({
   const [selectedLotId, setSelectedLotId] = useState<string | null>(lots[0]?.id || null);
   const [filterClass, setFilterClass] = useState<string>('all');
   const [filterVintage, setFilterVintage] = useState<string>('all');
+
+  // Lot Edit States
+  const [isEditingLot, setIsEditingLot] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editVariety, setEditVariety] = useState('');
+  const [editVintage, setEditVintage] = useState(2025);
+  const [editVolume, setEditVolume] = useState(0);
+  const [editBlock, setEditBlock] = useState('');
+  const [editRegion, setEditRegion] = useState('');
+
+  const selectedLot = lots.find(l => l.id === selectedLotId);
+
+  useEffect(() => {
+    if (selectedLot) {
+      setEditName(selectedLot.name);
+      setEditVariety(selectedLot.variety);
+      setEditVintage(selectedLot.vintage);
+      setEditVolume(selectedLot.currentVolume);
+      setEditBlock(selectedLot.vineyardBlock);
+      setEditRegion(selectedLot.region);
+      setIsEditingLot(false);
+    }
+  }, [selectedLotId, selectedLot]);
 
   // Stage transition states
   const [showTransitionForm, setShowTransitionForm] = useState(false);
@@ -85,7 +108,7 @@ export default function WineLotsTrace({
     setSelectedLotId(newLot.id);
   };
 
-  const selectedLot = lots.find(l => l.id === selectedLotId);
+
 
   const filteredLots = lots.filter(l => {
     if (filterClass !== 'all' && l.wineClass !== filterClass) return false;
@@ -356,6 +379,14 @@ export default function WineLotsTrace({
                   <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 font-bold bg-[#f5efe9] border border-[#e3d7cb] text-[#4e0e15] rounded">
                     {selectedLot.id}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingLot(!isEditingLot)}
+                    className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
+                    title="Edit Lot Properties"
+                  >
+                    ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
+                  </button>
                 </div>
                 <p className="text-xs text-slate-400 mt-1 font-medium font-sans">
                   Vintage {selectedLot.vintage} • Traditional Single-Lot Mapping trace
@@ -377,6 +408,119 @@ export default function WineLotsTrace({
                 )}
               </div>
             </div>
+
+            {isEditingLot ? (
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                const updatedLots = lots.map(l => {
+                  if (l.id === selectedLot.id) {
+                    return {
+                      ...l,
+                      name: editName,
+                      variety: editVariety,
+                      vintage: Number(editVintage) || 2025,
+                      currentVolume: Number(editVolume) || 0,
+                      vineyardBlock: editBlock,
+                      region: editRegion
+                    };
+                  }
+                  return l;
+                });
+                onUpdateLots(updatedLots);
+                setIsEditingLot(false);
+              }} className="space-y-4 bg-[#FAF8F5] p-5 border border-[#e8dfd5] rounded-xl text-xs text-stone-700">
+                <h3 className="text-xs uppercase font-mono tracking-widest text-[#4e0e15] font-black border-b pb-1.5 mb-3 flex justify-between items-center">
+                  <span>✏️ {lang === 'ka' ? 'პარტიის რედაქტირება' : 'Edit Wine Lot Properties'}</span>
+                </h3>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
+                      {lang === 'ka' ? 'სახელი' : 'Lot Name'}
+                    </label>
+                    <input 
+                      type="text" required
+                      value={editName} onChange={(e) => setEditName(e.target.value)}
+                      className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
+                        {lang === 'ka' ? 'ჯიში' : 'Grape Variety'}
+                      </label>
+                      <input 
+                        type="text" required
+                        value={editVariety} onChange={(e) => setEditVariety(e.target.value)}
+                        className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
+                        {lang === 'ka' ? 'წელი' : 'Vintage'}
+                      </label>
+                      <input 
+                        type="number" required
+                        value={editVintage} onChange={(e) => setEditVintage(Number(e.target.value) || 2025)}
+                        className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
+                        {lang === 'ka' ? 'მოცულობა (L)' : 'Volume (Liters)'}
+                      </label>
+                      <input 
+                        type="number" required min="0"
+                        value={editVolume} onChange={(e) => setEditVolume(Number(e.target.value) || 0)}
+                        className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
+                        {lang === 'ka' ? 'ნაკვეთი' : 'Vineyard Block'}
+                      </label>
+                      <input 
+                        type="text" required
+                        value={editBlock} onChange={(e) => setEditBlock(e.target.value)}
+                        className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
+                      {lang === 'ka' ? 'რეგიონი / PDO' : 'Origin Region / PDO'}
+                    </label>
+                    <input 
+                      type="text" required
+                      value={editRegion} onChange={(e) => setEditRegion(e.target.value)}
+                      className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button 
+                    type="button"
+                    onClick={() => setIsEditingLot(false)}
+                    className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-700 font-mono font-bold uppercase py-2 rounded text-[10px] cursor-pointer transition-colors"
+                  >
+                    {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
+                  </button>
+                  <button 
+                    type="submit"
+                    className="flex-1 bg-[#4e0e15] hover:bg-[#801323] text-white font-mono font-bold uppercase py-2 rounded text-[10px] cursor-pointer transition-colors"
+                  >
+                    {lang === 'ka' ? 'შენახვა' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <>
 
             {/* General Chemistry specs summary */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-3 bg-gradient-to-br from-[#FAF8F5] to-[#f5efe9]/30 border border-[#f0e6da] rounded-lg">
@@ -737,8 +881,10 @@ export default function WineLotsTrace({
                 ))}
               </div>
             </div>
-          </div>
-        ) : (
+          </>
+        )}
+      </div>
+    ) : (
           <div className="p-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
             Configure or select an active wine lot to audit traceability history pathways.
           </div>

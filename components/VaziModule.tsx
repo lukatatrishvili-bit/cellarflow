@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   VineyardBlock, 
   PhenologyRecord, 
@@ -245,6 +245,74 @@ export default function VaziModule({
   const selectedBlock = useMemo(() => {
     return blocks.find(b => b.id === selectedBlockId) || null;
   }, [blocks, selectedBlockId]);
+
+  // Block Edit States
+  const [isEditingBlock, setIsEditingBlock] = useState(false);
+  const [editBlockName, setEditBlockName] = useState('');
+  const [editVineyardName, setEditVineyardName] = useState('');
+  const [editLocationName, setEditLocationName] = useState('');
+  const [editArea, setEditArea] = useState(1.0);
+  const [editElevation, setEditElevation] = useState(350);
+  const [editSlope, setEditSlope] = useState('');
+  const [editAspect, setEditAspect] = useState('');
+  const [editSoilType, setEditSoilType] = useState('');
+  const [editGrapeVariety, setEditGrapeVariety] = useState('');
+  const [editPlantingYear, setEditPlantingYear] = useState(2018);
+  const [editSpacing, setEditSpacing] = useState('');
+  const [editRowsCount, setEditRowsCount] = useState(0);
+  const [editVinesCount, setEditVinesCount] = useState(0);
+  const [editTrainingSystem, setEditTrainingSystem] = useState('');
+  const [editIrrigationEnabled, setEditIrrigationEnabled] = useState(false);
+  const [editFarmingStatus, setEditFarmingStatus] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+
+  useEffect(() => {
+    if (selectedBlock) {
+      setEditBlockName(selectedBlock.name);
+      setEditVineyardName(selectedBlock.vineyardName);
+      setEditLocationName(selectedBlock.locationName);
+      setEditArea(selectedBlock.area);
+      setEditElevation(selectedBlock.elevation);
+      setEditSlope(selectedBlock.slope);
+      setEditAspect(selectedBlock.aspect);
+      setEditSoilType(selectedBlock.soilType);
+      setEditGrapeVariety(selectedBlock.grapeVariety);
+      setEditPlantingYear(selectedBlock.plantingYear);
+      setEditSpacing(selectedBlock.spacing);
+      setEditRowsCount(selectedBlock.rowsCount);
+      setEditVinesCount(selectedBlock.vinesCount);
+      setEditTrainingSystem(selectedBlock.trainingSystem);
+      setEditIrrigationEnabled(selectedBlock.irrigationEnabled);
+      setEditFarmingStatus(selectedBlock.farmingStatus);
+      setEditNotes(selectedBlock.notes || '');
+      setIsEditingBlock(false);
+    }
+  }, [selectedBlockId, selectedBlock]);
+
+  const handleSaveBlock = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedBlock) return;
+    onUpdateBlock(selectedBlock.id, {
+      name: editBlockName,
+      vineyardName: editVineyardName,
+      locationName: editLocationName,
+      area: Number(editArea) || 0,
+      elevation: Number(editElevation) || 0,
+      slope: editSlope,
+      aspect: editAspect,
+      soilType: editSoilType,
+      grapeVariety: editGrapeVariety,
+      plantingYear: Number(editPlantingYear) || 2018,
+      spacing: editSpacing,
+      rowsCount: Number(editRowsCount) || 0,
+      vinesCount: Number(editVinesCount) || 0,
+      trainingSystem: editTrainingSystem,
+      irrigationEnabled: editIrrigationEnabled,
+      farmingStatus: editFarmingStatus,
+      notes: editNotes
+    });
+    setIsEditingBlock(false);
+  };
 
   // Compute stats
   const totalArea = useMemo(() => blocks.reduce((acc, b) => acc + b.area, 0), [blocks]);
@@ -787,10 +855,20 @@ export default function VaziModule({
               <div className="bg-white border border-[#e8dfd5] p-6 rounded-2xl shadow-sm space-y-6">
                 
                 {/* Title and Base Stats */}
-                <div className="flex flex-col sm:flex-row justify-between sm:items-start border-b border-light-beige pb-4 gap-3">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-start border-b border-[#e8dfd5] pb-4 gap-3">
                   <div>
                     <span className="text-[10px] uppercase font-mono text-slate-450 tracking-widest">{selectedBlock.vineyardName} • {selectedBlock.locationName}</span>
-                    <h3 className="text-xl font-serif font-black text-[#4e0e15] mt-1">{selectedBlock.name}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <h3 className="text-xl font-serif font-black text-[#4e0e15]">{selectedBlock.name}</h3>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingBlock(!isEditingBlock)}
+                        className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
+                        title="Edit Block Properties"
+                      >
+                        ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
+                      </button>
+                    </div>
                     <p className="text-xs text-stone-500 font-medium font-sans leading-relaxed mt-1">{selectedBlock.notes}</p>
                   </div>
                   
@@ -806,6 +884,182 @@ export default function VaziModule({
                     </div>
                   </div>
                 </div>
+
+                {isEditingBlock ? (
+                  <form onSubmit={handleSaveBlock} className="space-y-4 bg-[#FAF8F5] p-5 border border-[#e8dfd5] rounded-xl text-xs text-stone-700">
+                    <h3 className="text-xs uppercase font-mono tracking-widest text-[#4e0e15] font-black border-b pb-1.5 mb-3 flex justify-between items-center">
+                      <span>✏️ {lang === 'ka' ? 'ნაკვეთის პარამეტრები' : 'Edit Block Properties'}</span>
+                    </h3>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Block Name</label>
+                        <input 
+                          type="text" required
+                          value={editBlockName} onChange={(e) => setEditBlockName(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vineyard Name</label>
+                        <input 
+                          type="text" required
+                          value={editVineyardName} onChange={(e) => setEditVineyardName(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Location Name</label>
+                        <input 
+                          type="text" required
+                          value={editLocationName} onChange={(e) => setEditLocationName(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Area (ha)</label>
+                        <input 
+                          type="number" step="0.01" required
+                          value={editArea} onChange={(e) => setEditArea(Number(e.target.value) || 0)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Elevation (m)</label>
+                        <input 
+                          type="number" required
+                          value={editElevation} onChange={(e) => setEditElevation(Number(e.target.value) || 0)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Slope</label>
+                        <input 
+                          type="text" required
+                          value={editSlope} onChange={(e) => setEditSlope(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Aspect</label>
+                        <input 
+                          type="text" required
+                          value={editAspect} onChange={(e) => setEditAspect(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Grape Variety</label>
+                        <input 
+                          type="text" required
+                          value={editGrapeVariety} onChange={(e) => setEditGrapeVariety(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Planting Year</label>
+                        <input 
+                          type="number" required
+                          value={editPlantingYear} onChange={(e) => setEditPlantingYear(Number(e.target.value) || 2018)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Training System</label>
+                        <input 
+                          type="text" required
+                          value={editTrainingSystem} onChange={(e) => setEditTrainingSystem(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Spacing</label>
+                        <input 
+                          type="text" required
+                          value={editSpacing} onChange={(e) => setEditSpacing(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Rows Count</label>
+                        <input 
+                          type="number" required
+                          value={editRowsCount} onChange={(e) => setEditRowsCount(Number(e.target.value) || 0)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vines Count</label>
+                        <input 
+                          type="number" required
+                          value={editVinesCount} onChange={(e) => setEditVinesCount(Number(e.target.value) || 0)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Farming Status</label>
+                        <input 
+                          type="text" required
+                          value={editFarmingStatus} onChange={(e) => setEditFarmingStatus(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Soil Type</label>
+                        <input 
+                          type="text" required
+                          value={editSoilType} onChange={(e) => setEditSoilType(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 pt-4">
+                        <input 
+                          type="checkbox" id="editIrrigationEnabled"
+                          checked={editIrrigationEnabled} onChange={(e) => setEditIrrigationEnabled(e.target.checked)}
+                          className="h-4 w-4 text-emerald-800 focus:ring-emerald-700 rounded accent-emerald-800"
+                        />
+                        <label htmlFor="editIrrigationEnabled" className="font-bold text-[10px] text-stone-700 cursor-pointer">Irrigation Enabled</label>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Block Notes / Description</label>
+                      <textarea 
+                        value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
+                        className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none h-16"
+                      />
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button 
+                        type="button"
+                        onClick={() => setIsEditingBlock(false)}
+                        className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-700 font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer transition-colors"
+                      >
+                        {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
+                      </button>
+                      <button 
+                        type="submit"
+                        className="flex-1 bg-emerald-800 hover:bg-emerald-900 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer transition-colors"
+                      >
+                        {lang === 'ka' ? 'შენახვა' : 'Save Changes'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
 
                 {/* Sub-Tabs of Block detail */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-stone-700">
@@ -988,6 +1242,8 @@ export default function VaziModule({
                   </div>
                 </div>
 
+              </>
+            )}
               </div>
             ) : (
               <div className="bg-stone-50 border border-dashed border-[#e8dfd5] text-center p-12 rounded-xl italic font-serif text-sm text-[#4e0e15]/60 flex flex-col items-center justify-center">

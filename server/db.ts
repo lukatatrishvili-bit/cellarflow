@@ -76,11 +76,37 @@ export function createEmptyUserData(): UserDataState {
 export function getDB(): DBState {
   if (dbData) return dbData;
 
+  const templatePath = path.resolve(__dirname, '../db.json');
+  if (DB_PATH !== templatePath && !fs.existsSync(DB_PATH) && fs.existsSync(templatePath)) {
+    try {
+      console.log(`Seeding database from template: ${templatePath} -> ${DB_PATH}`);
+      fs.copyFileSync(templatePath, DB_PATH);
+    } catch (err) {
+      console.error(`Failed to seed database from template:`, err);
+    }
+  }
+
   if (fs.existsSync(DB_PATH)) {
     try {
       dbData = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
       if (!dbData.users) dbData.users = [];
       if (!dbData.userData) dbData.userData = {};
+
+      // Merge googleConfig if missing in persistent db but present in template
+      if (!dbData.googleConfig && fs.existsSync(templatePath)) {
+        try {
+          const templateDb = JSON.parse(fs.readFileSync(templatePath, 'utf8'));
+          if (templateDb.googleConfig) {
+            console.log('Merging googleConfig from template database...');
+            dbData.googleConfig = templateDb.googleConfig;
+            // We delay saveDB to when server is fully initialized or call it synchronously here
+            fs.writeFileSync(DB_PATH, JSON.stringify(dbData, null, 2), 'utf8');
+          }
+        } catch (e) {
+          console.error('Failed to merge googleConfig from template:', e);
+        }
+      }
+
       return dbData;
     } catch (err) {
       console.error('Failed to read db.json, recreating...', err);

@@ -381,6 +381,28 @@ export function useWineryState() {
     }
   };
 
+  const handleUpdateProfile = async (updates: Partial<UserProfile>) => {
+    try {
+      const res = await fetch('/api/auth/update_profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCurrentUser(updated);
+        localStorage.setItem('vinea_curr_user', JSON.stringify(updated));
+        setToastMessage(lang === 'ka' ? 'პროფილი განახლდა!' : 'Profile updated successfully!');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToastMessage(`⚠️ Profile update failed: ${err.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Failed to update profile:', err);
+      setToastMessage('⚠️ Failed to connect for profile update.');
+    }
+  };
+
   const clearAllData = async () => {
     try {
       const res = await fetch('/api/admin/reset', {
@@ -1174,6 +1196,7 @@ export function useWineryState() {
     handleAuthLogin,
     handleAuthLogout,
     handleAuthRegister,
+    handleUpdateProfile,
     syncConflicts,
     setSyncConflicts,
     resolveConflict,
