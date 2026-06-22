@@ -169,18 +169,19 @@ function round1(n: unknown): number {
 }
 
 /** WMO weather interpretation codes -> compact description. */
-export function describeWeatherCode(code: number): { emoji: string; label: string } {
-  if (code === 0) return { emoji: '☀️', label: 'Clear sky' };
-  if (code === 1) return { emoji: '🌤️', label: 'Mainly clear' };
-  if (code === 2) return { emoji: '⛅', label: 'Partly cloudy' };
-  if (code === 3) return { emoji: '☁️', label: 'Overcast' };
-  if (code === 45 || code === 48) return { emoji: '🌫️', label: 'Fog' };
-  if (code >= 51 && code <= 57) return { emoji: '🌦️', label: 'Drizzle' };
-  if (code >= 61 && code <= 67) return { emoji: '🌧️', label: 'Rain' };
-  if (code >= 71 && code <= 77) return { emoji: '🌨️', label: 'Snow' };
-  if (code >= 80 && code <= 82) return { emoji: '🌧️', label: 'Rain showers' };
-  if (code === 85 || code === 86) return { emoji: '🌨️', label: 'Snow showers' };
-  if (code === 95) return { emoji: '⛈️', label: 'Thunderstorm' };
-  if (code === 96 || code === 99) return { emoji: '⛈️', label: 'Thunderstorm w/ hail' };
-  return { emoji: '🌡️', label: `Code ${code}` };
+export function describeWeatherCode(code: number, lang: string = 'en'): { emoji: string; label: string } {
+  const isKa = lang === 'ka';
+  if (code === 0) return { emoji: '☀️', label: isKa ? 'მოწმენდილი ცა' : 'Clear sky' };
+  if (code === 1) return { emoji: '🌤️', label: isKa ? 'უმეტესად მოწმენდილი' : 'Mainly clear' };
+  if (code === 2) return { emoji: '⛅', label: isKa ? 'ნაწილობრივ ღრუბლიანი' : 'Partly cloudy' };
+  if (code === 3) return { emoji: '☁️', label: isKa ? 'მოღრუბლული' : 'Overcast' };
+  if (code === 45 || code === 48) return { emoji: '🌫️', label: isKa ? 'ნისლი' : 'Fog' };
+  if (code >= 51 && code <= 57) return { emoji: '🌦️', label: isKa ? 'ჟინჟღლი' : 'Drizzle' };
+  if (code >= 61 && code <= 67) return { emoji: '🌧️', label: isKa ? 'წვიმა' : 'Rain' };
+  if (code >= 71 && code <= 77) return { emoji: '🌨️', label: isKa ? 'თოვლი' : 'Snow' };
+  if (code >= 80 && code <= 82) return { emoji: '🌧️', label: isKa ? 'ძლიერი წვიმა' : 'Rain showers' };
+  if (code === 85 || code === 86) return { emoji: '🌨️', label: isKa ? 'ძლიერი თოვლი' : 'Snow showers' };
+  if (code === 95) return { emoji: '⛈️', label: isKa ? 'ჭექა-ქუხილი' : 'Thunderstorm' };
+  if (code === 96 || code === 99) return { emoji: '⛈️', label: isKa ? 'ჭექა-ქუხილი სეტყვით' : 'Thunderstorm w/ hail' };
+  return { emoji: '🌡️', label: isKa ? `კოდი ${code}` : `Code ${code}` };
 }
