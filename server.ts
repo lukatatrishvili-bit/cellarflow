@@ -496,6 +496,36 @@ app.post('/api/admin/reset', (req, res) => {
   res.json(db.userData[session.username]);
 });
 
+// Secure administrative database export endpoint
+app.get('/api/admin/export', (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies['maranios_session'];
+  const session = verifySessionToken(token);
+  
+  if (!session) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (session.role !== 'Owner/Admin') {
+    return res.status(403).json({ error: 'Forbidden: Only Owner/Admin can export data.' });
+  }
+
+  // Clone database to avoid modifying in-memory cache
+  const db = JSON.parse(JSON.stringify(getDB()));
+  
+  // Strip password hashes for security
+  if (db.users) {
+    db.users.forEach((u: any) => {
+      delete u.passwordHash;
+    });
+  }
+  delete db.googleConfig; // Strip sensitive Google client secret
+
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', 'attachment; filename=cellarflow_export.json');
+  res.json(db);
+});
+
 // Helper to validate ID structure
 function isValidId(id: any): boolean {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[a-zA-Z0-9_\- ]+$/.test(id);

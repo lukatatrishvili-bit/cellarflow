@@ -272,6 +272,28 @@ export default function ProfileSettingsTab({
         </form>
       </div>
 
+      {currentUser.role === 'Owner/Admin' && (
+        <div className="bg-emerald-50/40 border border-emerald-200 p-6 rounded-2xl shadow-sm space-y-4 dark:bg-emerald-950/10 dark:border-emerald-900/40">
+          <div>
+            <h4 className="text-md font-serif font-black text-emerald-800 uppercase tracking-wide dark:text-emerald-400">
+              📊 {lang === 'ka' ? 'მონაცემთა ბაზის ექსპორტი (JSON)' : 'Administrative Database Export (JSON)'}
+            </h4>
+            <p className="text-[10px] text-emerald-700/80 mt-1 dark:text-emerald-500">
+              {lang === 'ka' 
+                ? 'ჩამოტვირთეთ ყველა მომხმარებლის სრული საოპერაციო მონაცემები სამომავლო ანალიზისა და გაუმჯობესებისთვის. პაროლები და სენსიტიური გასაღებები ამოღებულია უსაფრთხოებისთვის.' 
+                : 'Download full agricultural data and user configurations across all profiles for future system improvements. Passwords and API secrets are automatically stripped for security.'}
+            </p>
+          </div>
+          <a
+            href="/api/admin/export"
+            download="cellarflow_export.json"
+            className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors flex items-center justify-center gap-2 text-center text-decoration-none"
+          >
+            📥 {lang === 'ka' ? 'მონაცემთა ბაზის ჩამოტვირთვა' : 'Export and Download Database JSON'}
+          </a>
+        </div>
+      )}
+
       {onClearAllData && (
         <div className="bg-rose-50/50 border border-rose-200 p-6 rounded-2xl shadow-sm space-y-4">
           <div>
