@@ -559,7 +559,7 @@ export default function App() {
                       <input
                         type="text"
                         name="fullName"
-                        placeholder={state.lang === 'ka' ? 'ლუკა ტატრიშვილი' : 'Luka Tatrishvili'}
+                        placeholder={state.lang === 'ka' ? 'ლუკა თათრიშვილი' : 'Luka Tatrishvili'}
                         className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
                         required
                       />
