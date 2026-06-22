@@ -140,24 +140,24 @@ For the "Continue with Google" button to successfully authenticate users using t
 4. Search for and open the **Credentials** page:
    * Click **Create Credentials** > **OAuth Client ID**.
    * Select **Web Application** as the Application Type.
-   * Add **Authorized JavaScript Origins** (if running custom domains or testing):
-     * Local: `http://localhost:3000`
-     * Production: `https://cellarflow-app.fly.dev`
-   * Add **Authorized Redirect URIs**:
-     * Local: `http://localhost:3000/api/auth/google/callback`
-     * Production: `https://cellarflow-app.fly.dev/api/auth/google/callback`
-   * Click **Create** and copy the generated **Client ID** and **Client Secret**.
-
-### Step 6.2: Set Environment Variables
-Add the Client ID and Secret to your environment configurations:
-
-* **Locally**: Set them in your `.env` file:
-  ```env
-  GOOGLE_CLIENT_ID=your_client_id_here.apps.googleusercontent.com
-  GOOGLE_CLIENT_SECRET=GOCSPX-your_client_secret_here
-  ```
-* **On Fly.io**: Run the secrets command in your terminal:
-  ```powershell
-  fly secrets set GOOGLE_CLIENT_ID="your_client_id_here" GOOGLE_CLIENT_SECRET="your_client_secret_here"
-  ```
-
+    * Add **Authorized JavaScript Origins** (if running custom domains or testing):
+      * Local: `http://localhost:3000`
+      * Production: `https://cellarflow-app-445298255193.europe-west1.run.app`
+    * Add **Authorized Redirect URIs**:
+      * Local: `http://localhost:3000/api/auth/google/callback`
+      * Production: `https://cellarflow-app-445298255193.europe-west1.run.app/api/auth/google/callback`
+    * Click **Create** and copy the generated **Client ID** and **Client Secret**.
+ 
+ ### Step 6.2: Set Environment Variables
+ Add the Client ID and Secret to your environment configurations:
+ 
+ * **Locally**: Set them in your `.env` file:
+   ```env
+   GOOGLE_CLIENT_ID=your_client_id_here.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=GOCSPX-your_client_secret_here
+   ```
+ * **On Google Cloud Run**: You can configure these environment variables in your Cloud Run service configuration via the GCP Console or by redeploying the service with:
+   ```bash
+   gcloud run deploy cellarflow-app --set-env-vars GOOGLE_CLIENT_ID="your_client_id_here",GOOGLE_CLIENT_SECRET="your_client_secret_here" --region europe-west1
+   ```
+   Or set them directly on the setup screen at `/api/auth/google/login?reconfigure=true`.

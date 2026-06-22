@@ -134,6 +134,7 @@ app.get('/api/auth/google/login', (req, res) => {
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret;
   
   const reconfigure = req.query.reset === 'true' || req.query.reconfigure === 'true';
+  const redirectUri = getRedirectUri(req);
   
   if (!clientId || !clientSecret || reconfigure) {
     const displayClientId = db.googleConfig?.clientId || '';
@@ -174,8 +175,8 @@ app.get('/api/auth/google/login', (req, res) => {
             <li>Create a new project or select an existing one.</li>
             <li>Configure the <strong>OAuth Consent Screen</strong> (scopes: <code>openid</code>, <code>email</code>, <code>profile</code>).</li>
             <li>Go to <strong>Credentials > Create Credentials > OAuth client ID</strong> (Application type: <strong>Web application</strong>).</li>
-            <li>Add the following Authorized Redirect URIs:
-              <pre>http://localhost:3000/api/auth/google/callback<br>https://cellarflow-app.fly.dev/api/auth/google/callback</pre>
+            <li>Add the following Authorized Redirect URI:
+              <pre>${redirectUri}</pre>
             </li>
           </ol>
           
@@ -202,7 +203,6 @@ app.get('/api/auth/google/login', (req, res) => {
     return;
   }
   
-  const redirectUri = getRedirectUri(req);
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
     `response_type=code` +
     `&client_id=${encodeURIComponent(clientId)}` +
