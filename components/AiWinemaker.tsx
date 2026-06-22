@@ -36,15 +36,40 @@ interface TempTask {
 
 export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTab, contextModule, className }: Props) {
   const t = translations[lang];
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: translations[lang].ai_desc
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputMsg, setInputMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Load chats from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('vinea_ai_chats');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to parse saved chats:', e);
+      }
+    }
+    // Fallback/Initial state
+    setMessages([
+      {
+        role: 'assistant',
+        content: translations[lang].ai_desc
+      }
+    ]);
+  }, [lang]);
+
+  // Save chats to localStorage whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      localStorage.setItem('vinea_ai_chats', JSON.stringify(messages));
+    }
+  }, [messages]);
 
   // Work Order generator states
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -237,8 +262,28 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
             <p className="text-[10px] text-amber-200/80">Winery Advisor & Chemistry Modeler Mode</p>
           </div>
         </div>
-        <div className="px-2 py-0.5 bg-[#ffffff1d] text-[10px] rounded text-stone-100 flex items-center gap-1">
-          <Sparkles className="w-3 h-3 text-amber-300" /> Active Cellar Sync
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm('Clear enological chat history?')) {
+                localStorage.removeItem('vinea_ai_chats');
+                setMessages([
+                  {
+                    role: 'assistant',
+                    content: translations[lang].ai_desc
+                  }
+                ]);
+              }
+            }}
+            className="px-2 py-0.5 bg-[#ffffff1d] hover:bg-[#ffffff30] text-[10px] rounded text-stone-100 flex items-center gap-1 transition-colors cursor-pointer border-0"
+            title="Clear Chat History"
+          >
+            Clear History
+          </button>
+          <div className="px-2 py-0.5 bg-[#ffffff1d] text-[10px] rounded text-stone-100 flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-amber-300" /> Active Cellar Sync
+          </div>
         </div>
       </div>
 

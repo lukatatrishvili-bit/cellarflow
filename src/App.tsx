@@ -54,8 +54,7 @@ import {
   Sprout,
   Sun,
   Moon,
-  RefreshCw,
-  QrCode
+  RefreshCw
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -68,7 +67,6 @@ function ModuleLoader() {
 
 export default function App() {
   const state = useWineryState();
-  const [showQrModal, setShowQrModal] = useState(false);
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
 
@@ -370,16 +368,7 @@ export default function App() {
             <span>{isOnline ? (state.lang === 'ka' ? 'ონლაინ' : 'ONLINE') : (state.lang === 'ka' ? 'ოფლაინ' : 'OFFLINE')}</span>
           </div>
 
-          {/* QR Scanner Trigger */}
-          {state.isLoggedIn && (
-            <button
-              onClick={() => setShowQrModal(true)}
-              className="p-2 bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800 flex items-center justify-center shadow-2xs"
-              title="Simulate QR Code Scan"
-            >
-              <QrCode className="w-3.5 h-3.5" />
-            </button>
-          )}
+
 
           {/* Language Switcher */}
           <div className="flex items-center gap-1 bg-stone-50 border border-stone-200 px-2.5 py-1 rounded-xl shadow-2xs dark:bg-stone-900 dark:border-stone-800">
@@ -1364,105 +1353,7 @@ export default function App() {
         </>
       )}
 
-      {/* QR CODE SCANNER SIMULATOR MODAL */}
-      {showQrModal && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#140d0e] max-w-md w-full rounded-2xl border border-stone-200 dark:border-[#2a191b] shadow-2xl overflow-hidden animate-scale-up text-stone-850 dark:text-stone-100 font-sans">
-            <div className="px-5 py-4 border-b border-stone-100 dark:border-stone-800 flex justify-between items-center bg-stone-50 dark:bg-stone-950/40">
-              <h3 className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-2">
-                <QrCode className="w-4 h-4 text-[#801323] dark:text-amber-400" />
-                Mobile QR Code Scanner Simulator
-              </h3>
-              <button
-                onClick={() => setShowQrModal(false)}
-                className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            <div className="p-6 space-y-6">
-              {/* Viewfinder Framed Scanner Animation */}
-              <div className="relative w-48 h-48 mx-auto border-2 border-stone-300 dark:border-stone-700 rounded-xl overflow-hidden flex items-center justify-center bg-stone-50 dark:bg-stone-900 shadow-inner">
-                <div className="absolute top-2 left-2 w-4 h-4 border-t-2 border-l-2 border-[#801323] dark:border-amber-400"></div>
-                <div className="absolute top-2 right-2 w-4 h-4 border-t-2 border-r-2 border-[#801323] dark:border-amber-400"></div>
-                <div className="absolute bottom-2 left-2 w-4 h-4 border-b-2 border-l-2 border-[#801323] dark:border-amber-400"></div>
-                <div className="absolute bottom-2 right-2 w-4 h-4 border-b-2 border-r-2 border-[#801323] dark:border-amber-400"></div>
-                
-                <div className="absolute left-0 right-0 h-0.5 bg-emerald-500 shadow-[0_0_10px_#10b981] animate-bounce w-full" style={{ animationDuration: '2.5s' }}></div>
-
-                <div className="text-center p-3 select-none pointer-events-none">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-stone-400 block mb-1">Scanning...</span>
-                  <span className="text-2xl">📷</span>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <p className="text-xs text-stone-500 dark:text-stone-450 leading-relaxed text-center font-semibold">
-                  Select a mockup asset barcode target to simulate scanning with a smartphone camera.
-                </p>
-
-                <div className="space-y-3.5 max-h-60 overflow-y-auto pr-1">
-                  <div>
-                    <h4 className="text-[10px] uppercase font-mono text-stone-400 dark:text-stone-500 tracking-wider font-extrabold mb-1.5">Vessels (Tank Drawers)</h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      {state.vessels.slice(0, 4).map(v => (
-                        <button
-                          key={v.id}
-                          onClick={() => {
-                            state.setSelectedTankId(v.id);
-                            state.setActiveModule('gvino');
-                            state.setActiveTab('vessels');
-                            setShowQrModal(false);
-                            state.setToastMessage(`Scanned QR for Vessel: ${v.id}`);
-                          }}
-                          className="p-2 text-left bg-stone-50 hover:bg-[#FAF8F5]/85 border border-stone-200 dark:bg-stone-900 dark:border-stone-850 rounded-xl hover:border-[#801323] transition-all cursor-pointer text-xs font-bold text-[#4e0e15] dark:text-amber-100 flex items-center justify-between group"
-                        >
-                          <span>{v.id}</span>
-                          <span className="text-[9px] font-mono text-stone-400 font-semibold group-hover:text-stone-600">Scan ⚡</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="text-[10px] uppercase font-mono text-stone-400 dark:text-stone-500 tracking-wider font-extrabold mb-1.5">Wine Lots (Passport Reports)</h4>
-                    <div className="space-y-2">
-                      {state.lots.slice(0, 3).map(l => (
-                        <button
-                          key={l.id}
-                          onClick={() => {
-                            state.setPassportLotId(l.id);
-                            state.setActiveModule('gvino');
-                            setShowQrModal(false);
-                            state.setToastMessage(`Scanned QR for Lot: ${l.name}`);
-                          }}
-                          className="w-full p-2.5 text-left bg-stone-50 hover:bg-[#FAF8F5]/85 border border-stone-200 dark:bg-stone-900 dark:border-[#2a191b] rounded-xl hover:border-[#801323] transition-all cursor-pointer text-xs font-bold flex items-center justify-between group"
-                        >
-                          <div>
-                            <span className="text-[#4e0e15] dark:text-amber-100 block font-serif">{l.name}</span>
-                            <span className="text-[9px] text-stone-450 block font-mono font-semibold">{l.id} • {l.variety} ({l.vintage})</span>
-                          </div>
-                          <span className="text-[9px] font-mono text-stone-400 font-semibold group-hover:text-stone-600">Scan ⚡</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="px-5 py-4 bg-stone-50 dark:bg-stone-950/40 border-t border-stone-100 dark:border-stone-800 flex justify-end">
-              <button
-                onClick={() => setShowQrModal(false)}
-                className="px-4 py-2 bg-stone-200 dark:bg-stone-800 hover:bg-stone-300 dark:hover:bg-stone-750 text-stone-700 dark:text-stone-200 text-xs font-mono font-bold rounded-xl transition-all cursor-pointer"
-              >
-                Close Scanner
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 3. Humble human-label footer */}
       <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-400 font-mono font-medium">
