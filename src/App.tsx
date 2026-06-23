@@ -322,7 +322,7 @@ export default function App() {
       })()}
 
       {/* 1. Global Navigation Bar — floating glass pill */}
-      <header className="relative mx-3 md:mx-6 mt-3 px-5 md:px-7 py-3 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-3 z-40 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] transition-all duration-300 dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
+      <header className="relative max-w-[1720px] w-full mx-auto mt-4 px-6 md:px-8 py-3.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-3 z-40 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] transition-all duration-300 dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
         {/* Luxury Top Wine Edge Border */}
         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-[#801323] via-[#4e0e15] to-[#c5a059]" />
 
@@ -455,8 +455,8 @@ export default function App() {
 
       {/* 2. Main Shell Layout */}
       {!state.isLoggedIn ? (
-        <div className="flex-1 flex items-stretch justify-center p-4 sm:p-6 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
-          <div className="w-full max-w-4xl my-auto grid lg:grid-cols-[1.05fr_1fr] rounded-3xl overflow-hidden shadow-[0_30px_80px_-30px_rgba(78,14,21,0.35)] border border-stone-200/70 bg-white animate-fade-in dark:border-stone-850 dark:bg-stone-950">
+        <div className="flex-1 flex items-stretch justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
+          <div className="w-full max-w-5xl my-auto grid lg:grid-cols-[1.1fr_1fr] rounded-3xl overflow-hidden shadow-[0_35px_90px_-30px_rgba(78,14,21,0.38)] border border-stone-200/70 bg-white animate-fade-in dark:border-stone-850 dark:bg-stone-950">
 
             {/* Brand hero — desktop only */}
             <div className="relative hidden lg:flex flex-col justify-between p-10 bg-gradient-to-br from-[#5a1019] via-[#3a0a0f] to-[#1b0203] text-amber-100 overflow-hidden">
@@ -808,7 +808,7 @@ export default function App() {
           </div>
         </div>
       ) : state.activeModule === 'vazi' ? (
-        <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 flex flex-col">
+        <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 flex flex-col">
           <Suspense fallback={<ModuleLoader />}>
             <VaziModule
               lang={state.lang}
@@ -873,10 +873,10 @@ export default function App() {
           auditLogs={state.auditLogs}
         />
       ) : (
-        <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
+        <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 flex flex-col lg:flex-row gap-8">
           
           {/* Sticky sidebar */}
-          <aside className={`shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-20' : 'lg:w-60'} lg:self-start lg:sticky lg:top-24 transition-[width] duration-300`}>
+          <aside className={`shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-20' : 'lg:w-72'} lg:self-start lg:sticky lg:top-24 transition-[width] duration-300`}>
             <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
               {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">Winery Menu</span>}
               <button

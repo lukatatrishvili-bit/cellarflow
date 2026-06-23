@@ -617,7 +617,7 @@ export default function TanksVessels({
         />
       ) : viewMode === 'grid' ? (
         /* Original Premium Glass Cards Grid View */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 lg:gap-8">
           {filteredVessels.map(v => {
             const progress = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
             const assignedLot = lots.find(l => l.id === v.assignedLotId);

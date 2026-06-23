@@ -163,9 +163,9 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 24, stiffness: 200 }}
-            className="fixed inset-y-0 right-0 z-50 w-full sm:w-[480px] bg-[#FAF8F5] shadow-2xl border-l border-[#f0e6da] flex flex-col focus:outline-none text-stone-800"
+            className="fixed inset-y-0 right-0 z-50 w-full sm:w-[600px] lg:w-[680px] bg-[#FAF8F5] dark:bg-[#140d0e] shadow-2xl border-l border-[#f0e6da] dark:border-[#2a1618] flex flex-col focus:outline-none text-stone-800 dark:text-stone-200"
           >
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex-1 overflow-y-auto p-8 space-y-8">
               
               <div className="flex items-start justify-between border-b border-[#e8dfd5] pb-4">
                 <div>

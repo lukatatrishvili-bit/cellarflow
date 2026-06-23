@@ -790,7 +790,7 @@ export default function VaziModule({
           TAB 2: VINEYARD BLOCKS LIST & DETAIL
           ========================================== */}
       {vaziTab === 'blocks' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8">
           
           {/* Left Block Selection list */}
           <div className="lg:col-span-1 space-y-4">
@@ -821,27 +821,13 @@ export default function VaziModule({
                     {isActive && (
                       <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#4e0e15]" />
                     )}
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="text-[9px] font-mono text-slate-400 uppercase tracking-widest">{b.vineyardName}</span>
-                        <h4 className="font-serif font-bold text-sm text-[#4e0e15] mt-0.5">{b.name}</h4>
-                      </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded font-serif uppercase">{b.grapeVariety}</span>
+                    <div className="flex items-center justify-between">
+                      <strong className="text-xs font-serif font-black text-stone-900 dark:text-amber-100">{b.name}</strong>
+                      <span className="text-[9px] font-mono text-slate-400 font-bold">{b.area} ha</span>
                     </div>
-
-                    <div className="grid grid-cols-3 gap-2 mt-4 text-[10px] font-mono text-stone-500 font-semibold border-t border-stone-100 pt-2">
-                      <div>
-                        <span className="text-[9px] text-slate-400 uppercase block font-normal">Area</span>
-                        {b.area} ha
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400 uppercase block font-normal">Elevation</span>
-                        {b.elevation}m
-                      </div>
-                      <div>
-                        <span className="text-[9px] text-slate-400 uppercase block font-normal">Plant Year</span>
-                        {b.plantingYear}
-                      </div>
+                    <div className="flex justify-between items-center mt-2 font-mono text-[9px] text-stone-500">
+                      <span>{b.grapeVariety}</span>
+                      <span className="text-emerald-700 font-extrabold">{b.currentPhenology}</span>
                     </div>
                   </div>
                 );
@@ -850,9 +836,9 @@ export default function VaziModule({
           </div>
 
           {/* Right Detailed Analysis of Selected Block */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 xl:col-span-3 space-y-6">
             {selectedBlock ? (
-              <div className="bg-white border border-[#e8dfd5] p-6 rounded-2xl shadow-sm space-y-6">
+              <div className="bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-8 lg:p-10 rounded-3xl shadow-sm space-y-8">
                 
                 {/* Title and Base Stats */}
                 <div className="flex flex-col sm:flex-row justify-between sm:items-start border-b border-[#e8dfd5] pb-4 gap-3">
@@ -1260,11 +1246,11 @@ export default function VaziModule({
           TAB 3: SPRAYING RECORDS
           ========================================== */}
       {vaziTab === 'spraying' && selectedBlock && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 font-sans">
+        <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
           
           {/* Add Spray Record Form */}
-          <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
-            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 pb-2">Record Chemical Application</h4>
+          <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
+            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">Record Chemical Application</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
               const form = e.currentTarget;
@@ -1425,11 +1411,11 @@ export default function VaziModule({
           TAB 4: DISEASE SCOUTING
           ========================================== */}
       {vaziTab === 'scouting' && selectedBlock && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 font-sans">
+        <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
           
           {/* Add Scouting Record form */}
-          <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
-            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 pb-2">Log Pathogen Scouting</h4>
+          <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
+            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">Log Pathogen Scouting</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
               const form = e.currentTarget;
@@ -1520,7 +1506,7 @@ export default function VaziModule({
 
               <button 
                 type="submit" 
-                className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors"
+                className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors hover-lift"
               >
                 Save Scouting Record
               </button>
@@ -1528,7 +1514,7 @@ export default function VaziModule({
           </div>
 
           {/* Scouting List */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
+          <div className="lg:col-span-2 xl:col-span-3 bg-white dark:bg-stone-900 rounded-3xl border border-[#e8dfd5] dark:border-stone-800 p-8 shadow-sm space-y-5">
             <h4 className="font-serif font-bold text-sm text-[#4e0e15]">Continuous Field Pathology Records</h4>
             <div className="space-y-4">
               {scoutings.filter(sc => sc.blockId === selectedBlock.id).map(scout => (

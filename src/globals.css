@@ -1,10 +1,11 @@
 @import "tailwindcss";
 
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @theme {
   --font-serif: "Cormorant Garamond", Georgia, serif;
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Outfit", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Outfit", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
@@ -62,22 +63,22 @@
 }
 
 :root {
-  --background: #fdfdfc;      /* Clean Bright Alabaster */
-  --foreground: #1c1816;      /* Rich Espresso Charcoal */
+  --background: #fdfdfa;      /* Premium Clean Warm Alabaster */
+  --foreground: #14110f;      /* Deep Charcoal for high contrast readability */
   --card: #ffffff;            /* Pure White */
-  --border-custom: #ebd9c5;   /* Golden Linen Border */
+  --border-custom: #e8dfd5;   /* Golden Linen Border */
   --accent-gold: #c5a059;     /* Kakhuri Clay Amber Gold */
   --accent-burgundy: #801323; /* Georgian Saperavi Red */
   --accent-emerald: #0d9488;  /* Fresh Leaf Teal */
 }
 
 :root.dark {
-  --background: #0a0607;      /* Deep Obsidian Wine Black */
-  --foreground: #f6f1eb;      /* Warm Organic Cotton */
-  --card: #140d0e;            /* Deep Wine-tinted Walnut Card */
-  --border-custom: #2a191b;   /* Dark Warm Burgundy Branch Border */
+  --background: #080506;      /* Rich Obsidian Wine Black */
+  --foreground: #faf6f0;      /* Clear Organic White */
+  --card: #12090a;            /* Rich Dark Walnut Card */
+  --border-custom: #2a1618;   /* Dark Warm Burgundy Border */
   --accent-gold: #c5a059;     /* Gold Accent */
-  --accent-burgundy: #c82c40; /* Brighter Crimson Red for readability */
+  --accent-burgundy: #e13d51; /* Vivid Crimson Red for dark mode accessibility */
   --accent-emerald: #10b981;  /* Emerald */
 }
 
@@ -85,8 +86,8 @@ body {
   background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
-  /* Clip sideways overflow (background glow spheres) at the viewport level;
-     putting overflow on an inner wrapper would break sticky positioning. */
+  font-size: 16px;
+  line-height: 1.62;
   overflow-x: hidden;
   margin: 0;
   padding: 0;
@@ -98,6 +99,11 @@ body {
   font-family: var(--font-serif) !important;
   letter-spacing: -0.015em;
 }
+
+.font-display {
+  font-family: var(--font-display) !important;
+}
+
 
 /* Midnight Cellar Premium Dark Mode Wildcard Overrides */
 .dark body {
@@ -267,22 +273,48 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* Accessibility: Scale up very small fonts to be highly readable */
+.text-\[8px\] {
+  font-size: 12px !important;
+  letter-spacing: 0.02em;
+}
 .text-\[9px\] {
-  font-size: 11.5px !important;
-  letter-spacing: 0.03em;
+  font-size: 13px !important;
+  letter-spacing: 0.02em;
 }
 .text-\[10px\] {
-  font-size: 12.5px !important;
+  font-size: 14px !important;
+  letter-spacing: 0.015em;
 }
 .text-\[11px\] {
-  font-size: 13px !important;
+  font-size: 14.5px !important;
+  letter-spacing: 0.01em;
 }
 .text-xs {
-  font-size: 13.5px !important;
+  font-size: 15px !important;
 }
-.text-\[8px\] {
-  font-size: 10.5px !important;
+.text-sm {
+  font-size: 16.5px !important;
 }
+.text-base {
+  font-size: 18px !important;
+}
+.text-lg {
+  font-size: 21px !important;
+  letter-spacing: -0.01em;
+}
+.text-xl {
+  font-size: 24px !important;
+  letter-spacing: -0.015em;
+}
+.text-2xl {
+  font-size: 28px !important;
+  letter-spacing: -0.02em;
+}
+.text-3xl {
+  font-size: 34px !important;
+  letter-spacing: -0.025em;
+}
+
 
 .dark header {
   background-color: rgba(20, 13, 14, 0.95) !important;

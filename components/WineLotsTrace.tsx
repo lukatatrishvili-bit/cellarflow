@@ -119,7 +119,7 @@ export default function WineLotsTrace({
   const uniqueVintages = Array.from(new Set(lots.map(l => l.vintage))).sort((a, b) => b - a);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8">
       {/* List Panel */}
       <div className="lg:col-span-1 space-y-4">
         <div className="flex items-center justify-between">
@@ -368,9 +368,9 @@ export default function WineLotsTrace({
       </div>
 
       {/* Details/Timeline Trace Panel */}
-      <div className="lg:col-span-2 space-y-4">
+      <div className="lg:col-span-2 xl:col-span-3 space-y-6">
         {selectedLot ? (
-          <div className="p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm text-stone-800 space-y-6">
+          <div className="p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-xs text-stone-900 dark:text-stone-200 space-y-8">
             {/* Header info */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
               <div>

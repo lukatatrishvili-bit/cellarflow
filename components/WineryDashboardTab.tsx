@@ -72,22 +72,22 @@ export default function WineryDashboardTab({
     <div className="space-y-6 animate-fade-in text-stone-800 relative z-10">
       
       {/* Quick Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="p-4.5 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-3 border-l-[#801323] transition-all">
-          <span className="text-[9px] uppercase font-mono text-slate-450 block font-bold tracking-wider">{t.total_volume}</span>
-          <strong className="text-xl font-serif font-black text-[#801323] block mt-1.5">{totalLotsVolume.toLocaleString()} L</strong>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div className="p-6 lg:p-7 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-4 border-l-[#801323] transition-all">
+          <span className="text-[10px] uppercase font-mono text-slate-450 block font-black tracking-wider">{t.total_volume}</span>
+          <strong className="text-2xl lg:text-3xl font-display font-black text-[#801323] block mt-2">{totalLotsVolume.toLocaleString()} L</strong>
         </div>
-        <div className="p-4.5 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-3 border-l-[#4e0e15] transition-all">
-          <span className="text-[9px] uppercase font-mono text-slate-450 block font-bold tracking-wider">{t.total_tanks}</span>
-          <strong className="text-xl font-serif font-black text-[#4e0e15] block mt-1.5">{totalTanksCount} ({occupiedTanksCount} {isKa ? 'შევსებული' : 'ocup'})</strong>
+        <div className="p-6 lg:p-7 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-4 border-l-[#4e0e15] transition-all">
+          <span className="text-[10px] uppercase font-mono text-slate-450 block font-black tracking-wider">{t.total_tanks}</span>
+          <strong className="text-2xl lg:text-3xl font-display font-black text-[#4e0e15] block mt-2">{totalTanksCount} <span className="text-xs font-sans text-stone-500 font-bold">({occupiedTanksCount} {isKa ? 'შევსებული' : 'fill'})</span></strong>
         </div>
-        <div className="p-4.5 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-3 border-l-amber-600 transition-all">
-          <span className="text-[9px] uppercase font-mono text-slate-450 block font-bold tracking-wider">{t.active_ferms}</span>
-          <strong className="text-xl font-serif font-black text-amber-600 block mt-1.5">{activeFermsCount}</strong>
+        <div className="p-6 lg:p-7 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-4 border-l-amber-600 transition-all">
+          <span className="text-[10px] uppercase font-mono text-slate-450 block font-black tracking-wider">{t.active_ferms}</span>
+          <strong className="text-2xl lg:text-3xl font-display font-black text-amber-600 block mt-2">{activeFermsCount}</strong>
         </div>
-        <div className="p-4.5 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-3 border-l-emerald-750 transition-all">
-          <span className="text-[9px] uppercase font-mono text-slate-450 block font-bold tracking-wider">{t.temperature}</span>
-          <strong className="text-xl font-serif font-black text-emerald-700 block mt-1.5">{avgTemp} °C Avg</strong>
+        <div className="p-6 lg:p-7 glass-card rounded-2xl shadow-xs text-center hover-lift hover-glow border-l-4 border-l-emerald-750 transition-all">
+          <span className="text-[10px] uppercase font-mono text-slate-450 block font-black tracking-wider">{t.temperature}</span>
+          <strong className="text-2xl lg:text-3xl font-display font-black text-emerald-700 block mt-2">{avgTemp} °C</strong>
         </div>
       </div>
 
@@ -95,28 +95,28 @@ export default function WineryDashboardTab({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* 1. Cellar Vessel utilization graph */}
-        <div className="p-5.5 glass-card rounded-2xl shadow-xs text-stone-850 space-y-3.5 hover-glow transition-all">
-          <div className="border-b border-[#e8dfd5]/40 pb-2.5 flex items-center justify-between">
+        <div className="p-7 lg:p-8 glass-card rounded-3xl shadow-xs text-stone-850 space-y-4 hover-glow transition-all">
+          <div className="border-b border-[#e8dfd5]/40 pb-3.5 flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-serif font-black text-[#4e0e15]">{isKa ? 'რეზერვუარების დატვირთვა' : 'Cellar Vessel Utilization'}</h3>
-              <p className="text-[10px] text-slate-400 font-semibold">{isKa ? 'აქტიური მოცულობისა და ტევადობის დინამიური D3 დიაგრამა' : 'D3 Dynamic capacity vs active liquid volume tracking'}</p>
+              <h3 className="text-base font-display font-black text-[#4e0e15] dark:text-amber-100 uppercase tracking-wider">{isKa ? 'რეზერვუარების დატვირთვა' : 'Cellar Vessel Utilization'}</h3>
+              <p className="text-[10.5px] text-slate-400 font-semibold mt-1">{isKa ? 'აქტიური მოცულობისა და ტევადობის დინამიური D3 დიაგრამა' : 'D3 Dynamic capacity vs active liquid volume tracking'}</p>
             </div>
-            <span className="text-[8px] font-mono bg-stone-100/90 border border-stone-200 px-2 py-0.5 rounded text-[#4e0e15] uppercase font-bold tracking-widest shrink-0 dark:bg-stone-900 dark:border-stone-800 dark:text-amber-400">Cellar D3</span>
+            <span className="text-[9px] font-mono bg-stone-100/90 border border-stone-200 px-2.5 py-0.5 rounded-md text-[#4e0e15] uppercase font-bold tracking-widest shrink-0 dark:bg-stone-900 dark:border-stone-800 dark:text-amber-400">Cellar D3</span>
           </div>
           <TankCapacityChart tanks={mappedTanks} onSelectTank={setSelectedTankId} selectedTankId={selectedTankId} />
         </div>
 
         {/* 2. Fermentation kinetics curve */}
-        <div className="p-5.5 glass-card rounded-2xl shadow-xs text-stone-850 space-y-3.5 hover-glow transition-all">
-          <div className="border-b border-[#e8dfd5]/40 pb-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="p-7 lg:p-8 glass-card rounded-3xl shadow-xs text-stone-850 space-y-4 hover-glow transition-all">
+          <div className="border-b border-[#e8dfd5]/40 pb-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-serif font-black text-[#4e0e15]">{isKa ? 'დუღილის კინეტიკა და შაქრის კლება' : 'Kinetics & Sugar Degradation'}</h3>
-              <p className="text-[10px] text-slate-400 font-semibold">{isKa ? 'დუღილის პროგრესის ორღერძიანი D3 ტრეკერი' : 'D3 Live dual-axis fermentation kinetic tracker'}</p>
+              <h3 className="text-base font-display font-black text-[#4e0e15] dark:text-amber-100 uppercase tracking-wider">{isKa ? 'დუღილის კინეტიკა და შაქრის კლება' : 'Kinetics & Sugar Degradation'}</h3>
+              <p className="text-[10.5px] text-slate-400 font-semibold mt-1">{isKa ? 'დუღილის პროგრესის ორღერძიანი D3 ტრეკერი' : 'D3 Live dual-axis fermentation kinetic tracker'}</p>
             </div>
             <select
               value={chartLotId}
               onChange={(e) => setChartLotId(e.target.value)}
-              className="text-[10px] font-bold px-2 py-0.5 bg-[#FAF8F5] border border-slate-200 rounded outline-none w-full sm:w-40 cursor-pointer text-slate-800"
+              className="text-[10.5px] font-bold px-3 py-1 bg-[#FAF8F5] border border-slate-200 rounded-lg outline-none w-full sm:w-44 cursor-pointer text-slate-850"
             >
               {Array.from(new Set(fermLogs.map(l => l.lotId))).map(lId => {
                 const associatedLot = lots.find(lt => lt.id === lId);
