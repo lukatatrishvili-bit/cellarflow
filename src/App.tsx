@@ -374,14 +374,22 @@ export default function App() {
                       state.setActiveTab('dashboard'); // reset winery tab
                     }
                   }}
-                  className={`px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-all duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
-                    isActive 
-                      ? 'bg-[#4e0e15] text-amber-50 shadow-md scale-105 ring-1 ring-[#801323]/20' 
-                      : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 hover:scale-[1.02]'
+                  className={`relative px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
+                    isActive
+                      ? 'text-amber-50'
+                      : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15]'}`} />
-                  <span className="hidden lg:inline">{mod.label}</span>
+                  {/* Shared-element pill slides between active tabs */}
+                  {isActive && (
+                    <motion.span
+                      layoutId="module-nav-pill"
+                      className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md"
+                      transition={{ type: 'spring', stiffness: 480, damping: 38 }}
+                    />
+                  )}
+                  <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15]'}`} />
+                  <span className="relative z-10 hidden lg:inline">{mod.label}</span>
                 </button>
               );
             })}
