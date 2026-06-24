@@ -308,7 +308,7 @@ export default function VaziModule({
       vinesCount: Number(editVinesCount) || 0,
       trainingSystem: editTrainingSystem,
       irrigationEnabled: editIrrigationEnabled,
-      farmingStatus: editFarmingStatus,
+      farmingStatus: editFarmingStatus as VineyardBlock['farmingStatus'],
       notes: editNotes
     });
     setIsEditingBlock(false);

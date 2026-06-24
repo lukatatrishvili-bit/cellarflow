@@ -27,6 +27,7 @@ export default function TanksVessels({
   setActiveTab, setPrefilledSourceId, setPrefilledDestId
 }: Props) {
   const t = translations[lang];
+  const ka = lang === 'ka';
   const lText = (obj: Partial<Record<Language, string>>, fallback: string): string => {
     return obj[lang] || fallback;
   };
