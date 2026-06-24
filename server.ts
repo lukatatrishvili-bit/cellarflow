@@ -11,9 +11,17 @@ import { applyDeletions, mergeCollections } from './server/sync';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Default hardcoded Google OAuth fallback credentials (erasing need for setup screen)
-const DEFAULT_GOOGLE_CLIENT_ID = "445298255193-i21igsd0tfgicu4l364m2jo5pg8a6q4v.apps.googleusercontent.com";
-const DEFAULT_GOOGLE_CLIENT_SECRET = "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";
+// Google OAuth credentials are resolved ONLY from the environment
+// (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) or the in-app setup screen
+// (db.googleConfig). They are never hardcoded — a previously committed client
+// secret was removed and must be rotated in Google Cloud Console. When neither
+// source is configured, the OAuth routes fall back to the setup screen.
+function getGoogleOAuthCreds(db: any): { clientId: string; clientSecret: string } {
+  return {
+    clientId: process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId || '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret || '',
+  };
+}
 
 // Load .env manually if running locally
 try {
@@ -214,8 +222,7 @@ const getRedirectUri = (req: any) => {
 
 app.get('/api/auth/google/login', (req, res) => {
   const db = getDB() as any;
-  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId || DEFAULT_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret || DEFAULT_GOOGLE_CLIENT_SECRET;
+  const { clientId, clientSecret } = getGoogleOAuthCreds(db);
   
   const reconfigure = req.query.reset === 'true' || req.query.reconfigure === 'true';
   const redirectUri = getRedirectUri(req);
@@ -336,8 +343,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
   }
   
   const db = getDB() as any;
-  const clientId = process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId || DEFAULT_GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret || DEFAULT_GOOGLE_CLIENT_SECRET;
+  const { clientId, clientSecret } = getGoogleOAuthCreds(db);
   const redirectUri = getRedirectUri(req);
   
   try {
