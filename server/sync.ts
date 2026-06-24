@@ -31,6 +31,16 @@ export function toClientKey(serverKey: string): string {
   return SERVER_TO_CLIENT_KEY[serverKey] || serverKey;
 }
 
+/**
+ * Validates a record id. Allows Unicode letters/numbers — Georgian vessel and
+ * lot names (e.g. "ქვევრი 1") are legitimate ids — plus space, underscore and
+ * hyphen. Rejects control characters and path/query separators so ids stay safe
+ * in URLs and filenames.
+ */
+export function isValidId(id: any): boolean {
+  return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[\p{L}\p{N}_\- ]+$/u.test(id);
+}
+
 /** Compare item content ignoring sync metadata. */
 function sameContent(a: any, b: any): boolean {
   const { lastModified: _a, baselineTimestamp: _ba, ...restA } = a || {};

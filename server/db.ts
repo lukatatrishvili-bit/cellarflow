@@ -40,6 +40,7 @@ function scheduleGcsUpload(immediate = false): void {
 export async function initDB(): Promise<void> {
   if (!gcsEnabled) return;
   console.log(`[db] persistence: ${gcsTarget()}`);
+  console.warn('[db] GCS persistence uses a single shared object — run Cloud Run with --max-instances=1 to avoid concurrent instances overwriting each other.');
   const remote = await downloadDb();
   if (remote !== null) {
     try {

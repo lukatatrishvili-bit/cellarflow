@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeCollections, applyDeletions, toClientKey } from '../server/sync';
+import { mergeCollections, applyDeletions, toClientKey, isValidId } from '../server/sync';
 
 const item = (id: string, fields: Record<string, any> = {}) => ({ id, ...fields });
 
@@ -9,6 +9,28 @@ describe('toClientKey', () => {
     expect(toClientKey('fermlogs')).toBe('fermLogs');
     expect(toClientKey('lablogs')).toBe('labLogs');
     expect(toClientKey('vessels')).toBe('vessels');
+  });
+});
+
+describe('isValidId', () => {
+  it('accepts Georgian (Unicode) ids — the core bug fix', () => {
+    expect(isValidId('ქვევრი 1')).toBe(true);       // qvevri named in Georgian
+    expect(isValidId('საფერავი-2026')).toBe(true);   // Saperavi lot
+    expect(isValidId('მარანი_T-1')).toBe(true);
+  });
+
+  it('still accepts ASCII ids', () => {
+    expect(isValidId('SAP-2026-01')).toBe(true);
+    expect(isValidId('Tank 3')).toBe(true);
+  });
+
+  it('rejects empty, oversized, and unsafe ids', () => {
+    expect(isValidId('')).toBe(false);
+    expect(isValidId('a'.repeat(129))).toBe(false);
+    expect(isValidId('lot/../etc')).toBe(false);   // path separator
+    expect(isValidId('a?b=1')).toBe(false);        // query chars
+    expect(isValidId('line\nbreak')).toBe(false);  // control char
+    expect(isValidId(42 as any)).toBe(false);
   });
 });
 

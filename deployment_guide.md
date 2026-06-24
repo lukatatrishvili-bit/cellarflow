@@ -38,6 +38,7 @@ gcloud storage buckets add-iam-policy-binding gs://cellarflow-db \
 ### Step 0.3: Deploy with the bucket configured
 ```bash
 gcloud run deploy cellarflow-app --source . --region europe-west1 --allow-unauthenticated \
+  --max-instances=1 \
   --set-env-vars NODE_ENV=production,GCS_BUCKET=cellarflow-db
 ```
 The object key defaults to `db.json`; override with `GCS_DB_OBJECT=...` if needed.
@@ -45,8 +46,12 @@ Auth uses the service account automatically (Application Default Credentials) â€
 no key files. On first boot the freshly-seeded DB is uploaded; thereafter every
 revision restores from the bucket, so data survives redeploys.
 
-> Note: this single-object store fits this app's small JSON DB. For higher
-> concurrency or larger datasets, migrate to Cloud SQL / Firestore.
+> **`--max-instances=1` is required.** The whole DB is a single shared GCS
+> object held in each instance's memory. With two or more instances running
+> concurrently, their writes overwrite each other (last upload wins â†’ lost
+> data). Capping at one instance avoids this. To scale beyond one instance,
+> move to per-user object keys, Cloud SQL, or Firestore. The server logs a
+> warning at startup reminding you of this.
 
 ---
 

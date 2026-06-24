@@ -6,7 +6,8 @@ import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
 import { getDB, saveDB, createEmptyUserData, initDB } from './server/db';
 import { verifySessionToken, createSessionToken, hashPassword, verifyPassword } from './server/auth';
-import { applyDeletions, mergeCollections } from './server/sync';
+import { applyDeletions, mergeCollections, isValidId } from './server/sync';
+import { createLoginLimiter } from './server/loginLimiter';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,6 +104,9 @@ function updateEnvFile(updates: Record<string, string>) {
 const GEMINI_MODEL = "gemini-2.5-flash";
 
 const app = express();
+// Behind Cloud Run / any reverse proxy: trust X-Forwarded-* so client IP
+// (rate limiter) and protocol (cookie Secure / OAuth redirect) are correct.
+app.set('trust proxy', true);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -117,6 +121,40 @@ function parseCookies(cookieHeader: string | undefined): Record<string, string> 
     list[key] = decodeURIComponent(val);
   });
   return list;
+}
+
+const COOKIE_SECURE = process.env.NODE_ENV === 'production';
+
+/** Build a hardened session cookie (HttpOnly, SameSite=Lax, Secure in prod). */
+function sessionCookie(token: string, maxAgeSeconds: number): string {
+  const parts = [
+    `maranios_session=${token}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax', // Lax still allows the top-level Google OAuth redirect GET
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (COOKIE_SECURE) parts.push('Secure');
+  return parts.join('; ');
+}
+function clearSessionCookie(): string {
+  return ['maranios_session=', 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0', ...(COOKIE_SECURE ? ['Secure'] : [])].join('; ');
+}
+
+// ── Login brute-force limiter ────────────────────────────────────────────────
+// Per IP+identifier sliding window with temporary lockout. In-memory: paired
+// with --max-instances=1 (see deployment guide) it is effective; a shared store
+// (Redis) would be needed for multi-instance.
+const loginLimiter = createLoginLimiter({
+  maxAttempts: 8,
+  windowMs: 15 * 60 * 1000,
+  lockoutMs: 15 * 60 * 1000,
+});
+
+function clientIp(req: any): string {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length) return fwd.split(',')[0].trim();
+  return req.socket?.remoteAddress || 'unknown';
 }
 
 // Authentication endpoints
@@ -153,7 +191,7 @@ app.post('/api/auth/register', (req, res) => {
   
   const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
-  res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
+  res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
   res.json({
     username: user.username,
     email: user.email,
@@ -167,7 +205,15 @@ app.post('/api/auth/register', (req, res) => {
 
 app.post('/api/auth/login', (req, res) => {
   const { identifier, passcode, rememberMe } = req.body;
-  
+
+  // Brute-force guard: lock out an IP+identifier after repeated failures.
+  const limiterKey = `${clientIp(req)}:${String(identifier || '').toLowerCase()}`;
+  const lockRemaining = loginLimiter.lockRemainingSeconds(limiterKey);
+  if (lockRemaining > 0) {
+    res.setHeader('Retry-After', String(lockRemaining));
+    return res.status(429).json({ error: `Too many attempts. Try again in ${Math.ceil(lockRemaining / 60)} min.` });
+  }
+
   // Master Admin Environment Check (Private Credentials)
   const envAdminUser = process.env.ADMIN_USERNAME;
   const envAdminPass = process.env.ADMIN_PASSCODE || process.env.ADMIN_PASSWORD;
@@ -177,9 +223,10 @@ app.post('/api/auth/login', (req, res) => {
     const targetUser = String(envAdminUser).trim().toLowerCase();
     if (inputUser === targetUser || inputUser === `${targetUser}@vinea.com` || inputUser === `${targetUser}@cellarflow.com`) {
       if (String(passcode).trim() === String(envAdminPass).trim()) {
+        loginLimiter.clear(limiterKey);
         const token = createSessionToken({ username: envAdminUser, role: 'Owner/Admin' }, rememberMe);
         const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
-        res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
+        res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
         return res.json({
           username: envAdminUser,
           email: `${envAdminUser}@cellarflow.com`,
@@ -197,12 +244,14 @@ app.post('/api/auth/login', (req, res) => {
   
   const user = db.users.find(u => u.username === identifier || u.email === identifier);
   if (!user || !verifyPassword(passcode, user.passwordHash)) {
+    loginLimiter.recordFailure(limiterKey);
     return res.status(401).json({ error: 'Invalid username or passcode' });
   }
-  
+
+  loginLimiter.clear(limiterKey);
   const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
-  res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=${maxAge}`);
+  res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
   res.json({
     username: user.username,
     email: user.email,
@@ -430,7 +479,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
     
     // 4. Create and set session cookie
     const token = createSessionToken({ username: user.username, role: user.role }, true);
-    res.setHeader('Set-Cookie', `maranios_session=${token}; Path=/; HttpOnly; Max-Age=2592000`);
+    res.setHeader('Set-Cookie', sessionCookie(token, 2592000));
     
     // Redirect to main site
     res.redirect('/');
@@ -441,7 +490,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'maranios_session=; Path=/; HttpOnly; Max-Age=0');
+  res.setHeader('Set-Cookie', clearSessionCookie());
   res.json({ success: true });
 });
 
@@ -586,9 +635,7 @@ app.get('/api/admin/export', (req, res) => {
 });
 
 // Helper to validate ID structure
-function isValidId(id: any): boolean {
-  return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[a-zA-Z0-9_\- ]+$/.test(id);
-}
+// isValidId is imported from ./server/sync (shared with the sync merge tests).
 
 // Sync endpoint
 app.post('/api/sync', (req, res) => {
