@@ -207,21 +207,50 @@ const mapWineBlending: Mapper = (ctx) => {
   }));
 };
 
-// ── Annex 7 — bottling act (bottled lots) ────────────────────────────────────
+/** Real bottling runs recorded by the Bottling tab (localStorage, guarded for tests). */
+function loadBottlingRuns(): Array<{ lotId: string; lotName: string; date: string; lotNumber: string; volumeBottledL: number; totalBottles: number; totalCeramic: number }> {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem('cf_bottling_history');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+// ── Annex 7 — bottling act ───────────────────────────────────────────────────
 const mapBottling: Mapper = (ctx) => {
+  // Prefer actual bottling runs (with per-format bottle/ceramic counts); fall
+  // back to a lot-volume estimate for lots bottled before runs were tracked.
+  const runs = loadBottlingRuns().filter(r => (!ctx.lotId || r.lotId === ctx.lotId) && inRange(r.date, ctx));
+  if (runs.length > 0) {
+    return runs
+      .sort((a, b) => (a.date < b.date ? -1 : 1))
+      .map((r): DocRow => ({
+        wineNo: r.lotId,
+        lotNo: r.lotNumber || r.lotId,
+        inDate: '',
+        inQty: '',
+        fillDate: r.date.slice(0, 10),
+        fillQty: litresToDal(r.volumeBottledL),
+        bottles: r.totalBottles,
+        ceramic: r.totalCeramic || '',
+        note: r.lotName,
+      }));
+  }
+
   const lots = (ctx.lotId ? ctx.lots.filter(l => l.id === ctx.lotId) : ctx.lots)
     .filter(l => l.stage === 'bottled' || l.stage === 'sold');
   return lots.map((lot): DocRow => {
-    const bottledLitres = Math.max(0, (lot.initialVolume || 0)); // volume that went to bottling
     const fill = (lot.history || []).find(h => /bottl|ჩამოსხ/i.test(h.type + h.description));
     return {
       wineNo: lot.id,
       lotNo: lot.id,
       inDate: (lot.createdAt || '').slice(0, 10),
-      inQty: litresToDal(bottledLitres),
+      inQty: litresToDal(Math.max(0, lot.initialVolume || 0)),
       fillDate: (fill?.date || '').slice(0, 10),
       fillQty: litresToDal(lot.initialVolume - lot.currentVolume > 0 ? lot.initialVolume - lot.currentVolume : lot.initialVolume),
-      bottles: '', // TODO: per-format bottle counts (0.75/0.5/...) not tracked
+      bottles: '', // TODO: no per-format counts for pre-tracking lots
       ceramic: '',
       note: lot.name,
     };

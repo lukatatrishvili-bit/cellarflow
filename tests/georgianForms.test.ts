@@ -151,6 +151,25 @@ describe('data mapping', () => {
     expect(doc.rows[0].placeAlc).toBe(13.5);
     expect(doc.rows[0].placeQty).toBe(480); // 4800 L
   });
+
+  it('Annex 7 uses recorded bottling runs (per-format counts) when present', () => {
+    const store: Record<string, string> = {
+      cf_bottling_history: JSON.stringify([
+        { lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
+          volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0 },
+      ]),
+    };
+    (globalThis as any).localStorage = { getItem: (k: string) => store[k] ?? null };
+    try {
+      const doc = buildDocument('annex_07_bottling_act', makeCtx());
+      expect(doc.rows).toHaveLength(1);
+      expect(doc.rows[0].bottles).toBe(1200);
+      expect(doc.rows[0].fillQty).toBe(90); // 900 L → dal
+      expect(doc.rows[0].lotNo).toBe('L-26-07');
+    } finally {
+      delete (globalThis as any).localStorage;
+    }
+  });
 });
 
 // ── blank + validation + filenames ───────────────────────────────────────────

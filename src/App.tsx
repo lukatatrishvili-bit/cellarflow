@@ -21,6 +21,7 @@ import WineLotsTrace from '../components/WineLotsTrace';
 import TransfersTab from '../components/TransfersTab';
 import InventoryTab from '../components/InventoryTab';
 import FermentationTab from '../components/FermentationTab';
+import BottlingTab from '../components/BottlingTab';
 
 // Refactored modular pages
 import DashboardTab from '../components/DashboardTab';
@@ -51,6 +52,7 @@ import {
   ClipboardList,
   FileText,
   FileSpreadsheet,
+  Package,
   Trash,
   CheckCircle2,
   Sprout,
@@ -914,6 +916,7 @@ export default function App() {
                 { id: 'transfers', label: t.transfers, icon: GitCommit },
                 { id: 'fermentation', label: t.fermentation, icon: Activity },
                 { id: 'labs', label: t.lab_analysis, icon: TestTube },
+                { id: 'bottling', label: t.bottling, icon: Package },
                 { id: 'calculators', label: t.calculators, icon: TestTube },
                 { id: 'inventory', label: t.inventory, icon: Boxes },
                 { id: 'tasks', label: t.tasks, icon: ClipboardList },
@@ -1064,6 +1067,16 @@ export default function App() {
                 labTurbidity={state.labTurbidity}
                 setLabTurbidity={state.setLabTurbidity}
                 onAddLabLog={state.handleAddLabLog}
+              />
+            )}
+
+            {/* G0. BOTTLING */}
+            {state.activeTab === 'bottling' && (
+              <BottlingTab
+                lang={state.lang}
+                lots={state.lots}
+                onUpdateLots={state.setLots}
+                setToastMessage={state.setToastMessage}
               />
             )}
 
