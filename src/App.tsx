@@ -50,6 +50,8 @@ import {
   Thermometer,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   ClipboardList,
   FileText,
   FileSpreadsheet,
@@ -119,6 +121,16 @@ export default function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   // Estate location chosen during registration (drives weather, maps, disease models)
   const [regLocation, setRegLocation] = useState<PickedLocation | null>(null);
+
+  // Retractable header: slides up to reclaim vertical space; restored by click or
+  // by hovering the top edge (peek). Preference persists.
+  const [headerHidden, setHeaderHidden] = useState(() =>
+    typeof window !== 'undefined' && localStorage.getItem('cf_header_hidden') === 'true');
+  const [headerPeek, setHeaderPeek] = useState(false);
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem('cf_header_hidden', String(headerHidden));
+  }, [headerHidden]);
+  const showHeader = !headerHidden || headerPeek;
 
   // Network connection state
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -330,8 +342,43 @@ export default function App() {
         );
       })()}
 
-      {/* 1. Global Navigation Bar — floating glass pill */}
-      <header className="relative max-w-[1720px] w-full mx-auto mt-4 px-6 md:px-8 py-3.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-3 z-40 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] transition-all duration-300 dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
+      {/* Hover-to-peek zone at the very top edge (only when the header is retracted) */}
+      {headerHidden && (
+        <div
+          className="fixed top-0 left-0 right-0 h-3 z-50"
+          onMouseEnter={() => setHeaderPeek(true)}
+          onMouseLeave={() => setHeaderPeek(false)}
+        />
+      )}
+
+      {/* Restore handle shown while retracted */}
+      {headerHidden && !headerPeek && (
+        <button
+          onClick={() => setHeaderHidden(false)}
+          className="fixed top-1.5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 px-3 py-1 bg-[#4e0e15]/90 backdrop-blur text-amber-50 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-lg cursor-pointer hover:bg-[#4e0e15] animate-fade-in"
+          title={state.lang === 'ka' ? 'მენიუს ჩვენება' : 'Show menu'}
+        >
+          <ChevronDown className="w-3.5 h-3.5" /> {state.lang === 'ka' ? 'მენიუ' : 'Menu'}
+        </button>
+      )}
+
+      {/* 1. Global Navigation Bar — floating glass pill (retractable). Height
+          collapse (Framer) reclaims space; transform/opacity (CSS) reliably
+          drives the slide so the end-state holds even if frames are throttled. */}
+      <motion.div
+        initial={false}
+        animate={{ height: showHeader ? 'auto' : 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 34 }}
+        style={{ overflow: 'visible' }}
+      >
+      <header
+        style={{
+          transform: showHeader ? 'translateY(0)' : 'translateY(-130%)',
+          opacity: showHeader ? 1 : 0,
+          pointerEvents: showHeader ? 'auto' : 'none',
+          transition: 'transform 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease',
+        }}
+        className="relative max-w-[1720px] w-full mx-auto mt-4 px-6 md:px-8 py-3.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-3 z-40 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
         {/* Luxury Top Wine Edge Border */}
         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-[#801323] via-[#4e0e15] to-[#c5a059]" />
 
@@ -468,8 +515,19 @@ export default function App() {
               </motion.button>
             </div>
           )}
+
+          {/* Retract the header */}
+          <button
+            onClick={() => { setHeaderHidden(true); setHeaderPeek(false); }}
+            className="p-2 bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
+            title={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
+            aria-label={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
+          >
+            <ChevronUp className="w-3.5 h-3.5" />
+          </button>
         </div>
       </header>
+      </motion.div>
 
       {/* 2. Main Shell Layout */}
       {!state.isLoggedIn ? (
