@@ -22,6 +22,7 @@ import TransfersTab from '../components/TransfersTab';
 import InventoryTab from '../components/InventoryTab';
 import FermentationTab from '../components/FermentationTab';
 import BottlingTab from '../components/BottlingTab';
+import AuroraBackdrop from '../components/AuroraBackdrop';
 
 // Refactored modular pages
 import DashboardTab from '../components/DashboardTab';
@@ -275,10 +276,8 @@ export default function App() {
     // on this wrapper would break position:sticky for the floating header
     <div className="min-h-screen bg-[#f8f6f2] dark:bg-[#0a0607] flex flex-col font-sans relative transition-colors duration-300">
       
-      {/* Ambient background glow spheres */}
-      <div className="bg-glow-sphere top-[10%] left-[5%] w-[380px] h-[380px] bg-[#801323]" />
-      <div className="bg-glow-sphere top-[45%] right-[8%] w-[420px] h-[420px] bg-[#c5a059]" />
-      <div className="bg-glow-sphere bottom-[15%] left-[10%] w-[350px] h-[350px] bg-emerald-800" />
+      {/* Ambient, photo-free backdrop: drifting light + terrace contours */}
+      <AuroraBackdrop variant={state.isLoggedIn ? 'subtle' : 'rich'} />
       
       {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
       {state.toastMessage && (() => {
