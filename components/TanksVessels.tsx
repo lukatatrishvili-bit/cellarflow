@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import TankCapacityChart, { ChartTankData } from './TankCapacityChart';
 import CellarMap from './CellarMap';
+import VesselFill from './VesselFill';
 
 interface Props {
   lang: Language;
@@ -667,15 +668,16 @@ export default function TanksVessels({
                 {/* Liquid Graphics Fill Card */}
                 <div className="p-4 flex-1 flex flex-col space-y-4">
                   <div className="flex items-center gap-4">
-                    {/* Decorative vessel icon mapping */}
-                    <div className="w-12 h-16 shrink-0 relative bg-slate-50 border border-slate-200 rounded-md overflow-hidden flex items-end">
-                      <div 
-                        className={`w-full transition-all duration-300 ${isOver95 ? 'bg-gradient-to-t from-red-600 to-rose-400' : 'bg-gradient-to-t from-[#801323] to-[#510e19]'}`}
-                        style={{ height: `${progress}%` }}
+                    {/* Animated liquid-fill vessel (height = volume, colour = wine class) */}
+                    <div className={`shrink-0 flex flex-col items-center ${isOver95 ? 'text-red-600' : 'text-[#4e0e15]'}`}>
+                      <VesselFill
+                        fillPct={progress}
+                        wineClass={assignedLot?.wineClass || 'red'}
+                        qvevri={v.type === 'qvevri'}
+                        width={48}
+                        height={64}
                       />
-                      <div className="absolute inset-0 flex flex-col items-center justify-center text-[10px] font-bold text-slate-700 mix-blend-difference font-mono">
-                        {progress.toFixed(0)}%
-                      </div>
+                      <span className="mt-0.5 text-[9px] font-mono font-bold text-slate-500">{progress.toFixed(0)}%</span>
                     </div>
 
                     {/* Lot metrics */}
