@@ -87,12 +87,14 @@ export function Reveal({ children, className, delay = 0, y = 18 }: {
 /* ── CountUp ────────────────────────────────────────────────────────────────
    Animated number tween (rAF, easeOutQuart). Animates 0→value on mount and
    prev→value on change; snaps instantly under reduced-motion. */
-export function CountUp({ value, decimals = 0, duration = 1100, prefix = '', suffix = '', className }: {
+export function CountUp({ value, decimals = 0, duration = 1100, prefix = '', suffix = '', format, className }: {
   value: number;
   decimals?: number;
   duration?: number;
   prefix?: string;
   suffix?: string;
+  /** Custom number formatter (e.g. thousands grouping). Overrides decimals. */
+  format?: (n: number) => string;
   className?: string;
 }) {
   const [display, setDisplay] = useState(value);
@@ -119,7 +121,8 @@ export function CountUp({ value, decimals = 0, duration = 1100, prefix = '', suf
     return () => cancelAnimationFrame(raf);
   }, [value, duration]);
 
-  return <span className={className}>{prefix}{Number(display).toFixed(decimals)}{suffix}</span>;
+  const text = format ? format(display) : Number(display).toFixed(decimals);
+  return <span className={className}>{prefix}{text}{suffix}</span>;
 }
 
 /* ── Skeleton ───────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import {
   Activity, Thermometer, ShieldAlert, Sliders, ClipboardList, CheckSquare 
 } from 'lucide-react';
 import { computeAlerts } from '../lib/alerts';
+import { CountUp } from './motion';
 
 interface DashboardTabProps {
   lang: Language;
@@ -144,11 +145,11 @@ export default function DashboardTab({
               <div className="grid grid-cols-3 gap-4 border-t border-stone-100 dark:border-stone-800 pt-5 font-sans text-stone-600">
                 <div>
                   <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_blocks_count || 'Registered Blocks'}</span>
-                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5">{blocks.length} {lang === 'ka' ? 'ნაკვეთი' : 'Sectors'}</strong>
+                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={blocks.length} /> {lang === 'ka' ? 'ნაკვეთი' : 'Sectors'}</strong>
                 </div>
                 <div>
                   <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_total_area || 'Total Area'}</span>
-                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5">{totalArea.toFixed(1)} ha</strong>
+                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={totalArea} decimals={1} /> ha</strong>
                 </div>
                 <div>
                   <span className="text-[10px] uppercase text-stone-400 block pb-0.5 font-bold">{t.portal_scout_status || 'Scouting Reports'}</span>
@@ -197,15 +198,15 @@ export default function DashboardTab({
               <div className="grid grid-cols-3 gap-4 border-t border-stone-100 dark:border-stone-800 pt-5 font-sans text-stone-600">
                 <div>
                   <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_total_capacity || 'Total Capacity'}</span>
-                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5">{totalCapacity.toLocaleString()} L</strong>
+                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={totalCapacity} format={(n) => Math.round(n).toLocaleString()} /> L</strong>
                 </div>
                 <div>
                   <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_active_lots || 'Active Lots'}</span>
-                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5">{lots.length} {lang === 'ka' ? 'ჯიში' : 'Lots'}</strong>
+                  <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={lots.length} /> {lang === 'ka' ? 'ჯიში' : 'Lots'}</strong>
                 </div>
                 <div>
                   <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_fermenting_vessels || 'Fermenting'}</span>
-                  <strong className="text-lg lg:text-xl font-display font-extrabold text-amber-600 block mt-0.5">🔥 {activeFermsCount} {lang === 'ka' ? 'ჭურჭელი' : 'Vessels'}</strong>
+                  <strong className="text-lg lg:text-xl font-display font-extrabold text-amber-600 block mt-0.5">🔥 <CountUp value={activeFermsCount} /> {lang === 'ka' ? 'ჭურჭელი' : 'Vessels'}</strong>
                 </div>
               </div>
             </div>
