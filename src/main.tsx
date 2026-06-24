@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { MotionConfig } from 'motion/react';
 import App from './App';
 import './globals.css';
 
@@ -8,7 +9,11 @@ if (container) {
   const root = createRoot(container);
   root.render(
     <React.StrictMode>
-      <App />
+      {/* reducedMotion="user" makes every Framer Motion animation respect the
+          OS "reduce motion" setting globally — accessibility + battery on tablets. */}
+      <MotionConfig reducedMotion="user">
+        <App />
+      </MotionConfig>
     </React.StrictMode>
   );
 }

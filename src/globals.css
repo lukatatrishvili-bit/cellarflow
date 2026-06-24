@@ -1,13 +1,61 @@
 @import "tailwindcss";
 
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Three families only (was five): Cormorant Garamond (serif display), Outfit
+   (sans, incl. display weights), JetBrains Mono. Dropping Inter + Plus Jakarta
+   removes two font downloads for a faster, cleaner base. */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @theme {
   --font-serif: "Cormorant Garamond", Georgia, serif;
-  --font-sans: "Outfit", "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Plus Jakarta Sans", "Outfit", sans-serif;
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
+
+/* ── Motion vocabulary ──────────────────────────────────────────────────────
+   Single source of truth for easing + duration so every transition feels
+   consistent. Compositor-only (transform/opacity) usage keeps it 60fps. */
+:root {
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 140ms;
+  --dur-base: 240ms;
+  --dur-slow: 420ms;
+
+  /* Elevation scale (depth without heavy shadows) */
+  --elev-1: 0 1px 2px rgba(28, 24, 22, 0.04), 0 2px 8px -2px rgba(28, 24, 22, 0.05);
+  --elev-2: 0 4px 12px -2px rgba(28, 24, 22, 0.08), 0 8px 24px -6px rgba(28, 24, 22, 0.06);
+  --elev-float: 0 12px 40px -12px rgba(78, 14, 21, 0.22);
+
+  /* Semantic surface + accent tokens layered over the existing palette */
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f6f3ee;
+  --accent-wine: #4e0e15;
+  --accent-wine-bright: #801323;
+  --accent-gold: #c5a059;
+  --border-hair: rgba(120, 100, 80, 0.14);
+}
+
+:root.dark {
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
+  --elev-2: 0 4px 14px -2px rgba(0, 0, 0, 0.55), 0 10px 30px -8px rgba(0, 0, 0, 0.5);
+  --elev-float: 0 16px 44px -12px rgba(0, 0, 0, 0.7);
+  --surface: #140d0e;
+  --surface-raised: #1a1113;
+  --surface-sunken: #0a0607;
+  --accent-wine: #c82c40;
+  --accent-gold: #c5a059;
+  --border-hair: rgba(197, 160, 89, 0.16);
+}
+
+/* Adoptable helpers — additive, so existing components are unaffected. */
+.elev-1 { box-shadow: var(--elev-1); }
+.elev-2 { box-shadow: var(--elev-2); }
+.elev-float { box-shadow: var(--elev-float); }
+.transition-smooth { transition: transform var(--dur-base) var(--ease-out-quint), opacity var(--dur-base) var(--ease-out-quint); }
+.transition-spring { transition: transform var(--dur-base) var(--ease-spring); }
 
 /* Key Tailwind's dark: variant to the .dark class (set by the in-app toggle)
    instead of the OS prefers-color-scheme media query. Without this, half the
