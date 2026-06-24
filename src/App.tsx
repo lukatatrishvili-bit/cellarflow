@@ -13,6 +13,7 @@ const LotPassport = lazy(() => import('../components/LotPassport'));
 const VaziModule = lazy(() => import('../components/VaziModule'));
 const EnoCalculators = lazy(() => import('../components/EnoCalculators'));
 const AiWinemaker = lazy(() => import('../components/AiWinemaker'));
+const OfficialDocsTab = lazy(() => import('../components/OfficialDocsTab'));
 
 // Subcomponents modular layout
 import TanksVessels from '../components/TanksVessels';
@@ -49,6 +50,7 @@ import {
   ChevronRight,
   ClipboardList,
   FileText,
+  FileSpreadsheet,
   Trash,
   CheckCircle2,
   Sprout,
@@ -350,6 +352,7 @@ export default function App() {
               { id: 'portal', label: t.nav_portal || 'Dashboard Portal', icon: LayoutDashboard },
               { id: 'vazi', label: t.nav_vazi || 'Vazi (Vineyard)', icon: Sprout },
               { id: 'gvino', label: t.nav_gvino || 'Gvino (Winery)', icon: Wine },
+              { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
               { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
               { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList }
             ].filter(mod => {
@@ -872,6 +875,21 @@ export default function App() {
           lang={state.lang}
           auditLogs={state.auditLogs}
         />
+      ) : state.activeModule === 'docs' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <OfficialDocsTab
+            lang={state.lang}
+            company={state.companyProfile}
+            currentUser={state.currentUser}
+            blocks={state.blocks}
+            lots={state.lots}
+            vessels={state.vessels}
+            harvests={state.harvests}
+            samplings={state.samplings}
+            inventory={state.inventory}
+            labLogs={state.labLogs}
+          />
+        </Suspense>
       ) : (
         <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 flex flex-col lg:flex-row gap-8">
           
