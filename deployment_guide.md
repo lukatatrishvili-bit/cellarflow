@@ -12,6 +12,44 @@ This guide explains how to build, run, and publish the Vinea ERP application in 
 
 ---
 
+## 0. Persistent Database on Google Cloud Run (IMPORTANT)
+
+Cloud Run's container filesystem is **ephemeral** — `db.json` (all per-user data)
+is wiped on every new revision, deploy, or instance scale-up. To make data
+durable, the server can mirror `db.json` to a **Google Cloud Storage** bucket.
+This is **opt-in**: when `GCS_BUCKET` is unset the app uses the local file
+(unchanged for local/dev). When set, it loads the DB from the bucket on startup
+and writes it back (debounced) on every change.
+
+### Step 0.1: Create a bucket (once)
+```bash
+gcloud storage buckets create gs://cellarflow-db --location=europe-west1 --uniform-bucket-level-access
+```
+
+### Step 0.2: Grant the Cloud Run service account access
+Find the service account your service runs as (defaults to the Compute SA,
+`PROJECT_NUMBER-compute@developer.gserviceaccount.com`), then:
+```bash
+gcloud storage buckets add-iam-policy-binding gs://cellarflow-db \
+  --member="serviceAccount:445298255193-compute@developer.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+```
+
+### Step 0.3: Deploy with the bucket configured
+```bash
+gcloud run deploy cellarflow-app --source . --region europe-west1 --allow-unauthenticated \
+  --set-env-vars NODE_ENV=production,GCS_BUCKET=cellarflow-db
+```
+The object key defaults to `db.json`; override with `GCS_DB_OBJECT=...` if needed.
+Auth uses the service account automatically (Application Default Credentials) —
+no key files. On first boot the freshly-seeded DB is uploaded; thereafter every
+revision restores from the bucket, so data survives redeploys.
+
+> Note: this single-object store fits this app's small JSON DB. For higher
+> concurrency or larger datasets, migrate to Cloud SQL / Firestore.
+
+---
+
 ## 1. Local Production Test (Docker Compose)
 Before publishing, you can run the production build inside a container locally to verify everything.
 

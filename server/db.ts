@@ -1,15 +1,57 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { gcsEnabled, downloadDb, uploadDb, gcsTarget } from './gcsStore';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DB_PATH = process.env.DATABASE_PATH 
+
+// Where the working copy of the DB lives on disk. In GCS mode this is just a
+// local cache (the source of truth is the bucket), so default it to a writable
+// temp path; otherwise keep the repo-local db.json.
+const DB_PATH = process.env.DATABASE_PATH
   ? path.resolve(process.env.DATABASE_PATH)
-  : path.resolve(__dirname, '../db.json');
+  : gcsEnabled
+    ? path.join(os.tmpdir(), 'cellarflow-db.json')
+    : path.resolve(__dirname, '../db.json');
 
 // Memory cache
 let dbData: any = null;
+
+// Debounced GCS upload so rapid syncs coalesce into one write.
+let uploadTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleGcsUpload(immediate = false): void {
+  if (!gcsEnabled || !dbData) return;
+  const flush = () => {
+    uploadTimer = null;
+    if (dbData) void uploadDb(JSON.stringify(dbData, null, 2));
+  };
+  if (immediate) { flush(); return; }
+  if (uploadTimer) clearTimeout(uploadTimer);
+  uploadTimer = setTimeout(flush, 1500);
+}
+
+/**
+ * Hydrate the local DB cache from GCS before the server accepts traffic.
+ * No-op (returns immediately) when GCS is not configured — getDB() then
+ * lazy-loads from the local file exactly as before. Must be awaited at startup.
+ */
+export async function initDB(): Promise<void> {
+  if (!gcsEnabled) return;
+  console.log(`[db] persistence: ${gcsTarget()}`);
+  const remote = await downloadDb();
+  if (remote !== null) {
+    try {
+      fs.writeFileSync(DB_PATH, remote, 'utf8'); // hydrate local cache
+      dbData = null;                             // force getDB() to re-read with full logic
+    } catch (err) {
+      console.error('[db] failed to write local cache from GCS:', err);
+    }
+  }
+  getDB(); // load dbData (from the GCS cache, template, or a fresh empty seed)
+  if (remote === null) scheduleGcsUpload(true); // persist the freshly-seeded DB
+}
 
 export interface UserDataState {
   vessels: any[];
@@ -132,4 +174,6 @@ export function saveDB(): void {
   } catch (err) {
     console.error('Failed to write db.json', err);
   }
+  // Mirror to durable storage (no-op unless GCS_BUCKET is set).
+  scheduleGcsUpload();
 }

@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
-import { getDB, saveDB, createEmptyUserData } from './server/db';
+import { getDB, saveDB, createEmptyUserData, initDB } from './server/db';
 import { verifySessionToken, createSessionToken, hashPassword, verifyPassword } from './server/auth';
 import { applyDeletions, mergeCollections } from './server/sync';
 
@@ -1177,7 +1177,14 @@ if (isProd) {
 }
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
-});
+
+// Hydrate the database from durable storage (GCS) before accepting traffic.
+// initDB() is a no-op unless GCS_BUCKET is set, so local/dev startup is unchanged.
+initDB()
+  .catch((err) => console.error('[db] initialisation failed, continuing with local state:', err))
+  .finally(() => {
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
+    });
+  });
 

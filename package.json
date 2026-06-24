@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.21.0",
     "@google/genai": "*",
     "@types/express": "^5.0.6",
     "@vis.gl/react-google-maps": "^1.8.3",
