@@ -289,7 +289,13 @@ export default function App() {
           state.toastMessage.includes('უარყოფილია')
         );
         return (
-          <div className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-100 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-3 animate-fade-in">
+          <motion.div
+            initial={{ opacity: 0, y: -16, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -16, scale: 0.96 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 28 }}
+            className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-100 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-3 elev-float"
+          >
             <div className="flex items-center gap-2">
               <span>🍇</span>
               <span>{state.toastMessage}</span>
@@ -302,7 +308,7 @@ export default function App() {
                 ⚡ {state.lang === 'ka' ? 'მოგვარება' : 'Trace & Fix'}
               </button>
             )}
-          </div>
+          </motion.div>
         );
       })()}
 

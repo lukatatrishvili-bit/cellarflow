@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { prefersReducedMotion } from './motion';
+import { prefersReducedMotion, ambientMotionEnabled } from './motion';
 
 /**
  * Animated liquid-fill visual for a tank / qvevri. The fill height encodes
@@ -37,7 +37,8 @@ export default function VesselFill({
 }) {
   const pct = Math.max(0, Math.min(100, isFinite(fillPct) ? fillPct : 0));
   const colors = WINE_COLORS[wineClass] || WINE_COLORS.red;
-  const reduce = prefersReducedMotion();
+  const reduce = prefersReducedMotion();  // gates the fill-level spring
+  const ripple = ambientMotionEnabled();  // gates the continuous wave loop (off on Data Saver)
 
   // viewBox 0..100 x, 0..132 y. Body spans y 10..126 (height 116).
   const topY = 10;
@@ -75,7 +76,7 @@ export default function VesselFill({
           transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 55, damping: 14 }}
         >
           {/* Back wave (lighter, slower) */}
-          {!reduce ? (
+          {ripple ? (
             <motion.path
               d={WAVE}
               fill={colors.surface}
@@ -87,7 +88,7 @@ export default function VesselFill({
             <path d={WAVE} fill={colors.surface} opacity={0.55} />
           )}
           {/* Front wave (main liquid) */}
-          {!reduce ? (
+          {ripple ? (
             <motion.path
               d={WAVE}
               fill={colors.liquid}

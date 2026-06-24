@@ -57,6 +57,20 @@
 .transition-smooth { transition: transform var(--dur-base) var(--ease-out-quint), opacity var(--dur-base) var(--ease-out-quint); }
 .transition-spring { transition: transform var(--dur-base) var(--ease-spring); }
 
+/* Keyboard focus ring — gold, only for keyboard users (:focus-visible), never
+   on mouse click. Applies app-wide for accessibility + polish. */
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 /* Key Tailwind's dark: variant to the .dark class (set by the in-app toggle)
    instead of the OS prefers-color-scheme media query. Without this, half the
    UI followed the OS theme while the custom .dark CSS followed the toggle,

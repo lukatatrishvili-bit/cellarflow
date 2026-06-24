@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { prefersReducedMotion } from './motion';
+import { ambientMotionEnabled } from './motion';
 
 /**
  * Photo-free ambient backdrop: slow-drifting burgundy/gold/emerald light blobs
@@ -12,7 +12,7 @@ import { prefersReducedMotion } from './motion';
  *   variant="rich"    → login / portal hero
  */
 export default function AuroraBackdrop({ variant = 'subtle' }: { variant?: 'subtle' | 'rich' }) {
-  const reduce = prefersReducedMotion();
+  const reduce = !ambientMotionEnabled(); // also holds still on Data Saver / slow links
   const rich = variant === 'rich';
   const baseOpacity = rich ? 0.55 : 0.22;
 

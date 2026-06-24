@@ -18,6 +18,18 @@ export function prefersReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/** True when the user is on Data Saver — used to pause continuous ambient motion. */
+export function prefersReducedData(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const c = (navigator as any).connection;
+  return !!c && (c.saveData === true || /(^|-)2g$/.test(c.effectiveType || ''));
+}
+
+/** Whether continuous, decorative ambient motion (aurora, ripple) should run. */
+export function ambientMotionEnabled(): boolean {
+  return !prefersReducedMotion() && !prefersReducedData();
+}
+
 /* ── PageTransition ─────────────────────────────────────────────────────────
    Crossfade + subtle slide between keyed views (modules, tabs). */
 export function PageTransition({ motionKey, children, className }: {
