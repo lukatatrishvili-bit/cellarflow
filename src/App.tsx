@@ -23,6 +23,7 @@ import InventoryTab from '../components/InventoryTab';
 import FermentationTab from '../components/FermentationTab';
 import BottlingTab from '../components/BottlingTab';
 import AuroraBackdrop from '../components/AuroraBackdrop';
+import InstallButton from '../components/InstallButton';
 
 // Refactored modular pages
 import DashboardTab from '../components/DashboardTab';
@@ -426,6 +427,9 @@ export default function App() {
                       state.setActiveTab('dashboard'); // reset winery tab
                     }
                   }}
+                  title={mod.label}
+                  aria-label={mod.label}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`relative px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
                     isActive
                       ? 'text-amber-50'
@@ -478,6 +482,9 @@ export default function App() {
               <option value="ka">KA</option>
             </select>
           </div>
+
+          {/* PWA install (only renders when installable) */}
+          <InstallButton lang={state.lang} />
 
           {/* Dark Mode Switcher */}
           <button
