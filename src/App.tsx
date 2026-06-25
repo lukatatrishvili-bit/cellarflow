@@ -123,15 +123,14 @@ export default function App() {
   // Estate location chosen during registration (drives weather, maps, disease models)
   const [regLocation, setRegLocation] = useState<PickedLocation | null>(null);
 
-  // Retractable header: slides up to reclaim vertical space; restored by click or
-  // by hovering the top edge (peek). Preference persists.
+  // Retractable header: slides up to reclaim vertical space. Manual only —
+  // chevron button to hide, the "Menu" pill to show. Preference persists.
   const [headerHidden, setHeaderHidden] = useState(() =>
     typeof window !== 'undefined' && localStorage.getItem('cf_header_hidden') === 'true');
-  const [headerPeek, setHeaderPeek] = useState(false);
   useEffect(() => {
     if (typeof window !== 'undefined') localStorage.setItem('cf_header_hidden', String(headerHidden));
   }, [headerHidden]);
-  const showHeader = !headerHidden || headerPeek;
+  const showHeader = !headerHidden;
 
   // Network connection state
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -343,17 +342,8 @@ export default function App() {
         );
       })()}
 
-      {/* Hover-to-peek zone at the very top edge (only when the header is retracted) */}
+      {/* Restore handle shown while retracted (manual click only) */}
       {headerHidden && (
-        <div
-          className="fixed top-0 left-0 right-0 h-3 z-50"
-          onMouseEnter={() => setHeaderPeek(true)}
-          onMouseLeave={() => setHeaderPeek(false)}
-        />
-      )}
-
-      {/* Restore handle shown while retracted */}
-      {headerHidden && !headerPeek && (
         <button
           onClick={() => setHeaderHidden(false)}
           className="fixed top-1.5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 px-3 py-1 bg-[#4e0e15]/90 backdrop-blur text-amber-50 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-lg cursor-pointer hover:bg-[#4e0e15] animate-fade-in"
@@ -525,7 +515,7 @@ export default function App() {
 
           {/* Retract the header */}
           <button
-            onClick={() => { setHeaderHidden(true); setHeaderPeek(false); }}
+            onClick={() => setHeaderHidden(true)}
             className="p-2 bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
             title={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
             aria-label={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
