@@ -15,6 +15,7 @@ const EnoCalculators = lazy(() => import('../components/EnoCalculators'));
 const AiWinemaker = lazy(() => import('../components/AiWinemaker'));
 const OfficialDocsTab = lazy(() => import('../components/OfficialDocsTab'));
 const CostsTab = lazy(() => import('../components/CostsTab'));
+const StorageTab = lazy(() => import('../components/StorageTab'));
 
 // Subcomponents modular layout
 import TanksVessels from '../components/TanksVessels';
@@ -59,6 +60,7 @@ import {
   FileSpreadsheet,
   Package,
   Coins,
+  Warehouse,
   Trash,
   CheckCircle2,
   Sprout,
@@ -422,6 +424,7 @@ export default function App() {
               { id: 'gvino', label: t.nav_gvino || 'Gvino (Winery)', icon: Wine },
               { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
               { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
+              { id: 'storage', label: t.nav_storage || 'Storage', icon: Warehouse },
               { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
               { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList }
             ].filter(mod => {
@@ -1003,6 +1006,13 @@ export default function App() {
             lots={state.lots}
             inventory={state.inventory}
             company={state.companyProfile}
+          />
+        </Suspense>
+      ) : state.activeModule === 'storage' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <StorageTab
+            lang={state.lang}
+            lots={state.lots}
           />
         </Suspense>
       ) : state.activeModule === 'docs' ? (
