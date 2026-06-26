@@ -309,6 +309,8 @@ export interface CompanyProfile {
   phone: string;
   website: string;
   measurementUnits: 'metric' | 'imperial';
+  /** ISO-ish currency code for cost accounting (GEL/EUR/USD/…). Defaults to GEL. */
+  currency?: string;
   latitude?: number;
   longitude?: number;
 }

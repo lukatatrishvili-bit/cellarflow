@@ -11,6 +11,7 @@ export {
   perUnit,
   marginPct,
   valuation,
+  grossProfit,
   rollupLots,
   computeBlendTransfers,
   totalLedger,

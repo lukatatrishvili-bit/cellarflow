@@ -34,3 +34,24 @@ export function deleteCostEntry(id: string): CostEntry[] {
   saveCostEntries(next);
   return next;
 }
+
+// ── Wine pricing (sale price per bottle, by lot) ─────────────────────────────
+const PRICE_KEY = 'cf_wine_pricing';
+export type WinePricing = Record<string, number>;
+
+export function loadPricing(): WinePricing {
+  try {
+    const raw = localStorage.getItem(PRICE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function setPrice(lotId: string, pricePerBottle: number): WinePricing {
+  const next = { ...loadPricing() };
+  if (pricePerBottle > 0) next[lotId] = pricePerBottle;
+  else delete next[lotId];
+  try { localStorage.setItem(PRICE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  return next;
+}

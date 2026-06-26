@@ -41,6 +41,12 @@ export function valuation(bottlesOnHand: number, costPerBottle: number): number 
   return round2(bottlesOnHand * costPerBottle);
 }
 
+/** Gross profit = (price − cost) × bottles. */
+export function grossProfit(pricePerBottle: number, costPerBottle: number, bottles: number): number {
+  if (!bottles || bottles <= 0) return 0;
+  return round2((pricePerBottle - costPerBottle) * bottles);
+}
+
 /**
  * Roll up every lot's costs and derive per-litre / per-bottle.
  * `bottlesByLot` overrides a lot's own `bottles` when provided (e.g. from

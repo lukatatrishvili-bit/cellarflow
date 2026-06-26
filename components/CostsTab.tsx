@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Coins, Plus, Trash2, Wine, FlaskConical } from 'lucide-react';
+import { Coins, Plus, Trash2, Wine, FlaskConical, FileDown, FileSpreadsheet } from 'lucide-react';
 import { Language } from '../lib/i18n';
 import type { WineLot, InventoryItem, CompanyProfile } from '../lib/wineryState';
 import { rollupLots, type CostEntry, type CostCategory } from '../lib/costing';
-import { loadCostEntries, addCostEntry, deleteCostEntry } from '../lib/costing/store';
+import { loadCostEntries, addCostEntry, deleteCostEntry, loadPricing, setPrice } from '../lib/costing/store';
+import { buildCostReportRows, sumCostReport, costRowsToCSV } from '../lib/costing/report';
 import { loadBottlingHistory } from './BottlingTab';
 import { CountUp } from './motion';
 
@@ -31,7 +32,7 @@ const catLabel = (id: CostCategory, ka: boolean) => {
 
 export default function CostsTab({ lang, lots, inventory, company }: Props) {
   const ka = lang === 'ka';
-  const currency = (company as any).currency || 'GEL';
+  const currency = company.currency || 'GEL';
   const [entries, setEntries] = useState<CostEntry[]>(loadCostEntries);
 
   const bottlesByLot = useMemo(() => {
@@ -49,6 +50,42 @@ export default function CostsTab({ lang, lots, inventory, company }: Props) {
   ), [lots, entries, bottlesByLot]);
 
   const totalCost = useMemo(() => entries.reduce((a, e) => a + e.amount, 0), [entries]);
+
+  // ── pricing + margin/valuation report ────────────────────────
+  const [pricing, setPricing] = useState<Record<string, number>>(loadPricing);
+  const reportRows = useMemo(() => buildCostReportRows(
+    lots.map(l => ({ lotId: l.id, lotName: l.name, bottles: bottlesByLot[l.id] || 0, pricePerBottle: pricing[l.id] })),
+    summaries,
+  ), [lots, bottlesByLot, pricing, summaries]);
+  const reportTotals = useMemo(() => sumCostReport(reportRows), [reportRows]);
+  const updatePrice = (lotId: string, value: string) => setPricing(setPrice(lotId, parseFloat(value) || 0));
+
+  const download = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const exportCSV = () => {
+    const csv = costRowsToCSV(reportRows, currency);
+    download(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `cost_margin_report.csv`);
+  };
+  const [xlsxBusy, setXlsxBusy] = useState(false);
+  const exportXLSX = async () => {
+    setXlsxBusy(true);
+    try {
+      const { renderCostReportXlsx } = await import('../lib/costing/reportXlsx');
+      const blob = await renderCostReportXlsx(reportRows, {
+        company: company.companyName || 'MaraniOS',
+        currency,
+        generatedAt: new Date().toLocaleString(),
+      });
+      download(blob, 'cost_margin_report.xlsx');
+    } finally {
+      setXlsxBusy(false);
+    }
+  };
 
   // ── form state ──────────────────────────────────────────────
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -110,12 +147,16 @@ export default function CostsTab({ lang, lots, inventory, company }: Props) {
           </strong>
         </div>
         <div className="bg-white border border-[#e8dfd5] rounded-2xl p-4 dark:bg-stone-900 dark:border-stone-800">
-          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold tracking-widest">{ka ? 'ჩანაწერები' : 'Entries'}</span>
-          <strong className="block mt-1 text-2xl font-serif font-black text-stone-800 dark:text-amber-100"><CountUp value={entries.length} /></strong>
+          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold tracking-widest">{ka ? 'მზა მარაგის ღირებ.' : 'Finished-goods value'}</span>
+          <strong className="block mt-1 text-2xl font-serif font-black text-emerald-800 dark:text-emerald-400">
+            <CountUp value={reportTotals.inventoryValue} format={(n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 })} /> {currency}
+          </strong>
         </div>
         <div className="bg-white border border-[#e8dfd5] rounded-2xl p-4 dark:bg-stone-900 dark:border-stone-800">
-          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold tracking-widest">{ka ? 'ლოტები' : 'Lots'}</span>
-          <strong className="block mt-1 text-2xl font-serif font-black text-stone-800 dark:text-amber-100"><CountUp value={lots.length} /></strong>
+          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold tracking-widest">{ka ? 'მთლიანი მოგება' : 'Gross profit'}</span>
+          <strong className={`block mt-1 text-2xl font-serif font-black ${reportTotals.grossProfit >= 0 ? 'text-emerald-800 dark:text-emerald-400' : 'text-rose-600'}`}>
+            <CountUp value={reportTotals.grossProfit} format={(n) => n.toLocaleString(undefined, { maximumFractionDigits: 0 })} /> {currency}
+          </strong>
         </div>
         <div className="bg-white border border-[#e8dfd5] rounded-2xl p-4 dark:bg-stone-900 dark:border-stone-800">
           <span className="text-[9px] uppercase font-mono text-stone-400 font-bold tracking-widest">{ka ? 'ვალუტა' : 'Currency'}</span>
@@ -181,33 +222,51 @@ export default function CostsTab({ lang, lots, inventory, company }: Props) {
         {/* Per-lot rollup + entries */}
         <div className="space-y-4">
           <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
-            <div className="px-4 py-3 border-b border-[#e8dfd5] dark:border-stone-800">
-              <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><Wine className="w-4 h-4" /> {ka ? 'თვითღირებულება ლოტებზე' : 'Cost per lot'}</span>
+            <div className="px-4 py-3 border-b border-[#e8dfd5] dark:border-stone-800 flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><Wine className="w-4 h-4" /> {ka ? 'თვითღირებულება და მოგება' : 'Cost & margin per lot'}</span>
+              <div className="flex items-center gap-1.5">
+                <button onClick={exportCSV} className="flex items-center gap-1 px-2.5 py-1 border border-stone-200 dark:border-stone-700 rounded-lg text-[10px] font-bold uppercase tracking-wide text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 cursor-pointer">
+                  <FileDown className="w-3 h-3" /> CSV
+                </button>
+                <button onClick={exportXLSX} disabled={xlsxBusy} className="flex items-center gap-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white rounded-lg text-[10px] font-bold uppercase tracking-wide cursor-pointer">
+                  <FileSpreadsheet className="w-3 h-3" /> {xlsxBusy ? '…' : 'XLSX'}
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-[11px]">
+              <table className="w-full text-left text-[11px] whitespace-nowrap">
                 <thead>
                   <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-400 font-bold dark:bg-stone-950">
                     <th className="p-2.5">{ka ? 'ლოტი' : 'Lot'}</th>
                     <th className="p-2.5 text-right">{ka ? 'სულ' : 'Total'}</th>
-                    <th className="p-2.5 text-right">{ka ? 'ლიტრზე' : '/ Litre'}</th>
-                    <th className="p-2.5 text-right">{ka ? 'ბოთლზე' : '/ Bottle'}</th>
+                    <th className="p-2.5 text-right">{ka ? 'ლიტრზე' : '/L'}</th>
+                    <th className="p-2.5 text-right">{ka ? 'ბოთლზე' : '/Bottle'}</th>
+                    <th className="p-2.5 text-right">{ka ? 'ბოთლი' : 'Bottles'}</th>
+                    <th className="p-2.5 text-right">{ka ? 'ფასი' : 'Price'}</th>
+                    <th className="p-2.5 text-right">{ka ? 'მარჟა' : 'Margin'}</th>
+                    <th className="p-2.5 text-right">{ka ? 'მოგება' : 'Profit'}</th>
+                    <th className="p-2.5 text-right">{ka ? 'ღირებ.' : 'Value'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
                   {lots.length === 0 ? (
-                    <tr><td colSpan={4} className="p-6 text-center text-stone-400 italic">{ka ? 'მონაცემები არ არის' : 'No data'}</td></tr>
-                  ) : lots.map(l => {
-                    const s = summaries.get(l.id);
-                    return (
-                      <tr key={l.id} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
-                        <td className="p-2.5 font-bold text-stone-800 dark:text-amber-50">{l.name}<span className="block text-[9px] font-mono text-stone-400">{l.id}</span></td>
-                        <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300">{s ? fmt(s.total) : '—'}</td>
-                        <td className="p-2.5 text-right font-mono">{s?.perLitre != null ? fmt(s.perLitre) : '—'}</td>
-                        <td className="p-2.5 text-right font-mono">{s?.perBottle != null ? fmt(s.perBottle) : '—'}</td>
-                      </tr>
-                    );
-                  })}
+                    <tr><td colSpan={9} className="p-6 text-center text-stone-400 italic">{ka ? 'მონაცემები არ არის' : 'No data'}</td></tr>
+                  ) : reportRows.map(r => (
+                    <tr key={r.lotId} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
+                      <td className="p-2.5 font-bold text-stone-800 dark:text-amber-50">{r.lotName}<span className="block text-[9px] font-mono text-stone-400">{r.lotId}</span></td>
+                      <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300">{fmt(r.totalCost)}</td>
+                      <td className="p-2.5 text-right font-mono">{r.perLitre != null ? fmt(r.perLitre) : '—'}</td>
+                      <td className="p-2.5 text-right font-mono">{r.perBottle != null ? fmt(r.perBottle) : '—'}</td>
+                      <td className="p-2.5 text-right font-mono text-stone-500">{r.bottles || '—'}</td>
+                      <td className="p-2.5 text-right">
+                        <input type="number" min={0} value={pricing[r.lotId] ?? ''} onChange={e => updatePrice(r.lotId, e.target.value)}
+                          placeholder="—" className="w-16 bg-stone-50 border border-stone-200 dark:bg-stone-800 dark:border-stone-700 rounded px-1.5 py-1 text-right text-[11px] font-mono outline-none focus:border-[#4e0e15]" />
+                      </td>
+                      <td className={`p-2.5 text-right font-mono font-bold ${r.marginPct == null ? 'text-stone-300' : r.marginPct >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600'}`}>{r.marginPct != null ? `${r.marginPct}%` : '—'}</td>
+                      <td className={`p-2.5 text-right font-mono ${r.grossProfit < 0 ? 'text-rose-600' : 'text-stone-700 dark:text-stone-300'}`}>{r.pricePerBottle != null ? fmt(r.grossProfit) : '—'}</td>
+                      <td className="p-2.5 text-right font-mono text-stone-600 dark:text-stone-300">{r.perBottle != null ? fmt(r.inventoryValue) : '—'}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

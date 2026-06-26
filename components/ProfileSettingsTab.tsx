@@ -51,6 +51,7 @@ export default function ProfileSettingsTab({
             phone: fd.get('phone') as string,
             website: fd.get('website') as string,
             measurementUnits: fd.get('units') as any,
+            currency: (fd.get('currency') as string) || 'GEL',
             latitude: parseFloat(fd.get('latitude') as string) || 41.9056,
             longitude: parseFloat(fd.get('longitude') as string) || 45.4740
           });
@@ -116,6 +117,15 @@ export default function ProfileSettingsTab({
               <select name="units" defaultValue={companyProfile.measurementUnits} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-bold text-stone-900">
                 <option value="metric">{t.settings_unit_metric || 'Metric (L, kg, °C, ha)'}</option>
                 <option value="imperial">{t.settings_unit_us || 'US Customary (gal, lb, °F, acre)'}</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'ვალუტა (ხარჯები)' : 'Currency (costing)'}</label>
+              <select name="currency" defaultValue={companyProfile.currency || 'GEL'} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-bold text-stone-900">
+                <option value="GEL">GEL — ₾ {lang === 'ka' ? 'ლარი' : 'Georgian Lari'}</option>
+                <option value="EUR">EUR — € Euro</option>
+                <option value="USD">USD — $ US Dollar</option>
+                <option value="GBP">GBP — £ Pound</option>
               </select>
             </div>
           </div>
