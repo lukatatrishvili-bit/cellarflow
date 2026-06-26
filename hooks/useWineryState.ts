@@ -56,9 +56,11 @@ export function useWineryState() {
   const [isClient, setIsClient] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [demoLoginEnabled, setDemoLoginEnabled] = useState(false);
   const [passportLotId, setPassportLotId] = useState<string | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<any[] | null>(null);
   const [pendingServerDb, setPendingServerDb] = useState<any | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   // Auth States
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile>({
@@ -84,7 +86,7 @@ export function useWineryState() {
     longitude: 45.4740
   });
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'settings' | 'audit' | 'docs'>('portal');
+  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'settings' | 'audit' | 'docs' | 'costs'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Datasets
@@ -192,6 +194,9 @@ export function useWineryState() {
     setSafe(setFertilizerLogs, data.fertilizerLogs, 'fertilizerLogs', 'vinea_fertilizer');
     setSafe(setAuditLogs, data.auditLogs, 'auditLogs', 'vinea_audit_logs');
     setSafe(setCompanyProfile, data.companyProfile, 'companyProfile', 'vinea_company_profile');
+    const syncedAt = new Date().toISOString();
+    setLastSyncAt(syncedAt);
+    localStorage.setItem('vinea_last_sync_at', syncedAt);
   };
 
   const triggerSync = async (forcePayload?: any) => {
@@ -265,6 +270,20 @@ export function useWineryState() {
     }
   };
 
+  const hydrateAuthenticatedUser = async (user: UserProfile) => {
+    setCurrentUser(user);
+    setIsLoggedIn(true);
+
+    // Hydrate through the same persisted sync path for every account,
+    // including the optional public demo account.
+    try {
+      const dbData = await SyncQueueManager.sync({});
+      if (dbData) updateAllStates(dbData);
+    } catch (syncErr) {
+      console.error('Initial login sync failed:', syncErr);
+    }
+  };
+
   const handleAuthLogin = async (identifier: string, passcode: string, rememberMe?: boolean): Promise<boolean> => {
     setLoginError(null);
     try {
@@ -275,18 +294,7 @@ export function useWineryState() {
       });
       if (res.ok) {
         const user = await res.json();
-        setCurrentUser(user);
-        setIsLoggedIn(true);
-        
-        // Sync database immediately in background without blocking login on errors
-        try {
-          const dbData = await SyncQueueManager.sync({});
-          if (dbData) {
-            updateAllStates(dbData);
-          }
-        } catch (syncErr) {
-          console.error('Initial login sync failed:', syncErr);
-        }
+        await hydrateAuthenticatedUser(user);
         return true;
       } else {
         const err = await res.json().catch(() => ({}));
@@ -295,6 +303,25 @@ export function useWineryState() {
       }
     } catch (err) {
       setLoginError('Could not reach secure login gateway');
+      return false;
+    }
+  };
+
+  const handleDemoLogin = async (): Promise<boolean> => {
+    setLoginError(null);
+    try {
+      const res = await fetch('/api/auth/demo', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setLoginError(err.error || 'Demo workspace is unavailable');
+        return false;
+      }
+
+      const user = await res.json();
+      await hydrateAuthenticatedUser(user);
+      return true;
+    } catch {
+      setLoginError('Could not reach the demo workspace');
       return false;
     }
   };
@@ -450,6 +477,11 @@ export function useWineryState() {
   useEffect(() => {
     setIsClient(true);
 
+    fetch('/api/config')
+      .then((res) => res.ok ? res.json() : null)
+      .then((config) => setDemoLoginEnabled(Boolean(config?.demoLoginEnabled)))
+      .catch(() => setDemoLoginEnabled(false));
+
     const parseOrInit = (key: string, initVal: any) => {
       const stored = localStorage.getItem(key);
       if (stored) {
@@ -471,6 +503,7 @@ export function useWineryState() {
     setTasks(parseOrInit('cf_tasks', initialTasks));
     setNotesList(parseOrInit('cf_notes', initialCellarNotes));
     setIsSidebarCollapsed(localStorage.getItem('cf_sidebar_collapsed') === 'true');
+    setLastSyncAt(localStorage.getItem('vinea_last_sync_at'));
 
     setIsLoggedIn(localStorage.getItem('vinea_is_logged_in') === 'true');
     const storedUser = localStorage.getItem('vinea_curr_user');
@@ -1107,6 +1140,7 @@ export function useWineryState() {
     isClient,
     toastMessage, setToastMessage,
     loginError, setLoginError,
+    demoLoginEnabled,
     passportLotId, setPassportLotId,
     isLoggedIn, setIsLoggedIn,
     currentUser, setCurrentUser,
@@ -1194,6 +1228,7 @@ export function useWineryState() {
     handleDeleteNote,
     handleAddInventory,
     handleAuthLogin,
+    handleDemoLogin,
     handleAuthLogout,
     handleAuthRegister,
     handleUpdateProfile,
@@ -1202,6 +1237,7 @@ export function useWineryState() {
     resolveConflict,
     lastSyncError,
     setLastSyncError,
+    lastSyncAt,
     discardLocalUnsyncedChanges,
     clearAllData
   };

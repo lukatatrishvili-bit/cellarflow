@@ -14,6 +14,7 @@ const VaziModule = lazy(() => import('../components/VaziModule'));
 const EnoCalculators = lazy(() => import('../components/EnoCalculators'));
 const AiWinemaker = lazy(() => import('../components/AiWinemaker'));
 const OfficialDocsTab = lazy(() => import('../components/OfficialDocsTab'));
+const CostsTab = lazy(() => import('../components/CostsTab'));
 
 // Subcomponents modular layout
 import TanksVessels from '../components/TanksVessels';
@@ -57,6 +58,7 @@ import {
   FileText,
   FileSpreadsheet,
   Package,
+  Coins,
   Trash,
   CheckCircle2,
   Sprout,
@@ -281,7 +283,28 @@ export default function App() {
 
   // Derived stats for sidebar
   const activeFermsCount = state.lots.filter(l => l.stage === 'fermenting').length;
-  const occupiedTanksCount = state.vessels.filter(v => v.currentVolume > 0).length;
+  const occupiedVessels = state.vessels.filter(v => v.currentVolume > 0);
+  const occupiedTanksCount = occupiedVessels.length;
+  const averageOccupiedTemp = occupiedTanksCount > 0
+    ? parseFloat((occupiedVessels.reduce((acc, vessel) => acc + (vessel.temperature || 0), 0) / occupiedTanksCount).toFixed(1))
+    : 0;
+  const wineryTabs = [
+    { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard },
+    { id: 'vessels', label: t.tanks, icon: Container },
+    { id: 'lots', label: t.wine_lots, icon: Wine },
+    { id: 'transfers', label: t.transfers, icon: GitCommit },
+    { id: 'fermentation', label: t.fermentation, icon: Activity },
+    { id: 'labs', label: t.lab_analysis, icon: TestTube },
+    { id: 'bottling', label: t.bottling, icon: Package },
+    { id: 'calculators', label: t.calculators, icon: TestTube },
+    { id: 'inventory', label: t.inventory, icon: Boxes },
+    { id: 'tasks', label: t.tasks, icon: ClipboardList },
+    { id: 'notes', label: t.notes, icon: FileText },
+    { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon }
+  ];
+  const lastSyncLabel = state.lastSyncAt
+    ? new Date(state.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
 
   return (
     // overflow-x clipping lives on <body> (globals.css): an overflow value
@@ -398,6 +421,7 @@ export default function App() {
               { id: 'vazi', label: t.nav_vazi || 'Vazi (Vineyard)', icon: Sprout },
               { id: 'gvino', label: t.nav_gvino || 'Gvino (Winery)', icon: Wine },
               { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
+              { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
               { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
               { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList }
             ].filter(mod => {
@@ -452,6 +476,9 @@ export default function App() {
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
             <span>{isOnline ? (state.lang === 'ka' ? 'ონლაინ' : 'ONLINE') : (state.lang === 'ka' ? 'ოფლაინ' : 'OFFLINE')}</span>
+            {isOnline && lastSyncLabel && (
+              <span className="hidden xl:inline text-emerald-700/70">· SYNCED {lastSyncLabel}</span>
+            )}
           </div>
 
 
@@ -821,6 +848,26 @@ export default function App() {
                       {t.signin_btn || 'Secure Portal Login'}
                     </button>
 
+                    {state.demoLoginEnabled && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const success = await state.handleDemoLogin();
+                          if (success) state.setActiveModule('portal');
+                        }}
+                        className="w-full border border-[#c5a059]/60 bg-amber-50/60 hover:bg-amber-50 text-[#4e0e15] px-4 py-3 rounded-xl cursor-pointer transition-colors text-left"
+                      >
+                        <span className="block text-xs font-black uppercase tracking-wide">
+                          {state.lang === 'ka' ? 'დემო სივრცის გახსნა' : 'Open Demo Workspace'}
+                        </span>
+                        <span className="block text-[10px] text-stone-500 mt-0.5 font-medium">
+                          {state.lang === 'ka'
+                            ? 'იგივე რეალური მონაცემთა ბაზა, სინქრონიზაცია და სერვისები — სატესტო ჩანაწერების გარეშე.'
+                            : 'Uses the real database, sync, and services — no sample operational records.'}
+                        </span>
+                      </button>
+                    )}
+
                     <div className="relative flex py-1.5 items-center">
                       <div className="flex-grow border-t border-stone-200/60 dark:border-stone-800"></div>
                       <span className="flex-shrink mx-3 text-[10px] text-stone-400 dark:text-stone-500 font-mono uppercase tracking-wider">{state.lang === 'ka' ? 'ან' : 'or'}</span>
@@ -923,6 +970,10 @@ export default function App() {
           lots={state.lots}
           vessels={state.vessels}
           tasks={state.tasks}
+          fermLogs={state.fermLogs}
+          labLogs={state.labLogs}
+          inventory={state.inventory}
+          scoutings={state.scoutings}
           auditLogs={state.auditLogs}
           onToggleTaskStatus={state.handleToggleTaskStatus}
           setActiveModule={state.setActiveModule}
@@ -945,6 +996,15 @@ export default function App() {
           lang={state.lang}
           auditLogs={state.auditLogs}
         />
+      ) : state.activeModule === 'costs' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <CostsTab
+            lang={state.lang}
+            lots={state.lots}
+            inventory={state.inventory}
+            company={state.companyProfile}
+          />
+        </Suspense>
       ) : state.activeModule === 'docs' ? (
         <Suspense fallback={<ModuleLoader />}>
           <OfficialDocsTab
@@ -965,6 +1025,22 @@ export default function App() {
           
           {/* Sticky sidebar */}
           <aside className={`shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-20' : 'lg:w-72'} lg:self-start lg:sticky lg:top-24 transition-[width] duration-300`}>
+            <div className="lg:hidden rounded-2xl border border-[#e8dfd5] bg-white/90 p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
+              <label htmlFor="mobile-winery-section" className="mb-1.5 block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">
+                {state.lang === 'ka' ? 'მარნის განყოფილება' : 'Winery section'}
+              </label>
+              <select
+                id="mobile-winery-section"
+                value={state.activeTab}
+                onChange={(event) => state.setActiveTab(event.target.value)}
+                className="w-full border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm font-bold text-stone-800 dark:bg-stone-950 dark:border-stone-700 dark:text-stone-100"
+              >
+                {wineryTabs.map((tab) => (
+                  <option key={tab.id} value={tab.id}>{tab.label}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
               {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">Winery Menu</span>}
               <button
@@ -976,21 +1052,8 @@ export default function App() {
               </button>
             </div>
 
-            <div className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-visible no-scrollbar -mx-4 px-4 pb-1 lg:mx-0 lg:px-0 lg:pb-0">
-              {[
-                { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard },
-                { id: 'vessels', label: t.tanks, icon: Container },
-                { id: 'lots', label: t.wine_lots, icon: Wine },
-                { id: 'transfers', label: t.transfers, icon: GitCommit },
-                { id: 'fermentation', label: t.fermentation, icon: Activity },
-                { id: 'labs', label: t.lab_analysis, icon: TestTube },
-                { id: 'bottling', label: t.bottling, icon: Package },
-                { id: 'calculators', label: t.calculators, icon: TestTube },
-                { id: 'inventory', label: t.inventory, icon: Boxes },
-                { id: 'tasks', label: t.tasks, icon: ClipboardList },
-                { id: 'notes', label: t.notes, icon: FileText },
-                { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon }
-              ].map(tab => {
+            <div className="hidden lg:flex lg:flex-col gap-1.5 lg:overflow-visible">
+              {wineryTabs.map(tab => {
                 const Icon = tab.icon;
                 const isActive = state.activeTab === tab.id;
                 return (
@@ -1097,6 +1160,8 @@ export default function App() {
                 vessels={state.vessels}
                 lots={state.lots}
                 fermLogs={state.fermLogs}
+                currentUser={state.currentUser}
+                setActiveTab={state.setActiveTab}
                 onUpdateLots={state.setLots}
                 onUpdateVessels={state.setVessels}
                 onUpdateFermLogs={state.setFermLogs}
@@ -1179,9 +1244,7 @@ export default function App() {
                   cellarState={{
                     tanksCount: state.vessels.length,
                     activeFermsCount,
-                    avgTemp: occupiedTanksCount > 0 
-                      ? parseFloat((state.vessels.reduce((acc, curr) => acc + (curr.temperature || 0), 0) / state.vessels.length).toFixed(1))
-                      : 15.0,
+                    avgTemp: averageOccupiedTemp,
                     lowSo2Count: alerts.filter(a => a.category === 'so2').length,
                     highVaCount: alerts.filter(a => a.category === 'va').length,
                     sampleData: state.vessels.filter(v => v.currentVolume > 0).map(v => {
@@ -1537,7 +1600,7 @@ export default function App() {
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
                 onClick={() => setIsAiDrawerOpen(true)}
-                className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-gradient-to-tr from-[#4e0e15] to-[#801323] hover:from-[#801323] hover:to-[#c5a059] text-white rounded-full flex items-center justify-center shadow-[0_8px_30px_rgba(78,14,21,0.55)] border-2 border-[#c5a059]/50 dark:border-amber-400/50 cursor-pointer focus:outline-none transition-all duration-300 group"
+                className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-gradient-to-tr from-[#4e0e15] to-[#801323] hover:from-[#801323] hover:to-[#c5a059] text-white rounded-full hidden sm:flex items-center justify-center shadow-[0_8px_30px_rgba(78,14,21,0.55)] border-2 border-[#c5a059]/50 dark:border-amber-400/50 cursor-pointer focus:outline-none transition-all duration-300 group"
                 title="Open AI Winemaker Assistant"
               >
                 <div className="absolute inset-0 rounded-full bg-radial-gradient from-transparent to-[#c5a059]/10 animate-pulse" />
@@ -1606,9 +1669,7 @@ export default function App() {
                         cellarState={{
                           tanksCount: state.vessels.length,
                           activeFermsCount,
-                          avgTemp: occupiedTanksCount > 0 
-                            ? parseFloat((state.vessels.reduce((acc, curr) => acc + (curr.temperature || 0), 0) / state.vessels.length).toFixed(1))
-                            : 15.0,
+                          avgTemp: averageOccupiedTemp,
                           lowSo2Count: alerts.filter(a => a.category === 'so2').length,
                           highVaCount: alerts.filter(a => a.category === 'va').length,
                           sampleData: state.vessels.filter(v => v.currentVolume > 0).map(v => {
@@ -1637,7 +1698,7 @@ export default function App() {
 
       {/* 3. Humble human-label footer */}
       <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-400 font-mono font-medium">
-        MaraniOS • Operational Winemaking Control Loop • European Union PDO Standards Verified
+        MaraniOS • Operational Winemaking Control Loop • Offline-capable traceability
       </footer>
     </div>
   );
