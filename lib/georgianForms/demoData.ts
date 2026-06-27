@@ -8,7 +8,8 @@
 
 import type {
   VineyardBlock, WineLot, Vessel, HarvestRecord, GrapeSamplingRecord,
-  InventoryItem, LabAnalysis, TransferEvent,
+  InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord, CellarOperation,
+  BottlingRunRecord,
 } from '../wineryState';
 
 export const demoBlocks: VineyardBlock[] = [
@@ -99,6 +100,53 @@ export const demoLabLogs: LabAnalysis[] = [
     freeSo2: 22, totalSo2: 70, residualSugar: 1.4, ph: 3.3, malicAcid: 0, lacticAcid: 1.1, turbidity: 30, technician: 'ნ. ბერიძე', titratableAcidity: 6.1 },
 ];
 
+export const demoGrapeIntakes: GrapeIntakeRecord[] = [
+  {
+    id: 'GI-2026-01', date: '2026-09-23', source: 'own', blockId: 'GE-KAK-0001', blockName: 'ქონდოლის ნაკვეთი №1',
+    variety: 'საფერავი', vintage: 2026, grossWeightKg: 14300, tareWeightKg: 500, netWeightKg: 13800,
+    brix: 23.4, ph: 3.45, titratableAcidity: 5.8, temperatureC: 18, condition: 'excellent', pickingMethod: 'hand',
+    wineClass: 'red', juiceYieldPct: 70, estimatedVolumeL: 9660, destinationVesselId: 'ქვევრი Q-1',
+    createdLotId: 'SAP-2026-01', harvestRecordId: 'HV-2026-01', operator: 'ლუკა', notes: 'ხელით კრეფა, შერჩევითი',
+  },
+  {
+    id: 'GI-2026-02', date: '2026-09-29', source: 'own', blockId: 'GE-KAK-0002', blockName: 'მუკუზნის ტერასა S-3',
+    variety: 'რქაწითელი', vintage: 2026, grossWeightKg: 7500, tareWeightKg: 300, netWeightKg: 7200,
+    brix: 21.1, ph: 3.2, titratableAcidity: 6.4, temperatureC: 20, condition: 'good', pickingMethod: 'hand',
+    wineClass: 'amber', juiceYieldPct: 68, estimatedVolumeL: 4896, destinationVesselId: 'ცისტერნა T-2',
+    createdLotId: 'RKA-2026-01', harvestRecordId: 'HV-2026-02', operator: 'სოფიო', notes: '',
+  },
+  {
+    id: 'GI-2026-03', date: '2026-09-30', source: 'supplier', supplierName: 'გ. ნადირაძე — სოფ. ვაზისუბანი',
+    variety: 'საფერავი', vintage: 2026, grossWeightKg: 5200, tareWeightKg: 220, netWeightKg: 4980,
+    brix: 22.6, ph: 3.38, titratableAcidity: 6.0, temperatureC: 19, condition: 'good', pickingMethod: 'hand',
+    wineClass: 'red', juiceYieldPct: 70, estimatedVolumeL: 3486, destinationVesselId: null,
+    createdLotId: 'SAP-2026-03', operator: 'ლუკა', notes: 'შესყიდული ყურძენი, ხელშეკრულება №14',
+  },
+];
+
+export const demoCellarOps: CellarOperation[] = [
+  { id: 'OP-1', date: '2026-09-24', type: 'additive', lotId: 'SAP-2026-01', lotName: 'საფერავი ქონდოლი 2026',
+    vesselId: 'ქვევრი Q-1', materialId: 'INV-1', materialName: 'საფუარი QA23', dose: 1.2, unit: 'კგ',
+    operator: 'ლუკა', notes: 'ინოკულაცია' },
+  { id: 'OP-2', date: '2026-10-07', type: 'fining', lotId: 'SAP-2026-01', lotName: 'საფერავი ქონდოლი 2026',
+    vesselId: 'ცისტერნა T-1', materialId: 'INV-2', materialName: 'ბენტონიტი', dose: 4, unit: 'კგ',
+    operator: 'ლუკა', notes: 'ცილოვანი სტაბილიზაცია' },
+  { id: 'OP-3', date: '2026-09-26', type: 'additive', lotId: 'RKA-2026-01', lotName: 'რქაწითელი მუკუზანი 2026',
+    vesselId: 'ცისტერნა T-2', materialId: 'INV-3', materialName: 'საფუარის საკვები (DAP)', dose: 1.5, unit: 'კგ',
+    operator: 'სოფიო', notes: 'YAN კორექცია' },
+  { id: 'OP-4', date: '2026-10-02', type: 'racking', lotId: 'SAP-2026-01', lotName: 'საფერავი ქონდოლი 2026',
+    vesselId: 'ქვევრი Q-1', vesselToId: 'ცისტერნა T-1', volumeBeforeL: 9800, volumeAfterL: 9400,
+    operator: 'ლუკა', notes: 'გადაღება ქვევრიდან' },
+];
+
+export const demoBottlingRuns: BottlingRunRecord[] = [
+  {
+    id: 'BR-2025-01', lotId: 'SAP-2025-02', lotName: 'საფერავი რეზერვი 2025', date: '2026-05-12',
+    lotNumber: 'L-2025-02', operator: 'ლუკა', formats: { '0.75': 6400 }, totalBottles: 6400,
+    totalCeramic: 0, volumeBottledL: 4800,
+  },
+];
+
 export const demoPools = {
   blocks: demoBlocks,
   lots: demoLots,
@@ -108,4 +156,7 @@ export const demoPools = {
   inventory: demoInventory,
   labLogs: demoLabLogs,
   transfers: demoTransfers,
+  grapeIntakes: demoGrapeIntakes,
+  cellarOps: demoCellarOps,
+  bottlingRuns: demoBottlingRuns,
 };

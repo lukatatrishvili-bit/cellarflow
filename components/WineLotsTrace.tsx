@@ -2,7 +2,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { translations, Language } from '../lib/i18n';
-import { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis } from '../lib/wineryState';
+import { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord } from '../lib/wineryState';
+import type { CostEntry } from '../lib/costing';
+import type { StockMovement } from '../lib/storage';
+import WineLotCommandCenter from './WineLotCommandCenter';
 import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
 
 interface Props {
@@ -12,6 +15,12 @@ interface Props {
   onOpenPassport?: (lotId: string) => void;
   vessels?: Vessel[];
   labLogs?: LabAnalysis[];
+  costEntries?: CostEntry[];
+  bottlingRuns?: BottlingRunRecord[];
+  stockMovements?: StockMovement[];
+  salesOrders?: SalesOrderRecord[];
+  salesDispatches?: SalesDispatchRecord[];
+  currency?: string;
   setActiveTab?: (tab: string) => void;
   setSelectedTankId?: (tankId: string | null) => void;
   setCalculatorLotId?: (lotId: string) => void;
@@ -25,6 +34,12 @@ export default function WineLotsTrace({
   onOpenPassport,
   vessels = [],
   labLogs = [],
+  costEntries = [],
+  bottlingRuns = [],
+  stockMovements = [],
+  salesOrders = [],
+  salesDispatches = [],
+  currency = 'GEL',
   setActiveTab,
   setSelectedTankId,
   setCalculatorLotId,
@@ -371,8 +386,24 @@ export default function WineLotsTrace({
       <div className="lg:col-span-2 xl:col-span-3 space-y-6">
         {selectedLot ? (
           <div className="p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-xs text-stone-900 dark:text-stone-200 space-y-8">
+            <WineLotCommandCenter
+              lot={selectedLot}
+              vessels={vessels}
+              labLogs={labLogs}
+              costEntries={costEntries}
+              bottlingRuns={bottlingRuns}
+              stockMovements={stockMovements}
+              salesOrders={salesOrders}
+              salesDispatches={salesDispatches}
+              currency={currency}
+              onEdit={() => setIsEditingLot(!isEditingLot)}
+              onOpenPassport={onOpenPassport}
+              setActiveTab={setActiveTab}
+              setSelectedTankId={setSelectedTankId}
+              setCalculatorLotId={setCalculatorLotId}
+            />
             {/* Header info */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div className="hidden">
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-serif font-bold text-[#4e0e15]">{selectedLot.name}</h2>

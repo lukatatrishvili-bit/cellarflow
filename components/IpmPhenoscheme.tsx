@@ -660,9 +660,9 @@ export default function IpmPhenoscheme({
       totalWaterUsed: Math.round(water * selectedBlock.area),
       operator,
       machineryUsed: 'Fendt 207V Vineyard Tractor',
-      windSpeed: blockWeather ? blockWeather.wind : 5,
-      temperature: blockWeather ? blockWeather.temp : 24,
-      humidity: blockWeather ? blockWeather.humidity : 50,
+      windSpeed: blockWeather?.wind ?? 0,
+      temperature: blockWeather?.temp ?? 0,
+      humidity: blockWeather?.humidity ?? 0,
       preHarvestIntervalDays: formPhi,
       reEntryIntervalHours: 24,
       notes: `IPM Campaign: Active Group: ${active} [MoA MoA: ${moa} (${formMoaSystem})]. PHI: ${formPhi} days.`

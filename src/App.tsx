@@ -16,16 +16,23 @@ const AiWinemaker = lazy(() => import('../components/AiWinemaker'));
 const OfficialDocsTab = lazy(() => import('../components/OfficialDocsTab'));
 const CostsTab = lazy(() => import('../components/CostsTab'));
 const StorageTab = lazy(() => import('../components/StorageTab'));
+const SalesDispatchTab = lazy(() => import('../components/SalesDispatchTab'));
+const YearComparisonTab = lazy(() => import('../components/YearComparisonTab'));
 
 // Subcomponents modular layout
 import TanksVessels from '../components/TanksVessels';
+import GrapeReceivingTab from '../components/GrapeReceivingTab';
+import CellarOperationsTab from '../components/CellarOperationsTab';
+import LotLineageGraphTab from '../components/LotLineageGraphTab';
 import WineLotsTrace from '../components/WineLotsTrace';
 import TransfersTab from '../components/TransfersTab';
 import InventoryTab from '../components/InventoryTab';
 import FermentationTab from '../components/FermentationTab';
 import BottlingTab from '../components/BottlingTab';
 import AuroraBackdrop from '../components/AuroraBackdrop';
+import SyncStatus from '../components/SyncStatus';
 import InstallButton from '../components/InstallButton';
+import GlobalCommandPalette from '../components/GlobalCommandPalette';
 
 // Refactored modular pages
 import DashboardTab from '../components/DashboardTab';
@@ -41,13 +48,17 @@ import VesselDrawer from '../components/VesselDrawer';
 import {
   LayoutDashboard,
   Container,
+  Grape,
+  Workflow,
   Wine,
   GitCommit,
+  GitMerge,
   Activity,
   TestTube,
   Boxes,
   Languages,
   ShieldAlert,
+  MailCheck,
   Loader2,
   X,
   Thermometer,
@@ -58,15 +69,19 @@ import {
   ClipboardList,
   FileText,
   FileSpreadsheet,
+  BarChart3,
+  BadgeDollarSign,
   Package,
   Coins,
   Warehouse,
+  Truck,
   Trash,
   CheckCircle2,
   Sprout,
   Sun,
   Moon,
-  RefreshCw
+  RefreshCw,
+  Search
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -82,6 +97,8 @@ export default function App() {
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
 
   // Onboarding wizard toggling
   useEffect(() => {
@@ -265,6 +282,10 @@ export default function App() {
         state.setSelectedTankId(null);
         setIsAiDrawerOpen(false);
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandOpen(open => !open);
+      }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => {
@@ -290,23 +311,114 @@ export default function App() {
   const averageOccupiedTemp = occupiedTanksCount > 0
     ? parseFloat((occupiedVessels.reduce((acc, vessel) => acc + (vessel.temperature || 0), 0) / occupiedTanksCount).toFixed(1))
     : 0;
-  const wineryTabs = [
-    { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard },
-    { id: 'vessels', label: t.tanks, icon: Container },
-    { id: 'lots', label: t.wine_lots, icon: Wine },
-    { id: 'transfers', label: t.transfers, icon: GitCommit },
-    { id: 'fermentation', label: t.fermentation, icon: Activity },
-    { id: 'labs', label: t.lab_analysis, icon: TestTube },
-    { id: 'bottling', label: t.bottling, icon: Package },
-    { id: 'calculators', label: t.calculators, icon: TestTube },
-    { id: 'inventory', label: t.inventory, icon: Boxes },
-    { id: 'tasks', label: t.tasks, icon: ClipboardList },
-    { id: 'notes', label: t.notes, icon: FileText },
-    { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon }
+  const totalCellarCapacity = state.vessels.reduce((acc, vessel) => acc + vessel.capacity, 0);
+  const usedCellarVolume = occupiedVessels.reduce((acc, vessel) => acc + vessel.currentVolume, 0);
+  const cellarCapacityPct = totalCellarCapacity > 0 ? Math.round((usedCellarVolume / totalCellarCapacity) * 100) : 0;
+  const pendingTaskCount = state.tasks.filter(task => task.status !== 'completed').length;
+  const urgentAlertCount = alerts.filter(alert => alert.severity === 'critical').length;
+  const wineryTabGroups = [
+    {
+      label: state.lang === 'ka' ? 'მიმოხილვა' : 'Overview',
+      tabs: [
+        { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard },
+      ],
+    },
+    {
+      label: state.lang === 'ka' ? 'ღვინის გზა' : 'Wine lifecycle',
+      tabs: [
+        { id: 'intake', label: t.grape_intake || 'Grape Intake', icon: Grape },
+        { id: 'lots', label: t.wine_lots, icon: Wine },
+        { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
+      ],
+    },
+    {
+      label: state.lang === 'ka' ? 'მარანი' : 'Cellar work',
+      tabs: [
+        { id: 'vessels', label: t.tanks, icon: Container },
+        { id: 'operations', label: t.cellar_operations || 'Operations', icon: Workflow },
+        { id: 'transfers', label: t.transfers, icon: GitCommit },
+        { id: 'fermentation', label: t.fermentation, icon: Activity },
+        { id: 'labs', label: t.lab_analysis, icon: TestTube },
+        { id: 'bottling', label: t.bottling, icon: Package },
+      ],
+    },
+    {
+      label: state.lang === 'ka' ? 'სამუშაოები' : 'Tools',
+      tabs: [
+        { id: 'inventory', label: t.inventory, icon: Boxes },
+        { id: 'tasks', label: t.tasks, icon: ClipboardList },
+        { id: 'notes', label: t.notes, icon: FileText },
+        { id: 'calculators', label: t.calculators, icon: TestTube },
+        { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon },
+      ],
+    },
   ];
-  const lastSyncLabel = state.lastSyncAt
-    ? new Date(state.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : null;
+  const moduleGroups = [
+    {
+      id: 'dashboard',
+      label: state.lang === 'ka' ? 'მთავარი' : 'Dashboard',
+      icon: LayoutDashboard,
+      primary: 'portal',
+      modules: [{ id: 'portal', label: t.nav_portal || 'Dashboard Portal', icon: LayoutDashboard }],
+    },
+    {
+      id: 'vineyard',
+      label: state.lang === 'ka' ? 'ვენახი' : 'Vineyard',
+      icon: Sprout,
+      primary: 'vazi',
+      requires: 'vazi',
+      modules: [{ id: 'vazi', label: t.nav_vazi || 'Vazi', icon: Sprout }],
+    },
+    {
+      id: 'cellar',
+      label: state.lang === 'ka' ? 'მარანი' : 'Cellar',
+      icon: Wine,
+      primary: 'gvino',
+      requires: 'gvino',
+      modules: [{ id: 'gvino', label: t.nav_gvino || 'Gvino', icon: Wine }],
+    },
+    {
+      id: 'business',
+      label: state.lang === 'ka' ? 'ბიზნესი' : 'Business',
+      icon: BadgeDollarSign,
+      primary: 'sales',
+      modules: [
+        { id: 'sales', label: t.nav_sales || 'Sales', icon: Truck },
+        { id: 'storage', label: t.nav_storage || 'Storage', icon: Warehouse },
+        { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
+        { id: 'analytics', label: t.nav_analytics || 'Analytics', icon: BarChart3 },
+      ],
+    },
+    {
+      id: 'documents',
+      label: state.lang === 'ka' ? 'დოკუმენტები' : 'Documents',
+      icon: FileSpreadsheet,
+      primary: 'docs',
+      modules: [
+        { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
+        { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
+      ],
+    },
+    {
+      id: 'settings',
+      label: t.nav_settings || 'Settings',
+      icon: ClipboardList,
+      primary: 'settings',
+      modules: [{ id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList }],
+    },
+  ].filter(group => {
+    const enabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
+    if (group.requires === 'vazi' && !enabledModules.includes('vazi')) return false;
+    if (group.requires === 'gvino' && !enabledModules.includes('gvino')) return false;
+    return true;
+  });
+  const activeModuleGroup = moduleGroups.find(group => group.modules.some(mod => mod.id === state.activeModule)) || moduleGroups[0];
+  const switchModule = (moduleId: string) => {
+    state.setActiveModule(moduleId as any);
+    if (moduleId === 'gvino') {
+      state.setActiveTab('dashboard');
+    }
+  };
 
   return (
     // overflow-x clipping lives on <body> (globals.css): an overflow value
@@ -367,6 +479,24 @@ export default function App() {
         );
       })()}
 
+      {state.isLoggedIn && (
+        <GlobalCommandPalette
+          open={isCommandOpen}
+          onOpenChange={setIsCommandOpen}
+          lots={state.lots}
+          vessels={state.vessels}
+          inventory={state.inventory}
+          tasks={state.tasks}
+          orders={state.salesOrders}
+          dispatches={state.salesDispatches}
+          setActiveModule={(moduleId) => state.setActiveModule(moduleId as any)}
+          setActiveTab={state.setActiveTab}
+          setPassportLotId={state.setPassportLotId}
+          setSelectedTankId={state.setSelectedTankId}
+          setLineageLotId={setLineageFocusLotId}
+        />
+      )}
+
       {/* Restore handle shown while retracted (manual click only) */}
       {headerHidden && (
         <button
@@ -417,74 +547,80 @@ export default function App() {
 
         {/* Module Nav Switcher (Available once logged in) */}
         {state.isLoggedIn && (
-          <nav className="flex flex-wrap items-center gap-1 bg-stone-50 border border-[#e8dfd5] p-1 rounded-2xl text-xs font-semibold dark:bg-stone-900 dark:border-stone-800">
-            {[
-              { id: 'portal', label: t.nav_portal || 'Dashboard Portal', icon: LayoutDashboard },
-              { id: 'vazi', label: t.nav_vazi || 'Vazi (Vineyard)', icon: Sprout },
-              { id: 'gvino', label: t.nav_gvino || 'Gvino (Winery)', icon: Wine },
-              { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
-              { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
-              { id: 'storage', label: t.nav_storage || 'Storage', icon: Warehouse },
-              { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
-              { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList }
-            ].filter(mod => {
-              const enabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
-              if (mod.id === 'vazi' && !enabledModules.includes('vazi')) return false;
-              if (mod.id === 'gvino' && !enabledModules.includes('gvino')) return false;
-              return true;
-            }).map(mod => {
-              const Icon = mod.icon;
-              const isActive = state.activeModule === mod.id;
-              return (
-                <button
-                  key={mod.id}
-                  onClick={() => {
-                    state.setActiveModule(mod.id as any);
-                    if (mod.id === 'gvino') {
-                      state.setActiveTab('dashboard'); // reset winery tab
-                    }
-                  }}
-                  title={mod.label}
-                  aria-label={mod.label}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`relative px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
-                    isActive
-                      ? 'text-amber-50'
-                      : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90'
-                  }`}
-                >
-                  {/* Shared-element pill slides between active tabs */}
-                  {isActive && (
-                    <motion.span
-                      layoutId="module-nav-pill"
-                      className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md"
-                      transition={{ type: 'spring', stiffness: 480, damping: 38 }}
-                    />
-                  )}
-                  <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15]'}`} />
-                  <span className="relative z-10 hidden lg:inline">{mod.label}</span>
-                </button>
-              );
-            })}
+          <nav className="flex flex-col gap-1 bg-stone-50 border border-[#e8dfd5] p-1 rounded-2xl text-xs font-semibold dark:bg-stone-900 dark:border-stone-800">
+            <div className="flex flex-wrap items-center gap-1">
+              {moduleGroups.map(group => {
+                const Icon = group.icon;
+                const isActive = activeModuleGroup.id === group.id;
+                return (
+                  <button
+                    key={group.id}
+                    onClick={() => switchModule(group.primary)}
+                    title={group.label}
+                    aria-label={group.label}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`relative px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
+                      isActive
+                        ? 'text-amber-50'
+                        : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 dark:hover:bg-stone-800'
+                    }`}
+                  >
+                    {isActive && (
+                      <motion.span
+                        layoutId="module-nav-pill"
+                        className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md"
+                        transition={{ type: 'spring', stiffness: 480, damping: 38 }}
+                      />
+                    )}
+                    <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15]'}`} />
+                    <span className="relative z-10 hidden lg:inline">{group.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {activeModuleGroup.modules.length > 1 && (
+              <div className="flex flex-wrap items-center gap-1 border-t border-stone-200/70 pt-1 dark:border-stone-800">
+                {activeModuleGroup.modules.map(mod => {
+                  const Icon = mod.icon;
+                  const isActive = state.activeModule === mod.id;
+                  return (
+                    <button
+                      key={mod.id}
+                      onClick={() => switchModule(mod.id)}
+                      title={mod.label}
+                      className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide cursor-pointer transition-colors ${
+                        isActive
+                          ? 'bg-white text-[#4e0e15] shadow-sm ring-1 ring-[#e8dfd5] dark:bg-stone-800 dark:text-amber-100 dark:ring-stone-700'
+                          : 'text-stone-500 hover:text-stone-900 hover:bg-white/70 dark:hover:bg-stone-800 dark:hover:text-amber-100'
+                      }`}
+                    >
+                      <Icon className="w-3 h-3" />
+                      <span className="hidden xl:inline">{mod.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </nav>
         )}
 
         {/* Toolbar Controls: Language, Dark Mode, Notifications, and Profile */}
         <div className="flex items-center gap-3 justify-end">
-          {/* Connection Status Badge */}
-          <div className={`flex items-center gap-1.5 px-3 py-1 rounded-xl shadow-2xs text-[10px] font-mono font-bold tracking-wider border transition-all duration-300 ${
-            isOnline 
-              ? 'bg-emerald-50 border-emerald-250 text-emerald-800' 
-              : 'bg-amber-50 border-amber-250 text-amber-800 animate-pulse'
-          }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            <span>{isOnline ? (state.lang === 'ka' ? 'ონლაინ' : 'ONLINE') : (state.lang === 'ka' ? 'ოფლაინ' : 'OFFLINE')}</span>
-            {isOnline && lastSyncLabel && (
-              <span className="hidden xl:inline text-emerald-700/70">· SYNCED {lastSyncLabel}</span>
-            )}
-          </div>
+          {/* Connection + offline-queue status */}
+          <SyncStatus lang={state.lang} />
 
-
+          {state.isLoggedIn && (
+            <button
+              type="button"
+              onClick={() => setIsCommandOpen(true)}
+              className="hidden xl:flex items-center gap-2 min-w-[220px] rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-left text-[11px] font-semibold text-stone-500 shadow-2xs transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-amber-100"
+              title="Search everything"
+            >
+              <Search className="w-3.5 h-3.5 text-[#4e0e15] dark:text-amber-300" />
+              <span className="flex-1 truncate">Search wine, vessel, customer...</span>
+              <kbd className="rounded-md border border-stone-200 bg-white px-1.5 py-0.5 text-[9px] font-black text-stone-400 dark:bg-stone-950 dark:border-stone-700">⌘K</kbd>
+            </button>
+          )}
 
           {/* Language Switcher */}
           <div className="flex items-center gap-1 bg-stone-50 border border-stone-200 px-2.5 py-1 rounded-xl shadow-2xs dark:bg-stone-900 dark:border-stone-800">
@@ -600,6 +736,50 @@ export default function App() {
                 </div>
               </div>
               
+              {state.verificationPending && (
+                <div className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/30 dark:border-amber-900/60">
+                  <div className="flex items-start gap-2.5">
+                    <MailCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                        {state.lang === 'ka' ? 'დაადასტურეთ ელფოსტა' : 'Verify your email'}
+                      </h3>
+                      <p className="text-[12px] text-amber-800/90 mt-0.5 dark:text-amber-200/80">
+                        {state.lang === 'ka'
+                          ? 'გამოგიგზავნეთ დადასტურების ბმული მისამართზე '
+                          : 'We sent a confirmation link to '}
+                        <strong className="break-all">{state.verificationPending.email}</strong>
+                        {state.lang === 'ka' ? '. გახსენით ბმული ანგარიშის გასააქტიურებლად.' : '. Open it to activate your account.'}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3 mt-2.5">
+                        <button
+                          type="button"
+                          onClick={() => state.handleResendVerification(state.verificationPending!.email)}
+                          className="text-[11px] font-bold uppercase tracking-wide text-amber-900 bg-amber-200/70 hover:bg-amber-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors"
+                        >
+                          {state.lang === 'ka' ? 'ხელახლა გაგზავნა' : 'Resend link'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => state.setVerificationPending(null)}
+                          className="text-[11px] font-semibold text-amber-800/70 hover:text-amber-900 cursor-pointer"
+                        >
+                          {state.lang === 'ka' ? 'დახურვა' : 'Dismiss'}
+                        </button>
+                      </div>
+                      {state.verificationPending.devVerifyUrl && (
+                        <a
+                          href={state.verificationPending.devVerifyUrl}
+                          className="block mt-2.5 text-[10px] font-mono text-amber-700 underline break-all"
+                        >
+                          {state.lang === 'ka' ? 'დეველოპერ ბმული: ' : 'Dev link: '}{state.verificationPending.devVerifyUrl}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {isRegistering ? (
                 <div>
                   <div>
@@ -1006,6 +1186,11 @@ export default function App() {
             lots={state.lots}
             inventory={state.inventory}
             company={state.companyProfile}
+            bottlingRuns={state.bottlingRuns}
+            costEntries={state.costEntries}
+            onUpdateCostEntries={state.setCostEntries}
+            pricing={state.winePricing}
+            onUpdatePricing={state.setWinePricing}
           />
         </Suspense>
       ) : state.activeModule === 'storage' ? (
@@ -1013,6 +1198,46 @@ export default function App() {
           <StorageTab
             lang={state.lang}
             lots={state.lots}
+            bottlingRuns={state.bottlingRuns}
+            locations={state.storageLocations}
+            movements={state.stockMovements}
+            onUpdateLocations={state.setStorageLocations}
+            onUpdateMovements={state.setStockMovements}
+          />
+        </Suspense>
+      ) : state.activeModule === 'sales' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <SalesDispatchTab
+            lang={state.lang}
+            lots={state.lots}
+            bottlingRuns={state.bottlingRuns}
+            costEntries={state.costEntries}
+            pricing={state.winePricing}
+            locations={state.storageLocations}
+            movements={state.stockMovements}
+            dispatches={state.salesDispatches}
+            orders={state.salesOrders}
+            onUpdateMovements={state.setStockMovements}
+            onUpdateDispatches={state.setSalesDispatches}
+            onUpdateOrders={state.setSalesOrders}
+            currency={state.companyProfile.currency || 'GEL'}
+            currentUserName={state.currentUser.fullName}
+            setToastMessage={state.setToastMessage}
+          />
+        </Suspense>
+      ) : state.activeModule === 'analytics' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <YearComparisonTab
+            lang={state.lang}
+            lots={state.lots}
+            harvests={state.harvests}
+            grapeIntakes={state.grapeIntakes}
+            bottlingRuns={state.bottlingRuns}
+            costEntries={state.costEntries}
+            stockMovements={state.stockMovements}
+            dispatches={state.salesDispatches}
+            orders={state.salesOrders}
+            currency={state.companyProfile.currency || 'GEL'}
           />
         </Suspense>
       ) : state.activeModule === 'docs' ? (
@@ -1028,6 +1253,9 @@ export default function App() {
             samplings={state.samplings}
             inventory={state.inventory}
             labLogs={state.labLogs}
+            grapeIntakes={state.grapeIntakes}
+            cellarOps={state.cellarOps}
+            bottlingRuns={state.bottlingRuns}
           />
         </Suspense>
       ) : (
@@ -1045,11 +1273,70 @@ export default function App() {
                 onChange={(event) => state.setActiveTab(event.target.value)}
                 className="w-full border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm font-bold text-stone-800 dark:bg-stone-950 dark:border-stone-700 dark:text-stone-100"
               >
-                {wineryTabs.map((tab) => (
-                  <option key={tab.id} value={tab.id}>{tab.label}</option>
+                {wineryTabGroups.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.tabs.map((tab) => (
+                      <option key={tab.id} value={tab.id}>{tab.label}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>
+
+            {!state.isSidebarCollapsed && (
+              <div className="hidden lg:block mb-4 rounded-2xl border border-[#e8dfd5] bg-white/90 p-4 shadow-sm dark:border-stone-800 dark:bg-stone-900/90">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
+                      Today focus
+                    </span>
+                    <strong className="mt-1 block text-sm font-black text-stone-900 dark:text-amber-100">
+                      {activeModuleGroup.label} workspace
+                    </strong>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
+                    urgentAlertCount > 0
+                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
+                  }`}>
+                    {urgentAlertCount > 0 ? `${urgentAlertCount} urgent` : 'steady'}
+                  </span>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => state.setActiveTab('tasks')}
+                    className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300"
+                  >
+                    <span className="block text-stone-400">Tasks</span>
+                    <strong className="text-lg text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => state.setActiveTab('fermentation')}
+                    className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300"
+                  >
+                    <span className="block text-stone-400">Ferments</span>
+                    <strong className="text-lg text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
+                  </button>
+                </div>
+                <div className="mt-3">
+                  <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
+                    <span>Capacity</span>
+                    <span>{cellarCapacityPct}%</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
+                    <div
+                      className={`h-full rounded-full ${cellarCapacityPct > 85 ? 'bg-amber-500' : 'bg-[#4e0e15]'}`}
+                      style={{ width: `${Math.min(100, cellarCapacityPct)}%` }}
+                    />
+                  </div>
+                  <span className="mt-2 block text-[10px] font-semibold text-stone-400">
+                    {occupiedTanksCount} occupied vessels · avg {averageOccupiedTemp} °C
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
               {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">Winery Menu</span>}
@@ -1062,29 +1349,40 @@ export default function App() {
               </button>
             </div>
 
-            <div className="hidden lg:flex lg:flex-col gap-1.5 lg:overflow-visible">
-              {wineryTabs.map(tab => {
-                const Icon = tab.icon;
-                const isActive = state.activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => state.setActiveTab(tab.id)}
-                    title={tab.label}
-                    aria-current={isActive ? 'page' : undefined}
-                    className={`group shrink-0 lg:w-full flex items-center gap-2.5 px-3.5 py-2 lg:py-2.5 rounded-lg text-xs font-semibold tracking-wide whitespace-nowrap cursor-pointer transition-colors ${
-                      state.isSidebarCollapsed ? 'lg:justify-center' : ''
-                    } ${
-                      isActive
-                        ? 'bg-[#4e0e15] text-[#fbf9f6] shadow-sm'
-                        : 'text-stone-600 hover:text-[#4e0e15] hover:bg-[#f5efe9]'
-                    }`}
-                  >
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-400' : 'text-[#4e0e15]/70 group-hover:text-[#4e0e15]'}`} />
-                    <span className={state.isSidebarCollapsed ? 'lg:hidden' : ''}>{tab.label}</span>
-                  </button>
-                );
-              })}
+            <div className="hidden lg:flex lg:flex-col gap-3 lg:overflow-visible">
+              {wineryTabGroups.map(group => (
+                <div key={group.label} className="space-y-1">
+                  {!state.isSidebarCollapsed && (
+                    <div className="px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
+                      {group.label}
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    {group.tabs.map(tab => {
+                      const Icon = tab.icon;
+                      const isActive = state.activeTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          onClick={() => state.setActiveTab(tab.id)}
+                          title={tab.label}
+                          aria-current={isActive ? 'page' : undefined}
+                          className={`group shrink-0 lg:w-full flex items-center gap-2.5 px-3.5 py-2 lg:py-2.5 rounded-xl text-xs font-semibold tracking-wide whitespace-nowrap cursor-pointer transition-colors ${
+                            state.isSidebarCollapsed ? 'lg:justify-center' : ''
+                          } ${
+                            isActive
+                              ? 'bg-[#4e0e15] text-[#fbf9f6] shadow-sm'
+                              : 'text-stone-600 hover:text-[#4e0e15] hover:bg-[#f5efe9] dark:text-stone-300 dark:hover:text-amber-100 dark:hover:bg-stone-900'
+                          }`}
+                        >
+                          <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-400' : 'text-[#4e0e15]/70 group-hover:text-[#4e0e15] dark:text-amber-500/70 dark:group-hover:text-amber-300'}`} />
+                          <span className={state.isSidebarCollapsed ? 'lg:hidden' : ''}>{tab.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </aside>
 
@@ -1130,6 +1428,22 @@ export default function App() {
               </div>
             )}
 
+            {/* B2. GRAPE RECEIVING / INTAKE */}
+            {state.activeTab === 'intake' && (
+              <GrapeReceivingTab
+                lang={state.lang}
+                vessels={state.vessels}
+                blocks={state.blocks}
+                harvests={state.harvests}
+                intakes={state.grapeIntakes}
+                currentUserName={state.currentUser.fullName}
+                currency={state.companyProfile.currency || 'GEL'}
+                onReceiveGrapes={state.handleReceiveGrapes}
+                setActiveTab={state.setActiveTab}
+                setToastMessage={state.setToastMessage}
+              />
+            )}
+
             {/* C. WINE LOTS TAB */}
             {state.activeTab === 'lots' && (
               <WineLotsTrace 
@@ -1139,10 +1453,47 @@ export default function App() {
                 onOpenPassport={state.setPassportLotId} 
                 vessels={state.vessels}
                 labLogs={state.labLogs}
+                costEntries={state.costEntries}
+                bottlingRuns={state.bottlingRuns}
+                stockMovements={state.stockMovements}
+                salesOrders={state.salesOrders}
+                salesDispatches={state.salesDispatches}
+                currency={state.companyProfile.currency || 'GEL'}
                 setActiveTab={state.setActiveTab}
                 setSelectedTankId={state.setSelectedTankId}
                 setCalculatorLotId={state.setCalculatorLotId}
                 setCalculatorLotIdA={state.setCalculatorLotIdA}
+              />
+            )}
+
+            {/* C1. WINE CODE LINEAGE / TRACEABILITY TREE */}
+            {state.activeTab === 'lineage' && (
+              <LotLineageGraphTab
+                lang={state.lang}
+                lots={state.lots}
+                grapeIntakes={state.grapeIntakes}
+                cellarOps={state.cellarOps}
+                transfers={state.transfers}
+                bottlingRuns={state.bottlingRuns}
+                storageLocations={state.storageLocations}
+                stockMovements={state.stockMovements}
+                salesOrders={state.salesOrders}
+                salesDispatches={state.salesDispatches}
+                focusLotId={lineageFocusLotId}
+              />
+            )}
+
+            {/* C2. CELLAR OPERATIONS (fast entry) */}
+            {state.activeTab === 'operations' && (
+              <CellarOperationsTab
+                lang={state.lang}
+                lots={state.lots}
+                vessels={state.vessels}
+                inventory={state.inventory}
+                ops={state.cellarOps}
+                currentUserName={state.currentUser.fullName}
+                onAddOperation={state.handleAddCellarOperation}
+                setToastMessage={state.setToastMessage}
               />
             )}
 
@@ -1156,6 +1507,8 @@ export default function App() {
                 onUpdateLots={state.setLots} 
                 prefilledSourceId={state.prefilledSourceId}
                 prefilledDestId={state.prefilledDestId}
+                pastTransfers={state.transfers}
+                onUpdateTransfers={state.setTransfers}
                 clearPrefilled={() => {
                   state.setPrefilledSourceId('');
                   state.setPrefilledDestId('');
@@ -1219,6 +1572,17 @@ export default function App() {
                 lang={state.lang}
                 lots={state.lots}
                 onUpdateLots={state.setLots}
+                history={state.bottlingRuns}
+                onUpdateHistory={state.setBottlingRuns}
+                inventory={state.inventory}
+                onUpdateInventory={state.setInventory}
+                costEntries={state.costEntries}
+                onUpdateCostEntries={state.setCostEntries}
+                storageLocations={state.storageLocations}
+                stockMovements={state.stockMovements}
+                onUpdateStockMovements={state.setStockMovements}
+                currency={state.companyProfile.currency || 'GEL'}
+                currentUserName={state.currentUser.fullName}
                 setToastMessage={state.setToastMessage}
               />
             )}

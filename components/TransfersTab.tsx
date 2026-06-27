@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { translations, Language } from '../lib/i18n';
-import { Vessel, WineLot } from '../lib/wineryState';
+import { Vessel, WineLot, CellarTransferRecord } from '../lib/wineryState';
 import { 
   RefreshCw, 
   ShieldAlert, 
@@ -30,24 +30,15 @@ interface Props {
   prefilledSourceId?: string;
   prefilledDestId?: string;
   clearPrefilled?: () => void;
+  pastTransfers: CellarTransferRecord[];
+  onUpdateTransfers: (transfers: CellarTransferRecord[]) => void;
 }
 
-interface TransferRecord {
-  id: string;
-  sourceId: string;
-  destId: string;
-  volume: number;
-  loss: number;
-  operator: string;
-  category: string;
-  date: string;
-  pump: string;
-  details: string;
-}
+type TransferRecord = CellarTransferRecord;
 
 export default function TransfersTab({ 
   lang, vessels, lots, onUpdateVessels, onUpdateLots, 
-  prefilledSourceId, prefilledDestId, clearPrefilled 
+  prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers
 }: Props) {
   const t = translations[lang];
 
@@ -79,49 +70,8 @@ export default function TransfersTab({
     }
   }, [prefilledSourceId, prefilledDestId, vessels, clearPrefilled]);
 
-  // Custom transfers list for persistence
-  const [pastTransfers, setPastTransfers] = useState<TransferRecord[]>([]);
-
-  // Load past transfers on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('cf_transfers_history');
-    if (saved) {
-      setPastTransfers(JSON.parse(saved));
-    } else {
-      // Mock past transfers for beautiful UI filling
-      const mockTransfers: TransferRecord[] = [
-        {
-          id: 'xfer-1',
-          sourceId: 'Tank T-2',
-          destId: 'Tank T-1',
-          volume: 1200,
-          loss: 8,
-          operator: 'G. Tatrishvili',
-          category: 'racking',
-          date: '2026-05-24',
-          pump: 'Enopump E-400',
-          details: 'Decanted Cabernet lees post primary fermentation.'
-        },
-        {
-          id: 'xfer-2',
-          sourceId: 'B-1 (Barrel)',
-          destId: 'Tank T-3',
-          volume: 225,
-          loss: 2,
-          operator: 'S. Rossi',
-          category: 'filtration',
-          date: '2026-05-26',
-          pump: 'Enopump Mini',
-          details: 'Moved Chardonnay lot to tank for cold stabilization.'
-        }
-      ];
-      setPastTransfers(mockTransfers);
-      localStorage.setItem('cf_transfers_history', JSON.stringify(mockTransfers));
-    }
-  }, []);
-
   const saveTransfers = (newXfers: TransferRecord[]) => {
-    setPastTransfers(newXfers);
+    onUpdateTransfers(newXfers);
     localStorage.setItem('cf_transfers_history', JSON.stringify(newXfers));
   };
 

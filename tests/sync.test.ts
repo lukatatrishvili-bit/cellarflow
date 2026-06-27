@@ -127,6 +127,44 @@ describe('mergeCollections', () => {
     expect(db.companyProfile.companyName).toBe('New');
   });
 
+  it('replaces the wine pricing map as an account-backed object collection', () => {
+    const db: any = { winePricing: { L1: 12 } };
+    const conflicts = mergeCollections(db, {
+      winePricing: { L1: 18, L2: 24 },
+    });
+    expect(conflicts).toEqual([]);
+    expect(db.winePricing).toEqual({ L1: 18, L2: 24 });
+  });
+
+  it('merges new ERP ledger collections such as costs, bottling, storage, and transfers', () => {
+    const db: any = {
+      costEntries: [],
+      bottlingRuns: [],
+      storageLocations: [],
+      stockMovements: [],
+      salesDispatches: [],
+      salesOrders: [],
+      transfers: [],
+    };
+    const conflicts = mergeCollections(db, {
+      costEntries: [item('cost-1', { lotId: 'LOT-1', amount: 100 })],
+      bottlingRuns: [item('bot-1', { lotId: 'LOT-1', totalBottles: 120 })],
+      storageLocations: [item('loc-1', { name: 'Warehouse A' })],
+      stockMovements: [item('mov-1', { lotId: 'LOT-1', locationId: 'loc-1', bottles: 120 })],
+      salesDispatches: [item('sale-1', { lotId: 'LOT-1', locationId: 'loc-1', bottles: 12 })],
+      salesOrders: [item('so-1', { lotId: 'LOT-1', locationId: 'loc-1', bottles: 24, status: 'reserved' })],
+      transfers: [item('xfer-1', { sourceId: 'T1', destId: 'T2', volume: 500 })],
+    });
+    expect(conflicts).toEqual([]);
+    expect(db.costEntries).toHaveLength(1);
+    expect(db.bottlingRuns).toHaveLength(1);
+    expect(db.storageLocations).toHaveLength(1);
+    expect(db.stockMovements).toHaveLength(1);
+    expect(db.salesDispatches).toHaveLength(1);
+    expect(db.salesOrders).toHaveLength(1);
+    expect(db.transfers).toHaveLength(1);
+  });
+
   it('ignores collections the db does not know', () => {
     const db: any = { tasks: [] };
     mergeCollections(db, { exploits: [item('e1')] });

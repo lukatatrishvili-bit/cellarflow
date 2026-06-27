@@ -64,12 +64,23 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
         setSelectedCategory(parsed.includes('yeasts') ? 'yeasts' : parsed[0]);
       }
     } else {
-      const defaultCats = ['yeasts', 'nutritions', 'bottles', 'additives', 'closures', 'cleaning'];
+      const defaultCats = ['yeasts', 'nutritions', 'additives', 'packaging', 'bottles', 'closures', 'labels', 'boxes', 'sanitation', 'cleaning'];
       setCategories(defaultCats);
       setSelectedCategory('yeasts');
       localStorage.setItem('cf_inv_categories', JSON.stringify(defaultCats));
     }
   }, []);
+
+  useEffect(() => {
+    const inventoryCats = Array.from(new Set(inventory.map(item => item.category).filter(Boolean)));
+    if (inventoryCats.length === 0) return;
+    setCategories(prev => {
+      const merged = Array.from(new Set([...prev, ...inventoryCats]));
+      if (merged.length === prev.length) return prev;
+      localStorage.setItem('cf_inv_categories', JSON.stringify(merged));
+      return merged;
+    });
+  }, [inventory]);
 
   // Sync categories to localStorage
   const saveCategories = (newCats: string[]) => {

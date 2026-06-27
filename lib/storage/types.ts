@@ -32,6 +32,7 @@ export interface StockMovement {
   direction: 'in' | 'out'; // received vs dispatched/sold
   bottles: number;         // always positive; direction sets the sign
   reason?: string;         // bottling | sale | transfer | adjustment | ...
+  sourceRef?: string;      // optional linked document/run id, e.g. bottlingRunId
   note?: string;
 }
 

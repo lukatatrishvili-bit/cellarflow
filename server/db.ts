@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { gcsEnabled, downloadDb, uploadDb, gcsTarget } from './gcsStore';
+import { Firestore } from '@google-cloud/firestore';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,6 +73,16 @@ export interface UserDataState {
   irrigationLogs: any[];
   fertilizerLogs: any[];
   auditLogs: any[];
+  bottlingRuns: any[];
+  transfers: any[];
+  grapeIntakes: any[];
+  cellarOps: any[];
+  costEntries: any[];
+  winePricing: Record<string, number>;
+  storageLocations: any[];
+  stockMovements: any[];
+  salesDispatches: any[];
+  salesOrders: any[];
   companyProfile: any;
 }
 
@@ -99,6 +110,16 @@ export function createEmptyUserData(): UserDataState {
     irrigationLogs: [],
     fertilizerLogs: [],
     auditLogs: [],
+    bottlingRuns: [],
+    transfers: [],
+    grapeIntakes: [],
+    cellarOps: [],
+    costEntries: [],
+    winePricing: {},
+    storageLocations: [],
+    stockMovements: [],
+    salesDispatches: [],
+    salesOrders: [],
     companyProfile: {
       companyName: '',
       wineryName: '',
@@ -109,10 +130,47 @@ export function createEmptyUserData(): UserDataState {
       contactEmail: '',
       phone: '',
       website: '',
-      measurementUnits: 'metric',
-      latitude: 41.9056,
-      longitude: 45.4740
+      measurementUnits: 'metric'
     }
+  };
+}
+
+function normalizeUserData(data: Partial<UserDataState> | null | undefined): UserDataState {
+  const empty = createEmptyUserData();
+  if (!data || typeof data !== 'object') return empty;
+  return {
+    ...empty,
+    ...data,
+    vessels: Array.isArray(data.vessels) ? data.vessels : [],
+    lots: Array.isArray(data.lots) ? data.lots : [],
+    fermlogs: Array.isArray(data.fermlogs) ? data.fermlogs : [],
+    lablogs: Array.isArray(data.lablogs) ? data.lablogs : [],
+    inventory: Array.isArray(data.inventory) ? data.inventory : [],
+    tasks: Array.isArray(data.tasks) ? data.tasks : [],
+    notes: Array.isArray(data.notes) ? data.notes : [],
+    blocks: Array.isArray(data.blocks) ? data.blocks : [],
+    phenologyLogs: Array.isArray(data.phenologyLogs) ? data.phenologyLogs : [],
+    sprays: Array.isArray(data.sprays) ? data.sprays : [],
+    scoutings: Array.isArray(data.scoutings) ? data.scoutings : [],
+    soilRecords: Array.isArray(data.soilRecords) ? data.soilRecords : [],
+    samplings: Array.isArray(data.samplings) ? data.samplings : [],
+    harvests: Array.isArray(data.harvests) ? data.harvests : [],
+    irrigationLogs: Array.isArray(data.irrigationLogs) ? data.irrigationLogs : [],
+    fertilizerLogs: Array.isArray(data.fertilizerLogs) ? data.fertilizerLogs : [],
+    auditLogs: Array.isArray(data.auditLogs) ? data.auditLogs : [],
+    bottlingRuns: Array.isArray(data.bottlingRuns) ? data.bottlingRuns : [],
+    transfers: Array.isArray(data.transfers) ? data.transfers : [],
+    grapeIntakes: Array.isArray(data.grapeIntakes) ? data.grapeIntakes : [],
+    cellarOps: Array.isArray(data.cellarOps) ? data.cellarOps : [],
+    costEntries: Array.isArray(data.costEntries) ? data.costEntries : [],
+    winePricing: data.winePricing && typeof data.winePricing === 'object' && !Array.isArray(data.winePricing) ? data.winePricing : {},
+    storageLocations: Array.isArray(data.storageLocations) ? data.storageLocations : [],
+    stockMovements: Array.isArray(data.stockMovements) ? data.stockMovements : [],
+    salesDispatches: Array.isArray(data.salesDispatches) ? data.salesDispatches : [],
+    salesOrders: Array.isArray(data.salesOrders) ? data.salesOrders : [],
+    companyProfile: data.companyProfile && typeof data.companyProfile === 'object'
+      ? { ...empty.companyProfile, ...data.companyProfile }
+      : empty.companyProfile,
   };
 }
 
@@ -177,4 +235,53 @@ export function saveDB(): void {
   }
   // Mirror to durable storage (no-op unless GCS_BUCKET is set).
   scheduleGcsUpload();
+}
+
+// Firestore integration (optional)
+const firestore = new Firestore();
+
+/**
+ * Asynchronously fetch user data from Firestore or fallback to local JSON.
+ */
+export async function getUserData(username: string): Promise<UserDataState | null> {
+  if (process.env.USE_FIRESTORE === 'true') {
+    const docRef = firestore.collection('wineries').doc(username);
+    const doc = await docRef.get();
+    if (!doc.exists) return null;
+    return normalizeUserData(doc.data() as Partial<UserDataState>);
+  }
+  // Fallback to local DB
+  const db = getDB();
+  if (!db.userData[username]) return null;
+  const normalized = normalizeUserData(db.userData[username]);
+  db.userData[username] = normalized;
+  return normalized;
+}
+
+/**
+ * Save user data back to Firestore or local JSON.
+ */
+export async function saveUserData(username: string, data: UserDataState): Promise<void> {
+  if (process.env.USE_FIRESTORE === 'true') {
+    const docRef = firestore.collection('wineries').doc(username);
+    await docRef.set(data, { merge: true });
+    return;
+  }
+  // Fallback to local DB
+  const db = getDB();
+  db.userData[username] = data;
+  saveDB();
+}
+
+export async function resetUserData(username: string): Promise<UserDataState> {
+  const empty = createEmptyUserData();
+  if (process.env.USE_FIRESTORE === 'true') {
+    const docRef = firestore.collection('wineries').doc(username);
+    await docRef.set(empty, { merge: true });
+  } else {
+    const db = getDB();
+    db.userData[username] = empty;
+    saveDB();
+  }
+  return empty;
 }

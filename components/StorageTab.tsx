@@ -1,15 +1,19 @@
 import React, { useMemo, useState } from 'react';
 import { Warehouse, Plus, Trash2, Boxes, Thermometer, Droplet, PackagePlus } from 'lucide-react';
 import { Language } from '../lib/i18n';
-import type { WineLot } from '../lib/wineryState';
-import { computeStock, unstored, utilization, type StorageType } from '../lib/storage';
-import {
-  loadLocations, loadMovements, addLocation, deleteLocation, addMovement, deleteMovement,
-} from '../lib/storage/store';
-import { loadBottlingHistory } from './BottlingTab';
+import type { WineLot, BottlingRunRecord } from '../lib/wineryState';
+import { computeStock, unstored, utilization, type StorageLocation, type StockMovement, type StorageType } from '../lib/storage';
 import { CountUp } from './motion';
 
-interface Props { lang: Language; lots: WineLot[]; }
+interface Props {
+  lang: Language;
+  lots: WineLot[];
+  bottlingRuns: BottlingRunRecord[];
+  locations: StorageLocation[];
+  movements: StockMovement[];
+  onUpdateLocations: (locations: StorageLocation[]) => void;
+  onUpdateMovements: (movements: StockMovement[]) => void;
+}
 
 const TYPES: Array<{ id: StorageType; ka: string; en: string }> = [
   { id: 'warehouse', ka: 'საწყობი', en: 'Warehouse' },
@@ -21,16 +25,22 @@ const TYPES: Array<{ id: StorageType; ka: string; en: string }> = [
 ];
 const typeLabel = (id: StorageType, ka: boolean) => { const t = TYPES.find(x => x.id === id); return t ? (ka ? t.ka : t.en) : id; };
 
-export default function StorageTab({ lang, lots }: Props) {
+export default function StorageTab({
+  lang,
+  lots,
+  bottlingRuns,
+  locations,
+  movements,
+  onUpdateLocations,
+  onUpdateMovements,
+}: Props) {
   const ka = lang === 'ka';
-  const [locations, setLocations] = useState(loadLocations);
-  const [movements, setMovements] = useState(loadMovements);
 
   const producedByLot = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const r of loadBottlingHistory()) m[r.lotId] = (m[r.lotId] || 0) + (r.totalBottles || 0) + (r.totalCeramic || 0);
+    for (const r of bottlingRuns) m[r.lotId] = (m[r.lotId] || 0) + (r.totalBottles || 0) + (r.totalCeramic || 0);
     return m;
-  }, []);
+  }, [bottlingRuns]);
 
   const stock = useMemo(() => computeStock(movements), [movements]);
   const unstoredByLot = useMemo(() => unstored(producedByLot, movements), [producedByLot, movements]);
@@ -44,12 +54,14 @@ export default function StorageTab({ lang, lots }: Props) {
   const [lcap, setLcap] = useState(''); const [ltemp, setLtemp] = useState(''); const [lhum, setLhum] = useState('');
   const addLoc = () => {
     if (!ln.trim()) return;
-    setLocations(addLocation({
+    const loc: StorageLocation = {
+      id: `loc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: ln.trim(), type: lt,
       capacityBottles: parseInt(lcap) || undefined,
       targetTempC: ltemp === '' ? undefined : parseFloat(ltemp),
       targetHumidity: lhum === '' ? undefined : parseFloat(lhum),
-    }));
+    };
+    onUpdateLocations([...locations, loc]);
     setLn(''); setLcap(''); setLtemp(''); setLhum('');
   };
 
@@ -62,7 +74,16 @@ export default function StorageTab({ lang, lots }: Props) {
   const canMove = !!mLot && !!mLoc && (parseInt(mQty) || 0) > 0;
   const submitMove = () => {
     if (!canMove) return;
-    setMovements(addMovement({ date: mDate, lotId: mLot, locationId: mLoc, direction: mDir, bottles: parseInt(mQty) || 0, reason: mDir === 'in' ? 'receive' : 'dispatch' }));
+    const movement: StockMovement = {
+      id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      date: mDate,
+      lotId: mLot,
+      locationId: mLoc,
+      direction: mDir,
+      bottles: parseInt(mQty) || 0,
+      reason: mDir === 'in' ? 'receive' : 'dispatch',
+    };
+    onUpdateMovements([movement, ...movements]);
     setMQty('');
   };
   const prefillReceive = (lotId: string, bottles: number) => {
@@ -177,7 +198,7 @@ export default function StorageTab({ lang, lots }: Props) {
                       {loc.targetHumidity != null && <span className="flex items-center gap-0.5"><Droplet className="w-3 h-3" />{loc.targetHumidity}%</span>}
                     </div>
                   </div>
-                  <button onClick={() => setLocations(deleteLocation(loc.id))} className="text-stone-300 hover:text-rose-600 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => onUpdateLocations(locations.filter(l => l.id !== loc.id))} className="text-stone-300 hover:text-rose-600 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
                 <div className="p-4 space-y-3">
                   {/* capacity bar */}
@@ -221,7 +242,7 @@ export default function StorageTab({ lang, lots }: Props) {
                         <td className="p-2.5 text-stone-700 dark:text-amber-50">{lotName(m.lotId)}</td>
                         <td className="p-2.5 text-stone-500">{locations.find(l => l.id === m.locationId)?.name || '—'}</td>
                         <td className={`p-2.5 text-right font-mono font-bold ${m.direction === 'in' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600'}`}>{m.direction === 'in' ? '+' : '−'}{m.bottles}</td>
-                        <td className="p-2.5 text-right"><button onClick={() => setMovements(deleteMovement(m.id))} className="text-stone-300 hover:text-rose-600 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button></td>
+                        <td className="p-2.5 text-right"><button onClick={() => onUpdateMovements(movements.filter(x => x.id !== m.id))} className="text-stone-300 hover:text-rose-600 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button></td>
                       </tr>
                     ))}
                   </tbody>

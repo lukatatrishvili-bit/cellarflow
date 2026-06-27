@@ -15,6 +15,7 @@ import { Language } from '../lib/i18n';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
 import IpmPhenoscheme from './IpmPhenoscheme';
+import { DayWeather, fetchDayWeather, localISODate } from '../lib/weatherApi';
 import { 
   Mountain, Wind, Droplet, Sun, Layers, Plus, 
   AlertTriangle, Check, Calendar, Thermometer, 
@@ -318,43 +319,62 @@ export default function VaziModule({
   const totalArea = useMemo(() => blocks.reduce((acc, b) => acc + b.area, 0), [blocks]);
   const totalVines = useMemo(() => blocks.reduce((acc, b) => acc + b.vinesCount, 0), [blocks]);
   
-  // Custom Simulated Weather generator which creates a unique report based on Block coordinates!
+  const [blockWeatherData, setBlockWeatherData] = useState<DayWeather | null>(null);
+  const [blockWeatherError, setBlockWeatherError] = useState('');
+
+  useEffect(() => {
+    if (!selectedBlock) {
+      setBlockWeatherData(null);
+      setBlockWeatherError('');
+      return;
+    }
+
+    let active = true;
+    setBlockWeatherError('');
+    fetchDayWeather(selectedBlock.latitude, selectedBlock.longitude, localISODate())
+      .then((result) => {
+        if (active) setBlockWeatherData(result);
+      })
+      .catch((error) => {
+        if (active) {
+          setBlockWeatherData(null);
+          setBlockWeatherError(error instanceof Error ? error.message : 'Live weather is unavailable.');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedBlock?.id, selectedBlock?.latitude, selectedBlock?.longitude]);
+
   const blockWeather = useMemo(() => {
-    if (!selectedBlock) return null;
-    // Semi-deterministic from latitude/longitude
-    const latFactor = Math.sin(selectedBlock.latitude * 10) * 5;
-    const temp = Math.round(24.5 + latFactor);
-    const rainProb = Math.round(Math.abs(Math.cos(selectedBlock.longitude * 5)) * 100);
-    const wind = Math.round(8.5 + Math.abs(latFactor));
-    const humidity = Math.round(55 + latFactor * 3);
-    
-    // Frost & Heat risk checks
-    const frostRisk = temp < 5 ? 'High' : temp < 10 ? 'Medium' : 'None';
-    const heatStress = temp > 35 ? 'Severe' : temp > 30 ? 'Moderate' : 'Optimum';
-    const sprayConditions = wind > 14 ? 'Unsafe (High Wind)' : rainProb > 70 ? 'Unsafe (Rain Forecast)' : 'Excellent';
-    const diseasePressure = humidity > 75 && temp > 18 ? 'High (Downy Mildew Risk)' : 'Low';
+    if (!blockWeatherData) return null;
+    const temp = blockWeatherData.current?.temp
+      ?? (blockWeatherData.daily.tempMax + blockWeatherData.daily.tempMin) / 2;
+    const wind = blockWeatherData.current?.wind ?? blockWeatherData.daily.windMax;
+    const humidity = blockWeatherData.current?.humidity ?? 0;
+    const rainMm = blockWeatherData.daily.precipSum;
 
     return {
-      temp,
-      rainProb,
-      wind,
+      temp: Math.round(temp),
+      rainMm,
+      wind: Math.round(wind),
       humidity,
-      frostRisk,
-      heatStress,
-      sprayConditions,
-      diseasePressure
+      frostRisk: blockWeatherData.daily.tempMin < 2 ? 'High' : blockWeatherData.daily.tempMin < 5 ? 'Medium' : 'None',
+      heatStress: blockWeatherData.daily.tempMax > 35 ? 'Severe' : blockWeatherData.daily.tempMax > 30 ? 'Moderate' : 'Optimum',
+      sprayConditions: wind > 14 ? 'Unsafe (High Wind)' : rainMm > 0 ? 'Unsafe (Rain)' : 'Suitable',
+      diseasePressure: humidity > 75 && temp > 18 && rainMm > 0 ? 'High (Downy Mildew Risk)' : 'Low'
     };
-  }, [selectedBlock]);
+  }, [blockWeatherData]);
 
-  // Growing Degree Days (GDD) heat units calculation
+  // GDD is a recorded agronomic value, not a synthetic estimate.
   const computedGDD = useMemo(() => {
     if (!selectedBlock) return 0;
-    // Standard Base 10°C viticulture heat units accumulated from April to current date
-    const baseTemp = 10;
-    const daysSinceApril = 58; // Mocked for late May
-    const avgDailyTemp = blockWeather ? blockWeather.temp : 22;
-    return Math.round(Math.max(0, (avgDailyTemp - baseTemp) * daysSinceApril));
-  }, [selectedBlock, blockWeather]);
+    const latest = phenologyLogs
+      .filter((record) => record.blockId === selectedBlock.id)
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    return latest?.gdd ?? 0;
+  }, [selectedBlock, phenologyLogs]);
 
   return (
     <div id="vazi-sandbox" className="space-y-6 text-stone-800 animate-fade-in font-sans">
@@ -665,29 +685,30 @@ export default function VaziModule({
                   {(() => {
                     const block = blocks.find(x => x.id === selectedBlockId) || blocks[0];
                     if (!block) return null;
-                    
-                    const latFactor = Math.sin(block.latitude * 10) * 5;
-                    const temp = Math.round(24.5 + latFactor);
-                    const rainProb = Math.round(Math.abs(Math.cos(block.longitude * 5)) * 100);
-                    const wind = Math.round(8.5 + Math.abs(latFactor));
-                    const humidity = Math.round(55 + latFactor * 3);
-                    const diseasePressure = humidity > 75 && temp > 18 ? 'High (Downy Mildew Risk)' : 'Low';
-                    
-                    // Base Base-10 growing degree days heat units accumulation
-                    const baseTemp = 10;
-                    const daysSinceApril = 58; // Late May mocked
-                    const avgDailyTemp = temp;
-                    const blockGDD = Math.round(Math.max(0, (avgDailyTemp - baseTemp) * daysSinceApril));
+
+                    if (!blockWeather) {
+                      return (
+                        <div className="h-full flex flex-col items-center justify-center text-center gap-2 text-stone-500">
+                          <AlertTriangle className="w-6 h-6 text-amber-600" />
+                          <strong className="text-xs text-stone-800">Live weather unavailable</strong>
+                          <span className="text-[10px] max-w-sm">
+                            {blockWeatherError || 'No simulated readings are shown. Check the connection and block coordinates.'}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    const { temp, rainMm, wind, humidity, diseasePressure } = blockWeather;
 
                     return (
                       <div className="flex flex-col justify-between h-full space-y-2">
                         <div className="flex items-center justify-between">
                           <div>
                             <strong className="text-xs font-serif font-black text-emerald-950 block">{block.name} Forecast</strong>
-                            <span className="text-[9px] text-stone-500 font-mono">GPS: {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)} • GDD: {blockGDD}</span>
+                            <span className="text-[9px] text-stone-500 font-mono">GPS: {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)} • Recorded GDD: {computedGDD}</span>
                           </div>
                           <span className="text-[9px] font-mono font-bold bg-sky-50 text-sky-800 px-2 py-0.5 rounded border border-sky-200">
-                            {lang === 'ka' ? 'ტელემეტრია' : 'TELEMETRY LIVE'}
+                            {lang === 'ka' ? 'ცოცხალი ამინდი' : 'OPEN-METEO LIVE'}
                           </span>
                         </div>
 
@@ -697,8 +718,8 @@ export default function VaziModule({
                             <strong className="text-sm font-black mt-0.5 block">{temp}°C</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Rain Prob</span>
-                            <strong className="text-sm font-black mt-0.5 block">{rainProb}%</strong>
+                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Rain Today</span>
+                            <strong className="text-sm font-black mt-0.5 block">{rainMm} mm</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
                             <span className="text-[8px] font-mono text-slate-400 block uppercase">Wind Max</span>
@@ -1278,9 +1299,9 @@ export default function VaziModule({
                   totalWaterUsed: Math.round(water * selectedBlock.area),
                   operator,
                   machineryUsed: machinery,
-                  windSpeed: blockWeather ? blockWeather.wind : 6,
-                  temperature: blockWeather ? blockWeather.temp : 22,
-                  humidity: blockWeather ? blockWeather.humidity : 50,
+                  windSpeed: blockWeather?.wind ?? 0,
+                  temperature: blockWeather?.temp ?? 0,
+                  humidity: blockWeather?.humidity ?? 0,
                   preHarvestIntervalDays: phi,
                   reEntryIntervalHours: rei,
                   notes: `Authorized chemical pesticide spraying campaign for ${targetProblem} prevention on Saperavi rows.`

@@ -5,7 +5,8 @@ import {
 import { Language } from '../lib/i18n';
 import type {
   CompanyProfile, UserProfile, VineyardBlock, WineLot, Vessel, HarvestRecord,
-  GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent,
+  GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord, CellarOperation,
+  BottlingRunRecord,
 } from '../lib/wineryState';
 import {
   listForms, buildDocument, buildFilename, type ExportContext, type FilterId, type FormTemplate,
@@ -24,6 +25,9 @@ interface Props {
   samplings: GrapeSamplingRecord[];
   inventory: InventoryItem[];
   labLogs: LabAnalysis[];
+  grapeIntakes: GrapeIntakeRecord[];
+  cellarOps: CellarOperation[];
+  bottlingRuns: BottlingRunRecord[];
 }
 
 function loadTransfers(): TransferEvent[] {
@@ -68,6 +72,7 @@ export default function OfficialDocsTab(props: Props) {
   const pools = useDemo ? demoPools : {
     blocks: props.blocks, lots: props.lots, vessels: props.vessels, harvests: props.harvests,
     samplings: props.samplings, inventory: props.inventory, labLogs: props.labLogs, transfers: realTransfers,
+    grapeIntakes: props.grapeIntakes, cellarOps: props.cellarOps, bottlingRuns: props.bottlingRuns,
   };
 
   const ctx: ExportContext = useMemo(() => ({
@@ -91,6 +96,9 @@ export default function OfficialDocsTab(props: Props) {
     inventory: pools.inventory,
     labLogs: pools.labLogs,
     transfers: pools.transfers,
+    grapeIntakes: pools.grapeIntakes,
+    cellarOps: pools.cellarOps,
+    bottlingRuns: pools.bottlingRuns,
   }), [ka, mode, blankRows, company, currentUser, from, to, accountingYear, blockId, lotId, tankId,
       productName, materialId, pools]);
 

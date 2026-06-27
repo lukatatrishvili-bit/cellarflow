@@ -72,6 +72,10 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
       db.companyProfile = collections[key];
       continue;
     }
+    if (key === 'winePricing') {
+      db.winePricing = collections[key];
+      continue;
+    }
     if (!Array.isArray(collections[key])) continue;
 
     const existingList: any[] = db[key] || [];

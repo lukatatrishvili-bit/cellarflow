@@ -1,2 +1,2 @@
 export * from './types';
-export { computeStock, lotTotalStored, utilization, unstored } from './engine';
+export { computeStock, lotTotalStored, utilization, unstored, stockMovementFromBottlingRun, stockMovementFromDispatch } from './engine';

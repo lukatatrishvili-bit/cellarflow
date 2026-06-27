@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeStock, lotTotalStored, utilization, unstored, type StockMovement } from '../lib/storage';
+import { computeStock, lotTotalStored, stockMovementFromBottlingRun, stockMovementFromDispatch, utilization, unstored, type StockMovement } from '../lib/storage';
 
 const M = (over: Partial<StockMovement>): StockMovement => ({
   id: Math.random().toString(36).slice(2), date: '2026-06-15', lotId: 'L1',
@@ -62,5 +62,58 @@ describe('unstored', () => {
     );
     expect(res.L1).toBe(300); // 1300 produced − 1000 stored
     expect(res.L2).toBe(500); // none stored yet
+  });
+});
+
+describe('stockMovementFromBottlingRun', () => {
+  it('creates an inbound stock movement linked to the bottling run', () => {
+    const movement = stockMovementFromBottlingRun({
+      runId: 'bot-1',
+      date: '2026-12-01',
+      lotId: 'LOT-SAP-2026',
+      locationId: 'loc-main',
+      bottles: 1200,
+      lotName: 'Saperavi Reserve',
+    });
+
+    expect(movement).toMatchObject({
+      id: 'mov-bottling-bot-1',
+      date: '2026-12-01',
+      lotId: 'LOT-SAP-2026',
+      locationId: 'loc-main',
+      direction: 'in',
+      bottles: 1200,
+      reason: 'bottling',
+      sourceRef: 'bot-1',
+    });
+  });
+
+  it('returns null without a location or bottle count', () => {
+    expect(stockMovementFromBottlingRun({ runId: 'bot-1', date: '2026-12-01', lotId: 'L1', locationId: '', bottles: 100 })).toBeNull();
+    expect(stockMovementFromBottlingRun({ runId: 'bot-1', date: '2026-12-01', lotId: 'L1', locationId: 'loc-main', bottles: 0 })).toBeNull();
+  });
+});
+
+describe('stockMovementFromDispatch', () => {
+  it('creates an outbound stock movement linked to the sales dispatch', () => {
+    const movement = stockMovementFromDispatch({
+      dispatchId: 'sale-1',
+      date: '2026-12-10',
+      lotId: 'LOT-SAP-2026',
+      locationId: 'loc-main',
+      bottles: 60,
+      customerName: 'Tbilisi Wine Bar',
+    });
+
+    expect(movement).toMatchObject({
+      id: 'mov-dispatch-sale-1',
+      date: '2026-12-10',
+      lotId: 'LOT-SAP-2026',
+      locationId: 'loc-main',
+      direction: 'out',
+      bottles: 60,
+      reason: 'sale',
+      sourceRef: 'sale-1',
+    });
   });
 });

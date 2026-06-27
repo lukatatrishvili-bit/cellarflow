@@ -26,6 +26,19 @@ import {
   MaraniOSAuditLog,
   UserProfile,
   CompanyProfile,
+  BottlingRunRecord,
+  CellarTransferRecord,
+  SalesDispatchRecord,
+  SalesOrderRecord,
+  GrapeIntakeRecord,
+  CellarOperation,
+  estimateMustVolumeL,
+  deductStock,
+  initialGrapeIntakes,
+  initialSalesDispatches,
+  initialSalesOrders,
+  initialCellarOps,
+  CELLAR_OPERATIONS,
   initialVineyardBlocks,
   initialPhenologyRecords,
   initialSprayRecords,
@@ -37,6 +50,10 @@ import {
   initialFertilizerLogs,
   initialMaraniOSAuditLogs
 } from '../lib/wineryState';
+import type { CostEntry } from '../lib/costing';
+import { grapeIntakeCostEntry, materialCostEntryFromOperation } from '../lib/costing';
+import type { WinePricing } from '../lib/costing/store';
+import type { StorageLocation, StockMovement } from '../lib/storage';
 
 export interface CellarNote {
   id: string;
@@ -56,6 +73,7 @@ export function useWineryState() {
   const [isClient, setIsClient] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [verificationPending, setVerificationPending] = useState<{ email: string; devVerifyUrl?: string } | null>(null);
   const [demoLoginEnabled, setDemoLoginEnabled] = useState(false);
   const [passportLotId, setPassportLotId] = useState<string | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<any[] | null>(null);
@@ -86,7 +104,7 @@ export function useWineryState() {
     longitude: 45.4740
   });
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage'>('portal');
+  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Datasets
@@ -109,6 +127,16 @@ export function useWineryState() {
   const [irrigationLogs, setIrrigationLogs] = useState<IrrigationRecord[]>([]);
   const [fertilizerLogs, setFertilizerLogs] = useState<FertilizationRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<MaraniOSAuditLog[]>([]);
+  const [bottlingRuns, setBottlingRuns] = useState<BottlingRunRecord[]>([]);
+  const [transfers, setTransfers] = useState<CellarTransferRecord[]>([]);
+  const [grapeIntakes, setGrapeIntakes] = useState<GrapeIntakeRecord[]>([]);
+  const [cellarOps, setCellarOps] = useState<CellarOperation[]>([]);
+  const [costEntries, setCostEntries] = useState<CostEntry[]>([]);
+  const [winePricing, setWinePricing] = useState<WinePricing>({});
+  const [storageLocations, setStorageLocations] = useState<StorageLocation[]>([]);
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [salesDispatches, setSalesDispatches] = useState<SalesDispatchRecord[]>([]);
+  const [salesOrders, setSalesOrders] = useState<SalesOrderRecord[]>([]);
 
   // Daily fermentation inputs
   const [logTankId, setLogTankId] = useState('');
@@ -119,7 +147,7 @@ export function useWineryState() {
   const [logPH, setLogPH] = useState(3.5);
   const [logNotes, setLogNotes] = useState('');
   const [logCap, setLogCap] = useState('Punchdowns - 2X');
-  const [chartLotId, setChartLotId] = useState<string>('CS-2025-01');
+  const [chartLotId, setChartLotId] = useState<string>('');
   const [selectedTankId, setSelectedTankId] = useState<string | null>(null);
 
   // Lab entry inputs
@@ -193,6 +221,16 @@ export function useWineryState() {
     setSafe(setIrrigationLogs, data.irrigationLogs, 'irrigationLogs', 'vinea_irrigation');
     setSafe(setFertilizerLogs, data.fertilizerLogs, 'fertilizerLogs', 'vinea_fertilizer');
     setSafe(setAuditLogs, data.auditLogs, 'auditLogs', 'vinea_audit_logs');
+    setSafe(setBottlingRuns, data.bottlingRuns, 'bottlingRuns', 'cf_bottling_history');
+    setSafe(setTransfers, data.transfers, 'transfers', 'cf_transfers_history');
+    setSafe(setGrapeIntakes, data.grapeIntakes, 'grapeIntakes', 'cf_grape_intakes');
+    setSafe(setCellarOps, data.cellarOps, 'cellarOps', 'cf_cellar_ops');
+    setSafe(setCostEntries, data.costEntries, 'costEntries', 'cf_cost_entries');
+    setSafe(setWinePricing, data.winePricing, 'winePricing', 'cf_wine_pricing');
+    setSafe(setStorageLocations, data.storageLocations, 'storageLocations', 'cf_storage_locations');
+    setSafe(setStockMovements, data.stockMovements, 'stockMovements', 'cf_storage_movements');
+    setSafe(setSalesDispatches, data.salesDispatches, 'salesDispatches', 'cf_sales_dispatches');
+    setSafe(setSalesOrders, data.salesOrders, 'salesOrders', 'cf_sales_orders');
     setSafe(setCompanyProfile, data.companyProfile, 'companyProfile', 'vinea_company_profile');
     const syncedAt = new Date().toISOString();
     setLastSyncAt(syncedAt);
@@ -214,6 +252,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders,
         companyProfile
       };
 
@@ -298,12 +337,34 @@ export function useWineryState() {
         return true;
       } else {
         const err = await res.json().catch(() => ({}));
+        if (err.code === 'email_unverified') {
+          setVerificationPending({ email: identifier });
+        }
         setLoginError(err.error || 'Authentication failed');
         return false;
       }
     } catch (err) {
       setLoginError('Could not reach secure login gateway');
       return false;
+    }
+  };
+
+  const handleResendVerification = async (identifier: string) => {
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data && data.devVerifyUrl) {
+        setVerificationPending(prev => ({ email: prev?.email || identifier, devVerifyUrl: data.devVerifyUrl }));
+      }
+      setToastMessage(lang === 'ka'
+        ? 'დადასტურების ბმული ხელახლა გაიგზავნა. შეამოწმეთ ელფოსტა.'
+        : 'Verification link sent again — check your email.');
+    } catch {
+      setToastMessage(lang === 'ka' ? '⚠️ ბმულის გაგზავნა ვერ მოხერხდა.' : '⚠️ Could not resend the verification link.');
     }
   };
 
@@ -352,6 +413,14 @@ export function useWineryState() {
     localStorage.removeItem('vinea_irrigation');
     localStorage.removeItem('vinea_fertilizer');
     localStorage.removeItem('vinea_audit_logs');
+    localStorage.removeItem('cf_bottling_history');
+    localStorage.removeItem('cf_transfers_history');
+    localStorage.removeItem('cf_cost_entries');
+    localStorage.removeItem('cf_wine_pricing');
+    localStorage.removeItem('cf_storage_locations');
+    localStorage.removeItem('cf_storage_movements');
+    localStorage.removeItem('cf_sales_dispatches');
+    localStorage.removeItem('cf_sales_orders');
     localStorage.removeItem('vinea_company_profile');
     localStorage.removeItem('vinea_deleted_ids');
     
@@ -373,10 +442,21 @@ export function useWineryState() {
     setIrrigationLogs([]);
     setFertilizerLogs([]);
     setAuditLogs([]);
+    setBottlingRuns([]);
+    setTransfers([]);
+    setGrapeIntakes([]);
+    setCellarOps([]);
+    setCostEntries([]);
+    setWinePricing({});
+    setStorageLocations([]);
+    setStockMovements([]);
+    setSalesDispatches([]);
+    setSalesOrders([]);
   };
 
   const handleAuthRegister = async (profileData: { username: string, email: string, fullName: string, role: string, language: string, rememberMe?: boolean, passcode: string }) => {
     setLoginError(null);
+    setVerificationPending(null);
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -385,15 +465,23 @@ export function useWineryState() {
       });
       if (res.ok) {
         const user = await res.json();
+
+        // New accounts must confirm their email before the session is created.
+        if (user && user.requiresVerification) {
+          setVerificationPending({ email: user.email || profileData.email, devVerifyUrl: user.devVerifyUrl });
+          return;
+        }
+
         setCurrentUser(user);
         setIsLoggedIn(true);
-        
+
         // Only force full upload if there are unsynced offline changes made as guest
         const hasOfflineChanges = SyncQueueManager.getDirtyCollections().size > 0;
         const initialDB = await SyncQueueManager.sync(hasOfflineChanges ? {
           vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
           blocks, phenologyLogs, sprays, scoutings, soilRecords,
           samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
+          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders,
           companyProfile
         } : {});
         if (initialDB) {
@@ -457,6 +545,14 @@ export function useWineryState() {
         localStorage.removeItem('vinea_irrigation');
         localStorage.removeItem('vinea_fertilizer');
         localStorage.removeItem('vinea_audit_logs');
+        localStorage.removeItem('cf_bottling_history');
+        localStorage.removeItem('cf_transfers_history');
+        localStorage.removeItem('cf_cost_entries');
+        localStorage.removeItem('cf_wine_pricing');
+        localStorage.removeItem('cf_storage_locations');
+        localStorage.removeItem('cf_storage_movements');
+        localStorage.removeItem('cf_sales_dispatches');
+        localStorage.removeItem('cf_sales_orders');
         localStorage.removeItem('vinea_company_profile');
         localStorage.removeItem('vinea_deleted_ids');
 
@@ -502,6 +598,16 @@ export function useWineryState() {
     setInventory(parseOrInit('cf_inventory', initialInventory));
     setTasks(parseOrInit('cf_tasks', initialTasks));
     setNotesList(parseOrInit('cf_notes', initialCellarNotes));
+    setBottlingRuns(parseOrInit('cf_bottling_history', []));
+    setTransfers(parseOrInit('cf_transfers_history', []));
+    setGrapeIntakes(parseOrInit('cf_grape_intakes', initialGrapeIntakes));
+    setCellarOps(parseOrInit('cf_cellar_ops', initialCellarOps));
+    setCostEntries(parseOrInit('cf_cost_entries', []));
+    setWinePricing(parseOrInit('cf_wine_pricing', {}));
+    setStorageLocations(parseOrInit('cf_storage_locations', []));
+    setStockMovements(parseOrInit('cf_storage_movements', []));
+    setSalesDispatches(parseOrInit('cf_sales_dispatches', initialSalesDispatches));
+    setSalesOrders(parseOrInit('cf_sales_orders', initialSalesOrders));
     setIsSidebarCollapsed(localStorage.getItem('cf_sidebar_collapsed') === 'true');
     setLastSyncAt(localStorage.getItem('vinea_last_sync_at'));
 
@@ -564,6 +670,23 @@ export function useWineryState() {
         setActiveTab('vessels');
         setSelectedTankId(tankParam);
       }
+    }
+
+    // Email-verification landing (redirected here from the verification link).
+    const params = new URLSearchParams(window.location.search);
+    const verified = params.get('verified');
+    const verifyError = params.get('verify_error');
+    if (verified || verifyError) {
+      const isKa = (localStorage.getItem('vinea_lang') as Language) === 'ka';
+      if (verified) {
+        setToastMessage(isKa ? '✅ ელფოსტა დადასტურდა — ახლა შეგიძლიათ შესვლა.' : '✅ Email verified — you can now sign in.');
+      } else {
+        setToastMessage(verifyError === 'expired'
+          ? (isKa ? '⚠️ დადასტურების ბმულს ვადა გაუვიდა. მოითხოვეთ ახალი.' : '⚠️ Verification link expired. Please request a new one.')
+          : (isKa ? '⚠️ დადასტურების ბმული არასწორია.' : '⚠️ Invalid verification link.'));
+      }
+      // Strip the params so a refresh doesn't repeat the toast.
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 
@@ -653,7 +776,9 @@ export function useWineryState() {
       harvests: setHarvests,
       irrigationLogs: setIrrigationLogs,
       fertilizerLogs: setFertilizerLogs,
-      auditLogs: setAuditLogs
+      auditLogs: setAuditLogs,
+      salesDispatches: setSalesDispatches,
+      salesOrders: setSalesOrders
     };
 
     const setter = setters[key];
@@ -704,6 +829,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders,
         companyProfile
       };
       
@@ -721,6 +847,16 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('inventory', 'cf_inventory', inventory); }, [inventory, isClient]);
   useEffect(() => { handleCollectionUpdate('tasks', 'cf_tasks', tasks); }, [tasks, isClient]);
   useEffect(() => { handleCollectionUpdate('notesList', 'cf_notes', notesList); }, [notesList, isClient]);
+  useEffect(() => { handleCollectionUpdate('bottlingRuns', 'cf_bottling_history', bottlingRuns); }, [bottlingRuns, isClient]);
+  useEffect(() => { handleCollectionUpdate('transfers', 'cf_transfers_history', transfers); }, [transfers, isClient]);
+  useEffect(() => { handleCollectionUpdate('grapeIntakes', 'cf_grape_intakes', grapeIntakes); }, [grapeIntakes, isClient]);
+  useEffect(() => { handleCollectionUpdate('cellarOps', 'cf_cellar_ops', cellarOps); }, [cellarOps, isClient]);
+  useEffect(() => { handleCollectionUpdate('costEntries', 'cf_cost_entries', costEntries); }, [costEntries, isClient]);
+  useEffect(() => { handleCollectionUpdate('winePricing', 'cf_wine_pricing', winePricing); }, [winePricing, isClient]);
+  useEffect(() => { handleCollectionUpdate('storageLocations', 'cf_storage_locations', storageLocations); }, [storageLocations, isClient]);
+  useEffect(() => { handleCollectionUpdate('stockMovements', 'cf_storage_movements', stockMovements); }, [stockMovements, isClient]);
+  useEffect(() => { handleCollectionUpdate('salesDispatches', 'cf_sales_dispatches', salesDispatches); }, [salesDispatches, isClient]);
+  useEffect(() => { handleCollectionUpdate('salesOrders', 'cf_sales_orders', salesOrders); }, [salesOrders, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
@@ -904,6 +1040,222 @@ export function useWineryState() {
     setAuditLogs(prev => [audit, ...prev]);
 
     return lotId;
+  };
+
+  /**
+   * Structured grape receiving / intake. Creates a wine batch (WineLot) from the
+   * captured fruit, optionally fills a destination vessel, seeds the first
+   * fermentation log with the chemistry measured at the weighbridge, records the
+   * intake document, and writes an audit entry. Returns the new lot id.
+   */
+  const handleReceiveGrapes = (
+    input: Omit<GrapeIntakeRecord, 'id' | 'createdLotId' | 'netWeightKg' | 'estimatedVolumeL'>,
+  ): string => {
+    const netWeightKg = Math.max(0, (input.grossWeightKg || 0) - (input.tareWeightKg || 0));
+    const estimatedVolumeL = estimateMustVolumeL(netWeightKg, input.juiceYieldPct || 0);
+    const intakeId = sanitizeId(`intake-${Date.now()}`);
+
+    const rawLotId = `LOT-${(input.variety || 'XX').substring(0, 2).toUpperCase()}-${input.vintage}-${Date.now().toString().slice(-4)}`;
+    const lotId = sanitizeId(rawLotId);
+    const origin = input.source === 'own'
+      ? (input.blockName || 'Own vineyard')
+      : (input.supplierName || 'Supplier');
+    const lotName = `${input.variety} — ${origin} ${input.vintage}`;
+
+    const newLot: WineLot = {
+      id: lotId,
+      name: lotName,
+      vintage: input.vintage,
+      variety: input.variety,
+      vineyardBlock: input.source === 'own' ? (input.blockName || '') : (input.supplierName || ''),
+      region: companyProfile.region || 'Kakheti',
+      initialVolume: estimatedVolumeL,
+      currentVolume: estimatedVolumeL,
+      wineClass: input.wineClass,
+      stage: 'crushing',
+      createdAt: input.date,
+      history: [
+        {
+          date: input.date,
+          type: 'Grape Receiving',
+          description: `Intake of ${netWeightKg.toLocaleString()} kg ${input.variety} (${input.source === 'own' ? input.blockName || 'own block' : input.supplierName || 'supplier'}) — ${input.brix}°Brix, pH ${input.ph}, TA ${input.titratableAcidity} g/L. Est. ${estimatedVolumeL} L must.`,
+          operator: input.operator || currentUser.fullName,
+        },
+      ],
+    };
+    setLots(prev => [...prev, newLot]);
+
+    // Fill the destination vessel if one was chosen.
+    if (input.destinationVesselId) {
+      setVessels(prev => prev.map(v => v.id !== input.destinationVesselId ? v : {
+        ...v,
+        currentVolume: Math.round((v.currentVolume + estimatedVolumeL) * 10) / 10,
+        assignedLotId: lotId,
+        temperature: input.temperatureC,
+        lastOperation: `Grape intake: ${input.variety} (${estimatedVolumeL} L must)`,
+      }));
+    }
+
+    // Seed the first fermentation log with the real measured chemistry.
+    const firstFermLog: DailyFermLog = {
+      id: sanitizeId(`flog-${Date.now()}`),
+      tankId: input.destinationVesselId || '',
+      lotId,
+      date: input.date,
+      temperature: input.temperatureC,
+      density: 1.090,
+      sugar: input.brix,
+      ph: input.ph,
+      tastingNotes: `Received ${input.condition} condition fruit (${input.pickingMethod} picked).`,
+      capManagement: 'None',
+      additives: 'None',
+    };
+    setFermLogs(prev => [...prev, firstFermLog]);
+
+    const intakeRecord: GrapeIntakeRecord = {
+      ...input,
+      id: intakeId,
+      netWeightKg,
+      estimatedVolumeL,
+      createdLotId: lotId,
+      currency: input.currency || companyProfile.currency || 'GEL',
+    };
+    setGrapeIntakes(prev => [intakeRecord, ...prev]);
+
+    const grapeCost = grapeIntakeCostEntry(intakeRecord, {
+      currency: companyProfile.currency || 'GEL',
+      createdBy: input.operator || currentUser.fullName,
+    });
+    if (grapeCost) {
+      setCostEntries(prev => [grapeCost, ...prev]);
+    }
+
+    // Link a Vazi harvest record when the fruit came from the field.
+    if (input.harvestRecordId) {
+      setHarvests(prev => prev.map(h => h.id !== input.harvestRecordId ? h : {
+        ...h,
+        sentToGvino: true,
+        actualHarvestedKg: netWeightKg,
+        actualHarvestDate: input.date,
+        associatedLotId: lotId,
+      }));
+    }
+
+    const audit: MaraniOSAuditLog = {
+      id: sanitizeId(`audit-${Date.now()}`),
+      timestamp: new Date().toISOString(),
+      user: input.operator || currentUser.fullName,
+      module: 'GVINO',
+      actionType: 'Grape Receiving',
+      changedItem: `WineLot ${lotId}`,
+      oldValue: 'None',
+      newValue: `${netWeightKg} kg ${input.variety} → ${estimatedVolumeL} L must${input.destinationVesselId ? ` in ${input.destinationVesselId}` : ''}`,
+      notes: `Source: ${origin}. ${input.brix}°Brix, pH ${input.ph}, TA ${input.titratableAcidity} g/L.`,
+    };
+    setAuditLogs(prev => [audit, ...prev]);
+
+    return lotId;
+  };
+
+  /**
+   * Fast cellar-operation entry. Records a single winemaking action against a
+   * batch: appends a readable entry to the lot timeline, deducts an inventory
+   * material when one is consumed, applies a volume change (loss/addition) to the
+   * lot and its vessel, and writes an audit entry. Returns the operation id.
+   */
+  const handleAddCellarOperation = (
+    input: Omit<CellarOperation, 'id' | 'lotName' | 'volumeBeforeL' | 'materialName' | 'unit'>,
+  ): string => {
+    const lot = lots.find(l => l.id === input.lotId);
+    if (!lot) return '';
+
+    const meta = CELLAR_OPERATIONS.find(o => o.key === input.type);
+    const opLabel = input.type === 'custom'
+      ? (input.customLabel || 'Custom operation')
+      : (lang === 'ka' ? (meta?.ka || input.type) : (meta?.en || input.type));
+
+    const material = input.materialId ? inventory.find(i => i.id === input.materialId) : undefined;
+    const volumeBeforeL = lot.currentVolume;
+    const hasVolumeChange = input.volumeAfterL != null && Number.isFinite(input.volumeAfterL);
+    const volumeAfterL = hasVolumeChange ? Math.max(0, input.volumeAfterL as number) : undefined;
+
+    const opId = sanitizeId(`op-${Date.now()}`);
+    const operator = input.operator || currentUser.fullName;
+    const dateOnly = (input.date || new Date().toISOString()).slice(0, 10);
+
+    // Build a readable timeline description.
+    const parts: string[] = [opLabel];
+    if (material && input.dose) parts.push(`${material.name} ${input.dose}${material.unit || ''}`);
+    if (input.vesselId) parts.push(input.vesselToId ? `${input.vesselId} → ${input.vesselToId}` : `${input.vesselId}`);
+    if (hasVolumeChange) parts.push(`${volumeBeforeL} → ${volumeAfterL} L`);
+    if (input.notes) parts.push(input.notes);
+    const description = parts.join(' · ');
+
+    // 1) Lot: timeline entry + optional volume change.
+    setLots(prev => prev.map(l => l.id !== lot.id ? l : {
+      ...l,
+      currentVolume: hasVolumeChange ? (volumeAfterL as number) : l.currentVolume,
+      history: [
+        { date: dateOnly, type: opLabel, description, operator },
+        ...(l.history || []),
+      ],
+    }));
+
+    // 2) Vessel: mirror the volume change on the operating vessel.
+    if (input.vesselId && hasVolumeChange) {
+      setVessels(prev => prev.map(v => v.id !== input.vesselId ? v : {
+        ...v,
+        currentVolume: volumeAfterL as number,
+        lastOperation: description,
+      }));
+    } else if (input.vesselId) {
+      setVessels(prev => prev.map(v => v.id !== input.vesselId ? v : { ...v, lastOperation: description }));
+    }
+
+    // 3) Inventory: deduct the consumed material (clamped at zero).
+    if (material && input.dose && input.dose > 0) {
+      setInventory(prev => prev.map(i => i.id !== material.id ? i : {
+        ...i,
+        stock: deductStock(i.stock, input.dose as number),
+      }));
+    }
+
+    // 4) Operation record.
+    const op: CellarOperation = {
+      ...input,
+      id: opId,
+      lotName: lot.name,
+      operator,
+      volumeBeforeL,
+      volumeAfterL,
+      materialName: material?.name,
+      unit: material?.unit,
+    };
+    setCellarOps(prev => [op, ...prev]);
+
+    const materialCost = materialCostEntryFromOperation(op, material, {
+      currency: companyProfile.currency || 'GEL',
+      createdBy: operator,
+    });
+    if (materialCost) {
+      setCostEntries(prev => [materialCost, ...prev]);
+    }
+
+    // 5) Audit.
+    const audit: MaraniOSAuditLog = {
+      id: sanitizeId(`audit-${Date.now()}`),
+      timestamp: new Date().toISOString(),
+      user: operator,
+      module: 'GVINO',
+      actionType: `Cellar Operation: ${opLabel}`,
+      changedItem: `Lot ${lot.id}`,
+      oldValue: hasVolumeChange ? `${volumeBeforeL} L` : '',
+      newValue: hasVolumeChange ? `${volumeAfterL} L` : description,
+      notes: description,
+    };
+    setAuditLogs(prev => [audit, ...prev]);
+
+    return opId;
   };
 
   const handleAddFermLog = (e: React.FormEvent) => {
@@ -1126,6 +1478,14 @@ export function useWineryState() {
       irrigationLogs: db.irrigationLogs || irrigationLogs,
       fertilizerLogs: db.fertilizerLogs || fertilizerLogs,
       auditLogs: db.auditLogs || auditLogs,
+      bottlingRuns: db.bottlingRuns || bottlingRuns,
+      transfers: db.transfers || transfers,
+      costEntries: db.costEntries || costEntries,
+      winePricing: db.winePricing || winePricing,
+      storageLocations: db.storageLocations || storageLocations,
+      stockMovements: db.stockMovements || stockMovements,
+      salesDispatches: db.salesDispatches || salesDispatches,
+      salesOrders: db.salesOrders || salesOrders,
       companyProfile: db.companyProfile || companyProfile
     };
 
@@ -1140,6 +1500,7 @@ export function useWineryState() {
     isClient,
     toastMessage, setToastMessage,
     loginError, setLoginError,
+    verificationPending, setVerificationPending,
     demoLoginEnabled,
     passportLotId, setPassportLotId,
     isLoggedIn, setIsLoggedIn,
@@ -1166,6 +1527,16 @@ export function useWineryState() {
     irrigationLogs, setIrrigationLogs,
     fertilizerLogs, setFertilizerLogs,
     auditLogs, setAuditLogs,
+    bottlingRuns, setBottlingRuns,
+    transfers, setTransfers,
+    grapeIntakes, setGrapeIntakes,
+    cellarOps, setCellarOps,
+    costEntries, setCostEntries,
+    winePricing, setWinePricing,
+    storageLocations, setStorageLocations,
+    stockMovements, setStockMovements,
+    salesDispatches, setSalesDispatches,
+    salesOrders, setSalesOrders,
 
     // Inputs
     logTankId, setLogTankId,
@@ -1219,6 +1590,8 @@ export function useWineryState() {
     handleAddIrrigation,
     handleAddFertilizer,
     handleSendHarvestToGvino,
+    handleReceiveGrapes,
+    handleAddCellarOperation,
     handleAddFermLog,
     handleAddLabLog,
     handleToggleTaskStatus,
@@ -1231,6 +1604,7 @@ export function useWineryState() {
     handleDemoLogin,
     handleAuthLogout,
     handleAuthRegister,
+    handleResendVerification,
     handleUpdateProfile,
     syncConflicts,
     setSyncConflicts,

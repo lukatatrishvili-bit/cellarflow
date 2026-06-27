@@ -1,9 +1,8 @@
 // Bump the version to invalidate all caches on deploy of a new SW.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL_CACHE = `vinea-shell-${VERSION}`;
 const ASSET_CACHE = `vinea-assets-${VERSION}`;
-const API_CACHE = `vinea-api-${VERSION}`;
-const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE, API_CACHE];
+const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
 
 // Minimal shell precache. Each entry is added individually and failures are
 // tolerated, so a missing file can never block SW installation (cache.addAll
@@ -60,19 +59,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API reads: network-first with cached fallback for offline use.
+  // Authenticated API responses are never stored in the shared service-worker
+  // cache. Offline operational state is already handled by the user-scoped
+  // local sync queue, avoiding stale or cross-account API responses.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(API_CACHE).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => caches.match(request, { cacheName: API_CACHE }))
-    );
+    event.respondWith(fetch(request));
     return;
   }
 

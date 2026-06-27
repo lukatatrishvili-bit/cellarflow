@@ -9,7 +9,8 @@
  */
 
 import type { ExportContext, DocRow, FormTemplate } from './types';
-import type { VineyardBlock, WineLot, HarvestRecord } from '../wineryState';
+import type { VineyardBlock, WineLot, HarvestRecord, CellarOperation } from '../wineryState';
+import { CELLAR_OPERATIONS } from '../wineryState';
 import { applyRunningBalance, litresToDal, round2, toNum } from './balance';
 
 type Mapper = (ctx: ExportContext) => DocRow[];
@@ -97,8 +98,39 @@ const mapHarvest: Mapper = (ctx) => {
   return rows;
 };
 
-// ── Annex 3 — grape reception (derived from harvests sent to the winery) ──────
+// ── Annex 3 — grape reception ────────────────────────────────────────────────
+// Primary source: structured grape intakes (gross/tare/net + reception sugar +
+// supplier captured at the weighbridge). Falls back to harvest-derived rows for
+// legacy accounts that recorded field dispatches before the intake module.
 const mapGrapeReception: Mapper = (ctx) => {
+  const intakes = (ctx.grapeIntakes || [])
+    .filter(g => (!ctx.blockId || g.blockId === ctx.blockId))
+    .filter(g => inRange(g.date, ctx))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  if (intakes.length > 0) {
+    return intakes.map((g, i): DocRow => {
+      const block = ctx.blocks.find(b => b.id === g.blockId);
+      const supplier = g.source === 'supplier'
+        ? (g.supplierName || '')
+        : (g.blockName || block?.vineyardName || ctx.company.companyName || '');
+      return {
+        no: i + 1,
+        date: (g.date || '').slice(0, 10),
+        supplier,
+        variety: g.variety || block?.grapeVariety || '',
+        location: block?.locationName || (g.source === 'supplier' ? (g.supplierName || '') : ''),
+        transport: '', // TODO: transport not tracked in app
+        brutto: g.grossWeightKg != null ? round2(g.grossWeightKg) : '',
+        tara: g.tareWeightKg != null ? round2(g.tareWeightKg) : '',
+        netto: g.netWeightKg != null ? round2(g.netWeightKg) : '',
+        analysisNo: '', // TODO: lab analysis № not linked to reception
+        sugar: g.brix ? round2(g.brix) : '',
+        note: g.notes || '',
+      };
+    });
+  }
+
   return ctx.harvests
     .filter(h => h.sentToGvino && (!ctx.blockId || h.blockId === ctx.blockId))
     .filter(h => inRange(h.actualHarvestDate || h.estimatedHarvestDate, ctx))
@@ -113,10 +145,10 @@ const mapGrapeReception: Mapper = (ctx) => {
         variety: h.variety || block?.grapeVariety || '',
         location: block?.locationName || '',
         transport: '', // TODO: transport not tracked in app
-        brutto: '', // TODO: gross/tare weights not tracked; only net (harvested kg)
+        brutto: '', // gross/tare unknown for legacy harvest dispatches
         tara: '',
         netto: net,
-        analysisNo: '', // TODO: lab analysis № not linked to reception
+        analysisNo: '',
         sugar: latestSugarForBlock(ctx, h.blockId),
         note: h.notes || '',
       };
@@ -208,21 +240,18 @@ const mapWineBlending: Mapper = (ctx) => {
 };
 
 /** Real bottling runs recorded by the Bottling tab (localStorage, guarded for tests). */
-function loadBottlingRuns(): Array<{ lotId: string; lotName: string; date: string; lotNumber: string; volumeBottledL: number; totalBottles: number; totalCeramic: number }> {
-  try {
-    if (typeof localStorage === 'undefined') return [];
-    const raw = localStorage.getItem('cf_bottling_history');
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+/** Bottling runs in range (+ optional lot filter), oldest first. */
+function bottlingRunsInRange(ctx: ExportContext) {
+  return (ctx.bottlingRuns || [])
+    .filter(r => (!ctx.lotId || r.lotId === ctx.lotId) && inRange(r.date, ctx))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
 // ── Annex 7 — bottling act ───────────────────────────────────────────────────
 const mapBottling: Mapper = (ctx) => {
   // Prefer actual bottling runs (with per-format bottle/ceramic counts); fall
   // back to a lot-volume estimate for lots bottled before runs were tracked.
-  const runs = loadBottlingRuns().filter(r => (!ctx.lotId || r.lotId === ctx.lotId) && inRange(r.date, ctx));
+  const runs = bottlingRunsInRange(ctx);
   if (runs.length > 0) {
     return runs
       .sort((a, b) => (a.date < b.date ? -1 : 1))
@@ -258,14 +287,35 @@ const mapBottling: Mapper = (ctx) => {
 };
 
 // ── Annex 8 — finished goods warehouse movement ──────────────────────────────
+// Finished goods enter the warehouse from bottling, so the "incoming" column is
+// driven by the same bottling runs as Annex №7 — the two forms reconcile by
+// construction (Σ Annex 8 incoming === Σ Annex 7 fill quantity). Sales/dispatch
+// are not tracked yet, so outgoing stays 0 and the balance is goods on hand.
 const mapWarehouse: Mapper = (ctx) => {
+  const runs = bottlingRunsInRange(ctx);
+  const ka = ctx.lang === 'ka';
+
+  if (runs.length > 0) {
+    const rows: DocRow[] = runs.map((r): DocRow => ({
+      date: r.date.slice(0, 10),
+      fromTo: `${ka ? 'ჩამოსხმა' : 'Bottling'} / ${r.lotName}${r.lotNumber ? ` (${r.lotNumber})` : ''}`,
+      incoming: litresToDal(r.volumeBottledL || 0),
+      outgoing: 0, // TODO: finished-goods sales / dispatch not tracked yet
+      balance: 0,
+    }));
+    applyRunningBalance(rows, { incoming: 'incoming', outgoing: 'outgoing', balance: 'balance' });
+    return rows;
+  }
+
+  // Fallback for lots bottled before runs were tracked: estimate finished goods
+  // from the volume that left the lot (initial − current).
   const lots = (ctx.lotId ? ctx.lots.filter(l => l.id === ctx.lotId) : ctx.lots)
     .filter(l => l.stage === 'bottled' || l.stage === 'sold');
   const rows: DocRow[] = lots.map((lot): DocRow => ({
     date: (lot.createdAt || ctx.dateRange.from).slice(0, 10),
-    fromTo: `ჩამოსხმა / ${lot.name}`,
-    incoming: litresToDal(lot.initialVolume || 0),
-    outgoing: litresToDal(Math.max(0, (lot.initialVolume || 0) - (lot.currentVolume || 0))),
+    fromTo: `${ka ? 'ჩამოსხმა' : 'Bottling'} / ${lot.name}`,
+    incoming: litresToDal(Math.max(0, (lot.initialVolume || 0) - (lot.currentVolume || 0)) || (lot.initialVolume || 0)),
+    outgoing: 0,
     balance: 0,
   }));
   rows.sort((a, b) => (String(a.date) < String(b.date) ? -1 : 1));
@@ -273,20 +323,72 @@ const mapWarehouse: Mapper = (ctx) => {
   return rows;
 };
 
-// ── Annex 13 — auxiliary materials (inventory snapshot as opening balance) ────
+/** Localised label for a cellar operation type. */
+function opLabel(op: CellarOperation, lang: ExportContext['lang']): string {
+  if (op.type === 'custom') return op.customLabel || (lang === 'ka' ? 'სხვა' : 'Custom');
+  const m = CELLAR_OPERATIONS.find(o => o.key === op.type);
+  return m ? (lang === 'ka' ? m.ka : m.en) : op.type;
+}
+
+// ── Annex 13 — auxiliary materials movement journal ──────────────────────────
+// Real ledger reconstructed from cellar-operation usage: an opening-balance row
+// (current stock + in-range usage, assuming no in-range purchases) followed by
+// one outgoing row per additive use, with a running balance that closes at the
+// current stock. Materials with no recorded usage fall back to a stock snapshot.
 const mapMaterials: Mapper = (ctx) => {
   const items = ctx.inventory.filter(i =>
     /addit|yeast|nutri|bentonit|gelat|ferment|საფუარ|ბენტონ|ჟელატ|ფერმენ/i.test(i.category + i.name)
     && (!ctx.materialId || i.id === ctx.materialId));
-  // No movement ledger exists; present current stock as the standing balance.
-  return items.map((i): DocRow => ({
-    date: ctx.dateRange.to,
-    docNo: '', // TODO: material receipt documents not tracked
-    fromTo: `${i.supplierName || ''} — ${i.name}`.trim(),
-    incoming: round2(i.stock), // TODO: opening vs incoming not separated; shown as current stock
-    outgoing: 0,
-    balance: round2(i.stock),
-  }));
+
+  const usageAll = (ctx.cellarOps || []).filter(o =>
+    o.materialId && typeof o.dose === 'number' && o.dose > 0 && inRange(o.date, ctx));
+
+  const ka = ctx.lang === 'ka';
+  const rows: DocRow[] = [];
+
+  for (const i of items) {
+    const usage = usageAll
+      .filter(o => o.materialId === i.id)
+      .sort((a, b) => ((a.date || '') < (b.date || '') ? -1 : 1));
+
+    if (usage.length === 0) {
+      // No movements in range: present current stock as a standing balance.
+      rows.push({
+        date: ctx.dateRange.to,
+        docNo: '',
+        fromTo: `${i.supplierName || ''} — ${i.name}`.trim(),
+        incoming: round2(i.stock),
+        outgoing: 0,
+        balance: round2(i.stock),
+      });
+      continue;
+    }
+
+    const totalOut = usage.reduce((acc, o) => acc + (o.dose || 0), 0);
+    const opening = round2(i.stock + totalOut); // assumes no purchases inside the range
+    const block: DocRow[] = [{
+      date: ctx.dateRange.from,
+      docNo: '',
+      fromTo: `${i.name} — ${ka ? 'ნაშთი პერიოდის დასაწყისში' : 'opening balance'}`,
+      incoming: opening,
+      outgoing: 0,
+      balance: 0,
+    }];
+    for (const o of usage) {
+      block.push({
+        date: (o.date || '').slice(0, 10),
+        docNo: o.id,
+        fromTo: `${ka ? 'გამოყენება' : 'used'} — ${o.lotName} (${opLabel(o, ctx.lang)})`,
+        incoming: 0,
+        outgoing: round2(o.dose || 0),
+        balance: 0,
+      });
+    }
+    applyRunningBalance(block, { incoming: 'incoming', outgoing: 'outgoing', balance: 'balance' });
+    rows.push(...block);
+  }
+
+  return rows;
 };
 
 // ── Annex 17 — grape processing summary (by variety) ─────────────────────────

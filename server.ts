@@ -4,10 +4,14 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
-import { getDB, saveDB, createEmptyUserData, initDB } from './server/db';
+import { getDB, saveDB, createEmptyUserData, initDB, resetUserData, getUserData, saveUserData } from './server/db';
 import { verifySessionToken, createSessionToken, hashPassword, verifyPassword } from './server/auth';
 import { applyDeletions, mergeCollections, isValidId } from './server/sync';
 import { createLoginLimiter } from './server/loginLimiter';
+import { createDemoUser, readDemoAccountConfig } from './server/demoAccount';
+import { can, type Capability } from './server/permissions';
+import { generateVerificationToken, isVerificationTokenValid, isValidEmail } from './server/emailVerification';
+import { sendMail, buildVerificationEmail } from './server/mailer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -141,6 +145,58 @@ function clearSessionCookie(): string {
   return ['maranios_session=', 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0', ...(COOKIE_SECURE ? ['Secure'] : [])].join('; ');
 }
 
+/** Public base URL for building links (verification emails, redirects). */
+function appBaseUrl(req: express.Request): string {
+  const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
+  if (configured) return configured;
+  const proto = (req.headers['x-forwarded-proto'] as string)?.split(',')[0] || req.protocol || 'http';
+  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || 'localhost';
+  return `${proto}://${host}`;
+}
+
+function verificationLink(req: express.Request, username: string, token: string): string {
+  return `${appBaseUrl(req)}/api/auth/verify-email?token=${token}&u=${encodeURIComponent(username)}`;
+}
+
+/**
+ * Resolve the authenticated user's *current* role from the database rather than
+ * trusting the role baked into the session token at login time — so a role
+ * change (or a deleted account) takes effect immediately on the next request.
+ * The env master admin is not stored in db.users, so it is recognised here.
+ * Returns null when there is no valid session or the user no longer exists.
+ */
+function liveSessionRole(req: express.Request): { username: string; role: string } | null {
+  const cookies = parseCookies(req.headers.cookie);
+  const session = verifySessionToken(cookies['maranios_session']);
+  if (!session || !session.username) return null;
+  const envAdmin = (process.env.ADMIN_USERNAME || '').trim().toLowerCase();
+  if (envAdmin && String(session.username).trim().toLowerCase() === envAdmin) {
+    return { username: session.username, role: 'Owner/Admin' };
+  }
+  const user = getDB().users.find(u => u.username === session.username);
+  if (!user) return null;
+  return { username: user.username, role: user.role };
+}
+
+/**
+ * Express guard: write the appropriate error and return null when the request
+ * is unauthenticated (401) or the role lacks the capability (403); otherwise
+ * return the resolved { username, role }.
+ */
+function requireCapability(
+  req: express.Request,
+  res: express.Response,
+  capability: Capability,
+): { username: string; role: string } | null {
+  const auth = liveSessionRole(req);
+  if (!auth) { res.status(401).json({ error: 'Unauthorized' }); return null; }
+  if (!can(auth.role, capability)) {
+    res.status(403).json({ error: `Forbidden: ${capability} access required.` });
+    return null;
+  }
+  return auth;
+}
+
 // ── Login brute-force limiter ────────────────────────────────────────────────
 // Per IP+identifier sliding window with temporary lockout. In-memory: paired
 // with --max-instances=1 (see deployment guide) it is effective; a shared store
@@ -157,27 +213,69 @@ function clientIp(req: any): string {
   return req.socket?.remoteAddress || 'unknown';
 }
 
-// Authentication endpoints
-app.post('/api/auth/register', (req, res) => {
-  const { username, email, fullName, role, language, rememberMe, passcode } = req.body;
+const demoAccountConfig = readDemoAccountConfig();
+
+async function ensureDemoAccount() {
+  if (!demoAccountConfig.enabled) return null;
+
   const db = getDB();
-  
-  const cleanUsername = username.toLowerCase().replace(/\s+/g, '_');
-  
-  let user = db.users.find(u => u.username === cleanUsername);
-  if (user) {
+  let user = db.users.find((candidate: any) => candidate.username === demoAccountConfig.username);
+  if (!user) {
+    user = createDemoUser(demoAccountConfig);
+    db.users.push(user);
+    saveDB();
+  }
+
+  const existingData = await getUserData(demoAccountConfig.username);
+  if (!existingData) {
+    // This is intentionally empty. The demo account uses the real persistence
+    // and sync paths; it never receives fabricated operational records.
+    await saveUserData(demoAccountConfig.username, createEmptyUserData());
+  }
+
+  return user;
+}
+
+app.get('/api/config', (_req, res) => {
+  res.json({ demoLoginEnabled: demoAccountConfig.enabled });
+});
+
+// Authentication endpoints
+app.post('/api/auth/register', async (req, res) => {
+  const { username, email, fullName, role, language, passcode } = req.body;
+
+  if (!username || !passcode) {
+    return res.status(400).json({ error: 'Username and passcode are required' });
+  }
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'A valid email address is required' });
+  }
+
+  const db = getDB();
+  const cleanUsername = String(username).toLowerCase().replace(/\s+/g, '_');
+  const cleanEmail = String(email).toLowerCase().trim();
+
+  if (db.users.find(u => u.username === cleanUsername)) {
     return res.status(400).json({ error: 'Username is already taken' });
   }
-  
-  user = {
+  if (db.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail)) {
+    return res.status(400).json({ error: 'An account with this email already exists' });
+  }
+
+  const verification = generateVerificationToken();
+  const user: any = {
     username: cleanUsername,
-    email,
+    email: cleanEmail,
     fullName,
     role,
     language: language || 'en',
     passwordHash: hashPassword(passcode || 'vinea2026'),
     enabledModules: ['vazi', 'gvino'],
-    enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
+    enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
+    // New accounts must confirm their email before they can sign in.
+    emailVerified: false,
+    verifyTokenHash: verification.tokenHash,
+    verifyTokenExpires: verification.expiresAt,
   };
   db.users.push(user);
 
@@ -186,21 +284,60 @@ app.post('/api/auth/register', (req, res) => {
     db.userData = {};
   }
   db.userData[cleanUsername] = createEmptyUserData();
-  
+
   saveDB();
-  
-  const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
-  const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
-  res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
+
+  const link = verificationLink(req, cleanUsername, verification.token);
+  const mail = await sendMail(buildVerificationEmail({ to: cleanEmail, link, lang: user.language, wineryName: 'MaraniOS' }));
+
+  // No session cookie — the account is inactive until the email is verified.
   res.json({
-    username: user.username,
-    email: user.email,
-    fullName: user.fullName,
-    role: user.role,
-    language: user.language,
-    enabledModules: (user as any).enabledModules,
-    enabledWidgets: (user as any).enabledWidgets
+    requiresVerification: true,
+    username: cleanUsername,
+    email: cleanEmail,
+    // When no real mail provider delivered the message (dev / console transport),
+    // surface the link so the flow is completeable without SMTP.
+    ...(mail.transport === 'console' ? { devVerifyUrl: link } : {}),
   });
+});
+
+// Email verification — opened from the link in the verification email.
+app.get('/api/auth/verify-email', (req, res) => {
+  const token = String(req.query.token || '');
+  const username = String(req.query.u || '').toLowerCase();
+  const db = getDB();
+  const user = db.users.find(u => u.username === username) as any;
+
+  if (!user) return res.redirect('/?verify_error=invalid');
+  if (user.emailVerified) return res.redirect('/?verified=already');
+  if (!isVerificationTokenValid(user, token)) return res.redirect('/?verify_error=expired');
+
+  user.emailVerified = true;
+  delete user.verifyTokenHash;
+  delete user.verifyTokenExpires;
+  saveDB();
+  res.redirect('/?verified=1');
+});
+
+// Resend a verification link. Responds uniformly to avoid leaking which
+// accounts exist; only actually re-sends for a known, still-unverified user.
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const id = String(req.body?.identifier || '').toLowerCase().trim();
+  const db = getDB();
+  const user = db.users.find(u => u.username === id || (u.email || '').toLowerCase().trim() === id) as any;
+
+  if (user && user.emailVerified === false) {
+    const verification = generateVerificationToken();
+    user.verifyTokenHash = verification.tokenHash;
+    user.verifyTokenExpires = verification.expiresAt;
+    saveDB();
+    const link = verificationLink(req, user.username, verification.token);
+    const mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'MaraniOS' }));
+    if (mail.transport === 'console') {
+      return res.json({ ok: true, devVerifyUrl: link });
+    }
+  }
+  res.json({ ok: true });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -248,6 +385,16 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid username or passcode' });
   }
 
+  // Block sign-in until the email is confirmed (legacy accounts without the
+  // field are treated as verified, so they are never locked out).
+  if ((user as any).emailVerified === false) {
+    loginLimiter.clear(limiterKey);
+    return res.status(403).json({
+      error: 'Please verify your email before signing in. Check your inbox for the confirmation link.',
+      code: 'email_unverified',
+    });
+  }
+
   loginLimiter.clear(limiterKey);
   const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
@@ -261,6 +408,33 @@ app.post('/api/auth/login', (req, res) => {
     enabledModules: (user as any).enabledModules || ['vazi', 'gvino'],
     enabledWidgets: (user as any).enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
   });
+});
+
+app.post('/api/auth/demo', async (_req, res) => {
+  if (!demoAccountConfig.enabled) {
+    return res.status(404).json({ error: 'Demo login is not enabled for this deployment.' });
+  }
+
+  try {
+    const user = await ensureDemoAccount();
+    if (!user) return res.status(404).json({ error: 'Demo login is unavailable.' });
+
+    const token = createSessionToken({ username: user.username, role: user.role }, false);
+    res.setHeader('Set-Cookie', sessionCookie(token, 86400));
+    res.json({
+      username: user.username,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      language: user.language,
+      enabledModules: user.enabledModules,
+      enabledWidgets: user.enabledWidgets,
+      isDemo: true,
+    });
+  } catch (err) {
+    console.error('Demo login failed:', err);
+    res.status(500).json({ error: 'Demo workspace could not be opened.' });
+  }
 });
 
 const getRedirectUri = (req: any) => {
@@ -465,7 +639,9 @@ app.get('/api/auth/google/callback', async (req, res) => {
         language: 'en',
         passwordHash: '',
         enabledModules: ['vazi', 'gvino'],
-        enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
+        enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
+        // Google has already verified ownership of this email address.
+        emailVerified: true,
       };
       
       db.users.push(user);
@@ -485,7 +661,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
     res.redirect('/');
   } catch (err) {
     console.error('OAuth2 callback error:', err);
-    res.status(500).send(`OAuth2 authentication failed: ${err}`);
+    res.status(500).send('OAuth2 flow failed');
   }
 });
 
@@ -494,7 +670,7 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
@@ -503,19 +679,6 @@ app.get('/api/auth/me', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
-  const envAdminUser = process.env.ADMIN_USERNAME;
-  if (envAdminUser && session.username === envAdminUser) {
-    return res.json({
-      username: envAdminUser,
-      email: `${envAdminUser}@cellarflow.com`,
-      fullName: 'Master Administrator',
-      role: 'Owner/Admin',
-      language: 'en',
-      enabledModules: ['vazi', 'gvino'],
-      enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']
-    });
-  }
-
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
   if (!user) {
@@ -533,7 +696,7 @@ app.get('/api/auth/me', (req, res) => {
   });
 });
 
-app.post('/api/auth/update_profile', (req, res) => {
+app.post('/api/auth/update_profile', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
@@ -542,30 +705,15 @@ app.post('/api/auth/update_profile', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
-  const envAdminUser = process.env.ADMIN_USERNAME;
-  if (envAdminUser && session.username === envAdminUser) {
-    const { fullName, language, enabledModules, enabledWidgets } = req.body;
-    return res.json({
-      username: envAdminUser,
-      email: `${envAdminUser}@cellarflow.com`,
-      fullName: fullName || 'Master Administrator',
-      role: 'Owner/Admin',
-      language: language || 'en',
-      enabledModules: enabledModules || ['vazi', 'gvino'],
-      enabledWidgets: enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']
-    });
-  }
-
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
   if (!user) {
     return res.status(401).json({ error: 'User not found' });
   }
   
-  const { fullName, language, role, enabledModules, enabledWidgets } = req.body;
+  const { fullName, language, enabledModules, enabledWidgets } = req.body;
   if (fullName !== undefined) user.fullName = fullName;
   if (language !== undefined) user.language = language;
-  if (role !== undefined) user.role = role;
   if (enabledModules !== undefined) (user as any).enabledModules = enabledModules;
   if (enabledWidgets !== undefined) (user as any).enabledWidgets = enabledWidgets;
   
@@ -577,86 +725,28 @@ app.post('/api/auth/update_profile', (req, res) => {
     fullName: user.fullName,
     role: user.role,
     language: user.language,
-    enabledModules: (user as any).enabledModules || ['vazi', 'gvino'],
-    enabledWidgets: (user as any).enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
+    enabledModules: (user as any).enabledModules,
+    enabledWidgets: (user as any).enabledWidgets
   });
 });
 
 // Administrative database reset endpoint
-app.post('/api/admin/reset', (req, res) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['maranios_session'];
-  const session = verifySessionToken(token);
-  
-  if (!session) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+app.post('/api/admin/reset', async (req, res) => {
+  // Destructive — requires the live 'admin' capability (Owner/Admin only).
+  const session = requireCapability(req, res, 'admin');
+  if (!session) return;
 
-  if (session.role !== 'Owner/Admin') {
-    return res.status(403).json({ error: 'Forbidden: Only Owner/Admin can reset the database.' });
-  }
-
-  const db = getDB();
-  if (!db.userData) db.userData = {};
-  db.userData[session.username] = createEmptyUserData();
-
-  saveDB();
-  res.json(db.userData[session.username]);
+  const emptyData = resetUserData(session.username);
+  res.json(emptyData);
 });
-
-// Secure administrative database export endpoint
-app.get('/api/admin/export', (req, res) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['maranios_session'];
-  const session = verifySessionToken(token);
-  
-  if (!session) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  if (session.role !== 'Owner/Admin') {
-    return res.status(403).json({ error: 'Forbidden: Only Owner/Admin can export data.' });
-  }
-
-  // Clone database to avoid modifying in-memory cache
-  const db = JSON.parse(JSON.stringify(getDB()));
-  
-  // Strip password hashes for security
-  if (db.users) {
-    db.users.forEach((u: any) => {
-      delete u.passwordHash;
-    });
-  }
-  delete db.googleConfig; // Strip sensitive Google client secret
-
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', 'attachment; filename=cellarflow_export.json');
-  res.json(db);
-});
-
-// Helper to validate ID structure
-// isValidId is imported from ./server/sync (shared with the sync merge tests).
 
 // Sync endpoint
-app.post('/api/sync', (req, res) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['maranios_session'];
-  const session = verifySessionToken(token);
-  
-  if (!session) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+app.post('/api/sync', async (req, res) => {
+  // Authoritative role check (resolved from the DB, not the login-time token).
+  const session = requireCapability(req, res, 'write');
+  if (!session) return;
 
-  if (session.role === 'Read-Only') {
-    return res.status(403).json({ error: 'Forbidden: Read-only access.' });
-  }
-
-  const db = getDB();
-  if (!db.userData) db.userData = {};
-  if (!db.userData[session.username]) {
-    db.userData[session.username] = createEmptyUserData();
-  }
-  const userDb = db.userData[session.username];
+  const userDb = await getUserData(session.username) || createEmptyUserData();
 
   const { deletedIds, ...collections } = req.body;
 
@@ -696,6 +786,21 @@ app.post('/api/sync', (req, res) => {
           }
           if (profile.longitude !== undefined && typeof profile.longitude !== 'number') {
             throw new Error('companyProfile longitude must be a number');
+          }
+        }
+        continue;
+      }
+      if (key === 'winePricing') {
+        const pricing = collections[key];
+        if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
+          throw new Error('winePricing must be an object keyed by lot ID');
+        }
+        for (const [lotId, price] of Object.entries(pricing)) {
+          if (!isValidId(lotId)) {
+            throw new Error(`winePricing has invalid lot ID: ${lotId}`);
+          }
+          if (typeof price !== 'number' || price < 0) {
+            throw new Error(`winePricing for ${lotId} must be a non-negative number`);
           }
         }
         continue;
@@ -805,13 +910,17 @@ app.post('/api/sync', (req, res) => {
           }
 
           else if (key === 'fermlogs') {
-            if (!isValidId(item.tankId) || !isValidId(item.lotId)) {
-              throw new Error(`Fermentation log ${item.id} has invalid referenced IDs.`);
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Fermentation log ${item.id} has invalid referenced lotId.`);
+            }
+            const hasTankRef = item.tankId !== undefined && item.tankId !== null && item.tankId !== '';
+            if (hasTankRef && !isValidId(item.tankId)) {
+              throw new Error(`Fermentation log ${item.id} has invalid referenced tankId.`);
             }
             const lotExists = (userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
                               !(deletedIds && deletedIds.includes(item.lotId));
-            const tankExists = (userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
-                               !(deletedIds && deletedIds.includes(item.tankId));
+            const tankExists = !hasTankRef || ((userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
+                               !(deletedIds && deletedIds.includes(item.tankId)));
             if (!lotExists || !tankExists) {
               throw new Error(`Orphaned Fermentation: Fermentation log ${item.id} references non-existent or deleted Lot (${item.lotId}) or Vessel (${item.tankId}).`);
             }
@@ -857,6 +966,316 @@ app.post('/api/sync', (req, res) => {
             }
             if (item.costPerUnit !== undefined && (typeof item.costPerUnit !== 'number' || item.costPerUnit < 0)) {
               throw new Error(`Inventory item ${item.id} costPerUnit cannot be negative.`);
+            }
+          }
+
+          else if (key === 'bottlingRuns') {
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Bottling run ${item.id} has invalid referenced lotId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
+            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            if (!lotExists || lotDeleted) {
+              throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
+            }
+            const numericFields = ['totalBottles', 'totalCeramic', 'volumeBottledL', 'previousLotVolumeL', 'bottlesPerBox', 'packagingCostTotal', 'bottlingServiceCost', 'placedInStorageBottles'];
+            for (const field of numericFields) {
+              if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
+                throw new Error(`Bottling run ${item.id} property ${field} must be non-negative.`);
+              }
+            }
+            if (item.formats !== undefined) {
+              if (!item.formats || typeof item.formats !== 'object' || Array.isArray(item.formats)) {
+                throw new Error(`Bottling run ${item.id} formats must be an object.`);
+              }
+              for (const [format, count] of Object.entries(item.formats)) {
+                if (typeof count !== 'number' || count < 0) {
+                  throw new Error(`Bottling run ${item.id} format ${format} count must be non-negative.`);
+                }
+              }
+            }
+            if (item.packagingMaterialIds !== undefined) {
+              if (!item.packagingMaterialIds || typeof item.packagingMaterialIds !== 'object' || Array.isArray(item.packagingMaterialIds)) {
+                throw new Error(`Bottling run ${item.id} packagingMaterialIds must be an object.`);
+              }
+              for (const [component, materialId] of Object.entries(item.packagingMaterialIds)) {
+                if (materialId !== undefined && materialId !== null && materialId !== '') {
+                  if (!isValidId(materialId)) {
+                    throw new Error(`Bottling run ${item.id} has invalid packaging material for ${component}.`);
+                  }
+                  const materialExists = userDb.inventory.some((i: any) => i.id === materialId) || (collections.inventory && collections.inventory.some((i: any) => i.id === materialId));
+                  const materialDeleted = deletedIds && deletedIds.includes(materialId as string);
+                  if (!materialExists || materialDeleted) {
+                    throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted packaging material (${materialId}).`);
+                  }
+                }
+              }
+            }
+            if (item.packagingDeductions !== undefined) {
+              if (!item.packagingDeductions || typeof item.packagingDeductions !== 'object' || Array.isArray(item.packagingDeductions)) {
+                throw new Error(`Bottling run ${item.id} packagingDeductions must be an object.`);
+              }
+              for (const [materialId, qty] of Object.entries(item.packagingDeductions)) {
+                if (!isValidId(materialId)) {
+                  throw new Error(`Bottling run ${item.id} has invalid packaging deduction material ID.`);
+                }
+                if (typeof qty !== 'number' || qty < 0) {
+                  throw new Error(`Bottling run ${item.id} packaging deduction for ${materialId} must be non-negative.`);
+                }
+              }
+            }
+            if (item.storageLocationId) {
+              if (!isValidId(item.storageLocationId)) {
+                throw new Error(`Bottling run ${item.id} has invalid storageLocationId.`);
+              }
+              const locExists = userDb.storageLocations?.some((l: any) => l.id === item.storageLocationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.storageLocationId));
+              if (!locExists) {
+                throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent Storage Location (${item.storageLocationId}).`);
+              }
+            }
+            if (item.storageMovementId && !isValidId(item.storageMovementId)) {
+              throw new Error(`Bottling run ${item.id} has invalid storageMovementId.`);
+            }
+          }
+
+          else if (key === 'transfers') {
+            const numericFields = ['volume', 'loss'];
+            for (const field of numericFields) {
+              if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
+                throw new Error(`Transfer ${item.id} property ${field} must be non-negative.`);
+              }
+            }
+            if (item.sourceId !== undefined && !isValidId(item.sourceId)) {
+              throw new Error(`Transfer ${item.id} has invalid sourceId.`);
+            }
+            if (item.destId !== undefined && !isValidId(item.destId)) {
+              throw new Error(`Transfer ${item.id} has invalid destId.`);
+            }
+          }
+
+          else if (key === 'grapeIntakes') {
+            if (!isValidId(item.createdLotId)) {
+              throw new Error(`Grape intake ${item.id} has invalid referenced createdLotId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.createdLotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.createdLotId));
+            const lotDeleted = deletedIds && deletedIds.includes(item.createdLotId);
+            if (!lotExists || lotDeleted) {
+              throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Lot (${item.createdLotId}).`);
+            }
+
+            if (item.source !== undefined && !['own', 'supplier'].includes(item.source)) {
+              throw new Error(`Grape intake ${item.id} has invalid source.`);
+            }
+            if (item.condition !== undefined && !['excellent', 'good', 'fair', 'damaged'].includes(item.condition)) {
+              throw new Error(`Grape intake ${item.id} has invalid condition.`);
+            }
+            if (item.pickingMethod !== undefined && !['hand', 'machine'].includes(item.pickingMethod)) {
+              throw new Error(`Grape intake ${item.id} has invalid pickingMethod.`);
+            }
+            const nonNegativeFields = ['grossWeightKg', 'tareWeightKg', 'netWeightKg', 'brix', 'ph', 'titratableAcidity', 'estimatedVolumeL', 'costPerKg', 'totalCost'];
+            for (const field of nonNegativeFields) {
+              if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
+                throw new Error(`Grape intake ${item.id} property ${field} must be non-negative.`);
+              }
+            }
+            if (item.juiceYieldPct !== undefined && (typeof item.juiceYieldPct !== 'number' || item.juiceYieldPct < 0 || item.juiceYieldPct > 100)) {
+              throw new Error(`Grape intake ${item.id} juiceYieldPct must be between 0 and 100.`);
+            }
+            if (item.destinationVesselId) {
+              if (!isValidId(item.destinationVesselId)) {
+                throw new Error(`Grape intake ${item.id} has invalid destinationVesselId.`);
+              }
+              const vesselExists = userDb.vessels.some((v: any) => v.id === item.destinationVesselId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.destinationVesselId));
+              const vesselDeleted = deletedIds && deletedIds.includes(item.destinationVesselId);
+              if (!vesselExists || vesselDeleted) {
+                throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Vessel (${item.destinationVesselId}).`);
+              }
+            }
+            if (item.harvestRecordId) {
+              if (!isValidId(item.harvestRecordId)) {
+                throw new Error(`Grape intake ${item.id} has invalid harvestRecordId.`);
+              }
+              const harvestExists = userDb.harvests.some((h: any) => h.id === item.harvestRecordId) || (collections.harvests && collections.harvests.some((h: any) => h.id === item.harvestRecordId));
+              const harvestDeleted = deletedIds && deletedIds.includes(item.harvestRecordId);
+              if (!harvestExists || harvestDeleted) {
+                throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Harvest (${item.harvestRecordId}).`);
+              }
+            }
+          }
+
+          else if (key === 'cellarOps') {
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Cellar operation ${item.id} has invalid referenced lotId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
+            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            if (!lotExists || lotDeleted) {
+              throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
+            }
+
+            for (const vesselField of ['vesselId', 'vesselToId']) {
+              if (item[vesselField]) {
+                if (!isValidId(item[vesselField])) {
+                  throw new Error(`Cellar operation ${item.id} has invalid ${vesselField}.`);
+                }
+                const vesselExists = userDb.vessels.some((v: any) => v.id === item[vesselField]) || (collections.vessels && collections.vessels.some((v: any) => v.id === item[vesselField]));
+                const vesselDeleted = deletedIds && deletedIds.includes(item[vesselField]);
+                if (!vesselExists || vesselDeleted) {
+                  throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted Vessel (${item[vesselField]}).`);
+                }
+              }
+            }
+
+            if (item.materialId) {
+              if (!isValidId(item.materialId)) {
+                throw new Error(`Cellar operation ${item.id} has invalid materialId.`);
+              }
+              const materialExists = userDb.inventory.some((i: any) => i.id === item.materialId) || (collections.inventory && collections.inventory.some((i: any) => i.id === item.materialId));
+              const materialDeleted = deletedIds && deletedIds.includes(item.materialId);
+              if (!materialExists || materialDeleted) {
+                throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted inventory material (${item.materialId}).`);
+              }
+            }
+
+            const nonNegativeFields = ['dose', 'volumeBeforeL', 'volumeAfterL'];
+            for (const field of nonNegativeFields) {
+              if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
+                throw new Error(`Cellar operation ${item.id} property ${field} must be non-negative.`);
+              }
+            }
+          }
+
+          else if (key === 'costEntries') {
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Cost entry ${item.id} has invalid referenced lotId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
+            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            if (!lotExists || lotDeleted) {
+              throw new Error(`Orphaned Cost Entry: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
+            }
+            if (typeof item.amount !== 'number') {
+              throw new Error(`Cost entry ${item.id} amount must be a number.`);
+            }
+            if (item.quantity !== undefined && (typeof item.quantity !== 'number' || item.quantity < 0)) {
+              throw new Error(`Cost entry ${item.id} quantity must be non-negative.`);
+            }
+            if (item.unitCost !== undefined && (typeof item.unitCost !== 'number' || item.unitCost < 0)) {
+              throw new Error(`Cost entry ${item.id} unitCost must be non-negative.`);
+            }
+          }
+
+          else if (key === 'storageLocations') {
+            if (item.capacityBottles !== undefined && (typeof item.capacityBottles !== 'number' || item.capacityBottles < 0)) {
+              throw new Error(`Storage location ${item.id} capacityBottles must be non-negative.`);
+            }
+            if (item.targetTempC !== undefined && typeof item.targetTempC !== 'number') {
+              throw new Error(`Storage location ${item.id} targetTempC must be a number.`);
+            }
+            if (item.targetHumidity !== undefined && (typeof item.targetHumidity !== 'number' || item.targetHumidity < 0 || item.targetHumidity > 100)) {
+              throw new Error(`Storage location ${item.id} targetHumidity must be between 0 and 100.`);
+            }
+          }
+
+          else if (key === 'stockMovements') {
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Stock movement ${item.id} has invalid referenced lotId.`);
+            }
+            if (!isValidId(item.locationId)) {
+              throw new Error(`Stock movement ${item.id} has invalid referenced locationId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
+            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            if (!lotExists) {
+              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent Lot (${item.lotId}).`);
+            }
+            if (!locExists) {
+              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+            }
+            if (!['in', 'out'].includes(item.direction)) {
+              throw new Error(`Stock movement ${item.id} has invalid direction.`);
+            }
+            if (typeof item.bottles !== 'number' || item.bottles < 0) {
+              throw new Error(`Stock movement ${item.id} bottles must be non-negative.`);
+            }
+            if (item.sourceRef !== undefined && item.sourceRef !== null && item.sourceRef !== '' && !isValidId(item.sourceRef)) {
+              throw new Error(`Stock movement ${item.id} has invalid sourceRef.`);
+            }
+          }
+
+          else if (key === 'salesDispatches') {
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Sales dispatch ${item.id} has invalid referenced lotId.`);
+            }
+            if (!isValidId(item.locationId)) {
+              throw new Error(`Sales dispatch ${item.id} has invalid referenced locationId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
+            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            if (!lotExists) {
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent Lot (${item.lotId}).`);
+            }
+            if (!locExists) {
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+            }
+            const numericFields = ['bottles', 'pricePerBottle', 'revenue', 'cogs'];
+            for (const field of numericFields) {
+              if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
+                throw new Error(`Sales dispatch ${item.id} property ${field} must be non-negative.`);
+              }
+            }
+            if (item.grossProfit !== undefined && typeof item.grossProfit !== 'number') {
+              throw new Error(`Sales dispatch ${item.id} grossProfit must be a number.`);
+            }
+            if (item.costPerBottle !== undefined && item.costPerBottle !== null && (typeof item.costPerBottle !== 'number' || item.costPerBottle < 0)) {
+              throw new Error(`Sales dispatch ${item.id} costPerBottle must be non-negative.`);
+            }
+            if (item.marginPct !== undefined && item.marginPct !== null && typeof item.marginPct !== 'number') {
+              throw new Error(`Sales dispatch ${item.id} marginPct must be a number.`);
+            }
+            if (item.stockMovementId !== undefined && !isValidId(item.stockMovementId)) {
+              throw new Error(`Sales dispatch ${item.id} has invalid stockMovementId.`);
+            }
+            if (item.salesOrderId !== undefined && item.salesOrderId !== null && item.salesOrderId !== '' && !isValidId(item.salesOrderId)) {
+              throw new Error(`Sales dispatch ${item.id} has invalid salesOrderId.`);
+            }
+          }
+
+          else if (key === 'salesOrders') {
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Sales order ${item.id} has invalid referenced lotId.`);
+            }
+            if (!isValidId(item.locationId)) {
+              throw new Error(`Sales order ${item.id} has invalid referenced locationId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
+            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            if (!lotExists) {
+              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent Lot (${item.lotId}).`);
+            }
+            if (!locExists) {
+              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+            }
+            if (!['reserved', 'fulfilled', 'cancelled'].includes(item.status)) {
+              throw new Error(`Sales order ${item.id} has invalid status.`);
+            }
+            const numericFields = ['bottles', 'pricePerBottle', 'revenue', 'cogs'];
+            for (const field of numericFields) {
+              if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
+                throw new Error(`Sales order ${item.id} property ${field} must be non-negative.`);
+              }
+            }
+            if (item.grossProfit !== undefined && typeof item.grossProfit !== 'number') {
+              throw new Error(`Sales order ${item.id} grossProfit must be a number.`);
+            }
+            if (item.costPerBottle !== undefined && item.costPerBottle !== null && (typeof item.costPerBottle !== 'number' || item.costPerBottle < 0)) {
+              throw new Error(`Sales order ${item.id} costPerBottle must be non-negative.`);
+            }
+            if (item.marginPct !== undefined && item.marginPct !== null && typeof item.marginPct !== 'number') {
+              throw new Error(`Sales order ${item.id} marginPct must be a number.`);
+            }
+            if (item.dispatchId !== undefined && item.dispatchId !== null && item.dispatchId !== '' && !isValidId(item.dispatchId)) {
+              throw new Error(`Sales order ${item.id} has invalid dispatchId.`);
             }
           }
 
@@ -978,7 +1397,7 @@ app.post('/api/sync', (req, res) => {
   applyDeletions(userDb, deletedIds);
   const conflicts = mergeCollections(userDb, collections);
 
-  saveDB();
+  await saveUserData(session.username, userDb);
 
   if (conflicts.length > 0) {
     return res.json({ hasConflicts: true, conflicts, serverDb: userDb });
@@ -987,7 +1406,7 @@ app.post('/api/sync', (req, res) => {
 });
 
 // Load DB values initial route
-app.get('/api/db', (req, res) => {
+app.get('/api/db', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
@@ -996,13 +1415,12 @@ app.get('/api/db', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const db = getDB();
-  if (!db.userData) db.userData = {};
-  if (!db.userData[session.username]) {
-    db.userData[session.username] = createEmptyUserData();
-    saveDB();
+  let userDb = await getUserData(session.username);
+  if (!userDb) {
+    userDb = createEmptyUserData();
+    await saveUserData(session.username, userDb);
   }
-  res.json(db.userData[session.username]);
+  res.json(userDb);
 });
 
 // --- MOCK TELEMETRY ENGINE ---
@@ -1053,7 +1471,7 @@ function initTelemetry(username: string, userDb: any) {
   simulatedTelemetry[username] = newTelemetry;
 }
 
-app.get('/api/telemetry/active', (req, res) => {
+app.get('/api/telemetry/active', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
@@ -1062,12 +1480,7 @@ app.get('/api/telemetry/active', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const db = getDB();
-  if (!db.userData) db.userData = {};
-  if (!db.userData[session.username]) {
-    db.userData[session.username] = createEmptyUserData();
-  }
-  const userDb = db.userData[session.username];
+  const userDb = await getUserData(session.username) || createEmptyUserData();
 
   initTelemetry(session.username, userDb);
 
@@ -1234,4 +1647,3 @@ initDB()
       console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
     });
   });
-

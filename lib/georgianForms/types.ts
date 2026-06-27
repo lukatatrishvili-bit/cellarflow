@@ -14,7 +14,8 @@
 
 import type {
   CompanyProfile, VineyardBlock, WineLot, Vessel, HarvestRecord,
-  GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent,
+  GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord,
+  CellarOperation, BottlingRunRecord,
 } from '../wineryState';
 
 export type Language = 'en' | 'ka';
@@ -151,6 +152,9 @@ export interface ExportContext {
   inventory: InventoryItem[];
   labLogs: LabAnalysis[];
   transfers: TransferEvent[];
+  grapeIntakes: GrapeIntakeRecord[];
+  cellarOps: CellarOperation[];
+  bottlingRuns: BottlingRunRecord[];
 }
 
 /** Final renderable document produced by the engine. */

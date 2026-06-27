@@ -203,4 +203,28 @@ For the "Continue with Google" button to successfully authenticate users using t
    ```bash
    gcloud run deploy cellarflow-app --set-env-vars GOOGLE_CLIENT_ID="your_client_id_here",GOOGLE_CLIENT_SECRET="your_client_secret_here" --region europe-west1
    ```
-   Or set them directly on the setup screen at `/api/auth/google/login?reconfigure=true`.
+ Or set them directly on the setup screen at `/api/auth/google/login?reconfigure=true`.
+
+---
+
+## 7. Optional Public Demo Workspace
+
+The public demo is opt-in and uses the same persistence, sync, weather, and AI
+paths as a normal account. It does **not** inject sample vessels, lots, weather,
+lab analyses, tasks, or documents.
+
+Configure the deployment with:
+
+```env
+DEMO_LOGIN_ENABLED=true
+DEMO_USERNAME=demo
+DEMO_EMAIL=demo@your-domain.example
+DEMO_FULL_NAME=Demo Cellar
+DEMO_ROLE=Winemaker
+```
+
+When enabled, the sign-in page shows **Open Demo Workspace**. The account is
+created on first use and its records are persisted in the configured database
+backend. The default role is `Winemaker`, so the demo account cannot use
+owner-only database reset controls. Set `DEMO_ROLE=Read-Only` for a browse-only
+public deployment.

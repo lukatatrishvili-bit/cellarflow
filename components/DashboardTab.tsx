@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { translations, Language } from '../lib/i18n';
 import LiveClock from './LiveClock';
@@ -9,7 +9,11 @@ import {
   WineLot, 
   Vessel, 
   Task, 
-  MaraniOSAuditLog 
+  MaraniOSAuditLog,
+  DailyFermLog,
+  LabAnalysis,
+  InventoryItem,
+  ScoutingRecord
 } from '../lib/wineryState';
 import { 
   Wind, Sprout, AlertTriangle, FileText, CheckCircle2, 
@@ -17,6 +21,7 @@ import {
 } from 'lucide-react';
 import { computeAlerts } from '../lib/alerts';
 import { CountUp } from './motion';
+import { DayWeather, describeWeatherCode, fetchDayWeather, localISODate } from '../lib/weatherApi';
 
 interface DashboardTabProps {
   lang: Language;
@@ -26,6 +31,10 @@ interface DashboardTabProps {
   lots: WineLot[];
   vessels: Vessel[];
   tasks: Task[];
+  fermLogs: DailyFermLog[];
+  labLogs: LabAnalysis[];
+  inventory: InventoryItem[];
+  scoutings: ScoutingRecord[];
   auditLogs: MaraniOSAuditLog[];
   onToggleTaskStatus: (taskId: string) => void;
   setActiveModule: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
@@ -41,6 +50,10 @@ export default function DashboardTab({
   lots,
   vessels,
   tasks,
+  fermLogs,
+  labLogs,
+  inventory,
+  scoutings,
   auditLogs,
   onToggleTaskStatus,
   setActiveModule,
@@ -57,16 +70,79 @@ export default function DashboardTab({
   const totalArea = blocks.reduce((acc, b) => acc + b.area, 0);
   const totalCapacity = vessels.reduce((acc, v) => acc + v.capacity, 0);
   const activeFermsCount = lots.filter(l => l.stage === 'fermenting').length;
+  const today = localISODate();
+  const pendingTasks = tasks
+    .filter((task) => task.status !== 'completed')
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const overdueTasks = pendingTasks.filter((task) => task.dueDate < today);
+  const activeFerments = lots.filter((lot) => lot.stage === 'fermenting');
+  const fermentsMissingReading = activeFerments.filter(
+    (lot) => !fermLogs.some((log) => log.lotId === lot.id && log.date === today)
+  );
+  const unassignedLots = lots.filter(
+    (lot) => lot.currentVolume > 0 && !vessels.some((vessel) => vessel.assignedLotId === lot.id)
+  );
+  const highRiskScoutings = scoutings.filter((record) => record.severity === 'high');
+  const latestScouting = [...scoutings].sort((a, b) => b.date.localeCompare(a.date))[0];
+
+  const [weather, setWeather] = useState<DayWeather | null>(null);
+  const [weatherError, setWeatherError] = useState('');
+  const [weatherLoading, setWeatherLoading] = useState(false);
+
+  useEffect(() => {
+    const latitude = companyProfile.latitude;
+    const longitude = companyProfile.longitude;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      setWeather(null);
+      setWeatherError('Estate coordinates are not configured.');
+      return;
+    }
+
+    let active = true;
+    setWeatherLoading(true);
+    setWeatherError('');
+    fetchDayWeather(latitude as number, longitude as number, today)
+      .then((result) => {
+        if (active) setWeather(result);
+      })
+      .catch((error) => {
+        if (active) {
+          setWeather(null);
+          setWeatherError(error instanceof Error ? error.message : 'Weather is unavailable.');
+        }
+      })
+      .finally(() => {
+        if (active) setWeatherLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [companyProfile.latitude, companyProfile.longitude, today]);
 
   // Compute oenology alerts
   const derivedAlerts = computeAlerts({
     vessels,
     lots,
-    fermLogs: [],
-    labLogs: [],
-    inventory: [],
+    fermLogs,
+    labLogs,
+    inventory,
     tasks
-  }).slice(0, 3);
+  });
+  const criticalAlerts = derivedAlerts.filter((alert) => alert.severity === 'critical');
+  const displayedAlerts = derivedAlerts.slice(0, 3);
+  const weatherSummary = weather ? describeWeatherCode(weather.current?.code ?? weather.daily.code, lang) : null;
+  const weatherHumidity = weather?.current?.humidity ?? 0;
+  const weatherTemp = weather?.current?.temp ?? ((weather?.daily.tempMax ?? 0) + (weather?.daily.tempMin ?? 0)) / 2;
+  const diseaseRisk = weather
+    ? weather.daily.precipSum >= 5 || (weatherHumidity >= 85 && weatherTemp >= 10 && weatherTemp <= 28)
+      ? 'high'
+      : weather.daily.precipSum > 0 || weatherHumidity >= 75
+        ? 'watch'
+        : 'low'
+    : null;
+  const estateLocation = [companyProfile.region, companyProfile.country].filter(Boolean).join(', ')
+    || (lang === 'ka' ? 'მდებარეობა არ არის მითითებული' : 'Location not configured');
 
   return (
     <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-8 flex flex-col space-y-8 animate-fade-in text-stone-900 dark:text-stone-200">
@@ -94,7 +170,7 @@ export default function DashboardTab({
           </div>
           <div className="bg-[#fcfbf9] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left">
             <span className="text-stone-400 dark:text-stone-500 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_appellation || 'Active Appellation'}</span>
-            <strong className="text-[#c5a059] block mt-1 font-display font-extrabold text-xs">{companyProfile.region !== 'Kakheti / Appellation' ? companyProfile.region : (lang === 'ka' ? 'კახეთი / ალაზნის ველი' : companyProfile.region)}, {companyProfile.country === 'Georgia' && lang === 'ka' ? 'საქართველო' : companyProfile.country}</strong>
+            <strong className="text-[#c5a059] block mt-1 font-display font-extrabold text-xs">{estateLocation}</strong>
           </div>
           <div className="bg-[#fcfbf9] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left">
             <span className="text-stone-400 dark:text-stone-500 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_role || 'Active Role'}</span>
@@ -112,6 +188,84 @@ export default function DashboardTab({
           </button>
         </div>
       </div>
+
+      {/* Daily operating loop — only persisted records and live services. */}
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <span className="text-[10px] font-mono font-bold uppercase tracking-[0.18em] text-[#801323] dark:text-amber-300">
+              {lang === 'ka' ? 'დღევანდელი სამუშაო' : 'Today'}
+            </span>
+            <h3 className="mt-1 text-2xl font-display font-black text-stone-950 dark:text-amber-100">
+              {lang === 'ka' ? 'რა მოითხოვს ყურადღებას' : 'What needs attention'}
+            </h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => { setActiveModule('gvino'); setActiveTab('fermentation'); }}
+              className="rounded-xl bg-[#4e0e15] px-4 py-2 text-[11px] font-bold text-white cursor-pointer"
+            >
+              + {lang === 'ka' ? 'დუღილის ჩანაწერი' : 'Log fermentation'}
+            </button>
+            <button
+              onClick={() => { setActiveModule('gvino'); setActiveTab('labs'); }}
+              className="rounded-xl border border-stone-250 bg-white px-4 py-2 text-[11px] font-bold text-stone-700 cursor-pointer dark:bg-stone-900 dark:border-stone-700 dark:text-stone-200"
+            >
+              + {lang === 'ka' ? 'ლაბორატორიული შედეგი' : 'Add lab result'}
+            </button>
+            <button
+              onClick={() => { setActiveModule('gvino'); setActiveTab('tasks'); }}
+              className="rounded-xl border border-stone-250 bg-white px-4 py-2 text-[11px] font-bold text-stone-700 cursor-pointer dark:bg-stone-900 dark:border-stone-700 dark:text-stone-200"
+            >
+              {lang === 'ka' ? 'დავალებები' : 'Review tasks'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          {[
+            {
+              label: lang === 'ka' ? 'კრიტიკული გაფრთხილებები' : 'Critical alerts',
+              value: criticalAlerts.length,
+              detail: derivedAlerts.length ? `${derivedAlerts.length} open total` : 'No active alerts',
+              action: () => { setActiveModule('gvino'); setActiveTab('dashboard'); },
+              tone: criticalAlerts.length ? 'text-rose-700' : 'text-emerald-700',
+            },
+            {
+              label: lang === 'ka' ? 'ვადაგადაცილებული დავალებები' : 'Overdue tasks',
+              value: overdueTasks.length,
+              detail: `${pendingTasks.length} pending`,
+              action: () => { setActiveModule('gvino'); setActiveTab('tasks'); },
+              tone: overdueTasks.length ? 'text-rose-700' : 'text-stone-800',
+            },
+            {
+              label: lang === 'ka' ? 'დღიური ჩანაწერის გარეშე' : 'Ferments missing today',
+              value: fermentsMissingReading.length,
+              detail: `${activeFerments.length} active fermentations`,
+              action: () => { setActiveModule('gvino'); setActiveTab('fermentation'); },
+              tone: fermentsMissingReading.length ? 'text-amber-700' : 'text-emerald-700',
+            },
+            {
+              label: lang === 'ka' ? 'ჭურჭლის გარეშე დარჩენილი პარტია' : 'Lots without a vessel',
+              value: unassignedLots.length,
+              detail: `${lots.length} lots recorded`,
+              action: () => { setActiveModule('gvino'); setActiveTab('vessels'); },
+              tone: unassignedLots.length ? 'text-amber-700' : 'text-stone-800',
+            },
+          ].map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={item.action}
+              className="rounded-2xl border border-[#e8dfd5] bg-white p-4 text-left shadow-xs transition-transform hover:-translate-y-0.5 cursor-pointer dark:bg-stone-900 dark:border-stone-800"
+            >
+              <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-450">{item.label}</span>
+              <strong className={`mt-2 block text-3xl font-sans font-black ${item.tone}`}>{item.value}</strong>
+              <span className="mt-1 block text-[11px] font-medium text-stone-500 dark:text-stone-400">{item.detail}</span>
+            </button>
+          ))}
+        </div>
+      </section>
 
       {/* Module launch deck bentogrid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 text-stone-900">
@@ -132,7 +286,7 @@ export default function DashboardTab({
                 </span>
                 <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 font-mono">
                   <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  LIVE FROM FIELDS
+                  {blocks.length} {blocks.length === 1 ? 'BLOCK' : 'BLOCKS'} RECORDED
                 </span>
               </div>
               
@@ -153,7 +307,9 @@ export default function DashboardTab({
                 </div>
                 <div>
                   <span className="text-[10px] uppercase text-stone-400 block pb-0.5 font-bold">{t.portal_scout_status || 'Scouting Reports'}</span>
-                  <strong className="text-lg lg:text-xl font-display font-extrabold text-emerald-800 dark:text-emerald-400 block mt-0.5">🌿 {t.portal_scout_healthy || 'Healthy'}</strong>
+                  <strong className={`text-lg lg:text-xl font-display font-extrabold block mt-0.5 ${highRiskScoutings.length ? 'text-rose-700' : 'text-emerald-800 dark:text-emerald-400'}`}>
+                    {scoutings.length === 0 ? 'No reports' : highRiskScoutings.length ? `${highRiskScoutings.length} high risk` : `${scoutings.length} recorded`}
+                  </strong>
                 </div>
               </div>
             </div>
@@ -185,7 +341,7 @@ export default function DashboardTab({
                 </span>
                 <span className="flex items-center gap-1.5 text-[10px] font-bold text-amber-600 font-mono">
                   <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
-                  MONITORING MARANI
+                  {vessels.filter((vessel) => vessel.currentVolume > 0).length} ACTIVE VESSELS
                 </span>
               </div>
               
@@ -238,8 +394,8 @@ export default function DashboardTab({
                 ⚠️ {lang === 'ka' ? 'უსაფრთხოების და ქიმიის გაფრთხილებები' : 'Safety & Chemistry Warnings'}
               </h4>
               <div className="space-y-3.5">
-                {derivedAlerts.length > 0 ? (
-                  derivedAlerts.map(alert => (
+                {displayedAlerts.length > 0 ? (
+                  displayedAlerts.map(alert => (
                     <div key={alert.id} className="p-4 bg-red-50/50 dark:bg-red-950/20 border border-red-200/60 dark:border-red-900/50 rounded-2xl space-y-1.5 hover-glow transition-all">
                       <div className="flex justify-between items-center text-[10px] font-mono font-bold text-red-850 dark:text-red-400">
                         <span>{alert.title}</span>
@@ -251,7 +407,7 @@ export default function DashboardTab({
                 ) : (
                   <div className="p-5 bg-emerald-50/50 dark:bg-emerald-955/10 border border-emerald-250 dark:border-emerald-900/50 text-emerald-900 dark:text-emerald-400 rounded-2xl font-bold flex items-center gap-3">
                     <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                    <span className="text-xs">{lang === 'ka' ? 'ყველა ქიმიური მაჩვენებელი ნორმაშია.' : 'All cellar safety & lab parameters are optimal.'}</span>
+                    <span className="text-xs">{lang === 'ka' ? 'ჩაწერილ მონაცემებში აქტიური გაფრთხილება არ არის.' : 'No active alerts in the recorded cellar data.'}</span>
                   </div>
                 )}
               </div>
@@ -267,24 +423,65 @@ export default function DashboardTab({
                 🌦️ {lang === 'ka' ? 'მეტეო პროგნოზები და რისკები' : 'Weather Station & Mildew Forecasts'}
               </h4>
               <div className="space-y-3.5">
-                <div className="p-4 bg-stone-50/70 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex items-center justify-between">
-                  <div>
-                    <strong className="block text-stone-900 dark:text-amber-100 font-display font-extrabold text-sm">Telavi Appellation</strong>
-                    <span className="block text-[10px] text-slate-400 font-mono mt-1">GPS: {companyProfile.latitude?.toFixed(3) || 41.905}, {companyProfile.longitude?.toFixed(3) || 45.474}</span>
+                {weatherLoading && (
+                  <div className="p-5 rounded-2xl border border-stone-200 bg-stone-50 text-xs font-medium text-stone-500">
+                    Loading current weather from Open-Meteo…
                   </div>
-                  <div className="text-right">
-                    <span className="text-xl font-display font-black text-stone-900 dark:text-amber-100">24.5 °C</span>
-                    <span className="block text-[10px] text-emerald-700 font-bold uppercase tracking-wider mt-0.5">Wind: 12 km/h</span>
+                )}
+
+                {!weatherLoading && weatherError && (
+                  <div className="p-5 rounded-2xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+                    <strong className="block font-bold">Current weather unavailable</strong>
+                    <span className="mt-1 block">{weatherError}</span>
                   </div>
-                </div>
-                
-                <div className="p-4 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-250 dark:border-amber-900/55 text-amber-900 dark:text-amber-400 rounded-2xl flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <strong className="block text-xs leading-tight font-extrabold">IPM Disease Model: Mildew Risk Level High</strong>
-                    <p className="text-xs leading-relaxed mt-1 text-stone-700 dark:text-stone-400 font-medium">Canopy shoots are &gt;10cm length and weather stations show precipitation patterns. Initiate preventive sulfur-copper sprays in endangered blocks.</p>
-                  </div>
-                </div>
+                )}
+
+                {!weatherLoading && weather && (
+                  <>
+                    <div className="p-4 bg-stone-50/70 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex items-center justify-between gap-4">
+                      <div>
+                        <strong className="block text-stone-900 dark:text-amber-100 font-display font-extrabold text-sm">
+                          {[companyProfile.municipality, companyProfile.region].filter(Boolean).join(', ') || 'Estate location'}
+                        </strong>
+                        <span className="block text-[10px] text-slate-400 font-mono mt-1">
+                          GPS: {companyProfile.latitude?.toFixed(3)}, {companyProfile.longitude?.toFixed(3)} · Open-Meteo
+                        </span>
+                        <span className="block text-[11px] text-stone-600 dark:text-stone-300 mt-1">
+                          {weatherSummary?.emoji} {weatherSummary?.label} · Humidity {weather.current?.humidity ?? '—'}%
+                        </span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-xl font-sans font-black text-stone-900 dark:text-amber-100">{weatherTemp.toFixed(1)} °C</span>
+                        <span className="block text-[10px] text-emerald-700 font-bold uppercase tracking-wider mt-0.5">
+                          Wind: {(weather.current?.wind ?? weather.daily.windMax).toFixed(1)} km/h
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className={`p-4 rounded-2xl border flex items-start gap-3 ${
+                      diseaseRisk === 'high'
+                        ? 'bg-rose-50 border-rose-200 text-rose-900'
+                        : diseaseRisk === 'watch'
+                          ? 'bg-amber-50 border-amber-200 text-amber-900'
+                          : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    }`}>
+                      <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="block text-xs leading-tight font-extrabold">
+                          Weather-based disease risk: {diseaseRisk === 'high' ? 'High' : diseaseRisk === 'watch' ? 'Watch' : 'Low'}
+                        </strong>
+                        <p className="text-xs leading-relaxed mt-1 font-medium">
+                          Today: {weather.daily.precipSum.toFixed(1)} mm precipitation, {weather.daily.tempMin.toFixed(1)}–{weather.daily.tempMax.toFixed(1)} °C.
+                          {blocks.length === 0
+                            ? ' Add vineyard blocks to connect this weather signal to field scouting.'
+                            : latestScouting
+                              ? ` Latest scouting report: ${latestScouting.problemType} (${latestScouting.severity}, ${latestScouting.date}).`
+                              : ' No scouting reports have been recorded yet.'}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -295,21 +492,26 @@ export default function DashboardTab({
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
-                🔥 {lang === 'ka' ? 'აქტიური დუღილის ტელემეტრია' : 'Active Fermentations & Telemetry'}
+                🔥 {lang === 'ka' ? 'აქტიური დუღილის ჩანაწერები' : 'Active Fermentation Readings'}
               </h4>
               <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
                 {lots.filter(l => l.stage === 'fermenting').length > 0 ? (
                   lots.filter(l => l.stage === 'fermenting').map(lot => {
                     const vessel = vessels.find(v => v.assignedLotId === lot.id);
+                    const latestLog = fermLogs
+                      .filter((log) => log.lotId === lot.id)
+                      .sort((a, b) => b.date.localeCompare(a.date))[0];
                     return (
                       <div key={lot.id} className="p-4 bg-stone-50/50 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex justify-between items-center hover-glow transition-all">
                         <div>
                           <strong className="text-xs text-stone-900 dark:text-amber-100 block font-display font-extrabold">{lot.name} ({lot.variety})</strong>
-                          <span className="text-[10px] text-slate-400 block font-mono mt-1">Vessel: {vessel ? vessel.id : 'Bulk Cellar'} • Vol: {lot.currentVolume} L</span>
+                          <span className="text-[10px] text-slate-400 block font-mono mt-1">Vessel: {vessel ? vessel.id : 'Unassigned'} • Vol: {lot.currentVolume} L</span>
                         </div>
                         <div className="text-right font-mono">
                           <span className="text-sm font-black text-red-800 dark:text-red-400 block">{vessel ? `${vessel.temperature}°C` : '--'}</span>
-                          <span className="text-[10px] text-slate-450 block mt-0.5">Gravity: 1.002 SG</span>
+                          <span className="text-[10px] text-slate-450 block mt-0.5">
+                            {latestLog ? `Gravity: ${latestLog.density} SG · ${latestLog.date}` : 'No fermentation reading yet'}
+                          </span>
                         </div>
                       </div>
                     );
@@ -354,8 +556,8 @@ export default function DashboardTab({
                 📋 {t.portal_tasklist || 'Unified Operations Tasklist Checklist'}
               </h4>
               <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
-                {tasks.length > 0 ? (
-                  tasks.map(task => (
+                {pendingTasks.length > 0 ? (
+                  pendingTasks.map(task => (
                     <div key={task.id} className="flex items-start gap-3 border-b border-stone-100 dark:border-stone-850 pb-3 last:border-0 font-medium">
                       <input 
                         type="checkbox" 

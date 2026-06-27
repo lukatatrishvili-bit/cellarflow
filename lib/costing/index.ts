@@ -16,3 +16,14 @@ export {
   computeBlendTransfers,
   totalLedger,
 } from './engine';
+export {
+  bottlingRunCostEntries,
+  classifyInventoryCostCategory,
+  computeBottlingCostPosting,
+  grapeIntakeCostEntry,
+  materialCostEntryFromOperation,
+} from './autoEntries';
+export type {
+  BottlingPackagingComponent,
+  BottlingPackagingSelections,
+} from './autoEntries';

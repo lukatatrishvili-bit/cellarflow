@@ -1,11 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Coins, Plus, Trash2, Wine, FlaskConical, FileDown, FileSpreadsheet } from 'lucide-react';
 import { Language } from '../lib/i18n';
-import type { WineLot, InventoryItem, CompanyProfile } from '../lib/wineryState';
+import type { WineLot, InventoryItem, CompanyProfile, BottlingRunRecord } from '../lib/wineryState';
 import { rollupLots, type CostEntry, type CostCategory } from '../lib/costing';
-import { loadCostEntries, addCostEntry, deleteCostEntry, loadPricing, setPrice } from '../lib/costing/store';
+import type { WinePricing } from '../lib/costing/store';
 import { buildCostReportRows, sumCostReport, costRowsToCSV } from '../lib/costing/report';
-import { loadBottlingHistory } from './BottlingTab';
 import { CountUp } from './motion';
 
 interface Props {
@@ -13,6 +12,11 @@ interface Props {
   lots: WineLot[];
   inventory: InventoryItem[];
   company: CompanyProfile;
+  bottlingRuns: BottlingRunRecord[];
+  costEntries: CostEntry[];
+  onUpdateCostEntries: (entries: CostEntry[]) => void;
+  pricing: WinePricing;
+  onUpdatePricing: (pricing: WinePricing) => void;
 }
 
 const CATEGORIES: Array<{ id: CostCategory; ka: string; en: string }> = [
@@ -30,35 +34,49 @@ const catLabel = (id: CostCategory, ka: boolean) => {
   return c ? (ka ? c.ka : c.en) : id;
 };
 
-export default function CostsTab({ lang, lots, inventory, company }: Props) {
+export default function CostsTab({
+  lang,
+  lots,
+  inventory,
+  company,
+  bottlingRuns,
+  costEntries,
+  onUpdateCostEntries,
+  pricing,
+  onUpdatePricing,
+}: Props) {
   const ka = lang === 'ka';
   const currency = company.currency || 'GEL';
-  const [entries, setEntries] = useState<CostEntry[]>(loadCostEntries);
 
   const bottlesByLot = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const r of loadBottlingHistory()) {
+    for (const r of bottlingRuns) {
       map[r.lotId] = (map[r.lotId] || 0) + (r.totalBottles || 0) + (r.totalCeramic || 0);
     }
     return map;
-  }, []);
+  }, [bottlingRuns]);
 
   const summaries = useMemo(() => rollupLots(
     lots.map(l => ({ id: l.id, volumeLitres: l.currentVolume || l.initialVolume || 0 })),
-    entries,
+    costEntries,
     bottlesByLot,
-  ), [lots, entries, bottlesByLot]);
+  ), [lots, costEntries, bottlesByLot]);
 
-  const totalCost = useMemo(() => entries.reduce((a, e) => a + e.amount, 0), [entries]);
+  const totalCost = useMemo(() => costEntries.reduce((a, e) => a + e.amount, 0), [costEntries]);
 
   // ── pricing + margin/valuation report ────────────────────────
-  const [pricing, setPricing] = useState<Record<string, number>>(loadPricing);
   const reportRows = useMemo(() => buildCostReportRows(
     lots.map(l => ({ lotId: l.id, lotName: l.name, bottles: bottlesByLot[l.id] || 0, pricePerBottle: pricing[l.id] })),
     summaries,
   ), [lots, bottlesByLot, pricing, summaries]);
   const reportTotals = useMemo(() => sumCostReport(reportRows), [reportRows]);
-  const updatePrice = (lotId: string, value: string) => setPricing(setPrice(lotId, parseFloat(value) || 0));
+  const updatePrice = (lotId: string, value: string) => {
+    const pricePerBottle = parseFloat(value) || 0;
+    const next = { ...pricing };
+    if (pricePerBottle > 0) next[lotId] = pricePerBottle;
+    else delete next[lotId];
+    onUpdatePricing(next);
+  };
 
   const download = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -105,18 +123,19 @@ export default function CostsTab({ lang, lots, inventory, company }: Props) {
 
   const submit = () => {
     if (!canAdd) return;
-    const next = addCostEntry({
+    const entry: CostEntry = {
+      id: `cost-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       date, lotId, category,
       description: description || (invItem ? invItem.name : catLabel(category, ka)),
       amount: Math.round(computedAmount * 100) / 100,
       currency,
       ...(fromInventory && invItem ? { quantity: parseFloat(qty) || 0, unitCost: invItem.costPerUnit, sourceRef: invItem.id } : {}),
-    });
-    setEntries(next);
+    };
+    onUpdateCostEntries([entry, ...costEntries]);
     setAmount(''); setQty(''); setDescription('');
   };
 
-  const remove = (id: string) => setEntries(deleteCostEntry(id));
+  const remove = (id: string) => onUpdateCostEntries(costEntries.filter(e => e.id !== id));
 
   const lotName = (id: string) => lots.find(l => l.id === id)?.name || id;
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
@@ -277,7 +296,7 @@ export default function CostsTab({ lang, lots, inventory, company }: Props) {
             <div className="px-4 py-3 border-b border-[#e8dfd5] dark:border-stone-800">
               <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><FlaskConical className="w-4 h-4" /> {ka ? 'ხარჯების ჟურნალი' : 'Cost ledger'}</span>
             </div>
-            {entries.length === 0 ? (
+            {costEntries.length === 0 ? (
               <div className="text-center py-10 text-stone-400 text-xs font-semibold">{ka ? 'ჯერ არ არის ხარჯი აღრიცხული' : 'No costs recorded yet'}</div>
             ) : (
               <div className="overflow-x-auto max-h-96 overflow-y-auto">
@@ -293,7 +312,7 @@ export default function CostsTab({ lang, lots, inventory, company }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
-                    {entries.map(e => (
+                    {costEntries.map(e => (
                       <tr key={e.id} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
                         <td className="p-2.5 font-mono text-stone-500">{e.date}</td>
                         <td className="p-2.5 text-stone-700 dark:text-amber-50">{lotName(e.lotId)}</td>

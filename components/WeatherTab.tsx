@@ -503,78 +503,10 @@ export default function WeatherTab({
     return blocks.find(b => b.id === selectedBlockId) || blocks[0] || null;
   }, [blocks, selectedBlockId]);
 
-  // Base cumulative GDD estimate for May 29 (late spring)
-  const cumulativeGdd = useMemo(() => {
-    if (!activeBlock) return 180;
-    const elevationFactor = Math.max(0, 900 - activeBlock.elevation) * 0.12;
-    const latitudeFactor = Math.max(0, 45 - activeBlock.latitude) * 8;
-    const baseline = 140; // Realistic late-May baseline for Kakheti, Georgia (base 10°C)
-    return Math.round(baseline + elevationFactor + latitudeFactor);
-  }, [activeBlock]);
+  const finalCumulativeGdd = apiCumulativeGdd ?? 0;
+  const finalCompareData = apiCompareData ?? [];
 
-  const historicalCompareData = useMemo(() => {
-    return [
-      {
-        year: '2024 Past Vintage',
-        gdd: 195,
-        rain: 85,
-        temp: 17.5,
-        frost: 1,
-        color: '#d97706'
-      },
-      {
-        year: '2025 Past Vintage',
-        gdd: 242,
-        rain: 124, 
-        temp: 21.2,
-        frost: 0,
-        color: '#059669'
-      },
-      {
-        year: '2026 Current Vintage',
-        gdd: cumulativeGdd, 
-        rain: 62,
-        temp: weatherData?.currentTemp ?? 18.6,
-        frost: 2,
-        color: '#4e0e15'
-      }
-    ];
-  }, [cumulativeGdd, weatherData]);
-
-  const finalCumulativeGdd = apiCumulativeGdd !== null ? apiCumulativeGdd : cumulativeGdd;
-  const finalCompareData = apiCompareData !== null ? apiCompareData : historicalCompareData;
-
-  const mockMonthlyData = useMemo(() => {
-    const months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-    return months.map((m, idx) => {
-      const gdd24 = [150, 240, 310, 380, 280, 180, 95][idx];
-      const gdd25 = [180, 260, 340, 410, 300, 190, 105][idx];
-      const gdd26 = idx <= 2 ? [160, 250, 60][idx] : null;
-
-      const rain24 = [45, 55, 30, 15, 10, 25, 40][idx];
-      const rain25 = [60, 70, 45, 20, 15, 35, 55][idx];
-      const rain26 = idx <= 2 ? [50, 62, 10][idx] : null;
-
-      const temp24 = [13.2, 16.5, 21.0, 24.5, 23.8, 18.2, 12.5][idx];
-      const temp25 = [14.0, 17.2, 22.1, 25.0, 24.2, 19.0, 13.1][idx];
-      const temp26 = idx <= 2 ? [13.5, 16.8, 18.6][idx] : null;
-
-      return {
-        month: m,
-        '2024_gdd': gdd24,
-        '2025_gdd': gdd25,
-        '2026_gdd': gdd26,
-        '2024_rain': rain24,
-        '2025_rain': rain25,
-        '2026_rain': rain26,
-        '2024_temp': temp24,
-        '2025_temp': temp25,
-        '2026_temp': temp26,
-      };
-    });
-  }, []);
-
-  const finalMonthlyData = apiMonthlyData !== null ? apiMonthlyData : mockMonthlyData;
+  const finalMonthlyData = apiMonthlyData ?? [];
 
   const activeMetricLabel = useMemo(() => {
     switch(histMetric) {
@@ -661,11 +593,8 @@ export default function WeatherTab({
         daily: dailyData
       });
     } catch {
-      // Fallback semi-deterministic weather if network fails or sandbox restricts outgoing
       setErrorStatus(true);
-      if (activeBlock) {
-        generateMockWeatherData(activeBlock);
-      }
+      setWeatherData(null);
     } finally {
       setLoading(false);
     }
@@ -826,53 +755,6 @@ export default function WeatherTab({
     } finally {
       setHistLoading(false);
     }
-  };
-
-  const generateMockWeatherData = (block: VineyardBlock) => {
-    const latFactor = Math.sin(block.latitude * 10) * 5;
-    const temp = Math.round(26.5 + latFactor);
-    const rainProb = Math.round(Math.abs(Math.cos(block.longitude * 5)) * 100);
-    const wind = Math.round(7.5 + Math.abs(latFactor));
-    const humidity = Math.round(52 + latFactor * 3);
-
-    const mockHourly = Array.from({ length: 24 }).map((_, i) => {
-      const hr = (new Date().getHours() + i) % 24;
-      const hrStr = `${hr.toString().padStart(2, '0')}:00`;
-      const tCycle = Math.round(temp - Math.sin((i / 24) * Math.PI * 2) * 6);
-      const hCycle = Math.round(humidity + Math.sin((i / 24) * Math.PI * 2) * 15);
-      return {
-        time: hrStr,
-        temp: Math.max(5, tCycle),
-        humidity: Math.min(100, Math.max(10, hCycle)),
-        wind: Math.max(1, Math.round(wind + Math.cos(i / 3) * 3)),
-        pop: Math.min(100, Math.max(0, Math.round(rainProb + Math.sin(i / 2) * 20)))
-      };
-    });
-
-    const mockDaily = Array.from({ length: 5 }).map((_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      const dateStr = d.toLocaleDateString(currentLang === 'ka' ? 'ka-GE' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      return {
-        date: dateStr,
-        tempMax: Math.round(temp + 2 + Math.sin(i) * 2),
-        tempMin: Math.round(temp - 8 + Math.cos(i) * 3),
-        popMax: Math.min(100, Math.max(0, Math.round(rainProb + Math.sin(i) * 15))),
-        windMax: Math.max(4, Math.round(wind + 4 + Math.sin(i) * 4)),
-        weatherCode: rainProb > 50 ? 61 : rainProb > 25 ? 3 : 0
-      };
-    });
-
-    setWeatherData({
-      currentTemp: temp,
-      currentHumidity: humidity,
-      currentWind: wind,
-      currentPrecip: rainProb > 60 ? 3.5 : 0,
-      weatherCode: rainProb > 60 ? 61 : 1,
-      apparentTemp: temp + 1,
-      hourly: mockHourly,
-      daily: mockDaily
-    });
   };
 
   // Selected variety configuration
@@ -1173,8 +1055,26 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
           <RotateCw className="w-10 h-10 text-emerald-800 animate-spin" />
           <p className="text-xs font-semibold">{t.fetching}</p>
         </div>
+      ) : !weatherData ? (
+        <div className="bg-white border border-amber-200 rounded-3xl p-8 text-center text-stone-700 flex flex-col items-center gap-3">
+          <AlertTriangle className="w-8 h-8 text-amber-600" />
+          <div>
+            <h3 className="font-bold text-sm">Live weather is unavailable</h3>
+            <p className="mt-1 text-xs text-stone-500">
+              No estimated or simulated readings are being shown. Check the connection and the selected vineyard coordinates.
+            </p>
+          </div>
+          {activeBlock && (
+            <button
+              type="button"
+              onClick={() => fetchWeatherData(activeBlock.latitude, activeBlock.longitude)}
+              className="rounded-lg bg-[#4e0e15] px-4 py-2 text-xs font-bold text-white cursor-pointer"
+            >
+              Retry live weather
+            </button>
+          )}
+        </div>
       ) : (
-        weatherData && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
             {/* LIVE DATA CARD */}
@@ -2062,10 +1962,10 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                   
                   <div className="border-t border-stone-200/50 pt-3 space-y-1.5 text-[9.5px]">
                     <div className="flex justify-between items-center text-stone-600">
-                      <span>Verified Provider:</span>
+                      <span>Weather Provider:</span>
                       <span className="font-mono font-bold text-stone-800 flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        ECMWF Copernicus
+                        Open-Meteo
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-stone-600">
@@ -2075,8 +1975,8 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-stone-600">
-                      <span>Estimated Micro-Terroir Bias:</span>
-                      <span className="font-mono text-emerald-700 font-bold">±0.25°C Sentinel Calibrated</span>
+                      <span>Model Note:</span>
+                      <span className="font-mono text-stone-700 font-bold">Forecast grid, not an in-field sensor</span>
                     </div>
                   </div>
                 </div>
@@ -2089,7 +1989,6 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
             </div>
 
           </div>
-        )
       )}
 
     </div>

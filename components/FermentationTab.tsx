@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { translations, Language } from '../lib/i18n';
-import { WineLot, Vessel, DailyFermLog } from '../lib/wineryState';
+import { WineLot, Vessel, DailyFermLog, UserProfile } from '../lib/wineryState';
 import { 
   Plus, 
   Trash2, 
@@ -27,6 +27,8 @@ interface Props {
   vessels: Vessel[];
   lots: WineLot[];
   fermLogs: DailyFermLog[];
+  currentUser: UserProfile;
+  setActiveTab: (tab: string) => void;
   onUpdateLots: (newLots: WineLot[]) => void;
   onUpdateVessels: (newVessels: Vessel[]) => void;
   onUpdateFermLogs: (newLogs: DailyFermLog[]) => void;
@@ -37,6 +39,8 @@ export default function FermentationTab({
   vessels, 
   lots, 
   fermLogs, 
+  currentUser,
+  setActiveTab,
   onUpdateLots, 
   onUpdateVessels, 
   onUpdateFermLogs 
@@ -67,13 +71,15 @@ export default function FermentationTab({
   // General add log form state
   const [showGeneralForm, setShowGeneralForm] = useState(false);
   const [generalLotId, setGeneralLotId] = useState('');
+  const [formError, setFormError] = useState('');
 
   // Committing log entry
   const handleCommitLog = (lotId: string, tankId: string) => {
     if (!lotId || !tankId) {
-      alert('Please configure both Lot and Vessel identifiers.');
+      setFormError('An active wine lot must be assigned to a vessel before a fermentation reading can be saved.');
       return;
     }
+    setFormError('');
 
     const newLog: DailyFermLog = {
       id: `flog-${Date.now()}`,
@@ -84,7 +90,7 @@ export default function FermentationTab({
       density: logDensity,
       sugar: logSugar,
       ph: logPH,
-      tastingNotes: logNotes || 'Caps look active and well-hydrated. Sound vinification kinetics.',
+      tastingNotes: logNotes.trim(),
       capManagement: logCap,
       additives: logAdditives
     };
@@ -101,8 +107,8 @@ export default function FermentationTab({
             {
               date: new Date().toISOString().split('T')[0],
               type: 'Fermentation Log Entry',
-              description: `Density: ${logDensity} SG, Sugar: ${logSugar} g/L, Temp: ${logTemp}°C. Cap: ${logCap}. Note: ${logNotes || 'OK'}`,
-              operator: 'S. Rossi'
+              description: `Density: ${logDensity} SG, Sugar: ${logSugar} g/L, Temp: ${logTemp}°C. Cap: ${logCap}. Note: ${logNotes.trim() || 'No notes entered'}`,
+              operator: currentUser.fullName
             },
             ...l.history
           ]
@@ -127,6 +133,7 @@ export default function FermentationTab({
     // Reset log inputs
     setLogNotes('');
     setLogAdditives('None');
+    setFormError('');
     setExpLogFormLotId(null);
     setShowGeneralForm(false);
   };
@@ -135,6 +142,7 @@ export default function FermentationTab({
     // Find vessel this lot is assigned to
     const associatedVessel = vessels.find(v => v.assignedLotId === lot.id);
     setLogTankId(associatedVessel ? associatedVessel.id : '');
+    setFormError(associatedVessel ? '' : 'Assign this lot to a vessel before saving a fermentation reading.');
     setExpLogFormLotId(lot.id);
     
     // Default reasonable entries
@@ -142,9 +150,8 @@ export default function FermentationTab({
     if (lotLogs.length > 0) {
       const lastLog = lotLogs[0];
       setLogTemp(lastLog.temperature);
-      // Deplete a bit for easier mock tracking
-      setLogDensity(parseFloat(Math.max(0.990, lastLog.density - 0.005).toFixed(3)));
-      setLogSugar(Math.max(0, Math.round(lastLog.sugar * 0.7)));
+      setLogDensity(lastLog.density);
+      setLogSugar(lastLog.sugar);
       setLogPH(lastLog.ph);
     } else {
       setLogTemp(20.0);
@@ -157,7 +164,7 @@ export default function FermentationTab({
   // Mark fermentation as finished (transition lot stage for stabilization or barrel aging)
   const finishFermentationStage = (lotId: string) => {
     const confirmFinish = window.confirm(
-      'Are you sure you want to mark this fermentation campaign as completed? This will update the Processing Stage of the Lot to "malolactic_fermentation".'
+      'Mark this primary fermentation as completed and move the lot to stabilization?'
     );
     if (!confirmFinish) return;
 
@@ -172,7 +179,7 @@ export default function FermentationTab({
                 date: new Date().toISOString().split('T')[0],
                 type: 'Fermentation Concluded',
                 description: 'Primary yeast fermentation fully concluded. Dry status verified. Transferred or stabilized for MLF secondary inoculation.',
-                operator: 'Sofia Rossi'
+                operator: currentUser.fullName
               },
               ...l.history
             ]
@@ -211,7 +218,7 @@ export default function FermentationTab({
         <div className="p-4 bg-white border border-[#e8dfd5] rounded-xl shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Active Ferments</span>
-            <strong className="text-xl font-serif font-black text-[#4e0e15]">{activeFerments.length} Campaigns</strong>
+            <strong className="text-xl font-sans font-black text-[#4e0e15]">{activeFerments.length} Campaigns</strong>
           </div>
           <div className="p-3.5 bg-rose-50 rounded-lg text-[#801323] shrink-0">
             <Activity className="w-5 h-5 animate-pulse" />
@@ -221,7 +228,7 @@ export default function FermentationTab({
         <div className="p-4 bg-white border border-[#e8dfd5] rounded-xl shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Hot Vessel Warning</span>
-            <strong className="text-xl font-serif font-black text-amber-900">{hotTanksCount} Tanks &gt;28°C</strong>
+            <strong className="text-xl font-sans font-black text-amber-900">{hotTanksCount} Tanks &gt;28°C</strong>
           </div>
           <div className={`p-3.5 rounded-lg shrink-0 ${hotTanksCount > 0 ? 'bg-amber-100 text-amber-700 animate-bounce' : 'bg-slate-50 text-slate-400'}`}>
             <Flame className="w-5 h-5" />
@@ -231,7 +238,7 @@ export default function FermentationTab({
         <div className="p-4 bg-white border border-[#e8dfd5] rounded-xl shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Stuck / Sluggish Risk</span>
-            <strong className="text-xl font-serif font-black text-rose-800">{slowFermsCount} Lots Flagged</strong>
+            <strong className="text-xl font-sans font-black text-rose-800">{slowFermsCount} Lots Flagged</strong>
           </div>
           <div className={`p-3.5 rounded-lg shrink-0 ${slowFermsCount > 0 ? 'bg-red-50 text-red-650' : 'bg-slate-50 text-slate-400'}`}>
             <TrendingDown className="w-5 h-5" />
@@ -241,7 +248,7 @@ export default function FermentationTab({
         <div className="p-4 bg-white border border-[#e8dfd5] rounded-xl shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">Fermentation Logs</span>
-            <strong className="text-xl font-serif font-black text-[#4e0e15]">{fermLogs.length} Entries</strong>
+            <strong className="text-xl font-sans font-black text-[#4e0e15]">{fermLogs.length} Entries</strong>
           </div>
           <div className="p-3.5 bg-amber-50 rounded-lg text-amber-700 shrink-0">
             <Hourglass className="w-5 h-5" />
@@ -260,16 +267,19 @@ export default function FermentationTab({
               <FlaskConical className="w-4 h-4 text-[#801323]" /> Active Yeast Ferments
             </h3>
             <button
+              disabled={activeFerments.length === 0}
               onClick={() => {
                 setShowGeneralForm(!showGeneralForm);
                 setExpLogFormLotId(null);
+                setFormError('');
                 if (activeFerments.length > 0) {
                   setGeneralLotId(activeFerments[0].id);
                   const associated = vessels.find(v => v.assignedLotId === activeFerments[0].id);
-                  setLogTankId(associated ?? associated ? associated.id : '');
+                  setLogTankId(associated ? associated.id : '');
+                  if (!associated) setFormError('Assign the selected lot to a vessel before saving a reading.');
                 }
               }}
-              className="px-2.5 py-1 text-[11px] font-bold text-[#4e0e15] bg-[#f5efe9] border border-[#dcd0c0] hover:bg-[#eadecd] rounded-lg transition-colors cursor-pointer"
+              className="px-2.5 py-1 text-[11px] font-bold text-[#4e0e15] bg-[#f5efe9] border border-[#dcd0c0] hover:bg-[#eadecd] rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
             >
               + Standard Log Entry
             </button>
@@ -294,6 +304,7 @@ export default function FermentationTab({
                       setGeneralLotId(e.target.value);
                       const associated = vessels.find(v => v.assignedLotId === e.target.value);
                       setLogTankId(associated ? associated.id : '');
+                      setFormError(associated ? '' : 'Assign the selected lot to a vessel before saving a reading.');
                     }}
                     className="w-full px-2 py-1 text-xs border rounded bg-white text-stone-800"
                   >
@@ -392,10 +403,23 @@ export default function FermentationTab({
                 <button
                   type="button"
                   onClick={() => handleCommitLog(generalLotId, logTankId)}
-                  className="w-full py-1.5 bg-[#4e0e15] hover:bg-[#6b151e] text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors"
+                  disabled={!generalLotId || !logTankId}
+                  className="w-full py-1.5 bg-[#4e0e15] hover:bg-[#6b151e] text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   Commit Entry
                 </button>
+                {formError && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900">
+                    <p>{formError}</p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('vessels')}
+                      className="mt-1 font-bold underline underline-offset-2 cursor-pointer"
+                    >
+                      Open vessel assignments
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -465,7 +489,7 @@ export default function FermentationTab({
                   </div>
 
                   {/* Sensory notes and operations status */}
-                  {latestLog && (
+                  {latestLog?.tastingNotes && (
                     <div className="space-y-1 bg-amber-50/20 border border-amber-100 p-2.5 rounded-lg text-xs leading-relaxed">
                       <div className="flex items-center gap-1 font-mono text-[9px] text-[#4e0e15] font-black uppercase">
                         <MessageSquare className="w-3 h-3 text-[#801323]" />
@@ -584,11 +608,21 @@ export default function FermentationTab({
 
                       <button
                         type="button"
-                        onClick={() => handleCommitLog(lot.id, associatedVessel ? associatedVessel.id : 'Tank T-1')}
-                        className="w-full py-1 bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold rounded cursor-pointer"
+                        onClick={() => handleCommitLog(lot.id, associatedVessel?.id || '')}
+                        disabled={!associatedVessel}
+                        className="w-full py-1 bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold rounded cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         Commit Log Entry
                       </button>
+                      {!associatedVessel && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('vessels')}
+                          className="w-full text-[10px] font-bold text-amber-800 underline underline-offset-2 cursor-pointer"
+                        >
+                          Assign this lot to a vessel first
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -597,8 +631,15 @@ export default function FermentationTab({
             })}
             
             {activeFerments.length === 0 && (
-              <div className="p-8 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
-                No active fermentation campaigns. Update a Lot stage to &ldquo;fermenting&rdquo; to begin tracking kinetics here.
+              <div className="p-8 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-500">
+                <p className="font-serif italic">No active fermentation campaigns.</p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('lots')}
+                  className="mt-3 rounded-lg bg-[#4e0e15] px-3 py-2 text-[11px] font-bold text-white cursor-pointer"
+                >
+                  Open Wine Lots to start fermentation
+                </button>
               </div>
             )}
           </div>

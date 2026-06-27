@@ -55,7 +55,7 @@ function makeCtx(over: Partial<ExportContext> = {}): ExportContext {
   return {
     lang: 'ka', mode: 'filled', blankRows: 12, company, generatedBy: 'ტესტერი',
     dateRange: { from: '2026-01-01', to: '2026-12-31' }, accountingYear: '2026',
-    blocks, lots, vessels, harvests, samplings: [], inventory: [], labLogs, transfers,
+    blocks, lots, vessels, harvests, samplings: [], inventory: [], labLogs, transfers, grapeIntakes: [], cellarOps: [], bottlingRuns: [],
     ...over,
   };
 }
@@ -153,22 +153,90 @@ describe('data mapping', () => {
   });
 
   it('Annex 7 uses recorded bottling runs (per-format counts) when present', () => {
-    const store: Record<string, string> = {
-      cf_bottling_history: JSON.stringify([
-        { lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
-          volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0 },
-      ]),
-    };
-    (globalThis as any).localStorage = { getItem: (k: string) => store[k] ?? null };
-    try {
-      const doc = buildDocument('annex_07_bottling_act', makeCtx());
-      expect(doc.rows).toHaveLength(1);
-      expect(doc.rows[0].bottles).toBe(1200);
-      expect(doc.rows[0].fillQty).toBe(90); // 900 L → dal
-      expect(doc.rows[0].lotNo).toBe('L-26-07');
-    } finally {
-      delete (globalThis as any).localStorage;
-    }
+    const bottlingRuns: any[] = [
+      { id: 'BR1', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
+        operator: 'A', formats: { '0.75': 1200 }, volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0 },
+    ];
+    const doc = buildDocument('annex_07_bottling_act', makeCtx({ bottlingRuns }));
+    expect(doc.rows).toHaveLength(1);
+    expect(doc.rows[0].bottles).toBe(1200);
+    expect(doc.rows[0].fillQty).toBe(90); // 900 L → dal
+    expect(doc.rows[0].lotNo).toBe('L-26-07');
+  });
+
+  it('Annex 7 (bottling act) and Annex 8 (finished-goods warehouse) reconcile', () => {
+    const bottlingRuns: any[] = [
+      { id: 'BR1', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
+        operator: 'A', formats: { '0.75': 1200 }, volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0 },
+      { id: 'BR2', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-07-01', lotNumber: 'L-26-08',
+        operator: 'A', formats: { '0.75': 800 }, volumeBottledL: 600, totalBottles: 800, totalCeramic: 0 },
+    ];
+    const ctx = makeCtx({ bottlingRuns });
+    const annex7 = buildDocument('annex_07_bottling_act', ctx);
+    const annex8 = buildDocument('annex_08_warehouse_movement', ctx);
+    // Finished goods received (Annex 8 incoming) === volume bottled (Annex 7 fill).
+    expect(annex8.totalsRow?.incoming).toBe(annex7.totalsRow?.fillQty);
+    expect(annex8.totalsRow?.incoming).toBe(150); // (900 + 600) L → 150 dal
+    // Closing finished-goods balance equals everything bottled (no sales tracked).
+    expect(annex8.rows[annex8.rows.length - 1].balance).toBe(150);
+  });
+
+  it('Annex 3 maps structured grape intakes with gross/tare/net + reception sugar', () => {
+    const grapeIntakes: any[] = [
+      { id: 'GI1', date: '2026-09-23', source: 'own', blockId: 'BLK-1', blockName: 'ქონდოლი 1', variety: 'საფერავი',
+        vintage: 2026, grossWeightKg: 9500, tareWeightKg: 500, netWeightKg: 9000, brix: 23.4, ph: 3.45,
+        titratableAcidity: 5.8, temperatureC: 18, condition: 'excellent', pickingMethod: 'hand', wineClass: 'red',
+        juiceYieldPct: 70, estimatedVolumeL: 6300, destinationVesselId: 'T-1', createdLotId: 'SAP-2026-01',
+        operator: 'A', notes: 'clean' },
+      { id: 'GI2', date: '2026-09-30', source: 'supplier', supplierName: 'გ. ნადირაძე', variety: 'რქაწითელი',
+        vintage: 2026, grossWeightKg: 5200, tareWeightKg: 200, netWeightKg: 5000, brix: 21.0, ph: 3.2,
+        titratableAcidity: 6.4, temperatureC: 20, condition: 'good', pickingMethod: 'hand', wineClass: 'amber',
+        juiceYieldPct: 68, estimatedVolumeL: 3400, destinationVesselId: null, createdLotId: 'RKA-2026-01',
+        operator: 'A', notes: '' },
+    ];
+    const doc = buildDocument('annex_03_grape_reception', makeCtx({ grapeIntakes }));
+    expect(doc.rows).toHaveLength(2);
+    const [r1, r2] = doc.rows;
+    expect(r1.brutto).toBe(9500);
+    expect(r1.tara).toBe(500);
+    expect(r1.netto).toBe(9000);
+    expect(r1.sugar).toBe(23.4);          // reception Brix, not block sampling
+    expect(r2.supplier).toBe('გ. ნადირაძე'); // third-party supplier name
+    expect(doc.totalsRow?.netto).toBe(14000); // 9000 + 5000
+  });
+
+  it('Annex 3 falls back to harvest dispatches when no structured intakes exist', () => {
+    const doc = buildDocument('annex_03_grape_reception', makeCtx()); // grapeIntakes: []
+    expect(doc.rows).toHaveLength(1); // only the in-range, sentToGvino harvest
+    expect(doc.rows[0].netto).toBe(9000);
+    expect(doc.rows[0].brutto).toBe(''); // gross/tare unknown for legacy dispatch
+  });
+
+  it('Annex 13 builds a materials ledger from additive usage that closes at current stock', () => {
+    const inventory: any[] = [
+      { id: 'INV-B', name: 'ბენტონიტი', category: 'additives', stock: 26, minThreshold: 10, unit: 'კგ', costPerUnit: 6, supplierName: 'Enartis', details: '' },
+    ];
+    const cellarOps: any[] = [
+      { id: 'OP-A', date: '2026-10-07', type: 'fining', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026',
+        vesselId: 'T-1', materialId: 'INV-B', materialName: 'ბენტონიტი', dose: 4, unit: 'კგ', operator: 'A', notes: '' },
+    ];
+    const doc = buildDocument('annex_13_materials_movement', makeCtx({ inventory, cellarOps }));
+    // opening row + one usage row
+    expect(doc.rows).toHaveLength(2);
+    expect(doc.rows[0].incoming).toBe(30); // opening = current 26 + usage 4
+    expect(doc.rows[1].outgoing).toBe(4);
+    expect(doc.rows[1].balance).toBe(26);  // closes at current stock
+    expect(doc.totalsRow?.outgoing).toBe(4);
+  });
+
+  it('Annex 13 falls back to a stock snapshot when a material has no usage', () => {
+    const inventory: any[] = [
+      { id: 'INV-Y', name: 'საფუარი QA23', category: 'yeasts', stock: 4.5, minThreshold: 2, unit: 'კგ', costPerUnit: 95, supplierName: 'Lallemand', details: '' },
+    ];
+    const doc = buildDocument('annex_13_materials_movement', makeCtx({ inventory })); // cellarOps: []
+    expect(doc.rows).toHaveLength(1);
+    expect(doc.rows[0].balance).toBe(4.5);
+    expect(doc.rows[0].outgoing).toBe(0);
   });
 });
 

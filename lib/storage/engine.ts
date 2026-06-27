@@ -52,3 +52,54 @@ export function unstored(producedByLot: Record<string, number>, movements: Stock
   }
   return out;
 }
+
+function safeMovementId(...parts: Array<string | number | undefined>): string {
+  const raw = parts.filter(p => p !== undefined && p !== '').join('-') || `mov-${Date.now()}`;
+  return raw.replace(/[^\p{L}\p{N}_\- ]/gu, '-').slice(0, 128);
+}
+
+export function stockMovementFromBottlingRun(input: {
+  runId: string;
+  date: string;
+  lotId: string;
+  locationId: string;
+  bottles: number;
+  lotName?: string;
+}): StockMovement | null {
+  const bottles = Math.max(0, Math.floor(input.bottles || 0));
+  if (!input.runId || !input.lotId || !input.locationId || bottles <= 0) return null;
+  return {
+    id: safeMovementId('mov', 'bottling', input.runId),
+    date: (input.date || new Date().toISOString()).slice(0, 10),
+    lotId: input.lotId,
+    locationId: input.locationId,
+    direction: 'in',
+    bottles,
+    reason: 'bottling',
+    sourceRef: input.runId,
+    note: input.lotName ? `Auto placed from bottling run: ${input.lotName}` : 'Auto placed from bottling run',
+  };
+}
+
+export function stockMovementFromDispatch(input: {
+  dispatchId: string;
+  date: string;
+  lotId: string;
+  locationId: string;
+  bottles: number;
+  customerName?: string;
+}): StockMovement | null {
+  const bottles = Math.max(0, Math.floor(input.bottles || 0));
+  if (!input.dispatchId || !input.lotId || !input.locationId || bottles <= 0) return null;
+  return {
+    id: safeMovementId('mov', 'dispatch', input.dispatchId),
+    date: (input.date || new Date().toISOString()).slice(0, 10),
+    lotId: input.lotId,
+    locationId: input.locationId,
+    direction: 'out',
+    bottles,
+    reason: 'sale',
+    sourceRef: input.dispatchId,
+    note: input.customerName ? `Dispatch to ${input.customerName}` : 'Sales dispatch',
+  };
+}

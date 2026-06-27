@@ -70,6 +70,20 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
        .append('g')
        .attr('transform', `translate(${margin.left}, ${margin.top})`);
 
+    // Select chart elements by their bound datum rather than interpolating
+    // vessel IDs into CSS selectors. Real vessel names may contain spaces,
+    // Georgian characters, punctuation, or other valid ID characters that are
+    // not safe inside querySelectorAll().
+    const selectTankRects = (tankId: string) =>
+      g.selectAll<SVGRectElement, ChartTankData>('.capacity-bg, .fill-bar')
+        .filter((datum) => datum?.id === tankId);
+    const selectTankBackground = (tankId: string) =>
+      g.selectAll<SVGRectElement, ChartTankData>('.capacity-bg')
+        .filter((datum) => datum?.id === tankId);
+    const selectTankBar = (tankId: string) =>
+      g.selectAll<SVGRectElement, ChartTankData>('.fill-bar')
+        .filter((datum) => datum?.id === tankId);
+
     // Define scales
     const yScale = d3.scaleBand()
       .domain(tanks.map((d) => d.name))
@@ -104,7 +118,7 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
       .enter()
       .append('rect')
       .attr('class', 'capacity-bg')
-      .attr('id', (d) => `bg-${d.id}`)
+      .attr('data-tank-id', (d) => d.id)
       .attr('y', (d) => yScale(d.name) || 0)
       .attr('x', 0)
       .attr('width', (d) => xScale(d.capacity))
@@ -126,14 +140,14 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
       })
       .style('cursor', 'pointer')
       .on('mouseenter', function(event, d) {
-        d3.selectAll(`#bg-${d.id}, #bar-${d.id}`)
+        selectTankRects(d.id)
           .transition()
           .duration(150)
           .attr('height', yScale.bandwidth() + 4)
           .attr('y', (yScale(d.name) || 0) - 2);
 
-        d3.select(`#bg-${d.id}`).transition().duration(150).style('fill', '#e2e8f0');
-        d3.select(`#bar-${d.id}`).transition().duration(150).style('opacity', 0.85);
+        selectTankBackground(d.id).transition().duration(150).style('fill', '#e2e8f0');
+        selectTankBar(d.id).transition().duration(150).style('opacity', 0.85);
 
         const [x, y] = d3.pointer(event, containerRef.current);
         setHoveredTank({
@@ -157,14 +171,14 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
         });
       })
       .on('mouseleave', function(event, d) {
-        d3.selectAll(`#bg-${d.id}, #bar-${d.id}`)
+        selectTankRects(d.id)
           .transition()
           .duration(150)
           .attr('height', yScale.bandwidth())
           .attr('y', yScale(d.name) || 0);
 
-        d3.select(`#bg-${d.id}`).transition().duration(150).style('fill', '#f1f5f9');
-        d3.select(`#bar-${d.id}`).transition().duration(150).style('opacity', 1.0);
+        selectTankBackground(d.id).transition().duration(150).style('fill', '#f1f5f9');
+        selectTankBar(d.id).transition().duration(150).style('opacity', 1.0);
 
         setHoveredTank(null);
       })
@@ -178,7 +192,7 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
        .enter()
        .append('rect')
        .attr('class', 'fill-bar')
-       .attr('id', (d) => `bar-${d.id}`)
+       .attr('data-tank-id', (d) => d.id)
        .attr('y', (d) => yScale(d.name) || 0)
        .attr('x', 0)
        .attr('height', yScale.bandwidth())
@@ -190,14 +204,14 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
        .style('stroke-dasharray', (d) => d.id === selectedTankId ? '2, 1' : 'none')
        .style('cursor', 'pointer')
        .on('mouseenter', function(event, d) {
-         d3.selectAll(`#bg-${d.id}, #bar-${d.id}`)
+         selectTankRects(d.id)
            .transition()
            .duration(150)
            .attr('height', yScale.bandwidth() + 4)
            .attr('y', (yScale(d.name) || 0) - 2);
  
-         d3.select(`#bg-${d.id}`).transition().duration(150).style('fill', '#e2e8f0');
-         d3.select(`#bar-${d.id}`).transition().duration(150).style('opacity', 0.85);
+         selectTankBackground(d.id).transition().duration(150).style('fill', '#e2e8f0');
+         selectTankBar(d.id).transition().duration(150).style('opacity', 0.85);
  
          const [x, y] = d3.pointer(event, containerRef.current);
          setHoveredTank({
@@ -221,14 +235,14 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
          });
        })
        .on('mouseleave', function(event, d) {
-         d3.selectAll(`#bg-${d.id}, #bar-${d.id}`)
+         selectTankRects(d.id)
            .transition()
            .duration(150)
            .attr('height', yScale.bandwidth())
            .attr('y', yScale(d.name) || 0);
  
-         d3.select(`#bg-${d.id}`).transition().duration(150).style('fill', '#f1f5f9');
-         d3.select(`#bar-${d.id}`).transition().duration(150).style('opacity', 1.0);
+         selectTankBackground(d.id).transition().duration(150).style('fill', '#f1f5f9');
+         selectTankBar(d.id).transition().duration(150).style('opacity', 1.0);
  
          setHoveredTank(null);
        })
@@ -385,4 +399,3 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
     </div>
   );
 }
-

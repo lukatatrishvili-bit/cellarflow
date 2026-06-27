@@ -1,12 +1,32 @@
 import React, { useMemo, useState } from 'react';
 import { Wine, Package, AlertTriangle, CheckCircle2, Trash2, FileDown } from 'lucide-react';
 import { Language } from '../lib/i18n';
-import type { WineLot } from '../lib/wineryState';
+import type { WineLot, BottlingRunRecord, InventoryItem } from '../lib/wineryState';
+import { deductStock } from '../lib/wineryState';
+import {
+  classifyInventoryCostCategory,
+  computeBottlingCostPosting,
+  type BottlingPackagingComponent,
+  type BottlingPackagingSelections,
+  type CostEntry,
+} from '../lib/costing';
+import { stockMovementFromBottlingRun, type StockMovement, type StorageLocation } from '../lib/storage';
 
 interface Props {
   lang: Language;
   lots: WineLot[];
   onUpdateLots: (lots: WineLot[]) => void;
+  history: BottlingRunRecord[];
+  onUpdateHistory: (runs: BottlingRunRecord[]) => void;
+  inventory: InventoryItem[];
+  onUpdateInventory: (inventory: InventoryItem[]) => void;
+  costEntries: CostEntry[];
+  onUpdateCostEntries: (entries: CostEntry[]) => void;
+  storageLocations: StorageLocation[];
+  stockMovements: StockMovement[];
+  onUpdateStockMovements: (movements: StockMovement[]) => void;
+  currency: string;
+  currentUserName: string;
   setToastMessage?: (m: string) => void;
 }
 
@@ -21,18 +41,7 @@ export const BOTTLE_FORMATS: Array<{ key: string; litres: number; labelKa: strin
   { key: 'ceramic', litres: 0.75, labelKa: 'კერამიკა 0.75 ლ', kind: 'ceramic' },
 ];
 
-export interface BottlingRun {
-  id: string;
-  lotId: string;
-  lotName: string;
-  date: string;
-  lotNumber: string;
-  operator: string;
-  formats: Record<string, number>; // format key -> bottle count
-  totalBottles: number;
-  totalCeramic: number;
-  volumeBottledL: number;
-}
+export type BottlingRun = BottlingRunRecord;
 
 const HISTORY_KEY = 'cf_bottling_history';
 
@@ -49,10 +58,34 @@ function saveBottlingHistory(runs: BottlingRun[]) {
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
-export default function BottlingTab({ lang, lots, onUpdateLots, setToastMessage }: Props) {
+const PACKAGING_COMPONENTS: Array<{ key: BottlingPackagingComponent; en: string; ka: string }> = [
+  { key: 'bottle', en: 'Bottle / ceramic', ka: 'ბოთლი / კერამიკა' },
+  { key: 'closure', en: 'Cork / closure', ka: 'საცობი' },
+  { key: 'capsule', en: 'Capsule', ka: 'კაფსულა' },
+  { key: 'label', en: 'Label', ka: 'ეტიკეტი' },
+  { key: 'box', en: 'Box / case', ka: 'ყუთი' },
+];
+
+export default function BottlingTab({
+  lang,
+  lots,
+  onUpdateLots,
+  history,
+  onUpdateHistory,
+  inventory,
+  onUpdateInventory,
+  costEntries,
+  onUpdateCostEntries,
+  storageLocations,
+  stockMovements,
+  onUpdateStockMovements,
+  currency,
+  currentUserName,
+  setToastMessage,
+}: Props) {
   const ka = lang === 'ka';
-  const [history, setHistory] = useState<BottlingRun[]>(loadBottlingHistory);
 
   const bottleable = useMemo(
     () => lots.filter(l => l.currentVolume > 0 && l.stage !== 'sold'),
@@ -64,6 +97,10 @@ export default function BottlingTab({ lang, lots, onUpdateLots, setToastMessage 
   const [lotNumber, setLotNumber] = useState('');
   const [operator, setOperator] = useState('');
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [packagingSelections, setPackagingSelections] = useState<BottlingPackagingSelections>({});
+  const [bottlesPerBox, setBottlesPerBox] = useState('6');
+  const [bottlingServiceCost, setBottlingServiceCost] = useState('');
+  const [storageLocationId, setStorageLocationId] = useState('');
 
   const lot = lots.find(l => l.id === lotId) || null;
   const availableL = lot ? lot.currentVolume : 0;
@@ -78,13 +115,46 @@ export default function BottlingTab({ lang, lots, onUpdateLots, setToastMessage 
   const overfill = volumeBottledL > availableL + 0.001;
   const noBottles = totalBottles + totalCeramic === 0;
   const canSubmit = !!lot && !overfill && !noBottles;
+  const totalUnits = totalBottles + totalCeramic;
+
+  const packagingItems = useMemo(() => {
+    const filtered = inventory.filter(i => classifyInventoryCostCategory(i) === 'packaging');
+    return filtered.length > 0 ? filtered : inventory;
+  }, [inventory]);
+
+  const costPreview = useMemo(() => computeBottlingCostPosting({
+    runId: 'preview',
+    date,
+    lotId: lot?.id || '',
+    totalUnits,
+    packagingSelections,
+    inventory,
+    bottlesPerBox: parseInt(bottlesPerBox) || 6,
+    bottlingServiceCost: parseFloat(bottlingServiceCost) || 0,
+    currency,
+    createdBy: operator || currentUserName,
+  }), [bottlesPerBox, bottlingServiceCost, currency, currentUserName, date, inventory, lot?.id, operator, packagingSelections, totalUnits]);
+
+  const overdrawnPackaging = useMemo(() => Object.entries(costPreview.deductions)
+    .map(([itemId, qty]) => ({ item: inventory.find(i => i.id === itemId), qty }))
+    .filter(x => x.item && x.qty > (x.item.stock || 0)), [costPreview.deductions, inventory]);
+  const selectedStorageLocation = storageLocations.find(l => l.id === storageLocationId) || null;
 
   const setCount = (key: string, val: string) => {
     const n = Math.max(0, parseInt(val) || 0);
     setCounts(prev => ({ ...prev, [key]: n }));
   };
 
-  const resetForm = () => { setCounts({}); setLotNumber(''); };
+  const setPackaging = (component: BottlingPackagingComponent, itemId: string) => {
+    setPackagingSelections(prev => {
+      const next = { ...prev };
+      if (itemId) next[component] = itemId;
+      else delete next[component];
+      return next;
+    });
+  };
+
+  const resetForm = () => { setCounts({}); setLotNumber(''); setBottlingServiceCost(''); };
 
   const handleBottle = () => {
     if (!lot || !canSubmit) return;
@@ -107,8 +177,30 @@ export default function BottlingTab({ lang, lots, onUpdateLots, setToastMessage 
     });
     onUpdateLots(updatedLots);
 
-    const run: BottlingRun = {
-      id: `bot-${Date.now()}`,
+    const runId = `bot-${Date.now()}`;
+    const storageMovement = stockMovementFromBottlingRun({
+      runId,
+      date,
+      lotId: lot.id,
+      locationId: storageLocationId,
+      bottles: totalUnits,
+      lotName: lot.name,
+    });
+    const costPosting = computeBottlingCostPosting({
+      runId,
+      date,
+      lotId: lot.id,
+      totalUnits,
+      packagingSelections,
+      inventory,
+      bottlesPerBox: parseInt(bottlesPerBox) || 6,
+      bottlingServiceCost: parseFloat(bottlingServiceCost) || 0,
+      currency,
+      createdBy: operator || currentUserName,
+    });
+
+    const run: BottlingRunRecord = {
+      id: runId,
       lotId: lot.id,
       lotName: lot.name,
       date,
@@ -118,10 +210,34 @@ export default function BottlingTab({ lang, lots, onUpdateLots, setToastMessage 
       totalBottles,
       totalCeramic,
       volumeBottledL,
+      previousLotVolumeL: availableL,
+      previousLotStage: lot.stage,
+      ...(Object.keys(packagingSelections).length > 0 ? { packagingMaterialIds: { ...packagingSelections } } : {}),
+      ...(Object.keys(costPosting.deductions).length > 0 ? { packagingDeductions: costPosting.deductions } : {}),
+      ...(parseInt(bottlesPerBox) > 0 ? { bottlesPerBox: parseInt(bottlesPerBox) } : {}),
+      ...(costPosting.packagingCostTotal > 0 ? { packagingCostTotal: costPosting.packagingCostTotal } : {}),
+      ...(costPosting.bottlingServiceCost > 0 ? { bottlingServiceCost: costPosting.bottlingServiceCost } : {}),
+      ...(storageMovement ? {
+        storageLocationId: storageMovement.locationId,
+        storageMovementId: storageMovement.id,
+        placedInStorageBottles: storageMovement.bottles,
+      } : {}),
     };
     const next = [run, ...history];
-    setHistory(next);
+    onUpdateHistory(next);
     saveBottlingHistory(next);
+    if (storageMovement) {
+      onUpdateStockMovements([storageMovement, ...stockMovements]);
+    }
+    if (Object.keys(costPosting.deductions).length > 0) {
+      onUpdateInventory(inventory.map(item => {
+        const used = costPosting.deductions[item.id] || 0;
+        return used > 0 ? { ...item, stock: deductStock(item.stock, used) } : item;
+      }));
+    }
+    if (costPosting.entries.length > 0) {
+      onUpdateCostEntries([...costPosting.entries, ...costEntries]);
+    }
     setToastMessage?.(ka
       ? `ჩამოსხმა აღირიცხა: ${totalBottles + totalCeramic} ერთეული (${volumeBottledL} ლ)`
       : `Bottling recorded: ${totalBottles + totalCeramic} units (${volumeBottledL} L)`);
@@ -133,13 +249,32 @@ export default function BottlingTab({ lang, lots, onUpdateLots, setToastMessage 
   };
 
   const deleteRun = (id: string) => {
+    const run = history.find(r => r.id === id);
     const next = history.filter(r => r.id !== id);
-    setHistory(next);
+    onUpdateHistory(next);
     saveBottlingHistory(next);
+    onUpdateCostEntries(costEntries.filter(e => e.sourceRef !== id));
+    if (run?.storageMovementId) {
+      onUpdateStockMovements(stockMovements.filter(m => m.id !== run.storageMovementId));
+    }
+    if (run?.packagingDeductions) {
+      onUpdateInventory(inventory.map(item => {
+        const restored = run.packagingDeductions?.[item.id] || 0;
+        return restored > 0 ? { ...item, stock: round3((item.stock || 0) + restored) } : item;
+      }));
+    }
+    if (run?.previousLotVolumeL !== undefined || run?.previousLotStage !== undefined) {
+      onUpdateLots(lots.map(l => l.id !== run.lotId ? l : {
+        ...l,
+        ...(run.previousLotVolumeL !== undefined ? { currentVolume: run.previousLotVolumeL } : {}),
+        ...(run.previousLotStage !== undefined ? { stage: run.previousLotStage } : {}),
+      }));
+    }
   };
 
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
   const inputCls = 'w-full bg-stone-50 border border-stone-200 px-2.5 py-2 rounded-lg text-xs font-semibold text-stone-700 outline-none focus:border-[#4e0e15] dark:bg-stone-900 dark:border-stone-800';
+  const fmtMoney = (n: number) => `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 
   return (
     <div className="space-y-4 animate-fade-in text-stone-800">
@@ -205,6 +340,79 @@ export default function BottlingTab({ lang, lots, onUpdateLots, setToastMessage 
                   ))}
                 </div>
               </div>
+
+              {/* Packaging and bottling costing */}
+              <div className="border border-stone-200 rounded-xl p-3 space-y-3 bg-stone-50/50 dark:bg-stone-950/40 dark:border-stone-800">
+                <div className="flex items-center justify-between gap-2">
+                  <label className={labelCls}>{ka ? 'შეფუთვის ხარჯები' : 'Packaging & bottling cost'}</label>
+                  <span className="text-[10px] font-mono text-stone-400">{ka ? 'არასავალდებულო' : 'optional'}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {PACKAGING_COMPONENTS.map(component => (
+                    <div key={component.key}>
+                      <span className="text-[10px] font-bold text-stone-500 block mb-1">{ka ? component.ka : component.en}</span>
+                      <select value={packagingSelections[component.key] || ''} onChange={e => setPackaging(component.key, e.target.value)} className={inputCls}>
+                        <option value="">{ka ? '— არ არის —' : '— none —'}</option>
+                        {packagingItems.map(item => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} · {round1(item.stock)} {item.unit} · {fmtMoney(item.costPerUnit || 0)}/{item.unit}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-[10px] font-bold text-stone-500 block mb-1">{ka ? 'ბოთლი / ყუთი' : 'Bottles per box'}</span>
+                    <input type="number" min={1} value={bottlesPerBox} onChange={e => setBottlesPerBox(e.target.value)} className={inputCls} />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-stone-500 block mb-1">{ka ? 'ჩამოსხმის სერვისი' : `Bottling service (${currency})`}</span>
+                    <input type="number" min={0} step="0.01" value={bottlingServiceCost} onChange={e => setBottlingServiceCost(e.target.value)} placeholder="0.00" className={inputCls} />
+                  </div>
+                </div>
+                {(costPreview.packagingCostTotal > 0 || costPreview.bottlingServiceCost > 0) && (
+                  <div className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 dark:bg-emerald-950/20 dark:text-emerald-300 dark:border-emerald-900">
+                    {ka ? 'ხარჯებში ჩაიწერება:' : 'Will post to COGS:'}{' '}
+                    <strong>{fmtMoney(costPreview.packagingCostTotal + costPreview.bottlingServiceCost)}</strong>
+                    {costPreview.entries.length > 0 && <span className="text-stone-500"> · {costPreview.entries.length} {ka ? 'ჩანაწერი' : 'entry(s)'}</span>}
+                  </div>
+                )}
+                {overdrawnPackaging.length > 0 && (
+                  <div className="flex items-start gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 dark:bg-amber-950/30">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      {ka ? 'მასალა აღემატება მარაგს — ნაშთი ნულამდე დაიყვანება:' : 'Some packaging exceeds stock; inventory will be clamped at zero:'}{' '}
+                      {overdrawnPackaging.map(x => `${x.item?.name} (${round1(x.qty)} > ${round1(x.item?.stock || 0)})`).join(', ')}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Finished-goods placement */}
+              {storageLocations.length > 0 && (
+                <div className="border border-sky-200 rounded-xl p-3 space-y-2 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900/50">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className={labelCls}>{ka ? 'საწყობში განთავსება' : 'Place finished goods'}</label>
+                    <span className="text-[10px] font-mono text-stone-400">{ka ? 'არასავალდებულო' : 'optional'}</span>
+                  </div>
+                  <select value={storageLocationId} onChange={e => setStorageLocationId(e.target.value)} className={inputCls}>
+                    <option value="">{ka ? '— მოგვიანებით განთავსება —' : '— place later —'}</option>
+                    {storageLocations.map(loc => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name}{loc.capacityBottles ? ` · ${loc.capacityBottles.toLocaleString()} btl cap.` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {storageLocationId && selectedStorageLocation && totalUnits > 0 && (
+                    <div className="text-[11px] font-mono text-sky-800 bg-white border border-sky-100 rounded-lg px-3 py-2 dark:bg-stone-900 dark:text-sky-300 dark:border-sky-900">
+                      {ka ? 'შეიქმნება საწყობის შემოსავლის მოძრაობა:' : 'Will create inbound storage movement:'}{' '}
+                      <strong>{totalUnits.toLocaleString()} {ka ? 'ბოთლი' : 'bottles'}</strong> → {selectedStorageLocation.name}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Live summary */}
               <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono border-t border-stone-100 pt-3 dark:border-stone-800">
