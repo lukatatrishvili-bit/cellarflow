@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import { WineLot, DailyFermLog, LabAnalysis, CompanyProfile } from '../lib/wineryState';
+import type { WineLot, DailyFermLog, LabAnalysis, CompanyProfile } from '../lib/wineryState';
 import { buildPassportHtml } from '../lib/lotPassport';
 import { X, Printer, FileText } from 'lucide-react';
 

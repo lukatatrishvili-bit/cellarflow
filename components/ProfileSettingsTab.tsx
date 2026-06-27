@@ -1,6 +1,7 @@
 import React from 'react';
-import { translations, Language } from '../lib/i18n';
-import { UserProfile, CompanyProfile } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { UserProfile, CompanyProfile } from '../lib/wineryState';
 
 interface ProfileSettingsTabProps {
   lang: Language;

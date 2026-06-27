@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { translations, Language } from '../lib/i18n';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import LiveClock from './LiveClock';
-import { 
+import type { 
   UserProfile, 
   CompanyProfile, 
   VineyardBlock, 

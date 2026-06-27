@@ -3,8 +3,8 @@ import {
   ResponsiveContainer, ComposedChart, Area, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend
 } from 'recharts';
 import { CalendarSearch, Loader2, AlertTriangle, MapPin, Thermometer, Wind, Droplets, Sprout } from 'lucide-react';
-import { VineyardBlock } from '../lib/wineryState';
-import { Language } from '../lib/i18n';
+import type { VineyardBlock } from '../lib/wineryState';
+import type { Language } from '../lib/i18n';
 import {
   fetchDayWeather, describeWeatherCode, localISODate, maxForecastDate, DayWeather
 } from '../lib/weatherApi';

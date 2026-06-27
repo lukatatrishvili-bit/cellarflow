@@ -1,13 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import { SyncQueueManager, IndexedDBQueue } from '../lib/syncQueue';
-import {
-  initialVessels,
-  initialLots,
-  initialFermLogs,
-  initialLabLogs,
-  initialInventory,
-  initialTasks,
+import type {
   Vessel,
   WineLot,
   DailyFermLog,
@@ -32,24 +26,8 @@ import {
   SalesOrderRecord,
   GrapeIntakeRecord,
   CellarOperation,
-  estimateMustVolumeL,
-  deductStock,
-  initialGrapeIntakes,
-  initialSalesDispatches,
-  initialSalesOrders,
-  initialCellarOps,
-  CELLAR_OPERATIONS,
-  initialVineyardBlocks,
-  initialPhenologyRecords,
-  initialSprayRecords,
-  initialScoutingRecords,
-  initialSoilAnalysis,
-  initialGrapeSamples,
-  initialHarvestRecords,
-  initialIrrigationLogs,
-  initialFertilizerLogs,
-  initialMaraniOSAuditLogs
 } from '../lib/wineryState';
+import { CELLAR_OPERATIONS, deductStock, estimateMustVolumeL } from '../lib/wineryOperations';
 import type { CostEntry } from '../lib/costing';
 import { grapeIntakeCostEntry, materialCostEntryFromOperation } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
@@ -82,26 +60,25 @@ export function useWineryState() {
   // Auth States
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile>({
-    username: 'luka_winemaker',
-    email: 'luka@maranios.com',
-    fullName: 'Luka Tatrishvili',
-    role: 'Owner/Admin',
+    username: '',
+    email: '',
+    fullName: '',
+    role: 'Read-Only',
     language: 'en'
   });
 
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>({
-    companyName: 'MaraniOS Estates',
-    wineryName: 'MaraniOS Central Marani',
-    country: 'Georgia',
-    region: 'Kakheti',
-    municipality: 'Telavi',
-    address: 'Kondoli Village Highway, Telavi, Kakheti, Georgia',
-    contactEmail: 'production@maranios.ge',
-    phone: '+995 599 123 456',
-    website: 'www.maranios.ge',
+    companyName: '',
+    wineryName: '',
+    country: '',
+    region: '',
+    municipality: '',
+    address: '',
+    contactEmail: '',
+    phone: '',
+    website: '',
     measurementUnits: 'metric',
-    latitude: 41.9056,
-    longitude: 45.4740
+    currency: 'GEL'
   });
 
   const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
@@ -572,46 +549,70 @@ export function useWineryState() {
   // Unified Hydration
   useEffect(() => {
     setIsClient(true);
+    let cancelled = false;
 
     fetch('/api/config')
       .then((res) => res.ok ? res.json() : null)
-      .then((config) => setDemoLoginEnabled(Boolean(config?.demoLoginEnabled)))
-      .catch(() => setDemoLoginEnabled(false));
+      .then((config) => {
+        if (!cancelled) setDemoLoginEnabled(Boolean(config?.demoLoginEnabled));
+      })
+      .catch(() => {
+        if (!cancelled) setDemoLoginEnabled(false);
+      });
 
-    const parseOrInit = (key: string, initVal: any) => {
-      const stored = localStorage.getItem(key);
-      if (stored) {
+    const parseCached = <T>(key: string, fallback: T): T => {
+      const cached = localStorage.getItem(key);
+      if (cached) {
         try {
-          return JSON.parse(stored);
+          return JSON.parse(cached);
         } catch {
-          return initVal;
+          return fallback;
         }
       }
-      return initVal;
+      return fallback;
     };
 
-    // Initialize from local cache first to ensure smooth loading UI
-    setVessels(parseOrInit('cf_vessels', initialVessels));
-    setLots(parseOrInit('cf_lots', initialLots));
-    setFermLogs(parseOrInit('cf_fermlogs', initialFermLogs));
-    setLabLogs(parseOrInit('cf_lablogs', initialLabLogs));
-    setInventory(parseOrInit('cf_inventory', initialInventory));
-    setTasks(parseOrInit('cf_tasks', initialTasks));
-    setNotesList(parseOrInit('cf_notes', initialCellarNotes));
-    setBottlingRuns(parseOrInit('cf_bottling_history', []));
-    setTransfers(parseOrInit('cf_transfers_history', []));
-    setGrapeIntakes(parseOrInit('cf_grape_intakes', initialGrapeIntakes));
-    setCellarOps(parseOrInit('cf_cellar_ops', initialCellarOps));
-    setCostEntries(parseOrInit('cf_cost_entries', []));
-    setWinePricing(parseOrInit('cf_wine_pricing', {}));
-    setStorageLocations(parseOrInit('cf_storage_locations', []));
-    setStockMovements(parseOrInit('cf_storage_movements', []));
-    setSalesDispatches(parseOrInit('cf_sales_dispatches', initialSalesDispatches));
-    setSalesOrders(parseOrInit('cf_sales_orders', initialSalesOrders));
+    const hydrateLocalWineryCache = async () => {
+      const defaults = await import('../lib/wineryDefaults');
+      if (cancelled) return;
+
+      // Only remembered/authenticated sessions need winery datasets on boot.
+      // The logged-out shell stays lean and does not load cellar/vineyard defaults.
+      setVessels(parseCached('cf_vessels', defaults.initialVessels));
+      setLots(parseCached('cf_lots', defaults.initialLots));
+      setFermLogs(parseCached('cf_fermlogs', defaults.initialFermLogs));
+      setLabLogs(parseCached('cf_lablogs', defaults.initialLabLogs));
+      setInventory(parseCached('cf_inventory', defaults.initialInventory));
+      setTasks(parseCached('cf_tasks', defaults.initialTasks));
+      setNotesList(parseCached('cf_notes', initialCellarNotes));
+      setBottlingRuns(parseCached('cf_bottling_history', []));
+      setTransfers(parseCached('cf_transfers_history', []));
+      setGrapeIntakes(parseCached('cf_grape_intakes', defaults.initialGrapeIntakes));
+      setCellarOps(parseCached('cf_cellar_ops', defaults.initialCellarOps));
+      setCostEntries(parseCached('cf_cost_entries', []));
+      setWinePricing(parseCached('cf_wine_pricing', {}));
+      setStorageLocations(parseCached('cf_storage_locations', []));
+      setStockMovements(parseCached('cf_storage_movements', []));
+      setSalesDispatches(parseCached('cf_sales_dispatches', defaults.initialSalesDispatches));
+      setSalesOrders(parseCached('cf_sales_orders', defaults.initialSalesOrders));
+
+      setBlocks(parseCached('vinea_blocks', defaults.initialVineyardBlocks));
+      setPhenologyLogs(parseCached('vinea_phenology', defaults.initialPhenologyRecords));
+      setSprays(parseCached('vinea_sprays', defaults.initialSprayRecords));
+      setScoutings(parseCached('vinea_scoutings', defaults.initialScoutingRecords));
+      setSoilRecords(parseCached('vinea_soil', defaults.initialSoilAnalysis));
+      setSamplings(parseCached('vinea_samplings', defaults.initialGrapeSamples));
+      setHarvests(parseCached('vinea_harvests', defaults.initialHarvestRecords));
+      setIrrigationLogs(parseCached('vinea_irrigation', defaults.initialIrrigationLogs));
+      setFertilizerLogs(parseCached('vinea_fertilizer', defaults.initialFertilizerLogs));
+      setAuditLogs(parseCached('vinea_audit_logs', defaults.initialMaraniOSAuditLogs));
+    };
+
+    const hasLocalSession = localStorage.getItem('vinea_is_logged_in') === 'true';
     setIsSidebarCollapsed(localStorage.getItem('cf_sidebar_collapsed') === 'true');
     setLastSyncAt(localStorage.getItem('vinea_last_sync_at'));
 
-    setIsLoggedIn(localStorage.getItem('vinea_is_logged_in') === 'true');
+    setIsLoggedIn(hasLocalSession);
     const storedUser = localStorage.getItem('vinea_curr_user');
     if (storedUser) {
       try { setCurrentUser(JSON.parse(storedUser)); } catch { /* ignore */ }
@@ -623,41 +624,42 @@ export function useWineryState() {
     const storedModule = localStorage.getItem('vinea_active_module');
     if (storedModule) setActiveModule(storedModule as any);
 
-    setBlocks(parseOrInit('vinea_blocks', initialVineyardBlocks));
-    setPhenologyLogs(parseOrInit('vinea_phenology', initialPhenologyRecords));
-    setSprays(parseOrInit('vinea_sprays', initialSprayRecords));
-    setScoutings(parseOrInit('vinea_scoutings', initialScoutingRecords));
-    setSoilRecords(parseOrInit('vinea_soil', initialSoilAnalysis));
-    setSamplings(parseOrInit('vinea_samplings', initialGrapeSamples));
-    setHarvests(parseOrInit('vinea_harvests', initialHarvestRecords));
-    setIrrigationLogs(parseOrInit('vinea_irrigation', initialIrrigationLogs));
-    setFertilizerLogs(parseOrInit('vinea_fertilizer', initialFertilizerLogs));
-    setAuditLogs(parseOrInit('vinea_audit_logs', initialMaraniOSAuditLogs));
-
     // Restore session and sync from server
     const checkSessionAndSync = async () => {
       try {
         const res = await fetch('/api/auth/me');
         if (res.ok) {
           const user = await res.json();
+          if (cancelled) return;
           setCurrentUser(user);
           setIsLoggedIn(true);
           
           const dbData = await SyncQueueManager.sync({});
-          if (dbData) {
+          if (!cancelled && dbData) {
             updateAllStates(dbData);
           }
         }
       } catch (err) {
         console.error('Failed to restore session:', err);
       } finally {
-        hasHydrated.current = true;
+        if (!cancelled) hasHydrated.current = true;
       }
     };
-    checkSessionAndSync();
+
+    const bootstrap = async () => {
+      if (hasLocalSession) {
+        try {
+          await hydrateLocalWineryCache();
+        } catch (err) {
+          console.error('Failed to hydrate local winery cache:', err);
+        }
+      }
+      if (!cancelled) await checkSessionAndSync();
+    };
+    bootstrap();
 
     // Deep link logic
-    if (localStorage.getItem('vinea_is_logged_in') === 'true') {
+    if (hasLocalSession) {
       const params = new URLSearchParams(window.location.search);
       const lotParam = params.get('lot');
       const tankParam = params.get('tank');
@@ -688,11 +690,15 @@ export function useWineryState() {
       // Strip the params so a refresh doesn't repeat the toast.
       window.history.replaceState({}, '', window.location.pathname);
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Atomic sync to Local Storage with Auto-API sync wrappers
   const handleCollectionUpdate = (key: string, localKey: string, value: any) => {
-    if (!isClient) return;
+    if (!isClient || !isLoggedIn || !hasHydrated.current) return;
     
     // Auto-inject lastModified timestamps for arrays of objects
     let processedValue = value;

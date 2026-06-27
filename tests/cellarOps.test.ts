@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deductStock, CELLAR_OPERATIONS } from '../lib/wineryState';
+import { deductStock, CELLAR_OPERATIONS } from '../lib/wineryOperations';
 
 describe('cellar operations — inventory deduction', () => {
   it('subtracts the used amount from stock', () => {

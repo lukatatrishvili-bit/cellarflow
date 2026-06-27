@@ -1,4 +1,4 @@
-import { Vessel, WineLot, DailyFermLog, LabAnalysis, InventoryItem, Task } from './wineryState';
+import type { Vessel, WineLot, DailyFermLog, LabAnalysis, InventoryItem, Task } from './wineryState';
 
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 export type AlertCategory =

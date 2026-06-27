@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { Grape, CheckCircle2, AlertTriangle, ArrowRight, Sprout, Truck } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import type {
   WineLot, Vessel, VineyardBlock, HarvestRecord, GrapeIntakeRecord,
   WineClass, GrapeSource, GrapeIntakeCondition,
 } from '../lib/wineryState';
-import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryState';
+import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryOperations';
 import { EmptyState } from './ui/primitives';
 
 interface Props {

@@ -1,6 +1,7 @@
 import React from 'react';
-import { Language, translations } from '../lib/i18n';
-import { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
 
 interface LabsTabProps {
   lang: Language;

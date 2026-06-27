@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { translations, Language } from '../lib/i18n';
-import { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import WineLotCommandCenter from './WineLotCommandCenter';

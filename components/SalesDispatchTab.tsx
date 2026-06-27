@@ -9,7 +9,7 @@ import {
   Truck,
   XCircle,
 } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import type { BottlingRunRecord, SalesDispatchRecord, SalesOrderRecord, WineLot } from '../lib/wineryState';
 import { rollupLots, type CostEntry } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';

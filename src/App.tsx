@@ -1,48 +1,47 @@
 import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { translations, Language } from '../lib/i18n';
-import { authenticate, DEMO_PASSCODE } from '../lib/auth';
-import { computeAlerts, Alert } from '../lib/alerts';
+import type { Language } from '../lib/i18n';
+import { getShellTranslations } from '../lib/i18nShell';
+import { computeAlerts, type Alert } from '../lib/alerts';
 import NotificationCenter from '../components/NotificationCenter';
-import LocationPicker, { PickedLocation } from '../components/LocationPicker';
+import type { PickedLocation } from '../components/LocationPicker';
 import { useWineryState } from '../hooks/useWineryState';
 import { IndexedDBQueue } from '../lib/syncQueue';
 
 // Heavy modules are code-split
+const DashboardTab = lazy(() => import('../components/DashboardTab'));
+const ProfileSettingsTab = lazy(() => import('../components/ProfileSettingsTab'));
+const AuditTrailTab = lazy(() => import('../components/AuditTrailTab'));
 const LotPassport = lazy(() => import('../components/LotPassport'));
 const VaziModule = lazy(() => import('../components/VaziModule'));
+const WineryDashboardTab = lazy(() => import('../components/WineryDashboardTab'));
+const TanksVessels = lazy(() => import('../components/TanksVessels'));
+const GrapeReceivingTab = lazy(() => import('../components/GrapeReceivingTab'));
+const WineLotsTrace = lazy(() => import('../components/WineLotsTrace'));
+const LotLineageGraphTab = lazy(() => import('../components/LotLineageGraphTab'));
+const CellarOperationsTab = lazy(() => import('../components/CellarOperationsTab'));
+const TransfersTab = lazy(() => import('../components/TransfersTab'));
+const FermentationTab = lazy(() => import('../components/FermentationTab'));
+const LabsTab = lazy(() => import('../components/LabsTab'));
+const BottlingTab = lazy(() => import('../components/BottlingTab'));
 const EnoCalculators = lazy(() => import('../components/EnoCalculators'));
+const InventoryTab = lazy(() => import('../components/InventoryTab'));
 const AiWinemaker = lazy(() => import('../components/AiWinemaker'));
+const TasksTab = lazy(() => import('../components/TasksTab'));
+const NotesTab = lazy(() => import('../components/NotesTab'));
 const OfficialDocsTab = lazy(() => import('../components/OfficialDocsTab'));
 const CostsTab = lazy(() => import('../components/CostsTab'));
 const StorageTab = lazy(() => import('../components/StorageTab'));
 const SalesDispatchTab = lazy(() => import('../components/SalesDispatchTab'));
 const YearComparisonTab = lazy(() => import('../components/YearComparisonTab'));
+const VesselDrawer = lazy(() => import('../components/VesselDrawer'));
+const LocationPicker = lazy(() => import('../components/LocationPicker'));
+const GlobalCommandPalette = lazy(() => import('../components/GlobalCommandPalette'));
 
 // Subcomponents modular layout
-import TanksVessels from '../components/TanksVessels';
-import GrapeReceivingTab from '../components/GrapeReceivingTab';
-import CellarOperationsTab from '../components/CellarOperationsTab';
-import LotLineageGraphTab from '../components/LotLineageGraphTab';
-import WineLotsTrace from '../components/WineLotsTrace';
-import TransfersTab from '../components/TransfersTab';
-import InventoryTab from '../components/InventoryTab';
-import FermentationTab from '../components/FermentationTab';
-import BottlingTab from '../components/BottlingTab';
 import AuroraBackdrop from '../components/AuroraBackdrop';
 import SyncStatus from '../components/SyncStatus';
 import InstallButton from '../components/InstallButton';
-import GlobalCommandPalette from '../components/GlobalCommandPalette';
-
-// Refactored modular pages
-import DashboardTab from '../components/DashboardTab';
-import WineryDashboardTab from '../components/WineryDashboardTab';
-import AuditTrailTab from '../components/AuditTrailTab';
-import ProfileSettingsTab from '../components/ProfileSettingsTab';
-import LabsTab from '../components/LabsTab';
-import TasksTab from '../components/TasksTab';
-import NotesTab from '../components/NotesTab';
-import VesselDrawer from '../components/VesselDrawer';
 
 // Core Lucide Icons mapping
 import {
@@ -302,7 +301,7 @@ export default function App() {
     );
   }
 
-  const t = translations[state.lang];
+  const t = getShellTranslations(state.lang);
 
   // Derived stats for sidebar
   const activeFermsCount = state.lots.filter(l => l.stage === 'fermenting').length;
@@ -480,21 +479,23 @@ export default function App() {
       })()}
 
       {state.isLoggedIn && (
-        <GlobalCommandPalette
-          open={isCommandOpen}
-          onOpenChange={setIsCommandOpen}
-          lots={state.lots}
-          vessels={state.vessels}
-          inventory={state.inventory}
-          tasks={state.tasks}
-          orders={state.salesOrders}
-          dispatches={state.salesDispatches}
-          setActiveModule={(moduleId) => state.setActiveModule(moduleId as any)}
-          setActiveTab={state.setActiveTab}
-          setPassportLotId={state.setPassportLotId}
-          setSelectedTankId={state.setSelectedTankId}
-          setLineageLotId={setLineageFocusLotId}
-        />
+        <Suspense fallback={null}>
+          <GlobalCommandPalette
+            open={isCommandOpen}
+            onOpenChange={setIsCommandOpen}
+            lots={state.lots}
+            vessels={state.vessels}
+            inventory={state.inventory}
+            tasks={state.tasks}
+            orders={state.salesOrders}
+            dispatches={state.salesDispatches}
+            setActiveModule={(moduleId) => state.setActiveModule(moduleId as any)}
+            setActiveTab={state.setActiveTab}
+            setPassportLotId={state.setPassportLotId}
+            setSelectedTankId={state.setSelectedTankId}
+            setLineageLotId={setLineageFocusLotId}
+          />
+        </Suspense>
       )}
 
       {/* Restore handle shown while retracted (manual click only) */}
@@ -902,6 +903,7 @@ export default function App() {
                       <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
                         {state.lang === 'ka' ? 'მამულის / ვენახის მდებარეობა' : 'Estate / Vineyard Location'}
                       </label>
+                      <Suspense fallback={<div className="h-10 rounded-xl bg-stone-100 animate-pulse" />}>
                       <LocationPicker
                         latitude={regLocation?.latitude ?? state.companyProfile.latitude ?? 41.9056}
                         longitude={regLocation?.longitude ?? state.companyProfile.longitude ?? 45.474}
@@ -909,6 +911,7 @@ export default function App() {
                         placeholder={state.lang === 'ka' ? 'მოძებნეთ ადგილი… მაგ. თელავი' : 'Search your estate… e.g. Telavi, Kakheti'}
                         onChange={(loc) => setRegLocation(loc)}
                       />
+                      </Suspense>
                       {regLocation?.label && (
                         <p className="text-[10px] text-emerald-700 font-bold mt-1.5 flex items-center gap-1">
                           ✓ {regLocation.label} ({regLocation.latitude.toFixed(3)}, {regLocation.longitude.toFixed(3)})
@@ -1145,40 +1148,46 @@ export default function App() {
           </Suspense>
         </main>
       ) : state.activeModule === 'portal' ? (
-        <DashboardTab
-          lang={state.lang}
-          companyProfile={state.companyProfile}
-          currentUser={state.currentUser}
-          blocks={state.blocks}
-          lots={state.lots}
-          vessels={state.vessels}
-          tasks={state.tasks}
-          fermLogs={state.fermLogs}
-          labLogs={state.labLogs}
-          inventory={state.inventory}
-          scoutings={state.scoutings}
-          auditLogs={state.auditLogs}
-          onToggleTaskStatus={state.handleToggleTaskStatus}
-          setActiveModule={state.setActiveModule}
-          setActiveTab={state.setActiveTab}
-          onOpenOnboarding={() => setShowOnboarding(true)}
-        />
+        <Suspense fallback={<ModuleLoader />}>
+          <DashboardTab
+            lang={state.lang}
+            companyProfile={state.companyProfile}
+            currentUser={state.currentUser}
+            blocks={state.blocks}
+            lots={state.lots}
+            vessels={state.vessels}
+            tasks={state.tasks}
+            fermLogs={state.fermLogs}
+            labLogs={state.labLogs}
+            inventory={state.inventory}
+            scoutings={state.scoutings}
+            auditLogs={state.auditLogs}
+            onToggleTaskStatus={state.handleToggleTaskStatus}
+            setActiveModule={state.setActiveModule}
+            setActiveTab={state.setActiveTab}
+            onOpenOnboarding={() => setShowOnboarding(true)}
+          />
+        </Suspense>
       ) : state.activeModule === 'settings' ? (
-        <ProfileSettingsTab
-          lang={state.lang}
-          currentUser={state.currentUser}
-          setCurrentUser={state.setCurrentUser}
-          companyProfile={state.companyProfile}
-          setCompanyProfile={state.setCompanyProfile}
-          setToastMessage={state.setToastMessage}
-          onClearAllData={state.clearAllData}
-          onUpdateProfile={state.handleUpdateProfile}
-        />
+        <Suspense fallback={<ModuleLoader />}>
+          <ProfileSettingsTab
+            lang={state.lang}
+            currentUser={state.currentUser}
+            setCurrentUser={state.setCurrentUser}
+            companyProfile={state.companyProfile}
+            setCompanyProfile={state.setCompanyProfile}
+            setToastMessage={state.setToastMessage}
+            onClearAllData={state.clearAllData}
+            onUpdateProfile={state.handleUpdateProfile}
+          />
+        </Suspense>
       ) : state.activeModule === 'audit' ? (
-        <AuditTrailTab
-          lang={state.lang}
-          auditLogs={state.auditLogs}
-        />
+        <Suspense fallback={<ModuleLoader />}>
+          <AuditTrailTab
+            lang={state.lang}
+            auditLogs={state.auditLogs}
+          />
+        </Suspense>
       ) : state.activeModule === 'costs' ? (
         <Suspense fallback={<ModuleLoader />}>
           <CostsTab
@@ -1389,6 +1398,7 @@ export default function App() {
 
           {/* Content Tabs Area */}
           <section className="flex-1 min-w-0 space-y-4">
+            <Suspense fallback={<ModuleLoader />}>
             
             {/* A. DASHBOARD TAB */}
             {state.activeTab === 'dashboard' && (
@@ -1666,6 +1676,7 @@ export default function App() {
               />
             )}
 
+            </Suspense>
           </section>
 
         </main>
@@ -1948,18 +1959,22 @@ export default function App() {
       )}
 
       {/* SLIDE-OUT PANEL FOR SELECTED VESSEL DETAILED METRICS */}
-      <VesselDrawer
-        lang={state.lang}
-        selectedTankId={state.selectedTankId}
-        vessels={state.vessels}
-        lots={state.lots}
-        fermLogs={state.fermLogs}
-        onClose={() => state.setSelectedTankId(null)}
-        onAdjustTargetTemp={state.handleAdjustTargetTemp}
-        onToggleSanitation={state.handleToggleSanitation}
-        onToggleCoolingJacket={state.handleToggleCoolingJacket}
-        onUpdateVessels={state.setVessels}
-      />
+      {state.selectedTankId && (
+        <Suspense fallback={null}>
+          <VesselDrawer
+            lang={state.lang}
+            selectedTankId={state.selectedTankId}
+            vessels={state.vessels}
+            lots={state.lots}
+            fermLogs={state.fermLogs}
+            onClose={() => state.setSelectedTankId(null)}
+            onAdjustTargetTemp={state.handleAdjustTargetTemp}
+            onToggleSanitation={state.handleToggleSanitation}
+            onToggleCoolingJacket={state.handleToggleCoolingJacket}
+            onUpdateVessels={state.setVessels}
+          />
+        </Suspense>
+      )}
 
       {/* OMNIPRESENT FLOATING AI WIDGET */}
       {state.isLoggedIn && (

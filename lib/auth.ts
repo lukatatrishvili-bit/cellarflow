@@ -1,4 +1,4 @@
-import { UserProfile } from './wineryState';
+import type { UserProfile } from './wineryState';
 
 /**
  * CLIENT-SIDE demo authentication gate.

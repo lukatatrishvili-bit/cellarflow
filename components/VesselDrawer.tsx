@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Thermometer, RefreshCw } from 'lucide-react';
-import { Language } from '../lib/i18n';
-import { Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
+import type { Language } from '../lib/i18n';
+import type { Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface VesselDrawerProps {

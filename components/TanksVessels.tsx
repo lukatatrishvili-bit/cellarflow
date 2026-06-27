@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { translations, Language } from '../lib/i18n';
-import { Vessel, VesselType, WineLot } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { Vessel, VesselType, WineLot } from '../lib/wineryState';
 import { 
   ShieldAlert, CheckCircle, Flame, Snowflake, RotateCw, Plus, Trash2, Edit, 
   Search, LayoutGrid, List, Map, Sparkles, Database, Droplets, Thermometer, ShieldCheck

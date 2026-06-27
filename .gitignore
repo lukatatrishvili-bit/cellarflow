@@ -8,3 +8,7 @@ coverage/
 
 # Local runtime database (seeded on first run, contains password hashes)
 db.json
+# Atomic-write temp files and stray DB snapshots (also contain hashes)
+db.json.tmp
+.db.json.*.tmp
+*.tmp

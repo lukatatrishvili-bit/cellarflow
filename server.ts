@@ -12,6 +12,8 @@ import { createDemoUser, readDemoAccountConfig } from './server/demoAccount';
 import { can, type Capability } from './server/permissions';
 import { generateVerificationToken, isVerificationTokenValid, isValidEmail } from './server/emailVerification';
 import { sendMail, buildVerificationEmail } from './server/mailer';
+import { getDeploymentStatus } from './server/deploymentStatus';
+import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from './server/oauthConfigPolicy';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +60,10 @@ try {
 
 // Helper to dynamically update the .env file with new credentials
 function updateEnvFile(updates: Record<string, string>) {
+  if (process.env.NODE_ENV === 'production') {
+    console.warn('Refusing to update .env at runtime in production. Use Secret Manager or Cloud Run environment variables instead.');
+    return;
+  }
   try {
     const envPath = path.resolve(__dirname, '.env');
     let envContent = '';
@@ -248,6 +254,19 @@ async function ensureDemoAccount() {
 
 app.get('/api/config', (_req, res) => {
   res.json({ demoLoginEnabled: demoAccountConfig.enabled });
+});
+
+// Public liveness probe — intentionally minimal (no config/infra details).
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
+
+// Detailed deployment diagnostics (backend, integrations, warnings) are
+// admin-only: the full status reveals infrastructure that should not be public.
+app.get('/api/admin/deployment-status', (req, res) => {
+  const auth = requireCapability(req, res, 'admin');
+  if (!auth) return;
+  res.json(getDeploymentStatus());
 });
 
 // Authentication endpoints
@@ -449,9 +468,7 @@ app.post('/api/auth/demo', async (_req, res) => {
 });
 
 const getRedirectUri = (req: any) => {
-  const isLocal = req.headers.host.includes('localhost') || req.headers.host.includes('127.0.0.1');
-  const proto = isLocal ? 'http' : 'https';
-  return `${proto}://${req.headers.host}/api/auth/google/callback`;
+  return `${appBaseUrl(req)}/api/auth/google/callback`;
 };
 
 app.get('/api/auth/google/login', (req, res) => {
@@ -460,6 +477,41 @@ app.get('/api/auth/google/login', (req, res) => {
   
   const reconfigure = req.query.reset === 'true' || req.query.reconfigure === 'true';
   const redirectUri = getRedirectUri(req);
+  const runtimeConfigAllowed = isRuntimeOAuthConfigAllowed();
+
+  if ((!clientId || !clientSecret || reconfigure) && !runtimeConfigAllowed) {
+    const message = oauthConfigBlockedMessage();
+    res.status(reconfigure ? 403 : 503).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Google OAuth2 Setup Locked</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f6f2; color: #1b1715; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+          .card { background: white; border: 1px solid #e8dfd5; padding: 36px; border-radius: 20px; max-width: 680px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.03); box-sizing: border-box; }
+          h1 { font-family: Georgia, serif; color: #4e0e15; margin-top: 0; }
+          pre { background: #f0ebe4; padding: 15px; border-radius: 10px; font-family: monospace; overflow-x: auto; font-size: 12px; margin: 15px 0; line-height: 1.5; }
+          .notice { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; padding: 14px; border-radius: 12px; font-size: 13px; line-height: 1.5; }
+          a { color: #4e0e15; font-weight: 700; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Google OAuth2 Setup Locked</h1>
+          <div class="notice"><strong>Production safety:</strong> ${message}</div>
+          <p>Use these production configuration names:</p>
+          <pre>GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET</pre>
+          <p>Authorized redirect URI:</p>
+          <pre>${redirectUri}</pre>
+          <p>If you intentionally need runtime setup for a private maintenance window, deploy with <code>ALLOW_RUNTIME_OAUTH_CONFIG=true</code>, update credentials, then disable it again.</p>
+          <p><a href="/">Return to app</a></p>
+        </div>
+      </body>
+      </html>
+    `);
+    return;
+  }
   
   if (!clientId || !clientSecret || reconfigure) {
     const displayClientId = db.googleConfig?.clientId || '';
@@ -546,6 +598,10 @@ app.get('/api/auth/google/login', (req, res) => {
 });
 
 app.post('/api/auth/google/configure', (req, res) => {
+  if (!isRuntimeOAuthConfigAllowed()) {
+    return res.status(403).send(oauthConfigBlockedMessage());
+  }
+
   const { clientId, clientSecret } = req.body;
   if (!clientId || !clientSecret) {
     return res.status(400).send('Client ID and Client Secret are required');

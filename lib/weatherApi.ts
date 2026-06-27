@@ -87,6 +87,21 @@ export async function searchLocations(query: string): Promise<GeoLocation[]> {
 
 const HOURLY_FIELDS = 'temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m';
 const DAILY_FIELDS = 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max';
+const AGRO_FORECAST_CURRENT_FIELDS = 'temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m';
+const AGRO_FORECAST_HOURLY_FIELDS = 'temperature_2m,relative_humidity_2m,precipitation_probability,wind_speed_10m';
+const AGRO_FORECAST_DAILY_FIELDS = 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max';
+
+export function buildAgroForecastUrl(lat: number, lon: number): string {
+  const params = new URLSearchParams({
+    latitude: String(lat),
+    longitude: String(lon),
+    current: AGRO_FORECAST_CURRENT_FIELDS,
+    hourly: AGRO_FORECAST_HOURLY_FIELDS,
+    daily: AGRO_FORECAST_DAILY_FIELDS,
+    timezone: 'auto',
+  });
+  return `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+}
 
 export async function fetchDayWeather(lat: number, lon: number, dateISO: string): Promise<DayWeather> {
   const today = localISODate();

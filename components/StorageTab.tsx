@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Warehouse, Plus, Trash2, Boxes, Thermometer, Droplet, PackagePlus } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import type { WineLot, BottlingRunRecord } from '../lib/wineryState';
 import { computeStock, unstored, utilization, type StorageLocation, type StockMovement, type StorageType } from '../lib/storage';
 import { CountUp } from './motion';

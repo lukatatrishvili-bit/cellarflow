@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { translations, Language } from '../lib/i18n';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import { Sparkles, Send, Bot, HelpCircle, Loader2, ClipboardList, CheckSquare, X, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 

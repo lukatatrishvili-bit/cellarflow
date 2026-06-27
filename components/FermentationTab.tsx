@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { translations, Language } from '../lib/i18n';
-import { WineLot, Vessel, DailyFermLog, UserProfile } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { WineLot, Vessel, DailyFermLog, UserProfile } from '../lib/wineryState';
 import { 
   Plus, 
   Trash2, 

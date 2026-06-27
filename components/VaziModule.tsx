@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { 
+import type { 
   VineyardBlock, 
   PhenologyRecord, 
   SprayRecord, 
@@ -11,7 +11,7 @@ import {
   HarvestRecord,
   UserProfile
 } from '../lib/wineryState';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
 import IpmPhenoscheme from './IpmPhenoscheme';

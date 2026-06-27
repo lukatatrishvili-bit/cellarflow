@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { VineyardBlock, SprayRecord, UserProfile } from '../lib/wineryState';
-import { Language } from '../lib/i18n';
+import type { VineyardBlock, SprayRecord, UserProfile } from '../lib/wineryState';
+import type { Language } from '../lib/i18n';
 import { 
   Sprout, ShieldAlert, Sparkles, AlertTriangle, 
   CheckCircle2, Info, Calendar, Plus, Trash2, 

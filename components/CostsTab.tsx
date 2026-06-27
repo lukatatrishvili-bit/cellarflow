@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Coins, Plus, Trash2, Wine, FlaskConical, FileDown, FileSpreadsheet } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import type { WineLot, InventoryItem, CompanyProfile, BottlingRunRecord } from '../lib/wineryState';
 import { rollupLots, type CostEntry, type CostCategory } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';

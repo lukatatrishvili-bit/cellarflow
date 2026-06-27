@@ -5,6 +5,7 @@ import {
   maxForecastDate,
   describeWeatherCode,
   fetchDayWeather,
+  buildAgroForecastUrl,
 } from '../lib/weatherApi';
 
 afterEach(() => {
@@ -38,6 +39,15 @@ describe('describeWeatherCode', () => {
 
   it('falls back to the raw code for unknown values', () => {
     expect(describeWeatherCode(42).label).toBe('Code 42');
+  });
+});
+
+describe('buildAgroForecastUrl', () => {
+  it('uses current Open-Meteo precipitation probability field names', () => {
+    const url = buildAgroForecastUrl(41.9, 45.5);
+    expect(url).toContain('precipitation_probability');
+    expect(url).toContain('precipitation_probability_max');
+    expect(url).not.toContain('probability_of_precipitation');
   });
 });
 

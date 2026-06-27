@@ -20,6 +20,60 @@ const DB_PATH = process.env.DATABASE_PATH
 // Memory cache
 let dbData: any = null;
 
+const WRITE_RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+function isRetryableFsError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'code' in error && WRITE_RETRY_CODES.has(String((error as NodeJS.ErrnoException).code));
+}
+
+function sleepSync(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    // Synchronous persistence keeps the in-memory DB and disk cache in lockstep.
+    // This short spin is only used for rare transient Windows file locks.
+  }
+}
+
+function uniqueTempPath(targetPath: string): string {
+  const dir = path.dirname(targetPath);
+  const base = path.basename(targetPath);
+  const unique = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return path.join(dir, `.${base}.${unique}.tmp`);
+}
+
+function replaceFileWithRetry(tempPath: string, targetPath: string): void {
+  const delays = [0, 25, 75, 150, 300, 600];
+  let lastError: unknown = null;
+  for (const delay of delays) {
+    if (delay > 0) sleepSync(delay);
+    try {
+      fs.renameSync(tempPath, targetPath);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableFsError(error)) break;
+    }
+  }
+  throw lastError;
+}
+
+function writeJsonAtomically(targetPath: string, contents: string): void {
+  const dir = path.dirname(targetPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tempPath = uniqueTempPath(targetPath);
+  try {
+    fs.writeFileSync(tempPath, contents, 'utf8');
+    replaceFileWithRetry(tempPath, targetPath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {
+      // Best effort cleanup only.
+    }
+    throw error;
+  }
+}
+
 // Debounced GCS upload so rapid syncs coalesce into one write.
 let uploadTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleGcsUpload(immediate = false): void {
@@ -45,7 +99,7 @@ export async function initDB(): Promise<void> {
   const remote = await downloadDb();
   if (remote !== null) {
     try {
-      fs.writeFileSync(DB_PATH, remote, 'utf8'); // hydrate local cache
+      writeJsonAtomically(DB_PATH, remote);       // hydrate local cache
       dbData = null;                             // force getDB() to re-read with full logic
     } catch (err) {
       console.error('[db] failed to write local cache from GCS:', err);
@@ -181,6 +235,7 @@ export function getDB(): DBState {
   if (DB_PATH !== templatePath && !fs.existsSync(DB_PATH) && fs.existsSync(templatePath)) {
     try {
       console.log(`Seeding database from template: ${templatePath} -> ${DB_PATH}`);
+      fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
       fs.copyFileSync(templatePath, DB_PATH);
     } catch (err) {
       console.error(`Failed to seed database from template:`, err);
@@ -200,8 +255,7 @@ export function getDB(): DBState {
           if (templateDb.googleConfig) {
             console.log('Merging googleConfig from template database...');
             dbData.googleConfig = templateDb.googleConfig;
-            // We delay saveDB to when server is fully initialized or call it synchronously here
-            fs.writeFileSync(DB_PATH, JSON.stringify(dbData, null, 2), 'utf8');
+            writeJsonAtomically(DB_PATH, JSON.stringify(dbData, null, 2));
           }
         } catch (e) {
           console.error('Failed to merge googleConfig from template:', e);
@@ -226,10 +280,8 @@ export function getDB(): DBState {
 
 export function saveDB(): void {
   if (!dbData) return;
-  const tempPath = DB_PATH + '.tmp';
   try {
-    fs.writeFileSync(tempPath, JSON.stringify(dbData, null, 2), 'utf8');
-    fs.renameSync(tempPath, DB_PATH);
+    writeJsonAtomically(DB_PATH, JSON.stringify(dbData, null, 2));
   } catch (err) {
     console.error('Failed to write db.json', err);
   }

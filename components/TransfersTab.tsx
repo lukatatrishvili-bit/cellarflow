@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { translations, Language } from '../lib/i18n';
-import { Vessel, WineLot, CellarTransferRecord } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { Vessel, WineLot, CellarTransferRecord } from '../lib/wineryState';
 import { 
   RefreshCw, 
   ShieldAlert, 

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { DailyFermLog } from '../lib/wineryState';
+import type { DailyFermLog } from '../lib/wineryState';
 
 interface FermentationCurveChartProps {
   logs: DailyFermLog[];

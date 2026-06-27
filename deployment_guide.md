@@ -46,6 +46,69 @@ Auth uses the service account automatically (Application Default Credentials) â€
 no key files. On first boot the freshly-seeded DB is uploaded; thereafter every
 revision restores from the bucket, so data survives redeploys.
 
+### Step 0.4: Deploy from GitHub Actions
+This repository includes a manual workflow:
+
+```text
+.github/workflows/google-cloud-run.yml
+```
+
+It deploys with:
+
+* Cloud Run source deploy (`gcloud run deploy --source .`)
+* public unauthenticated access
+* `--max-instances=1`
+* GCS-backed `db.json` persistence
+* automatic bucket creation if missing
+* `/api/health` verification after deploy
+
+Configure GitHub repository secrets:
+
+```text
+GEMINI_API_KEY                 optional but needed for AI features
+GOOGLE_CLIENT_ID               optional Google OAuth client ID
+GOOGLE_CLIENT_SECRET           optional Google OAuth secret
+ADMIN_USERNAME                 optional production admin username
+ADMIN_PASSCODE                 optional production admin passcode
+```
+
+For Google Cloud authentication, use one of these options:
+
+**Recommended: Workload Identity Federation**
+
+```text
+GCP_WORKLOAD_IDENTITY_PROVIDER
+GCP_SERVICE_ACCOUNT
+```
+
+**Fallback: service-account JSON**
+
+```text
+GCP_SA_KEY
+```
+
+Then open GitHub Actions, choose **Google Cloud Run Deploy**, run the workflow,
+and enter:
+
+```text
+project_id: your-gcp-project-id
+region: europe-west1
+service: cellarflow-app
+gcs_bucket: cellarflow-db
+gcs_db_object: db.json
+demo_login_enabled: false
+```
+
+After deploy, open:
+
+```text
+https://YOUR_SERVICE_URL/api/health
+```
+
+The health endpoint intentionally exposes only non-secret deployment state:
+persistence backend, Cloud Run revision metadata, configured/not-configured
+integration booleans, and production warnings.
+
 > **`--max-instances=1` is required.** The whole DB is a single shared GCS
 > object held in each instance's memory. With two or more instances running
 > concurrently, their writes overwrite each other (last upload wins â†’ lost
@@ -199,11 +262,11 @@ For the "Continue with Google" button to successfully authenticate users using t
    GOOGLE_CLIENT_ID=your_client_id_here.apps.googleusercontent.com
    GOOGLE_CLIENT_SECRET=GOCSPX-your_client_secret_here
    ```
- * **On Google Cloud Run**: You can configure these environment variables in your Cloud Run service configuration via the GCP Console or by redeploying the service with:
-   ```bash
-   gcloud run deploy cellarflow-app --set-env-vars GOOGLE_CLIENT_ID="your_client_id_here",GOOGLE_CLIENT_SECRET="your_client_secret_here" --region europe-west1
-   ```
- Or set them directly on the setup screen at `/api/auth/google/login?reconfigure=true`.
+* **On Google Cloud Run**: Configure these values through Secret Manager or Cloud Run environment variables; Secret Manager is preferred for production. Redeploying with environment variables looks like:
+  ```bash
+  gcloud run deploy cellarflow-app --set-env-vars GOOGLE_CLIENT_ID="your_client_id_here",GOOGLE_CLIENT_SECRET="your_client_secret_here",ALLOW_RUNTIME_OAUTH_CONFIG=false --region europe-west1
+  ```
+* **Production safety**: keep `ALLOW_RUNTIME_OAUTH_CONFIG=false`. In production, the in-browser setup screen at `/api/auth/google/login?reconfigure=true` and the `/api/auth/google/configure` endpoint are blocked by default so OAuth credentials cannot be changed from the public app. If you ever enable `ALLOW_RUNTIME_OAUTH_CONFIG=true` for maintenance, redeploy it back to `false` immediately after updating credentials.
 
 ---
 

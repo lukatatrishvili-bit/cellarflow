@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Wine, Package, AlertTriangle, CheckCircle2, Trash2, FileDown } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import type { WineLot, BottlingRunRecord, InventoryItem } from '../lib/wineryState';
-import { deductStock } from '../lib/wineryState';
+import { deductStock } from '../lib/wineryOperations';
 import {
   classifyInventoryCostCategory,
   computeBottlingCostPosting,

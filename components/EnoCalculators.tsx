@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { translations, Language } from '../lib/i18n';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import { 
   FlaskConical, 
   Droplets, 
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
 
-import { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
+import type { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
 
 interface Props {
   lang: Language;

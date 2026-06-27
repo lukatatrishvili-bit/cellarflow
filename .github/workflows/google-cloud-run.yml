@@ -1,0 +1,179 @@
+name: Google Cloud Run Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: Google Cloud project ID
+        required: true
+      region:
+        description: Cloud Run region
+        required: true
+        default: europe-west1
+      service:
+        description: Cloud Run service name
+        required: true
+        default: cellarflow-app
+      gcs_bucket:
+        description: GCS bucket for durable db.json persistence, without gs://
+        required: true
+        default: cellarflow-db
+      gcs_db_object:
+        description: Object path inside the bucket
+        required: true
+        default: db.json
+      demo_login_enabled:
+        description: Enable public demo workspace
+        required: true
+        default: "false"
+      runtime_service_account:
+        description: Optional Cloud Run runtime service account email
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: google-cloud-run-deploy
+    env:
+      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && secrets.GCP_SERVICE_ACCOUNT != '' }}
+      HAS_SA_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+      PROJECT_ID: ${{ inputs.project_id }}
+      REGION: ${{ inputs.region }}
+      SERVICE: ${{ inputs.service }}
+      GCS_BUCKET: ${{ inputs.gcs_bucket }}
+      GCS_DB_OBJECT: ${{ inputs.gcs_db_object }}
+      DEMO_LOGIN_ENABLED: ${{ inputs.demo_login_enabled }}
+      RUNTIME_SERVICE_ACCOUNT_INPUT: ${{ inputs.runtime_service_account }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+      ADMIN_PASSCODE: ${{ secrets.ADMIN_PASSCODE }}
+      # Optional SMTP for verification email. Without these the verification gate
+      # falls back to logging the link server-side (new email/password signups
+      # cannot verify in production; Google sign-in still works).
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      MAIL_FROM: ${{ secrets.MAIL_FROM }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud with Workload Identity
+        if: env.HAS_WIF == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to Google Cloud with service account JSON
+        if: env.HAS_WIF != 'true' && env.HAS_SA_KEY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Require Google Cloud authentication
+        if: env.HAS_WIF != 'true' && env.HAS_SA_KEY != 'true'
+        run: |
+          echo "Configure either Workload Identity secrets (GCP_WORKLOAD_IDENTITY_PROVIDER + GCP_SERVICE_ACCOUNT) or GCP_SA_KEY."
+          exit 1
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Enable required Google Cloud services
+        run: |
+          gcloud services enable \
+            run.googleapis.com \
+            cloudbuild.googleapis.com \
+            artifactregistry.googleapis.com \
+            storage.googleapis.com \
+            --project "$PROJECT_ID"
+
+      - name: Prepare durable db bucket and runtime service account
+        run: |
+          if [ -n "$RUNTIME_SERVICE_ACCOUNT_INPUT" ]; then
+            RUNTIME_SERVICE_ACCOUNT="$RUNTIME_SERVICE_ACCOUNT_INPUT"
+          else
+            PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+            RUNTIME_SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+          fi
+
+          if ! gcloud storage buckets describe "gs://${GCS_BUCKET}" --project "$PROJECT_ID" >/dev/null 2>&1; then
+            gcloud storage buckets create "gs://${GCS_BUCKET}" \
+              --project "$PROJECT_ID" \
+              --location "$REGION" \
+              --uniform-bucket-level-access
+          fi
+
+          gcloud storage buckets add-iam-policy-binding "gs://${GCS_BUCKET}" \
+            --project "$PROJECT_ID" \
+            --member "serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+            --role "roles/storage.objectAdmin" \
+            --quiet
+
+          echo "RUNTIME_SERVICE_ACCOUNT=${RUNTIME_SERVICE_ACCOUNT}" >> "$GITHUB_ENV"
+
+      - name: Deploy to Cloud Run from source
+        run: |
+          # --update-env-vars (not --set-env-vars) so values set out-of-band
+          # (e.g. SMTP, APP_URL) are preserved across deploys instead of wiped.
+          # For stronger secret hygiene, move the sensitive values to Secret
+          # Manager and pass them with --set-secrets instead of --update-env-vars.
+          DEPLOY_ARGS=(
+            --source .
+            --project "$PROJECT_ID"
+            --region "$REGION"
+            --allow-unauthenticated
+            --max-instances 1
+            --service-account "$RUNTIME_SERVICE_ACCOUNT"
+            --update-env-vars "NODE_ENV=production"
+            --update-env-vars "GOOGLE_CLOUD_REGION=$REGION"
+            --update-env-vars "GCS_BUCKET=$GCS_BUCKET"
+            --update-env-vars "GCS_DB_OBJECT=$GCS_DB_OBJECT"
+            --update-env-vars "DEMO_LOGIN_ENABLED=$DEMO_LOGIN_ENABLED"
+          )
+
+          if [ -n "$GEMINI_API_KEY" ]; then DEPLOY_ARGS+=(--update-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY"); fi
+          if [ -n "$GOOGLE_CLIENT_ID" ]; then DEPLOY_ARGS+=(--update-env-vars "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"); fi
+          if [ -n "$GOOGLE_CLIENT_SECRET" ]; then DEPLOY_ARGS+=(--update-env-vars "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET"); fi
+          if [ -n "$ADMIN_USERNAME" ]; then DEPLOY_ARGS+=(--update-env-vars "ADMIN_USERNAME=$ADMIN_USERNAME"); fi
+          if [ -n "$ADMIN_PASSCODE" ]; then DEPLOY_ARGS+=(--update-env-vars "ADMIN_PASSCODE=$ADMIN_PASSCODE"); fi
+          if [ -n "$SMTP_HOST" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_HOST=$SMTP_HOST"); fi
+          if [ -n "$SMTP_PORT" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_PORT=$SMTP_PORT"); fi
+          if [ -n "$SMTP_SECURE" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_SECURE=$SMTP_SECURE"); fi
+          if [ -n "$SMTP_USER" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_USER=$SMTP_USER"); fi
+          if [ -n "$SMTP_PASS" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_PASS=$SMTP_PASS"); fi
+          if [ -n "$MAIL_FROM" ]; then DEPLOY_ARGS+=(--update-env-vars "MAIL_FROM=$MAIL_FROM"); fi
+
+          gcloud run deploy "$SERVICE" "${DEPLOY_ARGS[@]}"
+
+      - name: Set APP_URL to the deployed service URL
+        run: |
+          SERVICE_URL="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.url)')"
+
+          gcloud run services update "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --update-env-vars "APP_URL=$SERVICE_URL"
+
+          echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+
+      - name: Verify health endpoint
+        run: |
+          curl --fail --silent --show-error "$SERVICE_URL/api/health"
+
+      - name: Deployment summary
+        run: |
+          echo "Deployed $SERVICE to $SERVICE_URL"

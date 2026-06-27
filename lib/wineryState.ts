@@ -256,17 +256,8 @@ export interface GrapeIntakeRecord {
   notes: string;
 }
 
-/** Estimated must/juice volume (L) from net grape weight and a yield %. ~1 kg ≈ 1 L of fruit. */
-export function estimateMustVolumeL(netWeightKg: number, juiceYieldPct: number): number {
-  if (!(netWeightKg > 0) || !(juiceYieldPct > 0)) return 0;
-  return Math.round(netWeightKg * (juiceYieldPct / 100));
-}
-
-/** Rough potential alcohol (% vol) from sugar at harvest (°Brix). */
-export function brixToPotentialAlcohol(brix: number): number {
-  if (!(brix > 0)) return 0;
-  return Math.round(brix * 0.59 * 10) / 10;
-}
+// Cellar-operation runtime helpers (estimateMustVolumeL, brixToPotentialAlcohol,
+// CELLAR_OPERATIONS, deductStock) live in ./wineryOperations; this module owns the types.
 
 /**
  * Unified cellar operation (ტექნოლოგიური ოპერაცია). The fast-entry log for any
@@ -310,46 +301,8 @@ export interface CellarOperationMeta {
   needsVesselTo?: boolean;
 }
 
-/** Single source of truth for operation types, shared by the handler and the UI. */
-export const CELLAR_OPERATIONS: CellarOperationMeta[] = [
-  { key: 'crush_destem', en: 'Crush / destem', ka: 'დაჭყლეტა / დაგრეხა' },
-  { key: 'pressing', en: 'Pressing', ka: 'დაწურვა', affectsVolume: true },
-  { key: 'ferment_start', en: 'Fermentation start', ka: 'დუღილის დაწყება' },
-  { key: 'measurement', en: 'Temp / Brix check', ka: 'ტემპ. / შაქრის გაზომვა' },
-  { key: 'pumpover', en: 'Pump-over (remontage)', ka: 'რემონტაჟი (გადატუმბვა)' },
-  { key: 'punchdown', en: 'Punch-down', ka: 'ქუდის ჩაწნეხა' },
-  { key: 'racking', en: 'Transfer / racking', ka: 'გადაღება', affectsVolume: true, needsVesselTo: true },
-  { key: 'blending', en: 'Blending', ka: 'კუპაჟი', affectsVolume: true, needsVesselTo: true },
-  { key: 'sulfitation', en: 'Sulfitation (SO₂)', ka: 'სულფიტაცია', needsMaterial: true },
-  { key: 'additive', en: 'Additive addition', ka: 'დანამატის დამატება', needsMaterial: true },
-  { key: 'fining', en: 'Fining', ka: 'დადარაჯება (გაწმენდა)', needsMaterial: true },
-  { key: 'filtration', en: 'Filtration', ka: 'ფილტრაცია', affectsVolume: true },
-  { key: 'stabilization', en: 'Stabilization', ka: 'სტაბილიზაცია', needsMaterial: true },
-  { key: 'vessel_filling', en: 'Barrel / qvevri filling', ka: 'ჭურჭლის შევსება', needsVesselTo: true },
-  { key: 'bottling', en: 'Bottling', ka: 'ჩამოსხმა', affectsVolume: true },
-  { key: 'cleaning', en: 'Cleaning / sanitation', ka: 'წმენდა / სანიტარია' },
-  { key: 'correction', en: 'Correction', ka: 'კორექცია' },
-  { key: 'custom', en: 'Custom operation', ka: 'სხვა ოპერაცია' },
-];
-
-/** Deduct an amount from a stock level, clamped at zero and rounded to 3 dp. */
-export function deductStock(currentStock: number, amount: number): number {
-  const next = (currentStock || 0) - (amount || 0);
-  return Math.max(0, Math.round(next * 1000) / 1000);
-}
-
-export const initialCellarOps: CellarOperation[] = [];
-
-// Initial dummy data to make the app alive instantly
-export const initialVessels: Vessel[] = [];
-export const initialLots: WineLot[] = [];
-export const initialFermLogs: DailyFermLog[] = [];
-export const initialLabLogs: LabAnalysis[] = [];
-export const initialInventory: InventoryItem[] = [];
-export const initialTasks: Task[] = [];
-export const initialGrapeIntakes: GrapeIntakeRecord[] = [];
-export const initialSalesDispatches: SalesDispatchRecord[] = [];
-export const initialSalesOrders: SalesOrderRecord[] = [];
+// Empty seed datasets live in ./wineryDefaults (lazy-loaded so they stay out of
+// the type-only import graph); this module owns the types.
 
 // ==========================================
 // VINEA VAZI (VITICULTURE) PORTION TYPES
@@ -542,17 +495,4 @@ export interface CompanyProfile {
   longitude?: number;
 }
 
-// ==========================================
-// INITIAL VAZI DATASETS
-// ==========================================
-
-export const initialVineyardBlocks: VineyardBlock[] = [];
-export const initialPhenologyRecords: PhenologyRecord[] = [];
-export const initialSprayRecords: SprayRecord[] = [];
-export const initialScoutingRecords: ScoutingRecord[] = [];
-export const initialSoilAnalysis: SoilAnalysisRecord[] = [];
-export const initialGrapeSamples: GrapeSamplingRecord[] = [];
-export const initialHarvestRecords: HarvestRecord[] = [];
-export const initialIrrigationLogs: IrrigationRecord[] = [];
-export const initialFertilizerLogs: FertilizationRecord[] = [];
-export const initialMaraniOSAuditLogs: MaraniOSAuditLog[] = [];
+// Vazi seed datasets also live in ./wineryDefaults.

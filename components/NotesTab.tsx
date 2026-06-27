@@ -1,7 +1,8 @@
 import React from 'react';
 import { Trash, FileText } from 'lucide-react';
-import { Language, translations } from '../lib/i18n';
-import { WineLot } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { WineLot } from '../lib/wineryState';
 import { CellarNote } from '../hooks/useWineryState';
 
 interface NotesTabProps {

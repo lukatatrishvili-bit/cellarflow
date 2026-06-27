@@ -10,7 +10,7 @@
 
 import type { ExportContext, DocRow, FormTemplate } from './types';
 import type { VineyardBlock, WineLot, HarvestRecord, CellarOperation } from '../wineryState';
-import { CELLAR_OPERATIONS } from '../wineryState';
+import { CELLAR_OPERATIONS } from '../wineryOperations';
 import { applyRunningBalance, litresToDal, round2, toNum } from './balance';
 
 type Mapper = (ctx: ExportContext) => DocRow[];

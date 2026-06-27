@@ -15,6 +15,23 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalized = id.replace(/\\/g, '/');
+          if (!normalized.includes('/node_modules/')) return;
+          if (normalized.includes('/node_modules/react/') || normalized.includes('/node_modules/react-dom/')) {
+            return 'vendor-react';
+          }
+          if (normalized.includes('/node_modules/lucide-react/')) {
+            return 'vendor-icons';
+          }
+          if (normalized.includes('/node_modules/motion/')) {
+            return 'vendor-motion';
+          }
+        },
+      },
+    },
   },
   server: {
     port: 3000,

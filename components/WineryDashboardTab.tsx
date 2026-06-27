@@ -1,6 +1,7 @@
 import React from 'react';
-import { translations, Language } from '../lib/i18n';
-import { Vessel, WineLot, DailyFermLog, LabAnalysis, Task } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { Vessel, WineLot, DailyFermLog, LabAnalysis, Task } from '../lib/wineryState';
 import TankCapacityChart from './TankCapacityChart';
 import FermentationCurveChart from './FermentationCurveChart';
 import {

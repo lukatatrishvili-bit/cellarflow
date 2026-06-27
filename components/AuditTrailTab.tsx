@@ -1,6 +1,7 @@
 import React from 'react';
-import { translations, Language } from '../lib/i18n';
-import { MaraniOSAuditLog } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { MaraniOSAuditLog } from '../lib/wineryState';
 
 interface AuditTrailTabProps {
   lang: Language;

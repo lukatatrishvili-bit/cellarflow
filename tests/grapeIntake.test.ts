@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryState';
+import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryOperations';
 
 describe('grape intake — must volume estimate', () => {
   it('applies the juice yield % to net weight (≈1 kg → 1 L of fruit)', () => {

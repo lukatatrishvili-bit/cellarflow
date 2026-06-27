@@ -1,7 +1,8 @@
 import React from 'react';
 import { ClipboardList, CheckCircle2, Trash } from 'lucide-react';
-import { Language, translations } from '../lib/i18n';
-import { Task } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
+import type { Task } from '../lib/wineryState';
 
 interface TasksTabProps {
   lang: Language;

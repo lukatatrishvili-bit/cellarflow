@@ -1,4 +1,4 @@
-import { WineLot, DailyFermLog, LabAnalysis, CompanyProfile } from './wineryState';
+import type { WineLot, DailyFermLog, LabAnalysis, CompanyProfile } from './wineryState';
 import { molecularSO2 } from './alerts';
 
 export interface PassportData {

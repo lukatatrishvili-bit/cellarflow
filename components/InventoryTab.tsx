@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { InventoryItem } from '../lib/wineryState';
+import type { InventoryItem } from '../lib/wineryState';
 import { 
   Plus, 
   Trash2, 

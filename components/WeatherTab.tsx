@@ -10,8 +10,9 @@ import {
   BarChart, Bar, Legend, LineChart, Line, Cell
 } from 'recharts';
 import ReactMarkdown from 'react-markdown';
-import { VineyardBlock } from '../lib/wineryState';
-import { Language } from '../lib/i18n';
+import type { VineyardBlock } from '../lib/wineryState';
+import type { Language } from '../lib/i18n';
+import { buildAgroForecastUrl } from '../lib/weatherApi';
 import WeatherExplorer from './WeatherExplorer';
 
 interface WeatherTabProps {
@@ -531,10 +532,11 @@ export default function WeatherTab({
     setLoading(true);
     setErrorStatus(false);
     try {
-      const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,probability_of_precipitation,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max&timezone=auto`
-      );
-      if (!response.ok) throw new Error('Network error');
+      const response = await fetch(buildAgroForecastUrl(lat, lng));
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.reason || 'Network error');
+      }
       const data = await response.json();
 
       // Format hourly points (next 24 hours)
@@ -555,7 +557,7 @@ export default function WeatherTab({
           temp: Math.round(data.hourly.temperature_2m[nowIdx + i] || 20),
           humidity: Math.round(data.hourly.relative_humidity_2m[nowIdx + i] || 60),
           wind: Math.round(data.hourly.wind_speed_10m[nowIdx + i] || 10),
-          pop: Math.round(data.hourly.probability_of_precipitation[nowIdx + i] || 10),
+          pop: Math.round(data.hourly.precipitation_probability[nowIdx + i] || 10),
         });
       }
 

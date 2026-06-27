@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Vessel, WineLot } from '../lib/wineryState';
-import { Language, translations } from '../lib/i18n';
+import type { Vessel, WineLot } from '../lib/wineryState';
+import { translations } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import { 
   Move, MapPin, Eye, Thermometer, ShieldAlert, Sparkles, HelpCircle 
 } from 'lucide-react';

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Wifi, WifiOff, RefreshCw } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import { IndexedDBQueue, SyncQueueManager } from '../lib/syncQueue';
 
 /**

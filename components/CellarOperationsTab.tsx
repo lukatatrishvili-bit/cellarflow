@@ -4,9 +4,9 @@ import {
   ArrowRightLeft, Combine, ShieldCheck, Beaker, Filter, Snowflake, Container,
   Package, Sparkles, Wrench, Plus, CheckCircle2, ClipboardList, AlertTriangle,
 } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 import type { WineLot, Vessel, InventoryItem, CellarOperation, CellarOperationType } from '../lib/wineryState';
-import { CELLAR_OPERATIONS } from '../lib/wineryState';
+import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
 
 interface Props {
   lang: Language;

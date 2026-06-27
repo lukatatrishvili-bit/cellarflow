@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
-import { Language } from '../lib/i18n';
+import type { Language } from '../lib/i18n';
 
 /**
  * PWA install affordance. Renders nothing until the browser fires
