@@ -55,7 +55,7 @@ function makeCtx(over: Partial<ExportContext> = {}): ExportContext {
   return {
     lang: 'ka', mode: 'filled', blankRows: 12, company, generatedBy: 'ტესტერი',
     dateRange: { from: '2026-01-01', to: '2026-12-31' }, accountingYear: '2026',
-    blocks, lots, vessels, harvests, samplings: [], inventory: [], labLogs, transfers, grapeIntakes: [], cellarOps: [], bottlingRuns: [],
+    blocks, lots, vessels, harvests, samplings: [], inventory: [], labLogs, transfers, grapeIntakes: [], cellarOps: [], bottlingRuns: [], salesDispatches: [],
     ...over,
   };
 }
@@ -179,6 +179,23 @@ describe('data mapping', () => {
     expect(annex8.totalsRow?.incoming).toBe(150); // (900 + 600) L → 150 dal
     // Closing finished-goods balance equals everything bottled (no sales tracked).
     expect(annex8.rows[annex8.rows.length - 1].balance).toBe(150);
+  });
+
+  it('Annex 8 reflects sales dispatches in the outgoing column and balance', () => {
+    const bottlingRuns: any[] = [
+      { id: 'BR1', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
+        operator: 'A', formats: { '0.75': 1200 }, volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0 },
+    ];
+    const salesDispatches: any[] = [
+      { id: 'SD1', date: '2026-06-20', customerName: 'Wine Bar', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026',
+        locationId: 'WH-1', locationName: 'WH', bottles: 400, pricePerBottle: 25, currency: 'GEL',
+        revenue: 10000, stockMovementId: 'SM1', operator: 'A' },
+    ];
+    const doc = buildDocument('annex_08_warehouse_movement', makeCtx({ bottlingRuns, salesDispatches }));
+    // 1200 bottles → 900 L → 0.75 L/bottle; 400 dispatched → 300 L → 30 dal out.
+    expect(doc.totalsRow?.incoming).toBe(90);  // 900 L bottled
+    expect(doc.totalsRow?.outgoing).toBe(30);  // 300 L sold
+    expect(doc.rows[doc.rows.length - 1].balance).toBe(60); // 90 − 30 dal on hand
   });
 
   it('Annex 3 maps structured grape intakes with gross/tare/net + reception sugar', () => {

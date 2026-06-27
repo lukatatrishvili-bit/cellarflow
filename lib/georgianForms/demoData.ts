@@ -9,7 +9,7 @@
 import type {
   VineyardBlock, WineLot, Vessel, HarvestRecord, GrapeSamplingRecord,
   InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord, CellarOperation,
-  BottlingRunRecord,
+  BottlingRunRecord, SalesDispatchRecord,
 } from '../wineryState';
 
 export const demoBlocks: VineyardBlock[] = [
@@ -147,6 +147,15 @@ export const demoBottlingRuns: BottlingRunRecord[] = [
   },
 ];
 
+export const demoSalesDispatches: SalesDispatchRecord[] = [
+  {
+    id: 'SD-2026-01', date: '2026-06-01', customerName: 'ვაინ ბარი "ღვინო & მე"', lotId: 'SAP-2025-02',
+    lotName: 'საფერავი რეზერვი 2025', locationId: 'WH-1', locationName: 'მთავარი საწყობი',
+    bottles: 1200, pricePerBottle: 28, currency: 'GEL', revenue: 33600, costPerBottle: 9.5,
+    cogs: 11400, grossProfit: 22200, marginPct: 66.07, stockMovementId: 'SM-DISP-1', operator: 'ლუკა',
+  },
+];
+
 export const demoPools = {
   blocks: demoBlocks,
   lots: demoLots,
@@ -159,4 +168,5 @@ export const demoPools = {
   grapeIntakes: demoGrapeIntakes,
   cellarOps: demoCellarOps,
   bottlingRuns: demoBottlingRuns,
+  salesDispatches: demoSalesDispatches,
 };

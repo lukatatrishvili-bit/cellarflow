@@ -292,17 +292,49 @@ const mapBottling: Mapper = (ctx) => {
 // construction (Σ Annex 8 incoming === Σ Annex 7 fill quantity). Sales/dispatch
 // are not tracked yet, so outgoing stays 0 and the balance is goods on hand.
 const mapWarehouse: Mapper = (ctx) => {
-  const runs = bottlingRunsInRange(ctx);
   const ka = ctx.lang === 'ka';
+  const runs = bottlingRunsInRange(ctx);
+  const dispatches = (ctx.salesDispatches || [])
+    .filter(d => (!ctx.lotId || d.lotId === ctx.lotId) && inRange(d.date, ctx));
 
-  if (runs.length > 0) {
-    const rows: DocRow[] = runs.map((r): DocRow => ({
-      date: r.date.slice(0, 10),
-      fromTo: `${ka ? 'ჩამოსხმა' : 'Bottling'} / ${r.lotName}${r.lotNumber ? ` (${r.lotNumber})` : ''}`,
-      incoming: litresToDal(r.volumeBottledL || 0),
-      outgoing: 0, // TODO: finished-goods sales / dispatch not tracked yet
-      balance: 0,
-    }));
+  if (runs.length > 0 || dispatches.length > 0) {
+    // Dispatches are recorded in bottles; value them in the same dal unit as the
+    // incoming column using each lot's average litres/bottle from its bottling
+    // runs (falling back to a standard 0.75 L bottle).
+    const volAgg = new Map<string, { litres: number; units: number }>();
+    for (const r of (ctx.bottlingRuns || [])) {
+      const units = (r.totalBottles || 0) + (r.totalCeramic || 0);
+      if (units <= 0 || !(r.volumeBottledL > 0)) continue;
+      const a = volAgg.get(r.lotId) || { litres: 0, units: 0 };
+      a.litres += r.volumeBottledL;
+      a.units += units;
+      volAgg.set(r.lotId, a);
+    }
+    const litresPerBottle = (lotId: string): number => {
+      const a = volAgg.get(lotId);
+      return a && a.units > 0 ? a.litres / a.units : 0.75;
+    };
+
+    const rows: DocRow[] = [];
+    for (const r of runs) {
+      rows.push({
+        date: r.date.slice(0, 10),
+        fromTo: `${ka ? 'ჩამოსხმა' : 'Bottling'} / ${r.lotName}${r.lotNumber ? ` (${r.lotNumber})` : ''}`,
+        incoming: litresToDal(r.volumeBottledL || 0),
+        outgoing: 0,
+        balance: 0,
+      });
+    }
+    for (const d of dispatches) {
+      rows.push({
+        date: (d.date || '').slice(0, 10),
+        fromTo: `${ka ? 'რეალიზაცია' : 'Sale'} / ${d.customerName || d.lotName || ''}`.trim(),
+        incoming: 0,
+        outgoing: litresToDal((d.bottles || 0) * litresPerBottle(d.lotId)),
+        balance: 0,
+      });
+    }
+    rows.sort((a, b) => (String(a.date) < String(b.date) ? -1 : String(a.date) > String(b.date) ? 1 : 0));
     applyRunningBalance(rows, { incoming: 'incoming', outgoing: 'outgoing', balance: 'balance' });
     return rows;
   }

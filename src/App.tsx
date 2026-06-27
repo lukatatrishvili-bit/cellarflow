@@ -1256,6 +1256,7 @@ export default function App() {
             grapeIntakes={state.grapeIntakes}
             cellarOps={state.cellarOps}
             bottlingRuns={state.bottlingRuns}
+            salesDispatches={state.salesDispatches}
           />
         </Suspense>
       ) : (
