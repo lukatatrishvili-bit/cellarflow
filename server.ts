@@ -159,6 +159,16 @@ function verificationLink(req: express.Request, username: string, token: string)
 }
 
 /**
+ * Whether the verification link may be returned in the API response. Only when
+ * no real mail provider delivered it (console fallback) AND we are not in
+ * production — in production the link must reach the user only by email, never
+ * in the HTTP response (which would defeat verification).
+ */
+function exposeVerifyLink(transport: 'smtp' | 'console'): boolean {
+  return transport === 'console' && process.env.NODE_ENV !== 'production';
+}
+
+/**
  * Resolve the authenticated user's *current* role from the database rather than
  * trusting the role baked into the session token at login time — so a role
  * change (or a deleted account) takes effect immediately on the next request.
@@ -295,9 +305,10 @@ app.post('/api/auth/register', async (req, res) => {
     requiresVerification: true,
     username: cleanUsername,
     email: cleanEmail,
-    // When no real mail provider delivered the message (dev / console transport),
-    // surface the link so the flow is completeable without SMTP.
-    ...(mail.transport === 'console' ? { devVerifyUrl: link } : {}),
+    // Outside production, when no real mail provider delivered the message,
+    // surface the link so the flow is completeable without SMTP. Never exposed
+    // in production — there a verification link must arrive only via email.
+    ...(exposeVerifyLink(mail.transport) ? { devVerifyUrl: link } : {}),
   });
 });
 
@@ -333,7 +344,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
     saveDB();
     const link = verificationLink(req, user.username, verification.token);
     const mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'MaraniOS' }));
-    if (mail.transport === 'console') {
+    if (exposeVerifyLink(mail.transport)) {
       return res.json({ ok: true, devVerifyUrl: link });
     }
   }
