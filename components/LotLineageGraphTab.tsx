@@ -54,6 +54,7 @@ interface Props {
 
 const typeMeta: Record<LineageNodeType, {
   label: string;
+  labelKa: string;
   icon: React.ComponentType<{ className?: string }>;
   card: string;
   badge: string;
@@ -61,6 +62,7 @@ const typeMeta: Record<LineageNodeType, {
 }> = {
   grape_intake: {
     label: 'Grape intake',
+    labelKa: 'მიღება',
     icon: Grape,
     card: 'border-emerald-200 bg-emerald-50/80 dark:border-emerald-900 dark:bg-emerald-950/20',
     badge: 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -68,6 +70,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   wine_lot: {
     label: 'Wine lot',
+    labelKa: 'პარტია',
     icon: Wine,
     card: 'border-rose-200 bg-white dark:border-rose-950 dark:bg-stone-900',
     badge: 'bg-rose-100 text-rose-800 border-rose-200',
@@ -75,6 +78,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   blend: {
     label: 'Blend',
+    labelKa: 'კუპაჟი',
     icon: GitMerge,
     card: 'border-amber-200 bg-amber-50/80 dark:border-amber-900 dark:bg-amber-950/20',
     badge: 'bg-amber-100 text-amber-900 border-amber-200',
@@ -82,6 +86,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   transfer: {
     label: 'Transfer',
+    labelKa: 'გადაღება',
     icon: Shuffle,
     card: 'border-sky-200 bg-sky-50/80 dark:border-sky-900 dark:bg-sky-950/20',
     badge: 'bg-sky-100 text-sky-800 border-sky-200',
@@ -89,6 +94,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   cellar_operation: {
     label: 'Operation',
+    labelKa: 'ოპერაცია',
     icon: Wrench,
     card: 'border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-950/50',
     badge: 'bg-stone-100 text-stone-700 border-stone-200',
@@ -96,6 +102,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   bottling: {
     label: 'Bottling',
+    labelKa: 'ჩამოსხმა',
     icon: PackageCheck,
     card: 'border-blue-200 bg-blue-50/80 dark:border-blue-900 dark:bg-blue-950/20',
     badge: 'bg-blue-100 text-blue-800 border-blue-200',
@@ -103,6 +110,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   storage: {
     label: 'Storage',
+    labelKa: 'საწყობი',
     icon: Boxes,
     card: 'border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-950/50',
     badge: 'bg-zinc-100 text-zinc-700 border-zinc-200',
@@ -110,6 +118,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   reservation: {
     label: 'Reservation',
+    labelKa: 'ჯავშანი',
     icon: ShoppingCart,
     card: 'border-purple-200 bg-purple-50/80 dark:border-purple-900 dark:bg-purple-950/20',
     badge: 'bg-purple-100 text-purple-800 border-purple-200',
@@ -117,6 +126,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   dispatch: {
     label: 'Dispatch',
+    labelKa: 'რეალიზაცია',
     icon: Truck,
     card: 'border-teal-200 bg-teal-50/80 dark:border-teal-900 dark:bg-teal-950/20',
     badge: 'bg-teal-100 text-teal-800 border-teal-200',
@@ -124,15 +134,15 @@ const typeMeta: Record<LineageNodeType, {
   },
 };
 
-const edgeLabel: Record<LineageEdge['type'], string> = {
-  created: 'created',
-  transferred: 'moved',
-  blended: 'blend component',
-  operated: 'operation',
-  bottled: 'bottled',
-  stored: 'stored',
-  reserved: 'reserved',
-  sold: 'sold',
+const edgeLabel: Record<LineageEdge['type'], { en: string; ka: string }> = {
+  created: { en: 'created', ka: 'შეიქმნა' },
+  transferred: { en: 'moved', ka: 'გადაღება' },
+  blended: { en: 'blend component', ka: 'კუპაჟის ნაწილი' },
+  operated: { en: 'operation', ka: 'ოპერაცია' },
+  bottled: { en: 'bottled', ka: 'ჩამოისხა' },
+  stored: { en: 'stored', ka: 'შენახვა' },
+  reserved: { en: 'reserved', ka: 'ჯავშანი' },
+  sold: { en: 'sold', ka: 'გაიყიდა' },
 };
 
 function nodeMeta(node: LineageNode) {
@@ -187,10 +197,12 @@ function LineageCard({
   node,
   selected,
   onSelect,
+  ka,
 }: {
   node: PositionedLineageNode;
   selected: boolean;
   onSelect: (node: PositionedLineageNode) => void;
+  ka: boolean;
 }) {
   const meta = nodeMeta(node);
   const Icon = meta.icon;
@@ -210,7 +222,7 @@ function LineageCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <span className={`text-[8px] uppercase font-mono font-black px-1.5 py-0.5 rounded border ${meta.badge}`}>
-              {meta.label}
+              {ka ? meta.labelKa : meta.label}
             </span>
             {node.date && <span className="text-[8px] font-mono text-stone-400">{node.date}</span>}
           </div>
@@ -233,12 +245,18 @@ function LineageCard({
   );
 }
 
-function DetailPanel({ node, edges }: { node: LineageNode | null; edges: LineageEdge[] }) {
+function DetailPanel({ node, edges, ka }: { node: LineageNode | null; edges: LineageEdge[]; ka: boolean }) {
   if (!node) {
     return (
-      <SectionCard title="Node details" subtitle="Select a card in the graph to inspect its metadata." icon={Info}>
+      <SectionCard
+        title={ka ? 'კვანძის დეტალები' : 'Node details'}
+        subtitle={ka ? 'აირჩიეთ ბარათი გრაფზე დეტალების სანახავად.' : 'Select a card in the graph to inspect its metadata.'}
+        icon={Info}
+      >
         <p className="text-xs text-stone-400 leading-relaxed">
-          You will see volume, bottles, date, linked operations, and audit metadata for the selected traceability event.
+          {ka
+            ? 'აქ გამოჩნდება მოცულობა, ბოთლები, თარიღი, დაკავშირებული ოპერაციები და აუდიტის მონაცემები.'
+            : 'You will see volume, bottles, date, linked operations, and audit metadata for the selected traceability event.'}
         </p>
       </SectionCard>
     );
@@ -250,13 +268,13 @@ function DetailPanel({ node, edges }: { node: LineageNode | null; edges: Lineage
   const metadata = Object.entries(node.metadata || {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
 
   return (
-    <SectionCard title={node.label} subtitle={meta.label} icon={Icon}>
+    <SectionCard title={node.label} subtitle={ka ? meta.labelKa : meta.label} icon={Icon}>
       <div className="grid grid-cols-2 gap-2 text-[11px]">
         {[
-          ['Date', node.date || '—'],
-          ['Lot', node.lotId || '—'],
-          ['Volume', node.volumeL ? `${node.volumeL.toLocaleString()} L` : '—'],
-          ['Bottles', node.bottles ? `${node.bottles.toLocaleString()} btl` : '—'],
+          [ka ? 'თარიღი' : 'Date', node.date || '—'],
+          [ka ? 'პარტია' : 'Lot', node.lotId || '—'],
+          [ka ? 'მოცულობა' : 'Volume', node.volumeL ? `${node.volumeL.toLocaleString()} L` : '—'],
+          [ka ? 'ბოთლები' : 'Bottles', node.bottles ? `${node.bottles.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}` : '—'],
         ].map(([label, value]) => (
           <div key={label} className="rounded-xl bg-stone-50 p-2 dark:bg-stone-950/50">
             <span className="block text-[8px] uppercase font-mono text-stone-400 font-bold">{label}</span>
@@ -267,11 +285,11 @@ function DetailPanel({ node, edges }: { node: LineageNode | null; edges: Lineage
 
       {relatedEdges.length > 0 && (
         <div className="mt-3">
-          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">Links</span>
+          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">{ka ? 'კავშირები' : 'Links'}</span>
           <div className="mt-1 space-y-1.5">
             {relatedEdges.map(edge => (
               <div key={edge.id} className="text-[10px] rounded-lg bg-stone-50 px-2 py-1.5 text-stone-600 dark:bg-stone-950/50 dark:text-stone-300">
-                <strong>{edgeLabel[edge.type]}</strong>
+                <strong>{ka ? edgeLabel[edge.type].ka : edgeLabel[edge.type].en}</strong>
                 {edge.label ? ` · ${edge.label}` : ''}
               </div>
             ))}
@@ -281,7 +299,7 @@ function DetailPanel({ node, edges }: { node: LineageNode | null; edges: Lineage
 
       {metadata.length > 0 && (
         <div className="mt-3">
-          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">Metadata</span>
+          <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">{ka ? 'მეტამონაცემები' : 'Metadata'}</span>
           <div className="mt-1 space-y-1.5 max-h-44 overflow-y-auto pr-1">
             {metadata.slice(0, 8).map(([key, value]) => (
               <div key={key} className="text-[10px] rounded-lg bg-stone-50 px-2 py-1.5 text-stone-600 dark:bg-stone-950/50 dark:text-stone-300">
@@ -296,6 +314,7 @@ function DetailPanel({ node, edges }: { node: LineageNode | null; edges: Lineage
 }
 
 function MiniMap({
+  ka,
   nodes,
   edges,
   nodesById,
@@ -304,6 +323,7 @@ function MiniMap({
   selectedNodeId,
   zoom,
 }: {
+  ka: boolean;
   nodes: PositionedLineageNode[];
   edges: LineageEdge[];
   nodesById: Map<string, PositionedLineageNode>;
@@ -317,7 +337,7 @@ function MiniMap({
   const safeHeight = Math.max(height, 1);
 
   return (
-    <SectionCard title="Mini map" subtitle={`${Math.round(zoom * 100)}% zoom`}>
+    <SectionCard title={ka ? 'მინი რუკა' : 'Mini map'} subtitle={`${Math.round(zoom * 100)}% zoom`}>
       <div className="relative h-20 overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-950/40">
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
           {edges.map(edge => {
@@ -457,9 +477,11 @@ export default function LotLineageGraphTab({
   return (
     <div className="space-y-5 animate-fade-in">
       <PageHeader
-        eyebrow={ka ? 'Lineage' : 'Lineage'}
-        title="Wine Code Traceability Tree"
-        description="A horizontal visual lineage for each wine code: grape intake, lot creation, blends, operations, bottling, storage, reservations, and dispatch."
+        eyebrow={ka ? 'მიკვლევადობა' : 'Lineage'}
+        title={ka ? 'ღვინის კოდის მიკვლევადობის ხე' : 'Wine Code Traceability Tree'}
+        description={ka
+          ? 'თითო ღვინის კოდის ვიზუალური გზა: ყურძნის მიღება, პარტიის შექმნა, კუპაჟები, ოპერაციები, ჩამოსხმა, საწყობი, ჯავშნები და რეალიზაცია.'
+          : 'A horizontal visual lineage for each wine code: grape intake, lot creation, blends, operations, bottling, storage, reservations, and dispatch.'}
         icon={GitMerge}
         actions={(
           <div className="flex flex-col sm:flex-row gap-2 min-w-0">
@@ -468,7 +490,7 @@ export default function LotLineageGraphTab({
               <input
                 value={query}
                 onChange={e => setQuery(e.target.value)}
-                placeholder="Search lot code, wine, variety..."
+                placeholder={ka ? 'ძებნა: კოდი, ღვინო, ჯიში...' : 'Search lot code, wine, variety...'}
                 className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-semibold outline-none focus:border-[#4e0e15] dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
               />
             </div>
@@ -519,7 +541,7 @@ export default function LotLineageGraphTab({
                   : 'border-stone-200 bg-stone-50 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300'
               }`}
             >
-              Selected path
+              {ka ? 'არჩეული გზა' : 'Selected path'}
             </button>
           </div>
         )}
@@ -530,7 +552,7 @@ export default function LotLineageGraphTab({
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.vintage}</span>
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.variety}</span>
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.stage}</span>
-          <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.currentVolume.toLocaleString()} L current</span>
+          <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.currentVolume.toLocaleString()} {ka ? 'ლ ამჟამად' : 'L current'}</span>
         </div>
       )}
 
@@ -541,7 +563,7 @@ export default function LotLineageGraphTab({
           return (
             <div key={type} className="bg-white border border-[#e8dfd5] rounded-xl p-3 dark:bg-stone-900 dark:border-stone-800">
               <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[8px] uppercase font-black ${meta.badge}`}>
-                <Icon className="w-3 h-3" /> {meta.label}
+                <Icon className="w-3 h-3" /> {ka ? meta.labelKa : meta.label}
               </span>
               <strong className="block mt-1 text-lg font-serif font-black text-stone-900 dark:text-amber-100">{counts[type] || 0}</strong>
             </div>
@@ -553,13 +575,13 @@ export default function LotLineageGraphTab({
         <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
           <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-center justify-between dark:border-stone-800">
             <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
-              <Sparkles className="w-4 h-4" /> Horizontal lineage canvas
+              <Sparkles className="w-4 h-4" /> {ka ? 'მიკვლევადობის ტილო' : 'Horizontal lineage canvas'}
             </span>
             <div className="flex items-center gap-2">
-              {focusPathOnly && <StatusBadge tone="brand">focused</StatusBadge>}
+              {focusPathOnly && <StatusBadge tone="brand">{ka ? 'ფოკუსი' : 'focused'}</StatusBadge>}
               <span className="text-[9px] font-mono text-stone-400">
-                {visibleNodes.length}/{positioned.nodes.length} nodes · {visibleEdges.length} links
-                {positioned.hasCycle ? ' · cycle warning' : ''}
+                {visibleNodes.length}/{positioned.nodes.length} {ka ? 'კვანძი' : 'nodes'} · {visibleEdges.length} {ka ? 'კავშირი' : 'links'}
+                {positioned.hasCycle ? (ka ? ' · ციკლის გაფრთხილება' : ' · cycle warning') : ''}
               </span>
             </div>
           </div>
@@ -567,8 +589,8 @@ export default function LotLineageGraphTab({
           {positioned.nodes.length === 0 ? (
             <EmptyState
               icon={GitMerge}
-              title="No lineage graph available yet"
-              description="Create a wine lot or receive grapes to begin traceability."
+              title={ka ? 'მიკვლევადობის გრაფი ჯერ ცარიელია' : 'No lineage graph available yet'}
+              description={ka ? 'შექმენით პარტია ან მიიღეთ ყურძენი მიკვლევადობის დასაწყებად.' : 'Create a wine lot or receive grapes to begin traceability.'}
             />
           ) : (
             <div className="overflow-auto bg-[#fbfaf7] dark:bg-stone-950/40">
@@ -599,6 +621,7 @@ export default function LotLineageGraphTab({
                       node={node}
                       selected={selectedNode?.id === node.id}
                       onSelect={(n) => setSelectedNodeId(n.id)}
+                      ka={ka}
                     />
                   ))}
                 </div>
@@ -608,14 +631,19 @@ export default function LotLineageGraphTab({
         </div>
 
         <div className="space-y-4">
-          <DetailPanel node={selectedNode} edges={positioned.edges} />
-          <SectionCard title="Reading the tree" icon={Info}>
+          <DetailPanel node={selectedNode} edges={positioned.edges} ka={ka} />
+          <SectionCard title={ka ? 'როგორ იკითხება ხე' : 'Reading the tree'} icon={Info}>
             <div className="space-y-2 text-[11px] leading-relaxed text-stone-500 dark:text-stone-400">
-              <p>Cards move left-to-right through the wine lifecycle. Blend nodes merge two or more parent wine-code lines into one result lot.</p>
-              <p>Use selected-path mode when a blend becomes visually dense; it keeps the connected audit path visible and hides unrelated noise.</p>
+              <p>{ka
+                ? 'ბარათები მარცხნიდან მარჯვნივ მიჰყვება ღვინის სასიცოცხლო ციკლს. კუპაჟის კვანძი აერთიანებს ორ ან მეტ საწყის ხაზს ერთ პარტიაში.'
+                : 'Cards move left-to-right through the wine lifecycle. Blend nodes merge two or more parent wine-code lines into one result lot.'}</p>
+              <p>{ka
+                ? 'როცა კუპაჟი ვიზუალურად იტვირთება, ჩართეთ „არჩეული გზა" — დარჩება მხოლოდ დაკავშირებული აუდიტის ხაზი.'
+                : 'Use selected-path mode when a blend becomes visually dense; it keeps the connected audit path visible and hides unrelated noise.'}</p>
             </div>
           </SectionCard>
           <MiniMap
+            ka={ka}
             nodes={visibleNodes}
             edges={visibleEdges}
             nodesById={nodesById}

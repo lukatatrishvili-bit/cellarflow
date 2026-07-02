@@ -48,7 +48,15 @@ export interface CellarNote {
 const initialCellarNotes: CellarNote[] = [];
 
 export function useWineryState() {
-  const [lang, setLang] = useState<Language>('en');
+  const [lang, setLang] = useState<Language>(() => {
+    // Restore the chosen language across reloads (set by the header toggle and
+    // by login, which adopts the account's saved language).
+    try {
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('vinea_lang') : null;
+      if (stored === 'ka' || stored === 'en' || stored === 'it' || stored === 'fr' || stored === 'de') return stored;
+    } catch { /* ignore */ }
+    return 'en';
+  });
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isClient, setIsClient] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -354,6 +362,13 @@ export function useWineryState() {
   const hydrateAuthenticatedUser = async (user: UserProfile) => {
     setCurrentUser(user);
     setIsLoggedIn(true);
+
+    // Speak the user's saved language from the first screen after login —
+    // a Georgian account should not land in an English UI.
+    if (user.language && (user.language === 'ka' || user.language === 'en')) {
+      setLang(user.language);
+      try { localStorage.setItem('vinea_lang', user.language); } catch { /* ignore */ }
+    }
 
     try {
       await fetchOrganizations();

@@ -835,6 +835,13 @@ app.post('/api/auth/google/configure', (req, res) => {
 });
 
 app.get('/api/dev/seed-testuser1', async (req, res) => {
+  // Demo seeding replaces the whole organization dataset — anyone-can-GET is
+  // fine on a dev machine but must be master-admin-only in production.
+  if (process.env.NODE_ENV === 'production') {
+    const auth = await requireMasterAdmin(req, res);
+    if (!auth) return;
+    recordAdminAction(auth.username, 'seed.testuser1');
+  }
   try {
     await refreshCoreMetadataFromPostgres();
     const db = getDB();
@@ -874,26 +881,29 @@ app.get('/api/dev/seed-testuser1', async (req, res) => {
     // Save organizational data using standard persistence routine
     await saveUserData('testuser1', seededData, { updatedBy: 'seed-testuser1' });
 
+    // The strict round-trip check only applies when PostgreSQL is the active
+    // backend; on the GCS/local JSON fallback `reload...` returns null even
+    // though saveUserData persisted the seed — failing there was a bug.
     const persisted = await reloadOrganizationDataFromPostgres(orgId);
-    const persistedData = persisted?.data;
-    const expectedHarvestIds = new Set(seededData.harvests.map((item: any) => item.id));
-    const expectedSamplingIds = new Set(seededData.samplings.map((item: any) => item.id));
-    const lotIds = new Set(seededData.lots.map((lot: any) => lot.id));
-    const persistedMatchesSeed = Boolean(
-      persistedData &&
-      persistedData.lots.length === seededData.lots.length &&
-      persistedData.harvests.length === seededData.harvests.length &&
-      persistedData.samplings.length === seededData.samplings.length &&
-      persistedData.grapeIntakes.every((intake: any) => lotIds.has(intake.createdLotId)) &&
-      persistedData.harvests.every((item: any) => expectedHarvestIds.has(item.id)) &&
-      persistedData.samplings.every((item: any) => expectedSamplingIds.has(item.id))
-    );
-
-    if (!persistedMatchesSeed) {
-      throw new Error('Seed data was generated but did not persist exactly to PostgreSQL. Please retry after the deployment is warm.');
+    if (persisted) {
+      const persistedData = persisted.data;
+      const expectedHarvestIds = new Set(seededData.harvests.map((item: any) => item.id));
+      const expectedSamplingIds = new Set(seededData.samplings.map((item: any) => item.id));
+      const lotIds = new Set(seededData.lots.map((lot: any) => lot.id));
+      const persistedMatchesSeed = Boolean(
+        persistedData.lots.length === seededData.lots.length &&
+        persistedData.harvests.length === seededData.harvests.length &&
+        persistedData.samplings.length === seededData.samplings.length &&
+        persistedData.grapeIntakes.every((intake: any) => lotIds.has(intake.createdLotId)) &&
+        persistedData.harvests.every((item: any) => expectedHarvestIds.has(item.id)) &&
+        persistedData.samplings.every((item: any) => expectedSamplingIds.has(item.id))
+      );
+      if (!persistedMatchesSeed) {
+        throw new Error('Seed data was generated but did not persist exactly to PostgreSQL. Please retry after the deployment is warm.');
+      }
     }
-    
-    res.status(200).send(`Successfully seeded Kvareli demonstration data into organization [${orgId}] for testuser1.`);
+
+    res.status(200).send(`Successfully seeded Kvareli demonstration data into organization [${orgId}] for testuser1 (backend: ${persisted ? 'postgres' : 'json-fallback'}).`);
   } catch (err) {
     console.error('Failed to seed testuser1:', err);
     res.status(500).send(`Seeding failed: ${err instanceof Error ? err.message : String(err)}`);
