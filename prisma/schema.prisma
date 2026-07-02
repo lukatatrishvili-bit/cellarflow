@@ -1,0 +1,530 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                 String          @id @default(cuid())
+  username           String          @unique
+  email              String          @unique
+  fullName           String
+  role               String
+  language           String          @default("en")
+  passwordHash       String
+  emailVerified      Boolean         @default(false)
+  verifyTokenHash    String?
+  verifyTokenExpires BigInt?
+  isDemo             Boolean         @default(false)
+  activeOrganizationId String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  memberships        Membership[]
+}
+
+model Organization {
+  id               String          @id @default(cuid())
+  name             String
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  memberships      Membership[]
+  invitations      Invitation[]
+
+  companyProfile   CompanyProfile?
+  vessels          Vessel[]
+  lots             WineLot[]
+  fermlogs         DailyFermLog[]
+  lablogs          LabAnalysis[]
+  inventory        InventoryItem[]
+  tasks            Task[]
+  notes            Note[]
+  blocks           VineyardBlock[]
+  phenologyLogs    PhenologyRecord[]
+  sprays           SprayRecord[]
+  scoutings        ScoutingRecord[]
+  soilRecords      SoilAnalysisRecord[]
+  samplings        GrapeSamplingRecord[]
+  harvests         HarvestRecord[]
+  irrigationLogs   IrrigationRecord[]
+  fertilizerLogs   FertilizationRecord[]
+  auditLogs        AuditLog[]
+  bottlingRuns     BottlingRun[]
+  transfers        Transfer[]
+  grapeIntakes     GrapeIntake[]
+  cellarOps        CellarOp[]
+  costEntries      CostEntry[]
+  storageLocations StorageLocation[]
+  stockMovements   StockMovement[]
+  salesDispatches  SalesDispatch[]
+  salesOrders      SalesOrder[]
+
+  /// Authoritative JSONB snapshot of the full winery/vineyard ERP state.
+  /// The detailed collection tables below are retained for compatibility but
+  /// are not the production source of truth for this milestone.
+  state            OrganizationState?
+}
+
+model OrganizationState {
+  organizationId String       @id
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  data           Json
+  version        Int          @default(1)
+  updatedBy      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [username], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           String       // "Owner/Admin", "Winemaker", "Lab Technician", "Cellar Worker", "Read-Only"
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, organizationId])
+}
+
+model Invitation {
+  id             String       @id @default(cuid())
+  email          String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           String       // "Owner/Admin", "Winemaker", etc.
+  token          String       @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  createdAt      DateTime     @default(now())
+}
+
+model LoginAttempt {
+  key         String   @id
+  count       Int      @default(0)
+  firstAt     DateTime
+  lockedUntil DateTime?
+  updatedAt   DateTime @updatedAt
+}
+
+model CompanyProfile {
+  id               String       @id @default(cuid())
+  organizationId   String       @unique
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  companyName      String       @default("")
+  wineryName       String       @default("")
+  country          String       @default("")
+  region           String       @default("")
+  municipality     String       @default("")
+  address          String       @default("")
+  contactEmail     String       @default("")
+  phone            String       @default("")
+  website          String       @default("")
+  measurementUnits String       @default("metric")
+  currency         String       @default("GEL")
+  latitude         Float?
+  longitude        Float?
+}
+
+model Vessel {
+  id                  String       @id
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type                String
+  shape               String
+  capacity            Float
+  currentVolume       Float
+  assignedLotId       String?
+  cleaningStatus      String
+  lastCleaned         String
+  temperature         Float
+  coolingJacketActive Boolean
+  targetTemperature   Float?
+  lastOperation       String
+  locationDetails     String?
+  xGrid               Int?
+  yGrid               Int?
+  lastSealedDate      String?
+  soilTemperature     Float?
+}
+
+model WineLot {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  vintage        Int
+  variety        String
+  vineyardBlock  String
+  region         String
+  initialVolume  Float
+  currentVolume  Float
+  wineClass      String
+  stage          String
+  createdAt      String
+  history        Json         @default("[]")
+  sensoryProfile Json?
+}
+
+model DailyFermLog {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tankId         String
+  lotId          String
+  date           String
+  temperature    Float
+  density        Float
+  sugar          Float
+  ph             Float
+  tastingNotes   String
+  capManagement  String
+  additives      String
+}
+
+model LabAnalysis {
+  id                String       @id
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lotId             String
+  tankId            String
+  date              String
+  alcoholPct        Float
+  volatileAcid      Float
+  freeSo2           Float
+  totalSo2          Float
+  residualSugar     Float
+  ph                Float
+  malicAcid         Float
+  lacticAcid        Float
+  turbidity         Float
+  technician        String
+  titratableAcidity Float
+}
+
+model InventoryItem {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  category       String
+  quantity       Float
+  unit           String
+  safetyStock    Float
+  lastReorder    String?
+  supplier       String?
+  costPerUnit    Float
+  location       String?
+  notes          String?
+}
+
+model Task {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  priority       String
+  dueDate        String
+  assignedTo     String?
+  status         String
+  description    String
+  lastModified   String
+}
+
+model Note {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  content        String
+  category       String
+  createdAt      String
+  tags           Json         @default("[]")
+}
+
+model VineyardBlock {
+  id                   String       @id
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                 String
+  vineyardName         String
+  locationName         String
+  latitude             Float
+  longitude            Float
+  area                 Float
+  elevation            Float
+  slope                String
+  aspect               String
+  soilType             String
+  grapeVariety         String
+  clone                String?
+  rootstock            String?
+  plantingYear         Int
+  spacing              String
+  rowsCount            Int
+  vinesCount           Int
+  trainingSystem       String
+  pruningSystem        String
+  irrigationEnabled    Boolean
+  farmingStatus        String
+  currentPhenology     String
+  estimatedHarvestDate String
+  notes                String
+  boundary             Json?
+}
+
+model PhenologyRecord {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId        String
+  stage          String
+  date           String
+  gdd            Float
+  confidence     Float
+  status         String
+  notes          String
+  observer       String
+}
+
+model SprayRecord {
+  id                     String       @id
+  organizationId         String
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId                String
+  date                   String
+  targetProblem          String
+  productName            String
+  activeIngredient       String
+  dosePerHa              Float
+  waterVolumePerHa       Float
+  totalProductUsed       Float
+  totalWaterUsed         Float
+  operator               String
+  machineryUsed          String
+  windSpeed              Float
+  temperature            Float
+  humidity               Float
+  preHarvestIntervalDays Int
+  reEntryIntervalHours   Int
+  notes                  String
+}
+
+model ScoutingRecord {
+  id                String       @id
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId           String
+  date              String
+  locationDetails   String
+  problemType       String
+  severity          String
+  notes             String
+  recommendedAction String
+  followUpTaskId    String?
+}
+
+model SoilAnalysisRecord {
+  id               String       @id
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId          String
+  date             String
+  pH               Float
+  organicMatterPct Float
+  nitrogenMgKg     Float
+  phosphorusMgKg   Float
+  potassiumMgKg    Float
+  calciumMgKg      Float
+  magnesiumMgKg    Float
+  salinityDsm      Float
+  notes            String
+}
+
+model GrapeSamplingRecord {
+  id                   String       @id
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId              String
+  date                 String
+  brix                 Float
+  pH                   Float
+  totalAcidityGL       Float
+  berryWeightG         Float
+  phenolicMaturity     String
+  seedColor            String
+  tasteNotes           String
+  diseaseCondition     String
+  estimatedHarvestDate String
+  notes                String
+}
+
+model HarvestRecord {
+  id                   String       @id
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId              String
+  variety              String
+  estimatedHarvestDate String
+  estimatedTons        Float
+  actualHarvestDate    String?
+  actualHarvestedKg    Float?
+  pickingMethod        String
+  grapeCondition       String
+  sentToGvino          Boolean
+  associatedLotId      String?
+  notes                String
+}
+
+model IrrigationRecord {
+  id                    String       @id
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId               String
+  date                  String
+  durationHours         Float
+  waterVolumeLiters     Float
+  soilMoistureBeforePct Float
+  soilMoistureAfterPct  Float
+  weatherConditions     String
+  notes                 String
+}
+
+model FertilizationRecord {
+  id                String       @id
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  blockId           String
+  date              String
+  productName       String
+  dosePerHa         Float
+  totalAmountUsed   Float
+  applicationMethod String
+  operator          String
+  notes             String
+}
+
+model AuditLog {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  timestamp      String
+  action         String
+  details        String
+  operator       String
+}
+
+model BottlingRun {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lotId          String
+  date           String
+  bottleSize     String
+  bottlesCount   Int
+  totalVolume    Float
+  closureType    String
+  labelDesign    String?
+  qaPassed       Boolean
+  notes          String
+}
+
+model Transfer {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  date           String
+  lotId          String
+  sourceTankId   String
+  destTankId     String
+  volume         Float
+  lossVolume     Float
+  purpose        String
+  operator       String
+  notes          String
+}
+
+model GrapeIntake {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  date           String
+  supplier       String
+  variety        String
+  weightKg       Float
+  brix           Float
+  ph             Float
+  status         String
+  associatedLot  String
+}
+
+model CellarOp {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  date           String
+  type           String
+  targetId       String
+  description    String
+  operator       String
+  status         String
+}
+
+model CostEntry {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  date           String
+  category       String
+  amount         Float
+  description    String
+  lotId          String?
+  source         String
+}
+
+model StorageLocation {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  type           String
+  capacity       Float
+  notes          String?
+}
+
+model StockMovement {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  date           String
+  itemId         String
+  type           String
+  quantity       Float
+  reference      String?
+}
+
+model SalesDispatch {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  date           String
+  customerName   String
+  items          Json         @default("[]")
+  status         String
+}
+
+model SalesOrder {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  date           String
+  customerName   String
+  items          Json         @default("[]")
+  totalAmount    Float
+  status         String
+}

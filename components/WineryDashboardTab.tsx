@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog, LabAnalysis, Task } from '../lib/wineryState';
@@ -153,15 +153,17 @@ export default function WineryDashboardTab({
     ? chartLotId
     : chartableLotIds[0] || '';
 
-  const mappedTanks = vessels.map(v => ({
-    id: v.id,
-    name: v.id,
-    capacity: v.capacity,
-    currentVolume: v.currentVolume,
-    status: v.assignedLotId
-      ? (lots.find(l => l.id === v.assignedLotId)?.stage === 'fermenting' ? 'fermenting' : 'occupied')
-      : (v.cleaningStatus === 'dirty' ? 'cleaning' : 'empty')
-  }));
+  const mappedTanks = useMemo(() => {
+    return vessels.map(v => ({
+      id: v.id,
+      name: v.id,
+      capacity: v.capacity,
+      currentVolume: v.currentVolume,
+      status: v.assignedLotId
+        ? (lots.find(l => l.id === v.assignedLotId)?.stage === 'fermenting' ? 'fermenting' : 'occupied')
+        : (v.cleaningStatus === 'dirty' ? 'cleaning' : 'empty')
+    }));
+  }, [vessels, lots]);
 
   const recentFermLogs = [...fermLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
   const recentTasks = pendingTasks.slice(0, 6);

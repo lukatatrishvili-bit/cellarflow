@@ -24,7 +24,7 @@ export function readDemoAccountConfig(env: NodeJS.ProcessEnv = process.env): Dem
   return {
     enabled: TRUE_VALUES.has(String(env.DEMO_LOGIN_ENABLED || '').trim().toLowerCase()),
     username: String(env.DEMO_USERNAME || 'demo').trim().toLowerCase(),
-    email: String(env.DEMO_EMAIL || 'demo@maranios.app').trim().toLowerCase(),
+    email: String(env.DEMO_EMAIL || 'demo@vinos.app').trim().toLowerCase(),
     fullName: String(env.DEMO_FULL_NAME || 'Demo Cellar').trim(),
     role: ALLOWED_ROLES.has(requestedRole) ? requestedRole : 'Winemaker',
   };

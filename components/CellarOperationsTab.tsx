@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   Grape, Droplets, FlaskConical, Thermometer, RefreshCw, ArrowDownToLine,
   ArrowRightLeft, Combine, ShieldCheck, Beaker, Filter, Snowflake, Container,
@@ -17,6 +17,9 @@ interface Props {
   currentUserName: string;
   onAddOperation: (input: Omit<CellarOperation, 'id' | 'lotName' | 'volumeBeforeL' | 'materialName' | 'unit'>) => string;
   setToastMessage?: (m: string) => void;
+  /** Vessel to preselect (QR scan / vessel-drawer quick action). Applied once. */
+  prefillVesselId?: string;
+  clearPrefill?: () => void;
 }
 
 const OP_ICONS: Record<CellarOperationType, React.ComponentType<{ className?: string }>> = {
@@ -30,6 +33,7 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 
 export default function CellarOperationsTab({
   lang, lots, vessels, inventory, ops, currentUserName, onAddOperation, setToastMessage,
+  prefillVesselId, clearPrefill,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
@@ -57,11 +61,32 @@ export default function CellarOperationsTab({
     if (!lotId && activeLots.length) setLotId(activeLots[0].id);
   }, [activeLots, lotId]);
 
+  // Scanned / drawer-selected vessel: apply once, selecting its batch too.
+  const prefillGuard = useRef(false);
+  useEffect(() => {
+    if (!prefillVesselId) return;
+    const vessel = vessels.find(v => v.id === prefillVesselId);
+    if (vessel) {
+      prefillGuard.current = true;
+      setVesselId(vessel.id);
+      if (vessel.assignedLotId && lots.some(l => l.id === vessel.assignedLotId)) {
+        setLotId(vessel.assignedLotId);
+      }
+    }
+    clearPrefill?.();
+  }, [prefillVesselId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // When the batch changes, default the vessel to the one holding it and prefill volume.
   useEffect(() => {
     if (!lot) return;
-    const holding = vessels.find(v => v.assignedLotId === lot.id);
-    setVesselId(holding ? holding.id : '');
+    if (prefillGuard.current) {
+      // A scanned vessel was just applied — don't overwrite it (the vessel may
+      // be empty and unrelated to the default batch).
+      prefillGuard.current = false;
+    } else {
+      const holding = vessels.find(v => v.assignedLotId === lot.id);
+      setVesselId(holding ? holding.id : '');
+    }
     setVolumeAfter(meta.affectsVolume ? String(round1(lot.currentVolume)) : '');
   }, [lotId]); // eslint-disable-line react-hooks/exhaustive-deps
 

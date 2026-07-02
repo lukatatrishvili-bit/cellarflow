@@ -5,6 +5,7 @@ import {
   isActiveReservation,
   reservedBottlesFor,
   reservedByLocationLot,
+  stockAvailabilityPosition,
   type ReservationLike,
 } from '../lib/sales';
 
@@ -73,6 +74,22 @@ describe('sales reservations', () => {
       lotId: 'LOT-1',
       asOfDate: '2026-06-27',
     })).toBe(70);
+  });
+
+  it('returns the full on-hand, reserved, and available stock position', () => {
+    expect(stockAvailabilityPosition({
+      onHandBottles: 120,
+      orders,
+      locationId: 'loc-1',
+      lotId: 'LOT-1',
+      asOfDate: '2026-06-27',
+    })).toEqual({
+      locationId: 'loc-1',
+      lotId: 'LOT-1',
+      onHandBottles: 120,
+      reservedBottles: 50,
+      availableBottles: 70,
+    });
   });
 
   it('can exclude the order being fulfilled so its own reservation remains available', () => {

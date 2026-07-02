@@ -7,12 +7,70 @@ This guide explains how to build, run, and publish the Vinea ERP application in 
 ## Technical Architecture Overview
 * **Frontend**: React + Vite (Single Page Application).
 * **Backend**: Express (Node.js) server running on TypeScript.
-* **Database**: Local JSON storage (`db.json`) handled by Express sync.
+* **Database**: Cloud SQL PostgreSQL in production, with per-organization JSONB state and GCS JSON backup/fallback.
 * **AI Engine**: Google GenAI SDK (requires `GEMINI_API_KEY` configured in the environment).
 
 ---
 
-## 0. Persistent Database on Google Cloud Run (IMPORTANT)
+## 0. Production Database on Google Cloud Run (IMPORTANT)
+
+Production should use **Cloud SQL PostgreSQL** as the authoritative database.
+The app stores users, organizations, memberships, and invitations in normalized
+tables, and stores each organization's full winery/vineyard ERP state in the
+`OrganizationState` JSONB table. This keeps the current app data shape stable
+while removing the single shared `db.json` production risk.
+
+GCS remains useful as a backup/export layer: after successful PostgreSQL saves,
+the server mirrors a JSON backup to `GCS_BUCKET/GCS_DB_OBJECT`. If PostgreSQL is
+unavailable during startup, the app can still fall back to GCS/local JSON.
+
+### Step 0.1: Create Cloud SQL PostgreSQL
+```bash
+gcloud services enable sqladmin.googleapis.com secretmanager.googleapis.com --project cellarflow
+
+gcloud sql instances create cellarflow-postgres \
+  --project cellarflow \
+  --database-version POSTGRES_16 \
+  --region europe-west1 \
+  --edition ENTERPRISE \
+  --tier db-f1-micro \
+  --storage-size 10GB \
+  --storage-type SSD \
+  --storage-auto-increase \
+  --availability-type ZONAL \
+  --backup-start-time 03:00
+
+gcloud sql databases create cellarflow --instance cellarflow-postgres --project cellarflow
+gcloud sql users create cellarflow_app --instance cellarflow-postgres --project cellarflow --password "REPLACE_WITH_STRONG_PASSWORD"
+```
+
+### Step 0.2: Store DATABASE_URL in Secret Manager
+Use the Cloud SQL Unix socket path in the Prisma URL:
+
+```text
+postgresql://cellarflow_app:REPLACE_WITH_STRONG_PASSWORD@localhost/cellarflow?host=/cloudsql/cellarflow:europe-west1:cellarflow-postgres
+```
+
+Store it as `cellarflow-database-url`, and grant the Cloud Run runtime service
+account `roles/secretmanager.secretAccessor` plus `roles/cloudsql.client`.
+
+### Step 0.3: Deploy with Cloud SQL attached
+```bash
+gcloud run deploy cellarflow-app --source . --region europe-west1 --allow-unauthenticated \
+  --max-instances=1 \
+  --add-cloudsql-instances cellarflow:europe-west1:cellarflow-postgres \
+  --update-secrets DATABASE_URL=cellarflow-database-url:latest \
+  --update-env-vars NODE_ENV=production,PRISMA_DB_PUSH_ON_STARTUP=true,GCS_BUCKET=cellarflow-db,GCS_DB_OBJECT=db.json
+```
+
+`PRISMA_DB_PUSH_ON_STARTUP=true` lets the container apply additive Prisma schema
+changes before serving. Start new production deployments with
+`--max-instances=1`, verify the Master Admin "Cloud Run Scaling Readiness"
+panel, then raise max instances gradually only after smoke/load testing. Cloud
+SQL deployments now use PostgreSQL-backed auth/org metadata, a shared login
+attempt store, request-scoped winery reads, and versioned JSONB writes.
+
+## 0b. GCS backup/fallback bucket
 
 Cloud Run's container filesystem is **ephemeral** — `db.json` (all per-user data)
 is wiped on every new revision, deploy, or instance scale-up. To make data
@@ -35,13 +93,13 @@ gcloud storage buckets add-iam-policy-binding gs://cellarflow-db \
   --role="roles/storage.objectAdmin"
 ```
 
-### Step 0.3: Deploy with the bucket configured
+### Fallback-only deploy with the bucket configured
 ```bash
 gcloud run deploy cellarflow-app --source . --region europe-west1 --allow-unauthenticated \
   --max-instances=1 \
   --set-env-vars NODE_ENV=production,GCS_BUCKET=cellarflow-db
 ```
-The object key defaults to `db.json`; override with `GCS_DB_OBJECT=...` if needed.
+Use this only when Cloud SQL is intentionally not configured. The object key defaults to `db.json`; override with `GCS_DB_OBJECT=...` if needed.
 Auth uses the service account automatically (Application Default Credentials) —
 no key files. On first boot the freshly-seeded DB is uploaded; thereafter every
 revision restores from the bucket, so data survives redeploys.
@@ -57,8 +115,8 @@ It deploys with:
 
 * Cloud Run source deploy (`gcloud run deploy --source .`)
 * public unauthenticated access
-* `--max-instances=1`
-* GCS-backed `db.json` persistence
+* `--max-instances=1` by default for conservative rollout
+* GCS-backed `db.json` persistence when Cloud SQL is not configured
 * automatic bucket creation if missing
 * `/api/health` verification after deploy
 
@@ -109,12 +167,12 @@ The health endpoint intentionally exposes only non-secret deployment state:
 persistence backend, Cloud Run revision metadata, configured/not-configured
 integration booleans, and production warnings.
 
-> **`--max-instances=1` is required.** The whole DB is a single shared GCS
-> object held in each instance's memory. With two or more instances running
-> concurrently, their writes overwrite each other (last upload wins → lost
-> data). Capping at one instance avoids this. To scale beyond one instance,
-> move to per-user object keys, Cloud SQL, or Firestore. The server logs a
-> warning at startup reminding you of this.
+> **GCS fallback still requires `--max-instances=1`.** When Cloud SQL is not
+> configured, the whole DB is a single shared GCS object held in each instance's
+> memory. With two or more instances running concurrently, their writes can
+> overwrite each other. Cloud SQL PostgreSQL is the scalable production backend:
+> use the Master Admin readiness panel and load tests before raising Cloud Run
+> above one instance.
 
 ---
 

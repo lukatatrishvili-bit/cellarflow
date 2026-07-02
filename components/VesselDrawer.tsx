@@ -4,6 +4,316 @@ import { X, Thermometer, RefreshCw } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import QvevriCrossSection from './QvevriCrossSection';
+import { ambientMotionEnabled, prefersReducedMotion } from './motion';
+
+const WINE_COLORS: Record<string, { liquid: string; surface: string }> = {
+  red: { liquid: '#5a1020', surface: '#7c1c30' },
+  amber: { liquid: '#b06a16', surface: '#d18e2b' },
+  white: { liquid: '#c2a448', surface: '#dabf6a' },
+  rose: { liquid: '#c05a6e', surface: '#d8808f' },
+  sparkling: { liquid: '#cdb06a', surface: '#e6d089' },
+  fortified: { liquid: '#65220f', surface: '#86371f' },
+  base_wine: { liquid: '#94875a', surface: '#afa273' },
+};
+
+function SteelTankCrossSection({
+  fillPct,
+  wineClass = 'red',
+  temperature,
+  targetTemperature,
+  coolingJacketActive = false,
+  lang = 'en',
+}: {
+  fillPct: number;
+  wineClass?: string;
+  temperature: number;
+  targetTemperature?: number | null;
+  coolingJacketActive?: boolean;
+  lang?: string;
+}) {
+  const pct = Math.max(0, Math.min(100, isFinite(fillPct) ? fillPct : 0));
+  const colors = WINE_COLORS[wineClass] || WINE_COLORS.red;
+  const ripple = ambientMotionEnabled();
+  const reduce = prefersReducedMotion();
+
+  const WAVE = 'M -50 15 q 30 -12 60 0 t 60 0 t 60 0 t 60 0 t 60 0 t 60 0 v 350 h -300 z';
+
+  const topY = 100;
+  const bottomY = 320;
+  const cavityHeight = bottomY - topY;
+  const targetSurfaceY = bottomY - (pct / 100) * cavityHeight;
+
+  return (
+    <div className="relative w-full max-w-sm mx-auto bg-stone-50 dark:bg-stone-950/25 border border-[#e8dfd5] dark:border-stone-850 rounded-2xl p-4 overflow-hidden shadow-xs">
+      <svg viewBox="0 0 300 400" className="w-full h-auto select-none">
+        <defs>
+          <clipPath id="steel-tank-inner-clip">
+            <path d="M 96 100 C 96 76, 204 76, 204 100 V 320 C 204 344, 96 344, 96 320 Z" />
+          </clipPath>
+          <linearGradient id="steel-sheen" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#d4d4d8" />
+            <stop offset="30%" stopColor="#f4f4f5" />
+            <stop offset="70%" stopColor="#a1a1aa" />
+            <stop offset="100%" stopColor="#71717a" />
+          </linearGradient>
+        </defs>
+
+        <g stroke="#e2e8f0" strokeWidth={0.5} opacity={0.3} className="dark:stroke-stone-800">
+          <line x1="50" y1="0" x2="50" y2="400" />
+          <line x1="250" y1="0" x2="250" y2="400" />
+          <line x1="0" y1="100" x2="300" y2="100" />
+          <line x1="0" y1="200" x2="300" y2="200" />
+          <line x1="0" y1="300" x2="300" y2="300" />
+        </g>
+
+        <path d="M 90 320 V 375 L 85 380 H 98 L 100 320 Z" fill="#71717a" stroke="#52525b" strokeWidth={1} />
+        <path d="M 210 320 V 375 L 215 380 H 202 L 200 320 Z" fill="#71717a" stroke="#52525b" strokeWidth={1} />
+
+        <path d="M 90 100 C 90 70, 210 70, 210 100 V 320 C 210 350, 90 350, 90 320 Z" fill="url(#steel-sheen)" stroke="#52525b" strokeWidth={2} />
+
+        <path d="M 96 100 C 96 76, 204 76, 204 100 V 320 C 204 344, 96 344, 96 320 Z" fill="#18181b" />
+
+        <g clipPath="url(#steel-tank-inner-clip)">
+          <motion.g
+            initial={false}
+            animate={{ y: targetSurfaceY }}
+            transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 45, damping: 15 }}
+          >
+            {ripple ? (
+              <motion.path
+                d={WAVE}
+                fill={colors.surface}
+                opacity={0.45}
+                animate={{ x: [-35, 5] }}
+                transition={{ duration: 6, repeat: Infinity, ease: 'linear' }}
+              />
+            ) : (
+              <path d={WAVE} fill={colors.surface} opacity={0.45} />
+            )}
+
+            {ripple ? (
+              <motion.path
+                d={WAVE}
+                fill={colors.liquid}
+                animate={{ x: [0, -40] }}
+                transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}
+              />
+            ) : (
+              <path d={WAVE} fill={colors.liquid} />
+            )}
+          </motion.g>
+        </g>
+
+        <g opacity={coolingJacketActive ? 0.95 : 0.35}>
+          <rect x={86} y={140} width={128} height={140} rx={4} fill={coolingJacketActive ? 'rgba(14, 165, 233, 0.08)' : 'none'} stroke={coolingJacketActive ? '#38bdf8' : '#71717a'} strokeWidth={1} />
+          {[150, 170, 190, 210, 230, 250, 270].map((y, idx) => (
+            <motion.path
+              key={y}
+              d={`M 86 ${y} Q 150 ${y + 3}, 214 ${y}`}
+              fill="none"
+              stroke={coolingJacketActive ? '#0ea5e9' : '#52525b'}
+              strokeWidth={3}
+              strokeLinecap="round"
+              animate={coolingJacketActive ? {
+                strokeDasharray: ['4 4', '8 4', '4 4'],
+                opacity: [0.65, 1, 0.65]
+              } : {}}
+              transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut', delay: idx * 0.15 }}
+            />
+          ))}
+        </g>
+
+        <line x1="150" y1="80" x2="150" y2="200" stroke="#d4d4d8" strokeWidth={2.5} />
+        <circle cx="150" cy="80" r="4" fill="#3f3f46" />
+        <circle cx="150" cy="200" r="4" fill="#ef4444" className="animate-pulse" />
+
+        <path d="M 152 200 H 220" stroke="#ef4444" strokeWidth={1} strokeDasharray="2,2" />
+        <circle cx="220" cy="200" r="2" fill="#ef4444" />
+        <foreignObject x="225" y="185" width="70" height="40">
+          <div className="text-left font-sans text-stone-900 dark:text-stone-150">
+            <div className="text-[8px] uppercase font-mono text-slate-400 font-bold leading-none">Wine Temp</div>
+            <div className="text-[11px] font-bold text-rose-750 dark:text-rose-400 font-serif leading-tight">{temperature}°C</div>
+          </div>
+        </foreignObject>
+
+        {targetTemperature && (
+          <>
+            <path d="M 150 80 H 45" stroke="#38bdf8" strokeWidth={1} strokeDasharray="2,2" />
+            <circle cx="45" cy="80" r="2" fill="#0ea5e9" />
+            <foreignObject x="5" y="65" width="80" height="40">
+              <div className="text-right font-sans text-stone-900 dark:text-stone-150">
+                <div className="text-[8px] uppercase font-mono text-sky-400 font-bold leading-none">Target</div>
+                <div className="text-[11px] font-bold text-sky-700 dark:text-sky-400 font-serif leading-tight">{targetTemperature}°C</div>
+              </div>
+            </foreignObject>
+          </>
+        )}
+
+        <path d="M 214 210 H 230" stroke={coolingJacketActive ? '#0ea5e9' : '#71717a'} strokeWidth={1} strokeDasharray="2,2" />
+        <circle cx="230" cy="210" r="2" fill={coolingJacketActive ? '#0ea5e9' : '#71717a'} />
+        <foreignObject x="235" y="195" width="60" height="40">
+          <div className="text-left font-sans">
+            <div className="text-[8px] uppercase font-mono text-slate-400 font-bold leading-none">{lang === 'ka' ? 'პერანგი' : 'Jacket'}</div>
+            <div className={`text-[10px] font-bold leading-tight ${coolingJacketActive ? 'text-sky-600 dark:text-sky-400' : 'text-stone-500'}`}>
+              {coolingJacketActive ? (lang === 'ka' ? 'ჩართული' : 'Active') : (lang === 'ka' ? 'გამორთული' : 'Standby')}
+            </div>
+          </div>
+        </foreignObject>
+      </svg>
+
+      <div className={`mt-3 px-3 py-2 rounded-xl text-[11px] font-medium flex items-center justify-between border ${
+        coolingJacketActive
+          ? 'bg-sky-50 border-sky-200 text-sky-950 dark:bg-sky-950/20 dark:border-sky-900/60 dark:text-sky-300'
+          : 'bg-stone-50 border-stone-200 text-stone-600 dark:bg-stone-950/20 dark:border-stone-900/60 dark:text-stone-450'
+      }`}>
+        <span className="flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${coolingJacketActive ? 'bg-sky-400 animate-ping' : 'bg-stone-405'}`} />
+          {lang === 'ka' ? 'თერმორეგულაცია: ' : 'Thermoregulation: '}
+          <strong>
+            {coolingJacketActive
+              ? (lang === 'ka' ? 'აქტიური გაგრილება' : 'Active Cooling')
+              : (lang === 'ka' ? 'სტაბილური' : 'Stable')}
+          </strong>
+        </span>
+        {targetTemperature && (
+          <span className="font-mono text-[10px]">
+            Target: {targetTemperature}°C
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OakBarrelCrossSection({
+  fillPct,
+  wineClass = 'red',
+  temperature,
+  lang = 'en',
+}: {
+  fillPct: number;
+  wineClass?: string;
+  temperature: number;
+  lang?: string;
+}) {
+  const pct = Math.max(0, Math.min(100, isFinite(fillPct) ? fillPct : 0));
+  const colors = WINE_COLORS[wineClass] || WINE_COLORS.red;
+  const ripple = ambientMotionEnabled();
+  const reduce = prefersReducedMotion();
+
+  const WAVE = 'M -50 15 q 30 -12 60 0 t 60 0 t 60 0 t 60 0 t 60 0 t 60 0 v 350 h -300 z';
+
+  const topY = 106;
+  const bottomY = 294;
+  const cavityHeight = bottomY - topY;
+  const targetSurfaceY = bottomY - (pct / 100) * cavityHeight;
+
+  return (
+    <div className="relative w-full max-w-sm mx-auto bg-stone-50 dark:bg-stone-950/25 border border-[#e8dfd5] dark:border-stone-850 rounded-2xl p-4 overflow-hidden shadow-xs">
+      <svg viewBox="0 0 300 400" className="w-full h-auto select-none">
+        <defs>
+          <clipPath id="barrel-inner-clip">
+            <path d="M 106 106 Q 150 102, 194 106 Q 230 200, 194 294 Q 150 298, 106 294 Q 70 200, 106 106 Z" />
+          </clipPath>
+          <linearGradient id="wood-gradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#b08968" />
+            <stop offset="50%" stopColor="#7f5539" />
+            <stop offset="100%" stopColor="#9c6644" />
+          </linearGradient>
+          <linearGradient id="hoop-sheen" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#334155" />
+            <stop offset="50%" stopColor="#64748b" />
+            <stop offset="100%" stopColor="#1e293b" />
+          </linearGradient>
+        </defs>
+
+        <g stroke="#e2e8f0" strokeWidth={0.5} opacity={0.3} className="dark:stroke-stone-800">
+          <line x1="50" y1="0" x2="50" y2="400" />
+          <line x1="250" y1="0" x2="250" y2="400" />
+          <line x1="0" y1="100" x2="300" y2="100" />
+          <line x1="0" y1="200" x2="300" y2="200" />
+          <line x1="0" y1="300" x2="300" y2="300" />
+        </g>
+
+        <path d="M 80 290 L 60 350 H 90 L 95 300 Z" fill="#4a3b32" stroke="#2d221b" strokeWidth={1} />
+        <path d="M 220 290 L 240 350 H 210 L 205 300 Z" fill="#4a3b32" stroke="#2d221b" strokeWidth={1} />
+        <rect x={85} y={325} width={130} height={12} rx={2} fill="#3b2f27" stroke="#2d221b" />
+
+        <path d="M 100 100 Q 150 95, 200 100 Q 240 200, 200 300 Q 150 305, 100 300 Q 60 200, 100 100 Z" fill="url(#wood-gradient)" stroke="#4a3525" strokeWidth={2.5} />
+
+        <path d="M 115 100 Q 130 200, 115 300" fill="none" stroke="#5c3d2e" strokeWidth={1.5} opacity={0.5} />
+        <path d="M 132 99 Q 142 200, 132 301" fill="none" stroke="#5c3d2e" strokeWidth={1.5} opacity={0.5} />
+        <path d="M 150 98 V 302" fill="none" stroke="#5c3d2e" strokeWidth={1.8} opacity={0.65} />
+        <path d="M 168 99 Q 158 200, 168 301" fill="none" stroke="#5c3d2e" strokeWidth={1.5} opacity={0.5} />
+        <path d="M 185 100 Q 170 200, 185 300" fill="none" stroke="#5c3d2e" strokeWidth={1.5} opacity={0.5} />
+
+        <path d="M 92 130 Q 150 138, 208 130" fill="none" stroke="url(#hoop-sheen)" strokeWidth={5} strokeLinecap="round" />
+        <path d="M 76 185 Q 150 193, 224 185" fill="none" stroke="url(#hoop-sheen)" strokeWidth={5.5} strokeLinecap="round" />
+        <path d="M 76 215 Q 150 223, 224 215" fill="none" stroke="url(#hoop-sheen)" strokeWidth={5.5} strokeLinecap="round" />
+        <path d="M 92 270 Q 150 278, 208 270" fill="none" stroke="url(#hoop-sheen)" strokeWidth={5} strokeLinecap="round" />
+
+        <ellipse cx="150" cy="98" rx="7" ry="3.5" fill="#4a2c11" stroke="#3b1e05" strokeWidth={1} />
+        <path d="M 146 95 L 148 88 H 152 L 154 95 Z" fill="#d4a373" stroke="#a98467" />
+
+        <path d="M 106 106 Q 150 102, 194 106 Q 230 200, 194 294 Q 150 298, 106 294 Q 70 200, 106 106 Z" fill="#1b110b" />
+
+        <g clipPath="url(#barrel-inner-clip)">
+          <motion.g
+            initial={false}
+            animate={{ y: targetSurfaceY }}
+            transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 45, damping: 15 }}
+          >
+            {ripple ? (
+              <motion.path
+                d={WAVE}
+                fill={colors.surface}
+                opacity={0.45}
+                animate={{ x: [-35, 5] }}
+                transition={{ duration: 6, repeat: Infinity, ease: 'linear' }}
+              />
+            ) : (
+              <path d={WAVE} fill={colors.surface} opacity={0.45} />
+            )}
+
+            {ripple ? (
+              <motion.path
+                d={WAVE}
+                fill={colors.liquid}
+                animate={{ x: [0, -40] }}
+                transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}
+              />
+            ) : (
+              <path d={WAVE} fill={colors.liquid} />
+            )}
+          </motion.g>
+        </g>
+
+        <line x1="150" y1="98" x2="150" y2="190" stroke="#d4d4d8" strokeWidth={1.5} />
+        <circle cx="150" cy="190" r="3.5" fill="#ef4444" className="animate-pulse" />
+
+        <path d="M 152 190 H 220" stroke="#ef4444" strokeWidth={1} strokeDasharray="2,2" />
+        <circle cx="220" cy="190" r="2" fill="#ef4444" />
+        <foreignObject x="225" y="175" width="70" height="40">
+          <div className="text-left font-sans text-stone-900 dark:text-stone-150">
+            <div className="text-[8px] uppercase font-mono text-slate-400 font-bold leading-none">Wine</div>
+            <div className="text-[11px] font-bold text-rose-750 dark:text-rose-400 font-serif leading-tight">{temperature}°C</div>
+          </div>
+        </foreignObject>
+
+        <foreignObject x="10" y="240" width="80" height="45">
+          <div className="text-right font-sans text-amber-950 dark:text-amber-100">
+            <div className="text-[8px] uppercase font-mono text-slate-400 font-bold leading-none">Maturation</div>
+            <div className="text-[9px] font-medium leading-tight mt-0.5">
+              {lang === 'ka' ? 'მუხის კასრი' : 'Oak Aging'}
+            </div>
+          </div>
+        </foreignObject>
+      </svg>
+    </div>
+  );
+}
+
 
 interface VesselDrawerProps {
   lang: Language;
@@ -16,6 +326,8 @@ interface VesselDrawerProps {
   onToggleSanitation: (vesselId: string) => void;
   onToggleCoolingJacket?: (vesselId: string) => void;
   onUpdateVessels?: (newVessels: Vessel[]) => void;
+  /** Jump to the quick-operation form with this vessel (and its batch) preselected. */
+  onLogOperation?: (vesselId: string) => void;
 }
 
 export default function VesselDrawer({
@@ -28,7 +340,8 @@ export default function VesselDrawer({
   onAdjustTargetTemp,
   onToggleSanitation,
   onToggleCoolingJacket,
-  onUpdateVessels
+  onUpdateVessels,
+  onLogOperation
 }: VesselDrawerProps) {
   const selectedVessel = selectedTankId ? vessels.find(v => v.id === selectedTankId) : null;
   const selectedLot = selectedVessel?.assignedLotId 
@@ -183,6 +496,14 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                   </div>
                   <h2 className="text-xl font-serif font-bold text-[#4e0e15] mt-1">{selectedVessel.id}</h2>
                   <p className="text-xs text-slate-500 font-mono mt-0.5">{selectedVessel.locationDetails || 'Cellar Room A, main row'}</p>
+                  {onLogOperation && (
+                    <button
+                      onClick={() => onLogOperation(selectedVessel.id)}
+                      className="mt-2.5 inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#4e0e15] hover:bg-[#34070a] text-amber-50 rounded-xl text-[11px] font-bold uppercase tracking-wide cursor-pointer transition-colors"
+                    >
+                      ⚡ {lang === 'ka' ? 'ოპერაციის ჩაწერა' : 'Log operation'}
+                    </button>
+                  )}
                 </div>
                 <button
                   onClick={onClose}
@@ -399,58 +720,55 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     </div>
                   </div>
 
-                  {selectedVessel.type === 'qvevri' ? (
-                    <div className="p-4 bg-white border border-[#e8dfd5] rounded-xl space-y-4 shadow-2xs">
-                      <div className="flex items-center gap-2">
-                        <Thermometer className="w-5 h-5 text-emerald-800" />
-                        <div>
-                          <h3 className="text-xs font-bold text-stone-850">{lang === 'ka' ? 'მიწისქვეშა თერმული მონიტორინგი' : 'Underground Thermal Monitoring'}</h3>
-                          <p className="text-[10px] text-slate-400">{lang === 'ka' ? 'ქვევრის მიმდებარე ნიადაგის ტემპერატურა' : 'Clay vessel surrounding ground parameters'}</p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 bg-[#FAF8F5] p-3 rounded-lg border border-[#e8dfd5]/40">
-                        <div>
-                          <span className="text-[9px] uppercase font-mono text-slate-405 block">{lang === 'ka' ? 'ღვინის ტემპერატურა' : 'Internal Wine Temp'}</span>
-                          <strong className="text-lg font-serif font-black text-[#4e0e15] mt-0.5 block">{selectedVessel.temperature} °C</strong>
-                        </div>
-                        <div>
-                          <span className="text-[9px] uppercase font-mono text-slate-405 block">{lang === 'ka' ? 'ნიადაგის ტემპერატურა' : 'Surrounding Soil Temp'}</span>
-                          <strong className="text-lg font-serif font-black text-emerald-800 mt-0.5 block">{(selectedVessel.soilTemperature ?? (selectedVessel.temperature - 2.5)).toFixed(1)} °C</strong>
-                        </div>
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-100 space-y-1.5">
-                        <span className="text-[9px] uppercase font-mono text-slate-400 block font-bold">{lang === 'ka' ? 'ჰერმეტულობა და თიხის ლუქის ისტორია' : 'Airtightness & Clay Seal History'}</span>
-                        {(() => {
+                  {/* Visual Cross-Section & Environmental Metrics */}
+                  <div className="space-y-4">
+                    <div className="px-1">
+                      <h3 className="text-xs font-mono uppercase font-bold text-slate-400 tracking-wider mb-2">
+                        {lang === 'ka' ? 'კვეთის ხედი და პარამეტრები' : 'Cross-Section & Environmental Metrics'}
+                      </h3>
+                      {(() => {
+                        const progress = selectedVessel.capacity > 0 ? (selectedVessel.currentVolume / selectedVessel.capacity) * 100 : 0;
+                        if (selectedVessel.type === 'qvevri') {
                           const lastSealed = selectedVessel.lastSealedDate ? new Date(selectedVessel.lastSealedDate) : new Date(Date.now() - 45 * 86400000);
                           const diffDays = Math.round((Date.now() - lastSealed.getTime()) / (1000 * 60 * 60 * 24));
-                          const needsReseal = diffDays > 120;
-                          const formattedDate = selectedVessel.lastSealedDate || lastSealed.toISOString().split('T')[0];
                           return (
-                            <div className={`p-3 rounded-lg border text-xs ${
-                              needsReseal 
-                                ? 'bg-red-50 border-red-200 text-red-950 animate-pulse' 
-                                : 'bg-emerald-50 border-emerald-200 text-emerald-950'
-                            }`}>
-                              <strong className="block font-bold">
-                                {needsReseal 
-                                  ? (lang === 'ka' ? '⚠️ საჭიროებს სასწრაფო ხელახალ დალუქვას' : '⚠️ Urgent Beeswax Reseal Required') 
-                                  : (lang === 'ka' ? '✓ ჰერმეტულობა დაცულია' : '✓ Airtightness Intact')}
-                              </strong>
-                              <p className="mt-1 text-[10px] leading-relaxed text-stone-500">
-                                {lang === 'ka' 
-                                  ? `ეს ქვევრი ბოლოს დაილუქა ${diffDays} დღის წინ (${formattedDate}). თიხის ლუქის ჰერმეტულობა უნდა განახლდეს ყოველ 120 დღეში ჟანგბადის შეღწევის თავიდან ასაცილებლად.`
-                                  : `This vessel was last sealed ${diffDays} days ago (${formattedDate}). Beeswax seals must be audited or reapplied every 120 days to prevent oxidation and volatile acidity growth.`
-                                }
-                              </p>
-                            </div>
+                            <QvevriCrossSection
+                              fillPct={progress}
+                              wineClass={selectedLot?.wineClass || 'amber'}
+                              temperature={selectedVessel.temperature || 15}
+                              soilTemperature={selectedVessel.soilTemperature}
+                              lastSealedDays={diffDays}
+                              lang={lang}
+                            />
                           );
-                        })()}
-                      </div>
+                        } else if (selectedVessel.type === 'barrel') {
+                          return (
+                            <OakBarrelCrossSection
+                              fillPct={progress}
+                              wineClass={selectedLot?.wineClass || 'red'}
+                              temperature={selectedVessel.temperature || 15}
+                              lang={lang}
+                            />
+                          );
+                        } else {
+                          return (
+                            <SteelTankCrossSection
+                              fillPct={progress}
+                              wineClass={selectedLot?.wineClass || 'red'}
+                              temperature={selectedVessel.temperature || 15}
+                              targetTemperature={selectedVessel.targetTemperature}
+                              coolingJacketActive={selectedVessel.coolingJacketActive}
+                              lang={lang}
+                            />
+                          );
+                        }
+                      })()}
                     </div>
-                  ) : (
+                  </div>
+
+                  {selectedVessel.type !== 'qvevri' && (
                     <div className="p-4 bg-white border border-[#e8dfd5] rounded-xl space-y-4 shadow-2xs">
+
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Thermometer className="w-5 h-5 text-[#801323]" />

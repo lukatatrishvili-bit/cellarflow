@@ -11,6 +11,18 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './'),
     },
+    dedupe: ['react', 'react-dom'],
+  },
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'lucide-react',
+      'motion',
+      '@vis.gl/react-google-maps',
+      'recharts',
+      'react-markdown'
+    ],
   },
   build: {
     outDir: 'dist',

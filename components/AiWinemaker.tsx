@@ -5,6 +5,7 @@ import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import { Sparkles, Send, Bot, HelpCircle, Loader2, ClipboardList, CheckSquare, X, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { Skeleton } from './motion';
 
 interface Props {
   lang: Language;
@@ -319,9 +320,17 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
           </div>
         ))}
         {isLoading && (
-          <div className="flex items-center gap-2.5 text-xs text-slate-500 font-medium">
-            <Loader2 className="w-4 h-4 animate-spin text-[#4e0e15]" />
-            <span>{t.ai_thinking}</span>
+          <div className="flex gap-3 max-w-[85%]">
+            <div className="bg-[#f4efe9] text-[#2c241e] border border-[#e3d7cb] rounded-lg rounded-bl-none p-3.5 space-y-2.5 w-full">
+              <div className="flex items-center gap-2 text-[10px] text-[#4e0e15] font-bold font-mono">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#4e0e15]" />
+                <span>{t.ai_thinking || 'Gemini Winemaker Advisor thinking...'}</span>
+              </div>
+              <Skeleton className="h-4 w-11/12 rounded" />
+              <Skeleton className="h-4 w-5/6 rounded" />
+              <Skeleton className="h-4 w-full rounded" />
+              <Skeleton className="h-4 w-2/3 rounded" />
+            </div>
           </div>
         )}
         <div ref={bottomRef} />

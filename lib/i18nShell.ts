@@ -3,6 +3,7 @@ import type { Language } from './i18n';
 type ShellTranslationKey =
   | 'dashboard'
   | 'grape_intake'
+  | 'rtveli'
   | 'wine_lots'
   | 'lineage'
   | 'tanks'
@@ -41,6 +42,7 @@ export type ShellTranslations = Record<ShellTranslationKey, string>;
 const en: ShellTranslations = {
   dashboard: 'Dashboard',
   grape_intake: 'Grape Intake',
+  rtveli: 'Rtveli (Harvest)',
   wine_lots: 'Wine Lots',
   lineage: 'Lineage',
   tanks: 'Tanks & Vessels',
@@ -69,7 +71,7 @@ const en: ShellTranslations = {
   signin_role_winemaker: 'Head Winemaker',
   signin_role_owner: 'Owner & ERP Admin',
   signin_subtitle: 'Unified Vineyard (Vazi) & Winery (Gvino) Cloud Management',
-  signin_title: 'MaraniOS Unified Sign In',
+  signin_title: 'VinOS Unified Sign In',
   signin_username: 'Account Username / Email',
   signin_passcode: 'Passcode',
   signin_btn: 'Secure Portal Login',
@@ -78,6 +80,7 @@ const en: ShellTranslations = {
 const ka: ShellTranslations = {
   dashboard: 'მთავარი პანელი',
   grape_intake: 'ყურძნის მიღება',
+  rtveli: 'რთველი',
   wine_lots: 'ღვინის პარტიები',
   lineage: 'გენეალოგია',
   tanks: 'რეზერვუარები',
@@ -106,7 +109,7 @@ const ka: ShellTranslations = {
   signin_role_winemaker: 'მთავარი მეღვინე',
   signin_role_owner: 'მფლობელი & ERP ადმინი',
   signin_subtitle: 'ვენახების (ვაზი) და მარნის (ღვინო) ერთიანი მართვის სისტემა',
-  signin_title: 'MaraniOS - ავტორიზაცია',
+  signin_title: 'VinOS - ავტორიზაცია',
   signin_username: 'ანგარიშის სახელი / ელ-ფოსტა',
   signin_passcode: 'უსაფრთხოების კოდი',
   signin_btn: 'უსაფრთხო შესვლა',

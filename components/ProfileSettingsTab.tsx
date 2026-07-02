@@ -12,6 +12,10 @@ interface ProfileSettingsTabProps {
   setToastMessage: (val: string | null) => void;
   onClearAllData?: () => void;
   onUpdateProfile?: (updates: Partial<UserProfile>) => Promise<void>;
+  organizations?: { id: string; name: string; role: string; isActive: boolean }[];
+  onSwitchOrganization?: (orgId: string) => Promise<boolean>;
+  manualLowPower: boolean;
+  onToggleLowPower: () => void;
 }
 
 export default function ProfileSettingsTab({
@@ -22,9 +26,71 @@ export default function ProfileSettingsTab({
   setCompanyProfile,
   setToastMessage,
   onClearAllData,
-  onUpdateProfile
+  onUpdateProfile,
+  organizations,
+  onSwitchOrganization,
+  manualLowPower,
+  onToggleLowPower
 }: ProfileSettingsTabProps) {
   const t = translations[lang];
+
+  const [members, setMembers] = React.useState<{ username: string; fullName: string; email: string; role: string }[]>([]);
+  const [pendingInvites, setPendingInvites] = React.useState<{ id: string; email: string; role: string; expiresAt: string }[]>([]);
+  const [loadingMembers, setLoadingMembers] = React.useState(false);
+  const [invitingEmail, setInvitingEmail] = React.useState('');
+  const [invitingRole, setInvitingRole] = React.useState('Winemaker');
+  const [inviteResult, setInviteResult] = React.useState<string | null>(null);
+
+  const activeOrg = organizations?.find(o => o.isActive);
+
+  const fetchMembers = async () => {
+    if (!currentUser) return;
+    setLoadingMembers(true);
+    try {
+      const res = await fetch('/api/org/members');
+      if (res.ok) {
+        const data = await res.json();
+        setMembers(data.members || []);
+        setPendingInvites(data.pendingInvites || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch team members:', err);
+    } finally {
+      setLoadingMembers(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchMembers();
+  }, [activeOrg?.id]);
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!invitingEmail) return;
+    setInviteResult(null);
+    try {
+      const res = await fetch('/api/org/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: invitingEmail, role: invitingRole })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInvitingEmail('');
+        setToastMessage(lang === 'ka' ? 'მოწვევა წარმატებით გაიგზავნა!' : 'Invitation sent successfully!');
+        if (data.devInviteUrl) {
+          setInviteResult(lang === 'ka' ? `დეველოპმენტის ბმული: ${data.devInviteUrl}` : `Development Invite Link: ${data.devInviteUrl}`);
+        }
+        fetchMembers();
+      } else {
+        const err = await res.json();
+        setToastMessage(`⚠️ ${err.error || 'Failed to send invitation'}`);
+      }
+    } catch (err) {
+      setToastMessage(lang === 'ka' ? '⚠️ კავშირის შეცდომა მოწვევისას.' : '⚠️ Connection error while sending invitation.');
+    }
+  };
+
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto p-4 lg:p-6 flex flex-col space-y-6 font-sans text-stone-700 text-xs animate-fade-in">
@@ -274,6 +340,34 @@ export default function ProfileSettingsTab({
 
           <hr className="border-stone-100" />
 
+          <h4 className="text-[9px] uppercase font-mono border-l-2 border-stone-500 pl-2 font-black tracking-wider text-slate-400">
+            {lang === 'ka' ? 'ინტერფეისის წარმადობა' : 'UI Performance Preferences'}
+          </h4>
+
+          <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl flex items-center justify-between">
+            <div className="space-y-0.5">
+              <span className="font-bold text-stone-900 dark:text-amber-100 block text-[10.5px]">
+                ⚡ {lang === 'ka' ? 'ენერგიის დამზოგი რეჟიმი' : 'Low Power UI Mode'}
+              </span>
+              <span className="block text-[9.5px] text-slate-400 dark:text-stone-550 leading-normal">
+                {lang === 'ka' 
+                  ? 'თიშავს ფონურ ანიმაციებს და ეფექტებს ბატარეისა და პროცესორის რესურსების დასაზოგად.' 
+                  : 'Stops ambient drifting backdrops and complex visual effects to optimize CPU/GPU battery runtimes.'}
+              </span>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer select-none">
+              <input 
+                type="checkbox" 
+                checked={manualLowPower} 
+                onChange={onToggleLowPower}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-stone-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+          </div>
+
+          <hr className="border-stone-100" />
+
           <button 
             type="submit"
             className="w-full bg-emerald-850 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors"
@@ -281,6 +375,171 @@ export default function ProfileSettingsTab({
             {t.settings_save || 'Save Configurations'}
           </button>
         </form>
+      </div>
+
+      {/* 🏢 Organization & Team Management */}
+      <div className="bg-white border border-[#e8dfd5] p-6 rounded-2xl shadow-sm space-y-6">
+        <div>
+          <h3 className="text-md font-serif font-black text-[#4e0e15] border-b border-stone-100 pb-2 uppercase tracking-wide">
+            🏢 {lang === 'ka' ? 'ორგანიზაცია და გუნდის მართვა' : 'Organization & Team Management'}
+          </h3>
+          <p className="text-[10px] text-slate-450 mt-1">
+            {lang === 'ka' ? 'მართეთ თქვენი სამუშაო სივრცეები და მოიწვიეთ გუნდის წევრები.' : 'Switch between winery workspaces and manage your enology and viticulture team.'}
+          </p>
+        </div>
+
+        {/* Workspace Switcher */}
+        {organizations && organizations.length > 0 && (
+          <div className="space-y-3">
+            <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#c5a059] pl-2 font-black tracking-wider text-slate-400">
+              {lang === 'ka' ? 'აქტიური სამუშაო სივრცე' : 'Active Winery Workspace'}
+            </h4>
+            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+              <div className="w-full sm:max-w-xs">
+                <select
+                  value={activeOrg?.id || ''}
+                  onChange={async (e) => {
+                    if (onSwitchOrganization) {
+                      await onSwitchOrganization(e.target.value);
+                    }
+                  }}
+                  className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded text-stone-900 font-bold outline-none cursor-pointer"
+                >
+                  {organizations.map(org => (
+                    <option key={org.id} value={org.id}>
+                      {org.name} {org.isActive ? `(${lang === 'ka' ? 'აქტიური' : 'Active'})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[10px] text-stone-500 font-mono">
+                {lang === 'ka' ? `თქვენი როლი ამ სივრცეში: ${activeOrg?.role}` : `Your role in this workspace: ${activeOrg?.role}`}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <hr className="border-stone-100" />
+
+        {/* Team Members List */}
+        <div className="space-y-4">
+          <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#4e0e15] pl-2 font-black tracking-wider text-slate-400">
+            {lang === 'ka' ? 'გუნდის წევრები' : 'Active Team Members'}
+          </h4>
+          
+          {loadingMembers ? (
+            <div className="text-[10px] text-stone-400 animate-pulse">
+              {lang === 'ka' ? 'იტვირთება წევრები…' : 'Loading team members…'}
+            </div>
+          ) : (
+            <div className="border border-[#e8dfd5] rounded-xl overflow-hidden bg-stone-50/30">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-stone-50 border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-slate-400 font-bold">
+                    <th className="p-3">{lang === 'ka' ? 'სახელი' : 'Name'}</th>
+                    <th className="p-3">{lang === 'ka' ? 'ელ-ფოსტა' : 'Email'}</th>
+                    <th className="p-3">{lang === 'ka' ? 'როლი' : 'Role'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-150 text-[10.5px]">
+                  {members.map(member => (
+                    <tr key={member.username} className="hover:bg-white transition-colors">
+                      <td className="p-3 font-bold text-stone-800">{member.fullName} <span className="text-[9px] font-mono text-stone-400 font-normal">(@{member.username})</span></td>
+                      <td className="p-3 text-stone-600 font-mono">{member.email}</td>
+                      <td className="p-3 font-semibold text-[#4e0e15]">{member.role}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Pending Invitations */}
+        {pendingInvites.length > 0 && (
+          <div className="space-y-3 pt-2">
+            <h4 className="text-[9px] uppercase font-mono border-l-2 border-amber-600 pl-2 font-black tracking-wider text-slate-400">
+              {lang === 'ka' ? 'გაგზავნილი მოწვევები' : 'Pending Invitations'}
+            </h4>
+            <div className="border border-[#e8dfd5] rounded-xl overflow-hidden bg-amber-50/10">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-amber-50/30 border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-slate-400 font-bold">
+                    <th className="p-3">{lang === 'ka' ? 'ელ-ფოსტა' : 'Email'}</th>
+                    <th className="p-3">{lang === 'ka' ? 'როლი' : 'Role'}</th>
+                    <th className="p-3">{lang === 'ka' ? 'ვადა' : 'Expires'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-150 text-[10.5px]">
+                  {pendingInvites.map(invite => (
+                    <tr key={invite.id} className="hover:bg-white transition-colors">
+                      <td className="p-3 text-stone-750 font-mono">{invite.email}</td>
+                      <td className="p-3 font-semibold text-stone-700">{invite.role}</td>
+                      <td className="p-3 text-stone-500 font-mono">{new Date(invite.expiresAt).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <hr className="border-stone-100" />
+
+        {/* Invite Member Form */}
+        {activeOrg?.role === 'Owner/Admin' && (
+          <div className="space-y-4">
+            <h4 className="text-[9px] uppercase font-mono border-l-2 border-emerald-850 pl-2 font-black tracking-wider text-slate-400">
+              {lang === 'ka' ? 'ახალი წევრის მოწვევა' : 'Invite New Team Member'}
+            </h4>
+            <form onSubmit={handleInvite} className="space-y-4 bg-stone-50/50 p-4 border border-[#e8dfd5]/80 rounded-xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
+                    {lang === 'ka' ? 'ელ-ფოსტის მისამართი' : 'Email Address'}
+                  </label>
+                  <input
+                    type="email"
+                    value={invitingEmail}
+                    onChange={(e) => setInvitingEmail(e.target.value)}
+                    placeholder="colleague@winery.com"
+                    className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-800 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
+                    {lang === 'ka' ? 'უფლებამოსილების როლი' : 'Clearance Role'}
+                  </label>
+                  <select
+                    value={invitingRole}
+                    onChange={(e) => setInvitingRole(e.target.value)}
+                    className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 font-bold outline-none cursor-pointer"
+                  >
+                    <option value="Owner/Admin">Owner/Admin</option>
+                    <option value="Winemaker">Winemaker</option>
+                    <option value="Lab Technician">Lab Technician</option>
+                    <option value="Cellar Worker">Cellar Worker</option>
+                    <option value="Read-Only">Read-Only</option>
+                  </select>
+                </div>
+              </div>
+
+              {inviteResult && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[10.5px] font-mono text-amber-900 break-all select-all">
+                  {inviteResult}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase py-2 px-4 rounded text-[10px] tracking-wider transition-colors cursor-pointer"
+              >
+                ✉️ {lang === 'ka' ? 'მოწვევის გაგზავნა' : 'Send Invite'}
+              </button>
+            </form>
+          </div>
+        )}
       </div>
 
       {currentUser.role === 'Owner/Admin' && (

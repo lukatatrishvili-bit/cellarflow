@@ -1,4 +1,10 @@
-import type { DispatchFinancialInput, DispatchFinancials, ReservationLike, ReservationPosition } from './types';
+import type {
+  DispatchFinancialInput,
+  DispatchFinancials,
+  ReservationLike,
+  ReservationPosition,
+  StockAvailabilityPosition,
+} from './types';
 
 function round2(n: number): number {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -80,6 +86,17 @@ export function availableToSell(input: {
   asOfDate?: string;
   excludeOrderId?: string;
 }): number {
+  return stockAvailabilityPosition(input).availableBottles;
+}
+
+export function stockAvailabilityPosition(input: {
+  onHandBottles: number;
+  orders: ReservationLike[];
+  locationId: string;
+  lotId: string;
+  asOfDate?: string;
+  excludeOrderId?: string;
+}): StockAvailabilityPosition {
   const onHand = Math.max(0, Math.floor(input.onHandBottles || 0));
   const reserved = reservedBottlesFor(
     input.orders,
@@ -88,5 +105,11 @@ export function availableToSell(input: {
     input.asOfDate,
     input.excludeOrderId,
   );
-  return Math.max(0, onHand - reserved);
+  return {
+    locationId: input.locationId,
+    lotId: input.lotId,
+    onHandBottles: onHand,
+    reservedBottles: reserved,
+    availableBottles: Math.max(0, onHand - reserved),
+  };
 }

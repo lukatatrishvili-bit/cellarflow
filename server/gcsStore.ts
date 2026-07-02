@@ -51,6 +51,7 @@ export async function uploadDb(json: string): Promise<void> {
     await file.save(json, { contentType: 'application/json', resumable: false });
   } catch (err) {
     console.error('[gcs] upload failed:', err);
+    throw err;
   }
 }
 

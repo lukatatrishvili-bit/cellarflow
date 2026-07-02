@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { 
   VineyardBlock, 
   PhenologyRecord, 
@@ -15,6 +15,49 @@ import type { Language } from '../lib/i18n';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
 import IpmPhenoscheme from './IpmPhenoscheme';
+import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
+
+interface MapPolygonProps {
+  paths: { lat: number; lng: number }[];
+  fillColor?: string;
+  strokeColor?: string;
+  onClick?: () => void;
+}
+
+function MapPolygon({ paths, fillColor, strokeColor, onClick }: MapPolygonProps) {
+  const map = useMap();
+  const polygonRef = useRef<google.maps.Polygon | null>(null);
+
+  useEffect(() => {
+    if (!map) return;
+
+    const polygon = new google.maps.Polygon({
+      paths,
+      fillColor: fillColor || '#10b981',
+      fillOpacity: 0.45,
+      strokeColor: strokeColor || '#047857',
+      strokeOpacity: 0.8,
+      strokeWeight: 2,
+    });
+
+    polygon.setMap(map);
+    polygonRef.current = polygon;
+
+    let clickListener: google.maps.MapsEventListener | null = null;
+    if (onClick) {
+      clickListener = polygon.addListener('click', onClick);
+    }
+
+    return () => {
+      if (clickListener) {
+        google.maps.event.removeListener(clickListener);
+      }
+      polygon.setMap(null);
+    };
+  }, [map, paths, fillColor, strokeColor, onClick]);
+
+  return null;
+}
 import { DayWeather, fetchDayWeather, localISODate } from '../lib/weatherApi';
 import { 
   Mountain, Wind, Droplet, Sun, Layers, Plus, 
@@ -124,7 +167,36 @@ export default function VaziModule({
   const [addBlockLocName, setAddBlockLocName] = useState<string>('Kakheti, Georgia');
   const [addBlockElev, setAddBlockElev] = useState<number>(350);
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
-  const [drawnPoints, setDrawnPoints] = useState<{ x: number; y: number }[]>([]);
+  // Real-map polygon (add-block form): geographic boundary saved to the block.
+  const [drawnPoints, setDrawnPoints] = useState<{ lat: number; lng: number }[]>([]);
+  // Legacy block-detail "satellite simulation": pixel-space sketch only (visual).
+  const [drawnPixels, setDrawnPixels] = useState<{ x: number; y: number }[]>([]);
+
+  const defaultCenter = useMemo(() => {
+    if (blocks && blocks.length > 0) {
+      const validBlocks = blocks.filter(b => typeof b.latitude === 'number' && typeof b.longitude === 'number');
+      if (validBlocks.length > 0) {
+        const sumLat = validBlocks.reduce((sum, b) => sum + b.latitude, 0);
+        const sumLng = validBlocks.reduce((sum, b) => sum + b.longitude, 0);
+        return { lat: sumLat / validBlocks.length, lng: sumLng / validBlocks.length };
+      }
+    }
+    return { lat: 41.9056, lng: 45.474 };
+  }, [blocks]);
+
+  const getBlockPaths = (b: VineyardBlock) => {
+    if (b.boundary && b.boundary.length > 2) {
+      return b.boundary;
+    }
+    const latOffset = 0.0003;
+    const lngOffset = 0.0004;
+    return [
+      { lat: b.latitude - latOffset, lng: b.longitude - lngOffset },
+      { lat: b.latitude + latOffset, lng: b.longitude - lngOffset },
+      { lat: b.latitude + latOffset, lng: b.longitude + lngOffset },
+      { lat: b.latitude - latOffset, lng: b.longitude + lngOffset },
+    ];
+  };
 
   // Multilingual translations lookups
   const label = {
@@ -598,60 +670,38 @@ export default function VaziModule({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
-                {/* SVG Estate Map Column */}
+                {/* Google Map Column */}
                 <div className="md:col-span-5 bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col justify-between relative overflow-hidden h-60">
                   <div className="text-[9px] font-mono font-bold text-emerald-800 uppercase tracking-widest flex items-center gap-1">
-                    🛰️ {lang === 'ka' ? 'ვენახის სატელიტური სქემა' : 'Estate GIS Layout'}
+                    🛰️ {lang === 'ka' ? 'ვენახის სატელიტური რუკა' : 'Estate GIS Map'}
                   </div>
 
-                  <svg className="w-full h-36 mt-2 select-none overflow-visible">
-                    {/* SVG shapes for blocks */}
-                    {blocks.map((b) => {
-                      const isActive = b.id === selectedBlockId;
-                      // Represent blocks with custom points
-                      const points = b.id === 'block-1' ? '10,10 110,10 95,65 20,65' : 
-                                     b.id === 'block-2' ? '120,10 220,10 235,65 105,65' :
-                                     b.id === 'block-3' ? '10,75 110,75 95,130 20,130' :
-                                     '120,75 220,75 235,130 105,130';
-                      
-                      const labelX = b.id === 'block-1' ? 55 :
-                                     b.id === 'block-2' ? 165 :
-                                     b.id === 'block-3' ? 55 : 165;
-                      
-                      const labelY = b.id === 'block-1' ? 40 :
-                                     b.id === 'block-2' ? 40 :
-                                     b.id === 'block-3' ? 105 : 105;
-
-                      const fillColor = getBlockColor(b.id);
-                      return (
-                        <g 
-                          key={b.id}
-                          className="cursor-pointer group"
-                          onClick={() => setSelectedBlockId(b.id)}
-                          onMouseEnter={() => setMapHoveredBlock(b.id)}
-                          onMouseLeave={() => setMapHoveredBlock(null)}
-                        >
-                          <polygon
-                            points={points}
-                            fill={fillColor}
-                            fillOpacity={isActive ? 0.95 : 0.7}
-                            stroke={isActive ? '#4e0e15' : '#78716c'}
-                            strokeWidth={isActive ? 2.5 : 1.2}
-                            className="transition-all duration-250 hover:fill-opacity-100"
-                          />
-                          <text
-                            x={labelX}
-                            y={labelY}
-                            textAnchor="middle"
-                            fill={isActive ? '#ffffff' : '#231f1d'}
-                            className="text-[9px] font-bold font-mono select-none pointer-events-none drop-shadow-md"
-                          >
-                            {b.name.split(' ')[0]}
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </svg>
+                  <div className="w-full h-40 mt-2 rounded-lg overflow-hidden border border-stone-200 relative z-0">
+                    <APIProvider apiKey={process.env.GOOGLE_MAPS_PLATFORM_KEY || ''}>
+                      <Map
+                        defaultCenter={defaultCenter}
+                        defaultZoom={14}
+                        mapTypeId="hybrid"
+                        gestureHandling="greedy"
+                        disableDefaultUI={true}
+                      >
+                        {blocks.map((b) => {
+                          const paths = getBlockPaths(b);
+                          const isActive = b.id === selectedBlockId;
+                          const fillColor = getBlockColor(b.id);
+                          return (
+                            <MapPolygon
+                              key={b.id}
+                              paths={paths}
+                              fillColor={fillColor}
+                              strokeColor={isActive ? '#4e0e15' : '#78716c'}
+                              onClick={() => setSelectedBlockId(b.id)}
+                            />
+                          );
+                        })}
+                      </Map>
+                    </APIProvider>
+                  </div>
 
                   {/* Micro legend */}
                   <div className="flex items-center gap-3 text-[9px] font-mono text-stone-500 border-t border-stone-200/60 pt-1.5 mt-1 shrink-0">
@@ -1121,7 +1171,7 @@ export default function VaziModule({
                         <button 
                           onClick={() => {
                             setIsDrawingPolygon(!isDrawingPolygon);
-                            setDrawnPoints([]);
+                            setDrawnPixels([]);
                           }}
                           className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded cursor-pointer ${
                             isDrawingPolygon ? 'bg-red-600 text-white' : 'bg-emerald-800 text-white hover:bg-emerald-900'
@@ -1143,25 +1193,25 @@ export default function VaziModule({
                             const rect = e.currentTarget.getBoundingClientRect();
                             const x = e.clientX - rect.left;
                             const y = e.clientY - rect.top;
-                            setDrawnPoints([...drawnPoints, { x, y }]);
+                            setDrawnPixels([...drawnPixels, { x, y }]);
                           }}
                         >
                           {/* Saperavi drawing points SVG overlay */}
                           <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                            {drawnPoints.length > 1 && (
-                              <polygon 
-                                points={drawnPoints.map(p => `${p.x},${p.y}`).join(' ')}
+                            {drawnPixels.length > 1 && (
+                              <polygon
+                                points={drawnPixels.map(p => `${p.x},${p.y}`).join(' ')}
                                 fill="rgba(16, 185, 129, 0.2)"
                                 stroke="#10b981"
                                 strokeWidth="1.5"
                               />
                             )}
-                            {drawnPoints.map((p, i) => (
+                            {drawnPixels.map((p, i) => (
                               <circle key={i} cx={p.x} cy={p.y} r="3" fill="#10b981" />
                             ))}
                           </svg>
                           <span className="text-[8px] font-bold font-mono tracking-wider bg-[#4e0e15] text-white px-2 py-0.5 rounded shadow-sm relative z-15">
-                            Click {4 - drawnPoints.length > 0 ? `${4 - drawnPoints.length} more` : 'Completed'} times to snap block boundary
+                            Click {4 - drawnPixels.length > 0 ? `${4 - drawnPixels.length} more` : 'Completed'} times to snap block boundary
                           </span>
                         </div>
                       ) : (
@@ -1919,13 +1969,9 @@ export default function VaziModule({
               
               const name = fd.get('name') as string;
               const vineyard = fd.get('vineyardName') as string;
-              const locName = fd.get('locationName') as string;
-              const lat = parseFloat(fd.get('lat') as string) || 41.9;
-              const lng = parseFloat(fd.get('lng') as string) || 45.4;
               const area = parseFloat(fd.get('area') as string) || 2.5;
-              const elevation = parseFloat(fd.get('elevation') as string) || 300;
               const variety = fd.get('variety') as string;
-              const plantingYear = parseInt(fd.get('plantYear') as string) || 2012;
+              const plantYear = parseInt(fd.get('plantYear') as string) || 2012;
               const rows = parseInt(fd.get('rows') as string) || 50;
               const spacing = fd.get('spacing') as string;
               const note = fd.get('notes') as string;
@@ -1934,16 +1980,16 @@ export default function VaziModule({
                 onAddBlock({
                   name,
                   vineyardName: vineyard,
-                  locationName: locName,
-                  latitude: lat,
-                  longitude: lng,
+                  locationName: addBlockLocName,
+                  latitude: addBlockLat,
+                  longitude: addBlockLng,
                   area,
-                  elevation,
+                  elevation: addBlockElev,
                   slope: '12% South-West',
                   aspect: 'South-West',
                   soilType: 'Limestone with heavy gravel alluvial deposits',
                   grapeVariety: variety,
-                  plantingYear,
+                  plantingYear: plantYear,
                   spacing,
                   rowsCount: rows,
                   vinesCount: rows * 200, // 200 vines per row approx
@@ -1953,9 +1999,12 @@ export default function VaziModule({
                   farmingStatus: 'organic',
                   currentPhenology: 'Budburst',
                   estimatedHarvestDate: new Date(2026, 8, 15).toISOString().split('T')[0],
-                  notes: note
+                  notes: note,
+                  boundary: drawnPoints.length > 2 ? drawnPoints : undefined
                 });
                 form.reset();
+                setDrawnPoints([]);
+                setIsDrawingPolygon(false);
                 setShowAddBlockModal(false);
               }
             }} className="p-5 space-y-3 max-h-[80vh] overflow-y-auto pr-2">
@@ -1987,6 +2036,65 @@ export default function VaziModule({
                     if (typeof loc.elevation === 'number' && loc.elevation > 0) setAddBlockElev(Math.round(loc.elevation));
                   }}
                 />
+                
+                <div className="w-full h-40 rounded-lg overflow-hidden border border-stone-200 mt-2 relative z-0">
+                  <APIProvider apiKey={process.env.GOOGLE_MAPS_PLATFORM_KEY || ''}>
+                    <Map
+                      defaultCenter={defaultCenter}
+                      center={{ lat: addBlockLat, lng: addBlockLng }}
+                      defaultZoom={15}
+                      mapTypeId="hybrid"
+                      gestureHandling="greedy"
+                      disableDefaultUI={true}
+                      onClick={(e) => {
+                        if (e.detail.latLng) {
+                          const lat = e.detail.latLng.lat;
+                          const lng = e.detail.latLng.lng;
+                          if (isDrawingPolygon) {
+                            setDrawnPoints(prev => [...prev, { lat, lng }]);
+                          } else {
+                            setAddBlockLat(parseFloat(lat.toFixed(4)));
+                            setAddBlockLng(parseFloat(lng.toFixed(4)));
+                          }
+                        }
+                      }}
+                    >
+                      {!isDrawingPolygon && (
+                        <Marker position={{ lat: addBlockLat, lng: addBlockLng }} />
+                      )}
+                      {isDrawingPolygon && drawnPoints.map((pt, idx) => (
+                        <Marker key={idx} position={pt} label={String(idx + 1)} />
+                      ))}
+                      {drawnPoints.length > 1 && (
+                        <MapPolygon paths={drawnPoints} fillColor="#10b981" strokeColor="#047857" />
+                      )}
+                    </Map>
+                  </APIProvider>
+                </div>
+
+                <div className="flex items-center justify-between mt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsDrawingPolygon(!isDrawingPolygon);
+                      if (!isDrawingPolygon) setDrawnPoints([]);
+                    }}
+                    className={`px-2.5 py-1 text-[9px] font-mono font-bold uppercase rounded transition-colors cursor-pointer ${
+                      isDrawingPolygon ? 'bg-emerald-800 text-white hover:bg-emerald-900' : 'bg-stone-200 text-stone-700 hover:bg-stone-300'
+                    }`}
+                  >
+                    {isDrawingPolygon ? '🛑 Stop Drawing' : '✏️ Draw Block Boundary'}
+                  </button>
+                  {isDrawingPolygon && drawnPoints.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setDrawnPoints([])}
+                      className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-rose-100 hover:bg-rose-200 text-rose-800 rounded transition-colors cursor-pointer"
+                    >
+                      🗑️ Clear Points ({drawnPoints.length})
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3">

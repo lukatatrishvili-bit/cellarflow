@@ -3,19 +3,25 @@ import { motion } from 'motion/react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import LiveClock from './LiveClock';
-import type { 
-  UserProfile, 
-  CompanyProfile, 
-  VineyardBlock, 
-  WineLot, 
-  Vessel, 
-  Task, 
+import type {
+  UserProfile,
+  CompanyProfile,
+  VineyardBlock,
+  WineLot,
+  Vessel,
+  Task,
   MaraniOSAuditLog,
   DailyFermLog,
   LabAnalysis,
   InventoryItem,
-  ScoutingRecord
+  ScoutingRecord,
+  GrapeIntakeRecord,
+  CellarOperation
 } from '../lib/wineryState';
+import SetupJourney from './SetupJourney';
+import {
+  computeSetupJourney, isSetupJourneyDismissed, setSetupJourneyDismissed, type SetupStep,
+} from '../lib/onboarding';
 import { 
   Wind, Sprout, AlertTriangle, FileText, CheckCircle2, 
   Activity, Thermometer, ShieldAlert, Sliders, ClipboardList, CheckSquare 
@@ -37,6 +43,8 @@ interface DashboardTabProps {
   inventory: InventoryItem[];
   scoutings: ScoutingRecord[];
   auditLogs: MaraniOSAuditLog[];
+  grapeIntakes: GrapeIntakeRecord[];
+  cellarOps: CellarOperation[];
   onToggleTaskStatus: (taskId: string) => void;
   setActiveModule: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
   setActiveTab: (tab: string) => void;
@@ -56,12 +64,24 @@ export default function DashboardTab({
   inventory,
   scoutings,
   auditLogs,
+  grapeIntakes,
+  cellarOps,
   onToggleTaskStatus,
   setActiveModule,
   setActiveTab,
   onOpenOnboarding
 }: DashboardTabProps) {
   const t = translations[lang];
+
+  // Setup Journey — live onboarding progress computed from real records.
+  const journey = computeSetupJourney({
+    companyProfile, blocks, vessels, lots, grapeIntakes, cellarOps, fermLogs, labLogs,
+  });
+  const [journeyDismissed, setJourneyDismissed] = useState(isSetupJourneyDismissed);
+  const goToStep = (step: SetupStep) => {
+    setActiveModule(step.module);
+    if (step.tab) setActiveTab(step.tab);
+  };
 
   // Resolve preferences defaults
   const enabledModules = currentUser.enabledModules || ['vazi', 'gvino'];
@@ -189,6 +209,26 @@ export default function DashboardTab({
           </button>
         </div>
       </div>
+
+      {/* Setup Journey — guided zero-to-productive path for a young winery. */}
+      {!journey.complete && !journeyDismissed && (
+        <SetupJourney
+          lang={lang}
+          journey={journey}
+          onNavigate={goToStep}
+          onDismiss={() => { setSetupJourneyDismissed(true); setJourneyDismissed(true); }}
+        />
+      )}
+      {!journey.complete && journeyDismissed && (
+        <button
+          type="button"
+          onClick={() => { setSetupJourneyDismissed(false); setJourneyDismissed(false); }}
+          className="self-start inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-[#c5a059]/40 bg-[#c5a059]/10 text-[11px] font-bold text-[#7a5c1e] hover:border-[#c5a059] transition-colors cursor-pointer dark:text-amber-300"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-[#c5a059] animate-pulse" />
+          {lang === 'ka' ? `გამართვა ${journey.done}/${journey.total} — გაგრძელება` : `Setup ${journey.done}/${journey.total} — resume`}
+        </button>
+      )}
 
       {/* Daily operating loop — only persisted records and live services. */}
       <section className="space-y-4">

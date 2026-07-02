@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import type { DailyFermLog } from '../lib/wineryState';
 
@@ -17,15 +17,23 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   // Filter and sort logs chronologically for the selected lot
-  const activeLogs = logs
-    .filter((log) => log.lotId === selectedLotId)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const activeLogs = useMemo(() => {
+    return logs
+      .filter((log) => log.lotId === selectedLotId)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [logs, selectedLotId]);
+
+  // Content fingerprint: the D3 redraw must key on WHAT the data is, not the
+  // array identity — sync responses replace arrays with identical content, and
+  // an identity-keyed effect would wipe the SVG and replay the 1.2s draw
+  // animation on every pass (visible as a flashing chart).
+  const activeLogsKey = useMemo(() => JSON.stringify(activeLogs), [activeLogs]);
 
   // Calculate forecast metrics
-  const latestLog = activeLogs[activeLogs.length - 1];
-  let forecastInfo = null;
+  const forecastInfo = useMemo(() => {
+    const latestLog = activeLogs[activeLogs.length - 1];
+    if (!latestLog) return null;
 
-  if (latestLog) {
     let slope = -0.008; // default
     let isStuck = false;
     let slopeValForDisplay = 0.008;
@@ -57,7 +65,7 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
     const dateOptions: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
     const dateStr = dryDate.toLocaleDateString('en-US', dateOptions);
 
-    forecastInfo = {
+    return {
       isStuck,
       days: daysToDryVal.toFixed(1),
       dateStr,
@@ -65,7 +73,7 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       latestDensity: latestLog.density,
       daysToDryVal
     };
-  }
+  }, [activeLogs]);
 
   // Listen to window / container sizing
   useEffect(() => {
@@ -74,9 +82,12 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
     const resizeObserver = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0) return;
       const { width } = entries[0].contentRect;
-      setDimensions({
-        width: Math.max(100, width),
-        height: 320, // Neat standard landscape height
+      const roundedWidth = Math.max(100, Math.round(width));
+      setDimensions((prev) => {
+        if (prev.width === roundedWidth && prev.height === 320) {
+          return prev;
+        }
+        return { width: roundedWidth, height: 320 };
       });
     });
 
@@ -198,11 +209,17 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       .call(yGrid)
       .select('.domain').remove();
 
-    // Line generators
+    // Line and Area generators
     // Sugar Curve (crimson/wine)
     const sugarLineGen = d3.line<any>()
       .x((d) => xScale(d.parsedDate))
       .y((d) => ySugarScale(d.sugar))
+      .curve(d3.curveMonotoneX);
+
+    const sugarAreaGen = d3.area<any>()
+      .x((d) => xScale(d.parsedDate))
+      .y0(height)
+      .y1((d) => ySugarScale(d.sugar))
       .curve(d3.curveMonotoneX);
 
     // Density Curve (gold/amber)
@@ -212,8 +229,37 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       .curve(d3.curveMonotoneX);
 
     // Render gradients
-    const sugarGradientId = 'sugar-gradient-fade';
     const svgDefs = svg.append('defs');
+
+    // Sugar Area linear gradient
+    const sugarGrad = svgDefs.append('linearGradient')
+      .attr('id', 'sugar-area-gradient')
+      .attr('x1', '0%')
+      .attr('y1', '0%')
+      .attr('x2', '0%')
+      .attr('y2', '100%');
+
+    sugarGrad.append('stop')
+      .attr('offset', '0%')
+      .attr('stop-color', '#801323')
+      .attr('stop-opacity', 0.2);
+
+    sugarGrad.append('stop')
+      .attr('offset', '100%')
+      .attr('stop-color', '#801323')
+      .attr('stop-opacity', 0.0);
+
+    // Draw Sugar Area Path (underneath the lines)
+    const sugarArea = g.append('path')
+      .datum(formattedData)
+      .attr('fill', 'url(#sugar-area-gradient)')
+      .attr('d', sugarAreaGen)
+      .style('opacity', 0);
+
+    sugarArea.transition()
+      .delay(200)
+      .duration(1200)
+      .style('opacity', 1);
 
     // Draw Sugar Curve Path
     const sugarPath = g.append('path')
@@ -404,7 +450,8 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
         setHoveredPoint(null);
       });
 
-  }, [activeLogs, dimensions]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLogsKey, dimensions]);
 
   return (
     <div className="w-full relative select-none">

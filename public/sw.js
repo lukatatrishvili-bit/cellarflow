@@ -1,5 +1,5 @@
 // Bump the version to invalidate all caches on deploy of a new SW.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL_CACHE = `vinea-shell-${VERSION}`;
 const ASSET_CACHE = `vinea-assets-${VERSION}`;
 const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
@@ -7,7 +7,12 @@ const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
 // Minimal shell precache. Each entry is added individually and failures are
 // tolerated, so a missing file can never block SW installation (cache.addAll
 // is atomic and previously failed in production where dev paths 404).
-const SHELL_URLS = ['/', '/manifest.webmanifest', '/icon.svg'];
+const SHELL_URLS = [
+  '/', 
+  '/manifest.webmanifest', 
+  '/icon.svg',
+  'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap'
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

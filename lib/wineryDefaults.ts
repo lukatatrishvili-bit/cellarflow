@@ -12,6 +12,7 @@ import type {
   PhenologyRecord,
   SalesDispatchRecord,
   SalesOrderRecord,
+  SupplierPayment,
   ScoutingRecord,
   SoilAnalysisRecord,
   SprayRecord,
@@ -32,6 +33,7 @@ export const initialTasks: Task[] = [];
 export const initialGrapeIntakes: GrapeIntakeRecord[] = [];
 export const initialSalesDispatches: SalesDispatchRecord[] = [];
 export const initialSalesOrders: SalesOrderRecord[] = [];
+export const initialSupplierPayments: SupplierPayment[] = [];
 
 export const initialVineyardBlocks: VineyardBlock[] = [];
 export const initialPhenologyRecords: PhenologyRecord[] = [];

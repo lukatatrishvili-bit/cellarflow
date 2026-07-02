@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 
 export interface ChartTankData {
@@ -30,6 +30,12 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
     pct: number;
   } | null>(null);
 
+  // Content fingerprint: redraws must key on what the data IS, not the array
+  // identity — sync responses replace `tanks` with identical content, and an
+  // identity-keyed effect would rebuild the SVG (replaying animations) on
+  // every sync pass, which reads as a flashing chart.
+  const tanksKey = useMemo(() => JSON.stringify(tanks), [tanks]);
+
   // Monitor container size dynamically for absolute responsiveness
   useEffect(() => {
     if (!containerRef.current) return;
@@ -37,11 +43,13 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
     const resizeObserver = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0) return;
       const { width } = entries[0].contentRect;
-      // We calculate dynamic height based on number of tanks to allow sufficient vertical space (e.g., 48px per tank + margins)
+      const roundedWidth = Math.max(100, Math.round(width));
       const dynamicHeight = Math.max(220, tanks.length * 48 + 60);
-      setDimensions({
-        width: Math.max(100, width),
-        height: dynamicHeight,
+      setDimensions((prev) => {
+        if (prev.width === roundedWidth && prev.height === dynamicHeight) {
+          return prev;
+        }
+        return { width: roundedWidth, height: dynamicHeight };
       });
     });
 
@@ -349,9 +357,10 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
       .style('font-size', '9px')
       .style('fill', (d) => (d.capacity > 0 && d.currentVolume / d.capacity > 0.95) ? '#ef4444' : '#64748b')
       .attr('dx', '32px')
-      .text((d) => `(${d.currentVolume.toLocaleString()}/${d.capacity.toLocaleString()} L)`);
+      .text((d) => `(${(d.currentVolume ?? 0).toLocaleString()}/${(d.capacity ?? 0).toLocaleString()} L)`);
 
-  }, [tanks, dimensions, selectedTankId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tanksKey, dimensions, selectedTankId]);
 
   return (
     <div className="w-full flex flex-col space-y-2">
@@ -379,11 +388,11 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
             <div className="font-mono text-[10px] space-y-0.5">
               <div className="flex justify-between gap-4">
                 <span className="text-stone-400">Volume:</span>
-                <span className="text-amber-150 font-bold">{hoveredTank.volume.toLocaleString()} L</span>
+                <span className="text-amber-150 font-bold">{(hoveredTank.volume ?? 0).toLocaleString()} L</span>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-stone-400">Capacity:</span>
-                <span className="text-amber-150 font-bold">{hoveredTank.capacity.toLocaleString()} L</span>
+                <span className="text-amber-150 font-bold">{(hoveredTank.capacity ?? 0).toLocaleString()} L</span>
               </div>
               <div className="flex justify-between gap-4 pt-1 border-t border-stone-800">
                 <span className="text-stone-400">Utilization:</span>

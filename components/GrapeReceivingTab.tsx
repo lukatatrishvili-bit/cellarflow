@@ -406,8 +406,8 @@ export default function GrapeReceivingTab({
                           {r.brix ? ` · ${r.brix}°Bx` : ''}
                         </span>
                       </td>
-                      <td className="p-2.5 text-right font-bold whitespace-nowrap">{r.netWeightKg.toLocaleString()} kg</td>
-                      <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300 whitespace-nowrap">{r.estimatedVolumeL.toLocaleString()} L</td>
+                      <td className="p-2.5 text-right font-bold whitespace-nowrap">{(r.netWeightKg ?? 0).toLocaleString()} kg</td>
+                      <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300 whitespace-nowrap">{(r.estimatedVolumeL ?? 0).toLocaleString()} L</td>
                       <td className="p-2.5">
                         <button onClick={() => openLot(r.createdLotId)}
                           className="text-[10px] font-mono text-[#4e0e15] hover:underline cursor-pointer flex items-center gap-0.5 dark:text-amber-300">

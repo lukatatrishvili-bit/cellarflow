@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Coins, Plus, Trash2, Wine, FlaskConical, FileDown, FileSpreadsheet } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { WineLot, InventoryItem, CompanyProfile, BottlingRunRecord } from '../lib/wineryState';
@@ -34,6 +34,16 @@ const catLabel = (id: CostCategory, ka: boolean) => {
   return c ? (ka ? c.ka : c.en) : id;
 };
 
+const pricingToDraft = (pricing: WinePricing) =>
+  Object.fromEntries(Object.entries(pricing).map(([lotId, value]) => [lotId, String(value)]));
+
+const parsePriceDraft = (value: string | undefined) => {
+  const normalized = (value || '').trim().replace(',', '.');
+  if (!normalized) return 0;
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : 0;
+};
+
 export default function CostsTab({
   lang,
   lots,
@@ -63,6 +73,11 @@ export default function CostsTab({
   ), [lots, costEntries, bottlesByLot]);
 
   const totalCost = useMemo(() => costEntries.reduce((a, e) => a + e.amount, 0), [costEntries]);
+  const [draftPricing, setDraftPricing] = useState<Record<string, string>>(() => pricingToDraft(pricing));
+
+  useEffect(() => {
+    setDraftPricing(pricingToDraft(pricing));
+  }, [pricing]);
 
   // ── pricing + margin/valuation report ────────────────────────
   const reportRows = useMemo(() => buildCostReportRows(
@@ -70,12 +85,26 @@ export default function CostsTab({
     summaries,
   ), [lots, bottlesByLot, pricing, summaries]);
   const reportTotals = useMemo(() => sumCostReport(reportRows), [reportRows]);
-  const updatePrice = (lotId: string, value: string) => {
-    const pricePerBottle = parseFloat(value) || 0;
+  const updatePriceDraft = (lotId: string, value: string) => {
+    setDraftPricing(prev => ({ ...prev, [lotId]: value }));
+  };
+
+  const savePrice = (lotId: string) => {
+    const pricePerBottle = parsePriceDraft(draftPricing[lotId]);
+    const current = pricing[lotId] || 0;
+    if (pricePerBottle === current) {
+      setDraftPricing(prev => ({ ...prev, [lotId]: pricePerBottle > 0 ? String(pricePerBottle) : '' }));
+      return;
+    }
+
     const next = { ...pricing };
     if (pricePerBottle > 0) next[lotId] = pricePerBottle;
     else delete next[lotId];
     onUpdatePricing(next);
+  };
+
+  const resetPriceDraft = (lotId: string) => {
+    setDraftPricing(prev => ({ ...prev, [lotId]: pricing[lotId] ? String(pricing[lotId]) : '' }));
   };
 
   const download = (blob: Blob, filename: string) => {
@@ -278,7 +307,7 @@ export default function CostsTab({
                       <td className="p-2.5 text-right font-mono">{r.perBottle != null ? fmt(r.perBottle) : '—'}</td>
                       <td className="p-2.5 text-right font-mono text-stone-500">{r.bottles || '—'}</td>
                       <td className="p-2.5 text-right">
-                        <input type="number" min={0} value={pricing[r.lotId] ?? ''} onChange={e => updatePrice(r.lotId, e.target.value)}
+                        <input type="number" min={0} step="0.01" value={draftPricing[r.lotId] ?? ''} onChange={e => updatePriceDraft(r.lotId, e.target.value)} onBlur={() => savePrice(r.lotId)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') resetPriceDraft(r.lotId); }}
                           placeholder="—" className="w-16 bg-stone-50 border border-stone-200 dark:bg-stone-800 dark:border-stone-700 rounded px-1.5 py-1 text-right text-[11px] font-mono outline-none focus:border-[#4e0e15]" />
                       </td>
                       <td className={`p-2.5 text-right font-mono font-bold ${r.marginPct == null ? 'text-stone-300' : r.marginPct >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600'}`}>{r.marginPct != null ? `${r.marginPct}%` : '—'}</td>

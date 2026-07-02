@@ -1,6 +1,49 @@
-const DB_NAME = 'VineaOfflineDB';
-const DB_VERSION = 1;
-const STORE_NAME = 'offline_mutations';
+import type { RxDatabase } from 'rxdb';
+
+const DB_NAME = 'vinea_rx_offline_db';
+
+let dbPromise: Promise<RxDatabase> | null = null;
+
+export async function getRxDB(): Promise<RxDatabase> {
+  if (dbPromise) return dbPromise;
+
+  dbPromise = (async () => {
+    const [{ createRxDatabase }, { getRxStorageDexie }] = await Promise.all([
+      import('rxdb'),
+      import('rxdb/plugins/storage-dexie')
+    ]);
+
+    const db = await createRxDatabase({
+      name: DB_NAME,
+      storage: getRxStorageDexie()
+    });
+
+    await db.addCollections({
+      mutations: {
+        schema: {
+          title: 'mutation schema',
+          version: 0,
+          primaryKey: 'id',
+          type: 'object',
+          properties: {
+            id: { type: 'string', maxLength: 150 },
+            collection: { type: 'string' },
+            recordId: { type: 'string' },
+            action: { type: 'string' },
+            data: { type: 'object' },
+            timestamp: { type: 'string' },
+            baselineTimestamp: { type: 'string' }
+          },
+          required: ['id', 'collection', 'recordId', 'action', 'timestamp']
+        }
+      }
+    });
+
+    return db;
+  })();
+
+  return dbPromise;
+}
 
 export interface OfflineMutation {
   id: string; // Unique queue item ID
@@ -13,77 +56,84 @@ export interface OfflineMutation {
 }
 
 export class IndexedDBQueue {
-  static openDB(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-      if (typeof indexedDB === 'undefined') {
-        reject(new Error('IndexedDB is not supported in this environment'));
-        return;
-      }
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        }
-      };
-    });
-  }
-
   static async addMutation(mutation: Omit<OfflineMutation, 'id' | 'timestamp'>): Promise<void> {
     try {
-      const db = await this.openDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const item: OfflineMutation = {
-          ...mutation,
-          id: `${mutation.collection}-${mutation.recordId}-${Date.now()}`,
-          timestamp: new Date().toISOString()
-        };
-        const request = store.put(item);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve();
-      });
+      const db = await getRxDB();
+      const id = `${mutation.collection}-${mutation.recordId}-${Date.now()}`;
+      const item: OfflineMutation = {
+        ...mutation,
+        id,
+        timestamp: new Date().toISOString()
+      };
+      await db.collections.mutations.insert(item);
     } catch (err) {
-      console.warn('IndexedDB write warning:', err);
+      console.warn('RxDB write warning:', err);
     }
   }
 
   static async getMutations(): Promise<OfflineMutation[]> {
     try {
-      const db = await this.openDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_NAME, 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.getAll();
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-      });
-    } catch {
+      const db = await getRxDB();
+      const docs = await db.collections.mutations.find().exec();
+      return docs.map(doc => doc.toJSON() as OfflineMutation);
+    } catch (err) {
+      console.warn('RxDB read warning:', err);
       return [];
     }
   }
 
   static async clearMutations(): Promise<void> {
     try {
-      const db = await this.openDB();
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.clear();
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve();
-      });
+      const db = await getRxDB();
+      const docs = await db.collections.mutations.find().exec();
+      await Promise.all(docs.map(doc => doc.remove()));
     } catch (err) {
-      console.warn('IndexedDB clear warning:', err);
+      console.warn('RxDB clear warning:', err);
     }
   }
 }
 
 export class SyncQueueManager {
   private static DIRTY_KEY = 'vinea_dirty_collections';
+  private static ORG_STATE_KEYS = {
+    orgId: 'cellarflow_org_state_org_id',
+    source: 'cellarflow_org_state_source',
+    version: 'cellarflow_org_state_version',
+    updatedAt: 'cellarflow_org_state_updated_at',
+    updatedBy: 'cellarflow_org_state_updated_by',
+  };
+
+  private static hasLocalStorage(): boolean {
+    return typeof localStorage !== 'undefined';
+  }
+
+  private static requestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (!this.hasLocalStorage()) return headers;
+
+    const version = localStorage.getItem(this.ORG_STATE_KEYS.version);
+    const orgId = localStorage.getItem(this.ORG_STATE_KEYS.orgId);
+    if (version) headers['X-CellarFlow-Org-State-Version'] = version;
+    if (orgId) headers['X-CellarFlow-Org-Id'] = orgId;
+    return headers;
+  }
+
+  private static rememberOrgStateHeaders(res: Response): void {
+    if (!this.hasLocalStorage()) return;
+
+    const pairs: Array<[string, string]> = [
+      [this.ORG_STATE_KEYS.orgId, 'X-CellarFlow-Org-Id'],
+      [this.ORG_STATE_KEYS.source, 'X-CellarFlow-Org-State-Source'],
+      [this.ORG_STATE_KEYS.version, 'X-CellarFlow-Org-State-Version'],
+      [this.ORG_STATE_KEYS.updatedAt, 'X-CellarFlow-Org-State-Updated-At'],
+      [this.ORG_STATE_KEYS.updatedBy, 'X-CellarFlow-Org-State-Updated-By'],
+    ];
+
+    for (const [storageKey, headerName] of pairs) {
+      const value = res.headers.get(headerName);
+      if (value) localStorage.setItem(storageKey, value);
+    }
+  }
 
   static getDirtyCollections(): Set<string> {
     const stored = localStorage.getItem(this.DIRTY_KEY);
@@ -134,13 +184,14 @@ export class SyncQueueManager {
       return null;
     }
 
-    // 2. We are online. Check if we have queued offline mutations in IndexedDB
+    // 2. We are online. Check if we have queued offline mutations in RxDB
     const offlineMutations = await IndexedDBQueue.getMutations();
     if (offlineMutations.length > 0) {
       try {
         // Fetch server state to compare for conflict detection
-        const serverRes = await fetch('/api/db');
+        const serverRes = await fetch('/api/db', { headers: this.requestHeaders() });
         if (serverRes.ok) {
+          this.rememberOrgStateHeaders(serverRes);
           const serverDb = await serverRes.json();
           const conflicts: any[] = [];
 
@@ -184,7 +235,6 @@ export class SyncQueueManager {
     // 3. Perform standard online synchronization
     const dirty = this.getDirtyCollections();
     const payload: any = {};
-    // client dirty key per server payload key, for per-collection retries
     const sentPairs: Array<{ clientKey: string; serverKey: string }> = [];
 
     if (dirty.size > 0) {
@@ -217,7 +267,7 @@ export class SyncQueueManager {
       const method = hasChanges ? 'POST' : 'GET';
       const options: RequestInit = {
         method,
-        headers: { 'Content-Type': 'application/json' }
+        headers: this.requestHeaders()
       };
       
       if (method === 'POST') {
@@ -226,22 +276,47 @@ export class SyncQueueManager {
 
       const res = await fetch(endpoint, options);
       if (res.ok) {
-        // Only clear what this request actually carried — collections marked
-        // dirty (or ids deleted) while the request was in flight still need
-        // a future sync.
+        this.rememberOrgStateHeaders(res);
         this.clearDirtyKeys(dirty);
         this.consumeDeletedIds(deletedIds);
         await IndexedDBQueue.clearMutations();
         const data = await res.json();
         return data;
       }
+      this.rememberOrgStateHeaders(res);
+      let rejectionPayload: any | null = null;
 
-      // Server-side validation rejection: one bad record must not silently
-      // block every other change bundled in the same payload. Retry each
-      // collection separately so the good ones land, keep the bad ones dirty,
-      // and report what was rejected instead of swallowing it.
+      if (method === 'POST' && res.status === 409) {
+        rejectionPayload = await res.json().catch(() => ({} as any));
+        if (rejectionPayload?.code === 'org_state_conflict') {
+          const retryOptions: RequestInit = {
+            method,
+            headers: this.requestHeaders(),
+            body: JSON.stringify(payload)
+          };
+          const retryRes = await fetch(endpoint, retryOptions);
+          this.rememberOrgStateHeaders(retryRes);
+
+          if (retryRes.ok) {
+            this.clearDirtyKeys(dirty);
+            this.consumeDeletedIds(deletedIds);
+            await IndexedDBQueue.clearMutations();
+            const data = await retryRes.json();
+            return { ...data, recoveredOrgStateConflict: true };
+          }
+
+          const retryPayload = await retryRes.json().catch(() => ({} as any));
+          return {
+            orgStateConflict: true,
+            syncError: retryPayload.error || rejectionPayload.error || `Sync rejected (HTTP ${retryRes.status})`,
+            serverDb: retryPayload.serverDb || rejectionPayload.serverDb,
+          };
+        }
+      }
+
+      // Server-side validation rejection: retry each collection separately
       if (method === 'POST' && res.status >= 400 && res.status < 500) {
-        const firstErr = await res.json().catch(() => ({} as any));
+        const firstErr = rejectionPayload || await res.json().catch(() => ({} as any));
         if (sentPairs.length <= 1) {
           return { syncError: firstErr.error || `Sync rejected (HTTP ${res.status})` };
         }
@@ -253,13 +328,14 @@ export class SyncQueueManager {
         for (const { clientKey, serverKey } of sentPairs) {
           try {
             const single: any = { [serverKey]: payload[serverKey] };
-            if (deletedIds.length > 0) single.deletedIds = deletedIds; // deletions are idempotent
+            if (deletedIds.length > 0) single.deletedIds = deletedIds;
             const r = await fetch('/api/sync', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: this.requestHeaders(),
               body: JSON.stringify(single)
             });
             if (r.ok) {
+              this.rememberOrgStateHeaders(r);
               const data = await r.json();
               if (data.hasConflicts) {
                 conflicts.push(...data.conflicts);
@@ -269,6 +345,7 @@ export class SyncQueueManager {
               }
               this.clearDirtyKeys([clientKey]);
             } else {
+              this.rememberOrgStateHeaders(r);
               const e = await r.json().catch(() => ({} as any));
               syncErrors.push(`${clientKey}: ${e.error || `HTTP ${r.status}`}`);
             }
@@ -295,7 +372,6 @@ export class SyncQueueManager {
     return null;
   }
 
-  /** Remove successfully-synced ids from the pending-deletions list, keeping ids added mid-flight. */
   private static consumeDeletedIds(sent: string[]): void {
     if (sent.length === 0) {
       localStorage.removeItem('vinea_deleted_ids');

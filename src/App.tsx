@@ -7,6 +7,8 @@ import NotificationCenter from '../components/NotificationCenter';
 import type { PickedLocation } from '../components/LocationPicker';
 import { useWineryState } from '../hooks/useWineryState';
 import { IndexedDBQueue } from '../lib/syncQueue';
+import { ToastProvider } from '../components/ToastProvider';
+import { usePerformanceManager } from '../hooks/usePerformanceManager';
 
 // Heavy modules are code-split
 const DashboardTab = lazy(() => import('../components/DashboardTab'));
@@ -93,6 +95,7 @@ function ModuleLoader() {
 
 export default function App() {
   const state = useWineryState();
+  const perf = usePerformanceManager();
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -420,12 +423,51 @@ export default function App() {
   };
 
   return (
-    // overflow-x clipping lives on <body> (globals.css): an overflow value
-    // on this wrapper would break position:sticky for the floating header
-    <div className="min-h-screen bg-[#f8f6f2] dark:bg-[#0a0607] flex flex-col font-sans relative transition-colors duration-300">
+    <ToastProvider>
+      <AnimatePresence>
+        {!isOnline && (
+          <motion.div
+            initial={{ opacity: 0, y: -50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -50 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+            className="fixed top-0 left-0 right-0 z-[1000] bg-rose-600 border-b border-rose-700 text-white py-2 px-4 flex items-center justify-between shadow-md"
+          >
+            <div className="flex items-center gap-2 text-xs font-semibold">
+              <span className="animate-pulse">⚡</span>
+              <span>
+                {state.lang === 'ka' 
+                  ? 'კავშირი გაწყდა. მარანი მუშაობს ოფლაინ რეჟიმში — ცვლილებები შეინახება ლოკალურად და სინქრონიზირდება კავშირის აღდგენისას.' 
+                  : 'Offline Mode Enabled — Using local MaraniOS cache. Unsaved modifications will auto-sync on reconnect.'}
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                if (typeof navigator !== 'undefined') {
+                  const online = navigator.onLine;
+                  setIsOnline(online);
+                  if (online) {
+                    state.setToastMessage(state.lang === 'ka' ? 'კავშირი აღდგა! სინქრონიზაცია...' : 'Connection restored! Syncing...');
+                    state.triggerSync();
+                  } else {
+                    state.setToastMessage(state.lang === 'ka' ? 'კავშირი კვლავ არ არის.' : 'Still offline.');
+                  }
+                }
+              }}
+              className="px-2.5 py-1 bg-white hover:bg-stone-50 text-rose-700 rounded-lg text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer shadow-3xs active:scale-95 shrink-0"
+            >
+              🔄 {state.lang === 'ka' ? 'ხელახლა ცდა' : 'Retry'}
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* overflow-x clipping lives on <body> (globals.css): an overflow value
+          on this wrapper would break position:sticky for the floating header */}
+      <div className="min-h-screen bg-[#f8f6f2] dark:bg-[#0a0607] flex flex-col font-sans relative transition-colors duration-300">
       
       {/* Ambient, photo-free backdrop: drifting light + terrace contours */}
-      <AuroraBackdrop variant={state.isLoggedIn ? 'subtle' : 'rich'} />
+      <AuroraBackdrop variant={state.isLoggedIn ? 'subtle' : 'rich'} shouldReduceMotion={perf.shouldReduceMotion} />
       
       {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
       {state.toastMessage && (() => {
@@ -1162,6 +1204,8 @@ export default function App() {
             inventory={state.inventory}
             scoutings={state.scoutings}
             auditLogs={state.auditLogs}
+            grapeIntakes={state.grapeIntakes}
+            cellarOps={state.cellarOps}
             onToggleTaskStatus={state.handleToggleTaskStatus}
             setActiveModule={state.setActiveModule}
             setActiveTab={state.setActiveTab}
@@ -1179,6 +1223,8 @@ export default function App() {
             setToastMessage={state.setToastMessage}
             onClearAllData={state.clearAllData}
             onUpdateProfile={state.handleUpdateProfile}
+            manualLowPower={perf.manualLowPower}
+            onToggleLowPower={perf.toggleManualLowPower}
           />
         </Suspense>
       ) : state.activeModule === 'audit' ? (
@@ -2086,11 +2132,11 @@ export default function App() {
 
 
 
-      {/* 3. Humble human-label footer */}
       <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-400 font-mono font-medium">
         MaraniOS • Operational Winemaking Control Loop • Offline-capable traceability
       </footer>
     </div>
+    </ToastProvider>
   );
 }
 

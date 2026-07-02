@@ -4,16 +4,39 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from "@google/genai";
-import { getDB, saveDB, createEmptyUserData, initDB, resetUserData, getUserData, saveUserData } from './server/db';
+import {
+  getDB,
+  saveDB,
+  createEmptyUserData,
+  initDB,
+  resetUserData,
+  getUserData,
+  saveUserData,
+  getDbRuntimeStatus,
+  forceSaveDB,
+  getUserOrganizationStateMeta,
+  reloadOrganizationDataFromPostgres,
+  reloadUserOrganizationDataFromPostgres,
+  OrganizationStateVersionConflictError,
+  refreshCoreMetadataFromPostgres,
+  saveCoreMetadata,
+  deleteUserMetadataFromPostgres,
+  getPrismaClientForAdmin,
+  getPostgresReadinessProbe,
+} from './server/db';
 import { verifySessionToken, createSessionToken, hashPassword, verifyPassword } from './server/auth';
 import { applyDeletions, mergeCollections, isValidId } from './server/sync';
-import { createLoginLimiter } from './server/loginLimiter';
+import { createSharedLoginLimiter } from './server/loginLimiter';
 import { createDemoUser, readDemoAccountConfig } from './server/demoAccount';
 import { can, type Capability } from './server/permissions';
 import { generateVerificationToken, isVerificationTokenValid, isValidEmail } from './server/emailVerification';
-import { sendMail, buildVerificationEmail } from './server/mailer';
-import { getDeploymentStatus } from './server/deploymentStatus';
+import { sendMail, buildVerificationEmail, buildResetPasswordEmail, buildInvitationEmail } from './server/mailer';
+import { applyRuntimeScaleReadinessProbe, getDeploymentStatus } from './server/deploymentStatus';
 import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from './server/oauthConfigPolicy';
+import { auditLogContentMatches, prepareAuditLogsForServerMerge } from './lib/auditHash';
+import { getSeederData } from './server/seedTestUser';
+
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,12 +46,18 @@ const __dirname = path.dirname(__filename);
 // (db.googleConfig). They are never hardcoded — a previously committed client
 // secret was removed and must be rotated in Google Cloud Console. When neither
 // source is configured, the OAuth routes fall back to the setup screen.
+function cleanEnv(val: string | undefined): string {
+  if (!val) return '';
+  return val.replace(/^\uFEFF/, '').trim();
+}
+
 function getGoogleOAuthCreds(db: any): { clientId: string; clientSecret: string } {
   return {
-    clientId: process.env.GOOGLE_CLIENT_ID || db.googleConfig?.clientId || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || db.googleConfig?.clientSecret || '',
+    clientId: cleanEnv(process.env.GOOGLE_CLIENT_ID) || cleanEnv(db.googleConfig?.clientId),
+    clientSecret: cleanEnv(process.env.GOOGLE_CLIENT_SECRET) || cleanEnv(db.googleConfig?.clientSecret),
   };
 }
+
 
 // Load .env manually if running locally
 try {
@@ -117,8 +146,8 @@ const app = express();
 // Behind Cloud Run / any reverse proxy: trust X-Forwarded-* so client IP
 // (rate limiter) and protocol (cookie Secure / OAuth redirect) are correct.
 app.set('trust proxy', true);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // Helper to parse cookies manually
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
@@ -151,6 +180,18 @@ function clearSessionCookie(): string {
   return ['maranios_session=', 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0', ...(COOKIE_SECURE ? ['Secure'] : [])].join('; ');
 }
 
+function pruneTestUserSeedDuplicates(userDb: any): void {
+  const staleHarvestIds = new Set(['HV-SAP-24', 'HV-RK-23']);
+  const staleSamplingIds = new Set(['GS-SAP-24', 'GS-RK-23']);
+
+  if (Array.isArray(userDb.harvests)) {
+    userDb.harvests = userDb.harvests.filter((item: any) => !staleHarvestIds.has(item?.id));
+  }
+  if (Array.isArray(userDb.samplings)) {
+    userDb.samplings = userDb.samplings.filter((item: any) => !staleSamplingIds.has(item?.id));
+  }
+}
+
 /** Public base URL for building links (verification emails, redirects). */
 function appBaseUrl(req: express.Request): string {
   const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
@@ -181,18 +222,44 @@ function exposeVerifyLink(transport: 'smtp' | 'console'): boolean {
  * The env master admin is not stored in db.users, so it is recognised here.
  * Returns null when there is no valid session or the user no longer exists.
  */
-function liveSessionRole(req: express.Request): { username: string; role: string } | null {
+async function liveSessionRole(req: express.Request): Promise<{ username: string; role: string } | null> {
   const cookies = parseCookies(req.headers.cookie);
   const session = verifySessionToken(cookies['maranios_session']);
   if (!session || !session.username) return null;
-  const envAdmin = (process.env.ADMIN_USERNAME || '').trim().toLowerCase();
+  const envAdmin = cleanEnv(process.env.ADMIN_USERNAME).toLowerCase();
   if (envAdmin && String(session.username).trim().toLowerCase() === envAdmin) {
     return { username: session.username, role: 'Owner/Admin' };
   }
+  await refreshCoreMetadataFromPostgres();
   const user = getDB().users.find(u => u.username === session.username);
   if (!user) return null;
-  return { username: user.username, role: user.role };
+  const db = getDB();
+  const activeOrganizationId = user.activeOrganizationId;
+  const membership = activeOrganizationId
+    ? db.memberships?.find(m => m.userId === user.username && m.organizationId === activeOrganizationId)
+    : null;
+  return { username: user.username, role: membership?.role || user.role };
 }
+
+function isMasterAdmin(username: string): boolean {
+  const envAdmin = cleanEnv(process.env.ADMIN_USERNAME);
+  return Boolean(envAdmin) && username.trim().toLowerCase() === envAdmin.toLowerCase();
+}
+
+
+async function requireMasterAdmin(req: express.Request, res: express.Response): Promise<{ username: string; role: string } | null> {
+  const auth = await liveSessionRole(req);
+  if (!auth) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return null;
+  }
+  if (!isMasterAdmin(auth.username)) {
+    res.status(403).json({ error: 'Forbidden: Master Administrator access required.' });
+    return null;
+  }
+  return auth;
+}
+
 
 /**
  * Express guard: write the appropriate error and return null when the request
@@ -203,25 +270,78 @@ function requireCapability(
   req: express.Request,
   res: express.Response,
   capability: Capability,
-): { username: string; role: string } | null {
-  const auth = liveSessionRole(req);
+): Promise<{ username: string; role: string } | null> {
+  return (async () => {
+  const auth = await liveSessionRole(req);
   if (!auth) { res.status(401).json({ error: 'Unauthorized' }); return null; }
   if (!can(auth.role, capability)) {
     res.status(403).json({ error: `Forbidden: ${capability} access required.` });
     return null;
   }
   return auth;
+  })();
+}
+
+// ── Master-admin action trail ────────────────────────────────────────────────
+// Append-only record of every privileged mutation (who did what to whom).
+// In-process ring buffer, same tradeoff as the login limiter: effective with
+// --max-instances=1; move to a shared store for multi-instance.
+interface AdminAction {
+  at: string;
+  actor: string;
+  action: string;
+  target?: string;
+  detail?: string;
+}
+const ADMIN_ACTIONS_CAP = 500;
+const adminActions: AdminAction[] = [];
+function recordAdminAction(actor: string, action: string, target?: string, detail?: string): void {
+  adminActions.unshift({ at: new Date().toISOString(), actor, action, target, detail });
+  if (adminActions.length > ADMIN_ACTIONS_CAP) adminActions.length = ADMIN_ACTIONS_CAP;
+}
+
+// ── Event-loop lag sampler ───────────────────────────────────────────────────
+// Real responsiveness signal for the admin console (a lagging loop means slow
+// requests regardless of CPU). Sampled continuously, cheap (one timer).
+let eventLoopLagMs = 0;
+{
+  const SAMPLE_EVERY_MS = 500;
+  let last = Date.now();
+  const sampler = setInterval(() => {
+    const t = Date.now();
+    eventLoopLagMs = Math.max(0, t - last - SAMPLE_EVERY_MS);
+    last = t;
+  }, SAMPLE_EVERY_MS);
+  sampler.unref?.(); // never keep the process alive just for telemetry
 }
 
 // ── Login brute-force limiter ────────────────────────────────────────────────
 // Per IP+identifier sliding window with temporary lockout. In-memory: paired
 // with --max-instances=1 (see deployment guide) it is effective; a shared store
 // (Redis) would be needed for multi-instance.
-const loginLimiter = createLoginLimiter({
+async function setOrganizationStateHeaders(res: express.Response, username: string) {
+  const meta = await getUserOrganizationStateMeta(username);
+  if (!meta) return null;
+
+  res.setHeader('X-CellarFlow-Org-Id', meta.organizationId);
+  res.setHeader('X-CellarFlow-Org-State-Source', meta.source);
+  if (meta.version !== null) {
+    res.setHeader('X-CellarFlow-Org-State-Version', String(meta.version));
+  }
+  if (meta.updatedAt) {
+    res.setHeader('X-CellarFlow-Org-State-Updated-At', meta.updatedAt);
+  }
+  if (meta.updatedBy) {
+    res.setHeader('X-CellarFlow-Org-State-Updated-By', meta.updatedBy);
+  }
+  return meta;
+}
+
+const loginLimiter = createSharedLoginLimiter({
   maxAttempts: 8,
   windowMs: 15 * 60 * 1000,
   lockoutMs: 15 * 60 * 1000,
-});
+}, getPrismaClientForAdmin);
 
 function clientIp(req: any): string {
   const fwd = req.headers['x-forwarded-for'];
@@ -234,12 +354,13 @@ const demoAccountConfig = readDemoAccountConfig();
 async function ensureDemoAccount() {
   if (!demoAccountConfig.enabled) return null;
 
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   let user = db.users.find((candidate: any) => candidate.username === demoAccountConfig.username);
   if (!user) {
     user = createDemoUser(demoAccountConfig);
     db.users.push(user);
-    saveDB();
+    await saveCoreMetadata('demo-account-create');
   }
 
   const existingData = await getUserData(demoAccountConfig.username);
@@ -263,8 +384,8 @@ app.get('/api/health', (_req, res) => {
 
 // Detailed deployment diagnostics (backend, integrations, warnings) are
 // admin-only: the full status reveals infrastructure that should not be public.
-app.get('/api/admin/deployment-status', (req, res) => {
-  const auth = requireCapability(req, res, 'admin');
+app.get('/api/admin/deployment-status', async (req, res) => {
+  const auth = await requireCapability(req, res, 'admin');
   if (!auth) return;
   res.json(getDeploymentStatus());
 });
@@ -280,6 +401,7 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'A valid email address is required' });
   }
 
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const cleanUsername = String(username).toLowerCase().replace(/\s+/g, '_');
   const cleanEmail = String(email).toLowerCase().trim();
@@ -292,6 +414,19 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const verification = generateVerificationToken();
+  
+  // Create a default organization for the user
+  const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
+  const org = { id: orgId, name: `${fullName || cleanUsername}'s Estate` };
+  if (!db.organizations) db.organizations = [];
+  db.organizations.push(org);
+
+  // Create membership
+  const memId = 'mem_' + Math.random().toString(36).substr(2, 9);
+  const membership = { id: memId, userId: cleanUsername, organizationId: orgId, role: 'Owner/Admin' };
+  if (!db.memberships) db.memberships = [];
+  db.memberships.push(membership);
+
   const user: any = {
     username: cleanUsername,
     email: cleanEmail,
@@ -305,19 +440,21 @@ app.post('/api/auth/register', async (req, res) => {
     emailVerified: false,
     verifyTokenHash: verification.tokenHash,
     verifyTokenExpires: verification.expiresAt,
+    activeOrganizationId: orgId,
   };
   db.users.push(user);
 
-  // Initialize empty user-scoped data container
-  if (!db.userData) {
-    db.userData = {};
+  // Initialize empty organization-scoped data container
+  if (!db.orgData) {
+    db.orgData = {};
   }
-  db.userData[cleanUsername] = createEmptyUserData();
+  db.orgData[orgId] = createEmptyUserData();
 
-  saveDB();
+  await saveCoreMetadata('auth-register');
+  await saveUserData(cleanUsername, db.orgData[orgId]);
 
   const link = verificationLink(req, cleanUsername, verification.token);
-  const mail = await sendMail(buildVerificationEmail({ to: cleanEmail, link, lang: user.language, wineryName: 'MaraniOS' }));
+  const mail = await sendMail(buildVerificationEmail({ to: cleanEmail, link, lang: user.language, wineryName: 'VinOS' }));
 
   // No session cookie — the account is inactive until the email is verified.
   res.json({
@@ -332,9 +469,10 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // Email verification — opened from the link in the verification email.
-app.get('/api/auth/verify-email', (req, res) => {
+app.get('/api/auth/verify-email', async (req, res) => {
   const token = String(req.query.token || '');
   const username = String(req.query.u || '').toLowerCase();
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === username) as any;
 
@@ -345,7 +483,12 @@ app.get('/api/auth/verify-email', (req, res) => {
   user.emailVerified = true;
   delete user.verifyTokenHash;
   delete user.verifyTokenExpires;
-  saveDB();
+  await saveCoreMetadata('auth-verify-email');
+
+  // Automatically log the user in after successful verification
+  const sessionToken = createSessionToken({ username: user.username, role: user.role }, true);
+  res.setHeader('Set-Cookie', sessionCookie(sessionToken, 2592000)); // 30 days
+
   res.redirect('/?verified=1');
 });
 
@@ -353,6 +496,7 @@ app.get('/api/auth/verify-email', (req, res) => {
 // accounts exist; only actually re-sends for a known, still-unverified user.
 app.post('/api/auth/resend-verification', async (req, res) => {
   const id = String(req.body?.identifier || '').toLowerCase().trim();
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === id || (u.email || '').toLowerCase().trim() === id) as any;
 
@@ -360,9 +504,9 @@ app.post('/api/auth/resend-verification', async (req, res) => {
     const verification = generateVerificationToken();
     user.verifyTokenHash = verification.tokenHash;
     user.verifyTokenExpires = verification.expiresAt;
-    saveDB();
+    await saveCoreMetadata('auth-resend-verification');
     const link = verificationLink(req, user.username, verification.token);
-    const mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'MaraniOS' }));
+    const mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
     if (exposeVerifyLink(mail.transport)) {
       return res.json({ ok: true, devVerifyUrl: link });
     }
@@ -370,27 +514,90 @@ app.post('/api/auth/resend-verification', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const email = String(req.body?.email || '').toLowerCase().trim();
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = db.users.find(u => (u.email || '').toLowerCase().trim() === email) as any;
+
+  if (!user) {
+    return res.status(400).json({ error: 'No account found with this email address' });
+  }
+
+  const resetToken = generateVerificationToken();
+  user.resetTokenHash = resetToken.tokenHash;
+  user.resetTokenExpires = resetToken.expiresAt;
+  await saveCoreMetadata('auth-forgot-password');
+
+  const link = `${appBaseUrl(req)}/?reset_token=${resetToken.token}&u=${encodeURIComponent(user.username)}`;
+  const mail = await sendMail(buildResetPasswordEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+
+  if (exposeVerifyLink(mail.transport)) {
+    return res.json({ ok: true, devVerifyUrl: link });
+  }
+
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, username, passcode } = req.body;
+  if (!token || !username || !passcode) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const cleanUsername = String(username).toLowerCase().trim();
+  const user = db.users.find(u => u.username === cleanUsername) as any;
+
+  if (!user) {
+    return res.status(400).json({ error: 'User not found' });
+  }
+
+  const isValid = isVerificationTokenValid({
+    verifyTokenHash: user.resetTokenHash,
+    verifyTokenExpires: user.resetTokenExpires
+  }, token);
+
+  if (!isValid) {
+    return res.status(400).json({ error: 'Invalid or expired reset token' });
+  }
+
+  user.passwordHash = hashPassword(passcode || 'vinea2026');
+  delete user.resetTokenHash;
+  delete user.resetTokenExpires;
+  await saveCoreMetadata('auth-reset-password');
+
+  res.json({ ok: true });
+});
+
+
+app.post('/api/auth/login', async (req, res) => {
   const { identifier, passcode, rememberMe } = req.body;
 
   // Brute-force guard: lock out an IP+identifier after repeated failures.
   const limiterKey = `${clientIp(req)}:${String(identifier || '').toLowerCase()}`;
-  const lockRemaining = loginLimiter.lockRemainingSeconds(limiterKey);
+  const lockRemaining = await loginLimiter.lockRemainingSeconds(limiterKey);
   if (lockRemaining > 0) {
     res.setHeader('Retry-After', String(lockRemaining));
     return res.status(429).json({ error: `Too many attempts. Try again in ${Math.ceil(lockRemaining / 60)} min.` });
   }
 
   // Master Admin Environment Check (Private Credentials)
-  const envAdminUser = process.env.ADMIN_USERNAME;
-  const envAdminPass = process.env.ADMIN_PASSCODE || process.env.ADMIN_PASSWORD;
+  const envAdminUser = cleanEnv(process.env.ADMIN_USERNAME);
+  const envAdminPass = cleanEnv(process.env.ADMIN_PASSCODE) || cleanEnv(process.env.ADMIN_PASSWORD);
+
   
   if (envAdminUser && envAdminPass && identifier && passcode) {
     const inputUser = String(identifier).trim().toLowerCase();
     const targetUser = String(envAdminUser).trim().toLowerCase();
     if (inputUser === targetUser || inputUser === `${targetUser}@vinea.com` || inputUser === `${targetUser}@cellarflow.com`) {
       if (String(passcode).trim() === String(envAdminPass).trim()) {
-        loginLimiter.clear(limiterKey);
+        await loginLimiter.clear(limiterKey);
         const token = createSessionToken({ username: envAdminUser, role: 'Owner/Admin' }, rememberMe);
         const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
         res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
@@ -407,25 +614,26 @@ app.post('/api/auth/login', (req, res) => {
     }
   }
 
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   
   const user = db.users.find(u => u.username === identifier || u.email === identifier);
   if (!user || !verifyPassword(passcode, user.passwordHash)) {
-    loginLimiter.recordFailure(limiterKey);
+    await loginLimiter.recordFailure(limiterKey);
     return res.status(401).json({ error: 'Invalid username or passcode' });
   }
 
   // Block sign-in until the email is confirmed (legacy accounts without the
   // field are treated as verified, so they are never locked out).
   if ((user as any).emailVerified === false) {
-    loginLimiter.clear(limiterKey);
+    await loginLimiter.clear(limiterKey);
     return res.status(403).json({
       error: 'Please verify your email before signing in. Check your inbox for the confirmation link.',
       code: 'email_unverified',
     });
   }
 
-  loginLimiter.clear(limiterKey);
+  await loginLimiter.clear(limiterKey);
   const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400; // 30 days vs 24 hours
   res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
@@ -626,6 +834,73 @@ app.post('/api/auth/google/configure', (req, res) => {
   res.redirect('/api/auth/google/login');
 });
 
+app.get('/api/dev/seed-testuser1', async (req, res) => {
+  try {
+    await refreshCoreMetadataFromPostgres();
+    const db = getDB();
+    const user = db.users.find(u => u.username === 'testuser1');
+    if (!user) {
+      return res.status(404).send('User testuser1 not found in core database. Please ensure they have signed up first.');
+    }
+
+    let orgId = user.activeOrganizationId;
+    if (!orgId) {
+      const membership = db.memberships.find(m => m.userId === user.username);
+      if (membership) {
+        orgId = membership.organizationId;
+      }
+    }
+
+    if (!orgId) {
+      orgId = `org_testuser1`;
+      const newOrg = { id: orgId, name: 'ყვარლის სადემონსტრაციო მარანი' };
+      const newMembership = {
+        id: `mem_testuser1`,
+        userId: user.username,
+        organizationId: orgId,
+        role: 'Owner/Admin'
+      };
+      db.organizations.push(newOrg);
+      db.memberships.push(newMembership);
+      user.activeOrganizationId = orgId;
+    }
+
+    user.language = 'ka';
+    await saveCoreMetadata('seed-testuser1');
+
+    const seededData = getSeederData(orgId);
+    db.orgData[orgId] = seededData;
+    
+    // Save organizational data using standard persistence routine
+    await saveUserData('testuser1', seededData, { updatedBy: 'seed-testuser1' });
+
+    const persisted = await reloadOrganizationDataFromPostgres(orgId);
+    const persistedData = persisted?.data;
+    const expectedHarvestIds = new Set(seededData.harvests.map((item: any) => item.id));
+    const expectedSamplingIds = new Set(seededData.samplings.map((item: any) => item.id));
+    const lotIds = new Set(seededData.lots.map((lot: any) => lot.id));
+    const persistedMatchesSeed = Boolean(
+      persistedData &&
+      persistedData.lots.length === seededData.lots.length &&
+      persistedData.harvests.length === seededData.harvests.length &&
+      persistedData.samplings.length === seededData.samplings.length &&
+      persistedData.grapeIntakes.every((intake: any) => lotIds.has(intake.createdLotId)) &&
+      persistedData.harvests.every((item: any) => expectedHarvestIds.has(item.id)) &&
+      persistedData.samplings.every((item: any) => expectedSamplingIds.has(item.id))
+    );
+
+    if (!persistedMatchesSeed) {
+      throw new Error('Seed data was generated but did not persist exactly to PostgreSQL. Please retry after the deployment is warm.');
+    }
+    
+    res.status(200).send(`Successfully seeded Kvareli demonstration data into organization [${orgId}] for testuser1.`);
+  } catch (err) {
+    console.error('Failed to seed testuser1:', err);
+    res.status(500).send(`Seeding failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+});
+
+
 app.get('/api/auth/google/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) {
@@ -679,6 +954,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
     }
     
     // 3. Find or register the user in the database
+    await refreshCoreMetadataFromPostgres();
     const db = getDB();
     const cleanEmail = email.toLowerCase().trim();
     let user = db.users.find(u => u.email.toLowerCase().trim() === cleanEmail);
@@ -702,7 +978,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
         username,
         email: cleanEmail,
         fullName,
-        role: 'Winemaker',
+        role: 'Owner/Admin',
         language: 'en',
         passwordHash: '',
         enabledModules: ['vazi', 'gvino'],
@@ -710,14 +986,20 @@ app.get('/api/auth/google/callback', async (req, res) => {
         // Google has already verified ownership of this email address.
         emailVerified: true,
       };
+      const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
+      const org = { id: orgId, name: `${fullName || username}'s Estate` };
+      const membership = { id: 'mem_' + Math.random().toString(36).substr(2, 9), userId: username, organizationId: orgId, role: 'Owner/Admin' };
+      user.activeOrganizationId = orgId;
       
+      if (!db.organizations) db.organizations = [];
+      if (!db.memberships) db.memberships = [];
+      if (!db.orgData) db.orgData = {};
+      db.organizations.push(org);
+      db.memberships.push(membership);
+      db.orgData[orgId] = createEmptyUserData();
       db.users.push(user);
-      
-      if (!db.userData) {
-        db.userData = {};
-      }
-      db.userData[username] = createEmptyUserData();
-      saveDB();
+      await saveCoreMetadata('auth-google-register');
+      await saveUserData(username, db.orgData[orgId]);
     }
     
     // 4. Create and set session cookie
@@ -746,6 +1028,19 @@ app.get('/api/auth/me', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
+  const envAdmin = cleanEnv(process.env.ADMIN_USERNAME).toLowerCase();
+  if (envAdmin && String(session.username).trim().toLowerCase() === envAdmin) {
+    return res.json({
+      username: session.username,
+      email: `${session.username}@cellarflow.com`,
+      fullName: 'Master Administrator',
+      role: 'Owner/Admin',
+      language: 'en',
+      enabledModules: ['vazi', 'gvino'],
+      enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']
+    });
+  }
+  
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
   if (!user) {
@@ -759,9 +1054,12 @@ app.get('/api/auth/me', async (req, res) => {
     role: user.role,
     language: user.language,
     enabledModules: (user as any).enabledModules || ['vazi', 'gvino'],
-    enabledWidgets: (user as any).enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
+    enabledWidgets: (user as any).enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
+    // Present only while a master admin is viewing this account (support mode).
+    ...(session.impersonatedBy ? { impersonatedBy: session.impersonatedBy } : {})
   });
 });
+
 
 app.post('/api/auth/update_profile', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
@@ -784,7 +1082,7 @@ app.post('/api/auth/update_profile', async (req, res) => {
   if (enabledModules !== undefined) (user as any).enabledModules = enabledModules;
   if (enabledWidgets !== undefined) (user as any).enabledWidgets = enabledWidgets;
   
-  saveDB();
+  await saveCoreMetadata('auth-update-profile');
   
   res.json({
     username: user.username,
@@ -797,23 +1095,693 @@ app.post('/api/auth/update_profile', async (req, res) => {
   });
 });
 
+app.post('/api/org/invite', async (req, res) => {
+  const session = await requireCapability(req, res, 'manage_users');
+  if (!session) return;
+
+  const { email, role } = req.body;
+  if (!email || !role) {
+    return res.status(400).json({ error: 'Email and role are required' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = db.users.find(u => u.username === session.username);
+  if (!user) {
+    return res.status(401).json({ error: 'User not found' });
+  }
+
+  const orgId = user.activeOrganizationId;
+  if (!orgId) {
+    return res.status(400).json({ error: 'User has no active organization' });
+  }
+
+  const org = db.organizations?.find(o => o.id === orgId);
+  const cleanEmail = String(email).toLowerCase().trim();
+
+  // Generate a secure token
+  const token = generateVerificationToken().token;
+  const inviteId = 'invite_' + Math.random().toString(36).substr(2, 9);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+  const invitation = {
+    id: inviteId,
+    email: cleanEmail,
+    organizationId: orgId,
+    role: role,
+    token: token,
+    expiresAt: expiresAt.toISOString(),
+    acceptedAt: null,
+  };
+
+  if (!db.invitations) db.invitations = [];
+  db.invitations.push(invitation);
+  await saveCoreMetadata('org-invite-create');
+
+  const link = `${appBaseUrl(req)}/accept-invite?token=${token}`;
+  const mail = await sendMail(buildInvitationEmail({
+    to: cleanEmail,
+    inviterName: user.fullName,
+    orgName: org?.name || 'VinOS Estate',
+    link,
+    lang: user.language
+  }));
+
+  if (exposeVerifyLink(mail.transport)) {
+    return res.json({ ok: true, devInviteUrl: link });
+  }
+
+  res.json({ ok: true });
+});
+
+app.get('/api/org/invitations/:token', async (req, res) => {
+  const { token } = req.params;
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const invite = db.invitations?.find(i => i.token === token);
+
+  if (!invite) {
+    return res.status(404).json({ error: 'Invitation not found' });
+  }
+  if (invite.acceptedAt) {
+    return res.status(400).json({ error: 'Invitation has already been accepted' });
+  }
+  if (new Date(invite.expiresAt) < new Date()) {
+    return res.status(400).json({ error: 'Invitation has expired' });
+  }
+
+  const org = db.organizations?.find(o => o.id === invite.organizationId);
+  res.json({
+    email: invite.email,
+    role: invite.role,
+    orgName: org?.name || 'VinOS Estate',
+  });
+});
+
+app.post('/api/org/accept-invite', async (req, res) => {
+  const { token } = req.body;
+  if (!token) {
+    return res.status(400).json({ error: 'Invitation token is required' });
+  }
+
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionToken = cookies['maranios_session'];
+  const session = verifySessionToken(sessionToken);
+
+  if (!session) {
+    return res.status(401).json({ error: 'Authentication required. Please sign in or register to accept the invitation.' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const invite = db.invitations?.find(i => i.token === token);
+
+  if (!invite) {
+    return res.status(404).json({ error: 'Invitation not found' });
+  }
+  if (invite.acceptedAt) {
+    return res.status(400).json({ error: 'Invitation has already been accepted' });
+  }
+  if (new Date(invite.expiresAt) < new Date()) {
+    return res.status(400).json({ error: 'Invitation has expired' });
+  }
+
+  const user = db.users.find(u => u.username === session.username);
+  if (!user) {
+    return res.status(401).json({ error: 'User not found' });
+  }
+
+  // Create membership
+  const memId = 'mem_' + Math.random().toString(36).substr(2, 9);
+  const membership = {
+    id: memId,
+    userId: user.username,
+    organizationId: invite.organizationId,
+    role: invite.role
+  };
+
+  if (!db.memberships) db.memberships = [];
+  
+  // Check if already a member
+  const alreadyMember = db.memberships.some(m => m.userId === user.username && m.organizationId === invite.organizationId);
+  if (!alreadyMember) {
+    db.memberships.push(membership);
+  }
+
+  // Mark invitation as accepted
+  invite.acceptedAt = new Date().toISOString();
+  user.activeOrganizationId = invite.organizationId;
+  await saveCoreMetadata('org-invite-accept');
+
+  res.json({ ok: true, activeOrganizationId: invite.organizationId });
+});
+
+app.post('/api/org/switch', async (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionToken = cookies['maranios_session'];
+  const session = verifySessionToken(sessionToken);
+
+  if (!session) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { organizationId } = req.body;
+  if (!organizationId) {
+    return res.status(400).json({ error: 'Organization ID is required' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = db.users.find(u => u.username === session.username);
+  if (!user) {
+    return res.status(401).json({ error: 'User not found' });
+  }
+
+  // Verify the user is a member of this organization
+  const isMember = db.memberships?.some(m => m.userId === user.username && m.organizationId === organizationId);
+  if (!isMember) {
+    return res.status(403).json({ error: 'You are not a member of this organization' });
+  }
+
+  user.activeOrganizationId = organizationId;
+  await saveCoreMetadata('org-switch');
+
+  // Also update session cookie with the new active organization role if it changed
+  const membership = db.memberships.find(m => m.userId === user.username && m.organizationId === organizationId);
+  const newToken = createSessionToken({ username: user.username, role: membership.role }, true);
+  res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
+
+  res.json({ ok: true, activeOrganizationId: organizationId });
+});
+
+// ── Master Admin Endpoints ──────────────────────────────────────────
+
+function scrubSensitiveForExport(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(item => scrubSensitiveForExport(item));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const sensitiveKey = /password|passcode|secret|token|api[_-]?key/i;
+  const cleaned: Record<string, any> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (sensitiveKey.test(key)) continue;
+    cleaned[key] = scrubSensitiveForExport(child);
+  }
+  return cleaned;
+}
+
+function exportFilename(prefix: string): string {
+  return `${prefix}_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+}
+
+app.get('/api/admin/system-health', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const memoryUsage = process.memoryUsage();
+  const dbStatus = getDbRuntimeStatus();
+  const postgresReadiness = await getPostgresReadinessProbe();
+  const deployment = applyRuntimeScaleReadinessProbe(getDeploymentStatus(), postgresReadiness);
+  res.json({
+    ok: dbStatus.ok && deployment.ok && postgresReadiness.ok,
+    checkedAt: new Date().toISOString(),
+    db: {
+      ...dbStatus,
+      postgresReadiness,
+    },
+    deployment,
+    process: {
+      uptimeSeconds: Math.round(process.uptime()),
+      memoryHeapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+      memoryHeapTotalMB: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+      nodeVersion: process.version,
+      platform: process.platform,
+    },
+    actions: {
+      exportUrl: '/api/admin/export',
+      forceSaveAction: 'save_db',
+    },
+  });
+});
+
+app.get('/api/admin/export', async (req, res) => {
+  const auth = await requireCapability(req, res, 'admin');
+  if (!auth) return;
+
+  const db = getDB();
+  const exportedAt = new Date().toISOString();
+  let snapshot: any;
+  let filename = exportFilename('cellarflow_export');
+
+  if (isMasterAdmin(auth.username)) {
+    snapshot = {
+      exportedAt,
+      scope: 'system',
+      db: scrubSensitiveForExport(db),
+    };
+    delete snapshot.db.userData;
+    filename = exportFilename('cellarflow_system_export');
+  } else {
+    const user = db.users.find(u => u.username === auth.username);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const orgId = user.activeOrganizationId;
+    if (!orgId) {
+      return res.status(400).json({ error: 'No active organization to export' });
+    }
+    const organization = db.organizations?.find(o => o.id === orgId);
+    const memberships = db.memberships?.filter(m => m.organizationId === orgId) || [];
+    const invitations = db.invitations?.filter(i => i.organizationId === orgId) || [];
+    snapshot = {
+      exportedAt,
+      scope: 'organization',
+      organization: scrubSensitiveForExport(organization || { id: orgId, name: 'Unnamed Winery' }),
+      currentUser: scrubSensitiveForExport(user),
+      members: memberships.map(m => ({
+        ...scrubSensitiveForExport(m),
+        user: scrubSensitiveForExport(db.users.find(u => u.username === m.userId) || null),
+      })),
+      pendingInvitations: scrubSensitiveForExport(invitations),
+      data: scrubSensitiveForExport(db.orgData?.[orgId] || createEmptyUserData()),
+    };
+    filename = exportFilename(`cellarflow_${orgId}_export`);
+  }
+
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(JSON.stringify(snapshot, null, 2));
+});
+
+app.get('/api/admin/stats', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const db = getDB();
+  const memoryUsage = process.memoryUsage();
+  const uptime = process.uptime();
+  const dbStatus = getDbRuntimeStatus();
+
+  res.json({
+    ok: true,
+    usersCount: db.users.length,
+    orgsCount: db.organizations?.length || 0,
+    membershipsCount: db.memberships?.length || 0,
+    invitationsCount: db.invitations?.length || 0,
+    memoryHeapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+    memoryHeapTotalMB: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+    memoryRssMB: Math.round(memoryUsage.rss / 1024 / 1024),
+    eventLoopLagMs,
+    uptimeSeconds: Math.round(uptime),
+    persistenceMode: dbStatus.activeBackendLabel,
+    nodeEnv: process.env.NODE_ENV || 'development'
+  });
+});
+
+app.get('/api/admin/users', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const db = getDB();
+  const usersWithOrgs = db.users.map(u => {
+    const userMemberships = db.memberships?.filter(m => m.userId === u.username) || [];
+    const orgs = userMemberships.map(m => {
+      const org = db.organizations?.find(o => o.id === m.organizationId);
+      return {
+        id: m.organizationId,
+        name: org?.name || 'Unknown',
+        role: m.role
+      };
+    });
+
+    return {
+      id: u.id,
+      username: u.username,
+      email: u.email,
+      fullName: u.fullName,
+      role: u.role,
+      emailVerified: u.emailVerified,
+      isDemo: u.isDemo,
+      createdAt: u.createdAt,
+      organizations: orgs
+    };
+  });
+
+  res.json({ ok: true, users: usersWithOrgs });
+});
+
+app.post('/api/admin/users/update', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const { username, email, role, emailVerified, passcode } = req.body;
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+
+  const db = getDB();
+  const user = db.users.find(u => u.username === username);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  if (email !== undefined) {
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+    const duplicate = db.users.find(u => u.email === email && u.username !== username);
+    if (duplicate) {
+      return res.status(400).json({ error: 'Email address already in use' });
+    }
+    user.email = email;
+  }
+
+  if (role !== undefined) {
+    user.role = role;
+  }
+
+  if (emailVerified !== undefined) {
+    user.emailVerified = !!emailVerified;
+  }
+
+  if (passcode !== undefined) {
+    const trimmed = String(passcode).trim();
+    if (trimmed.length < 4) {
+      return res.status(400).json({ error: 'Passcode must be at least 4 characters long' });
+    }
+    user.passwordHash = await hashPassword(trimmed);
+  }
+
+  await saveCoreMetadata('admin-user-update');
+  const changed = [
+    email !== undefined ? 'email' : '',
+    role !== undefined ? 'role' : '',
+    emailVerified !== undefined ? 'emailVerified' : '',
+    passcode !== undefined ? 'passcode' : '',
+  ].filter(Boolean).join(', ');
+  recordAdminAction(auth.username, 'user.update', username, changed);
+  res.json({ ok: true, message: 'User updated successfully' });
+});
+
+app.post('/api/admin/users/delete', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const { username } = req.body;
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+
+  const envAdmin = cleanEnv(process.env.ADMIN_USERNAME) || 'admin';
+  if (username.trim().toLowerCase() === envAdmin.toLowerCase()) {
+    return res.status(400).json({ error: 'Cannot delete the master administrator' });
+  }
+
+  const db = getDB();
+  const userIndex = db.users.findIndex(u => u.username === username);
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  // Remove memberships
+  if (db.memberships) {
+    db.memberships = db.memberships.filter(m => m.userId !== username);
+  }
+
+  // Delete user
+  db.users.splice(userIndex, 1);
+  await deleteUserMetadataFromPostgres(username);
+  await saveCoreMetadata('admin-user-delete');
+
+  recordAdminAction(auth.username, 'user.delete', username);
+  res.json({ ok: true, message: 'User deleted successfully' });
+});
+
+app.get('/api/admin/orgs', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const db = getDB();
+  const orgList = db.organizations?.map(org => {
+    const members = db.memberships?.filter(m => m.organizationId === org.id) || [];
+    const orgData = db.orgData?.[org.id] || {};
+    const tanksCount = orgData.vessels?.length || 0;
+    const lotsCount = orgData.lots?.length || 0;
+    const dataSize = JSON.stringify(orgData).length;
+
+    return {
+      id: org.id,
+      name: org.name,
+      createdAt: org.createdAt,
+      membersCount: members.length,
+      tanksCount,
+      lotsCount,
+      dataSize
+    };
+  }) || [];
+
+  res.json({ ok: true, organizations: orgList });
+});
+
+app.post('/api/admin/system-action', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const { action } = req.body;
+  if (!action) {
+    return res.status(400).json({ error: 'Action is required' });
+  }
+
+  if (action === 'save_db') {
+    try {
+      recordAdminAction(auth.username, 'system.save_db');
+      const status = await forceSaveDB();
+      return res.json({
+        ok: status.ok,
+        message: status.postgres.usable
+          ? 'Database snapshot durably saved to PostgreSQL JSONB and backup mirror checked'
+          : status.json.gcsEnabled
+            ? 'Database snapshot durably saved to JSON fallback and GCS backup'
+            : 'Database snapshot saved to local JSON fallback',
+        status,
+      });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Durable save failed',
+        status: getDbRuntimeStatus(),
+      });
+    }
+  }
+
+  res.status(400).json({ error: 'Unknown system action' });
+});
+
+// ── Master-admin action trail ────────────────────────────────────────────────
+app.get('/api/admin/actions', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+  res.json({ ok: true, actions: adminActions });
+});
+
+// ── Impersonation ("view as") ────────────────────────────────────────────────
+// The support session token carries BOTH identities: it acts as the target user
+// while `impersonatedBy` marks the responsible admin. Short-lived cookie.
+app.post('/api/admin/impersonate', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const target = String(req.body?.username || '').trim();
+  if (!target) return res.status(400).json({ error: 'Username is required' });
+  if (isMasterAdmin(target)) {
+    return res.status(400).json({ error: 'Cannot impersonate the master administrator' });
+  }
+
+  const db = getDB();
+  const user = db.users.find(u => u.username === target);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const token = createSessionToken(
+    { username: user.username, role: user.role, impersonatedBy: auth.username },
+    false,
+  );
+  res.setHeader('Set-Cookie', sessionCookie(token, 3600)); // 1-hour support window
+  recordAdminAction(auth.username, 'impersonate.start', target);
+  res.json({ ok: true, username: user.username, fullName: user.fullName });
+});
+
+// Exiting impersonation only requires the impersonation cookie itself: the
+// claim proves a master admin started it, so the admin session is restored
+// without re-entering credentials.
+app.post('/api/admin/impersonate/stop', async (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const session = verifySessionToken(cookies['maranios_session']);
+  if (!session || !session.impersonatedBy) {
+    return res.status(400).json({ error: 'Not in an impersonation session' });
+  }
+  if (!isMasterAdmin(String(session.impersonatedBy))) {
+    return res.status(403).json({ error: 'Impersonation origin is no longer the master administrator' });
+  }
+
+  const adminToken = createSessionToken({ username: session.impersonatedBy, role: 'Owner/Admin' }, false);
+  res.setHeader('Set-Cookie', sessionCookie(adminToken, 86400));
+  recordAdminAction(String(session.impersonatedBy), 'impersonate.stop', String(session.username));
+  res.json({ ok: true, username: session.impersonatedBy });
+});
+
+// ── Login lockouts (brute-force limiter state) ───────────────────────────────
+app.get('/api/admin/lockouts', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+  const entries = await loginLimiter.list();
+  res.json({ ok: true, backend: loginLimiter.backend(), entries });
+});
+
+app.post('/api/admin/lockouts/clear', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+  const key = String(req.body?.key || '').trim();
+  if (!key) return res.status(400).json({ error: 'Lockout key is required' });
+  await loginLimiter.clear(key);
+  recordAdminAction(auth.username, 'lockout.clear', key);
+  res.json({ ok: true });
+});
+
+// ── Outbound email check ─────────────────────────────────────────────────────
+app.post('/api/admin/test-email', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const to = String(req.body?.to || '').trim();
+  if (!isValidEmail(to)) return res.status(400).json({ error: 'A valid recipient email is required' });
+
+  const result = await sendMail({
+    to,
+    subject: 'VinOS — delivery test',
+    text: `This is a delivery test from the VinOS admin console, requested by ${auth.username} at ${new Date().toISOString()}. If you received it, outbound email works.`,
+  });
+  recordAdminAction(auth.username, 'email.test', to, `transport=${result.transport}`);
+  res.json({ ok: true, delivered: result.delivered, transport: result.transport });
+});
+
+// ── Organization data inspector ──────────────────────────────────────────────
+// Per-collection record counts + freshness for any winery, without exposing the
+// records themselves in the console.
+app.get('/api/admin/orgs/inspect', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const orgId = String(req.query.id || '').trim();
+  if (!orgId) return res.status(400).json({ error: 'Organization id is required' });
+
+  const db = getDB();
+  const org = db.organizations?.find(o => o.id === orgId);
+  if (!org) return res.status(404).json({ error: 'Organization not found' });
+
+  const data: any = db.orgData?.[orgId] || {};
+  const collections: Array<{ key: string; count: number; lastModified: string | null }> = [];
+  let lastActivity: string | null = null;
+
+  for (const key of Object.keys(data)) {
+    if (!Array.isArray(data[key])) continue;
+    let newest: string | null = null;
+    for (const item of data[key]) {
+      const lm = item?.lastModified;
+      if (typeof lm === 'string' && (!newest || lm > newest)) newest = lm;
+    }
+    if (newest && (!lastActivity || newest > lastActivity)) lastActivity = newest;
+    collections.push({ key, count: data[key].length, lastModified: newest });
+  }
+  collections.sort((a, b) => b.count - a.count);
+
+  const members = db.memberships?.filter(m => m.organizationId === orgId) || [];
+  res.json({
+    ok: true,
+    organization: { id: org.id, name: org.name, createdAt: org.createdAt },
+    wineryName: data.companyProfile?.wineryName || data.companyProfile?.companyName || '',
+    members: members.map(m => ({ username: m.userId, role: m.role })),
+    dataSizeBytes: JSON.stringify(data).length,
+    lastActivity,
+    collections,
+  });
+});
+
+
+app.get('/api/org/members', async (req, res) => {
+  const session = await requireCapability(req, res, 'read');
+  if (!session) return;
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = db.users.find(u => u.username === session.username);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const orgId = user.activeOrganizationId;
+  if (!orgId) return res.status(400).json({ error: 'No active organization' });
+
+  const memberships = db.memberships?.filter(m => m.organizationId === orgId) || [];
+  const members = memberships.map(m => {
+    const u = db.users.find(usr => usr.username === m.userId);
+    return {
+      username: m.userId,
+      fullName: u?.fullName || m.userId,
+      email: u?.email || '',
+      role: m.role,
+    };
+  });
+
+  const pendingInvites = db.invitations?.filter(i => i.organizationId === orgId && !i.acceptedAt && new Date(i.expiresAt) > new Date()) || [];
+
+  res.json({ members, pendingInvites });
+});
+
+app.get('/api/org/list', async (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionToken = cookies['maranios_session'];
+  const session = verifySessionToken(sessionToken);
+
+  if (!session) return res.status(401).json({ error: 'Unauthorized' });
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = db.users.find(u => u.username === session.username);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+
+  const userMemberships = db.memberships?.filter(m => m.userId === user.username) || [];
+  const orgs = userMemberships.map(m => {
+    const org = db.organizations?.find(o => o.id === m.organizationId);
+    return {
+      id: m.organizationId,
+      name: org?.name || 'Unnamed Winery',
+      role: m.role,
+      isActive: m.organizationId === user.activeOrganizationId,
+    };
+  });
+
+  res.json(orgs);
+});
+
 // Administrative database reset endpoint
 app.post('/api/admin/reset', async (req, res) => {
   // Destructive — requires the live 'admin' capability (Owner/Admin only).
-  const session = requireCapability(req, res, 'admin');
+  const session = await requireCapability(req, res, 'admin');
   if (!session) return;
 
-  const emptyData = resetUserData(session.username);
+  const emptyData = await resetUserData(session.username);
   res.json(emptyData);
 });
 
 // Sync endpoint
 app.post('/api/sync', async (req, res) => {
   // Authoritative role check (resolved from the DB, not the login-time token).
-  const session = requireCapability(req, res, 'write');
+  const session = await requireCapability(req, res, 'write');
   if (!session) return;
 
-  const userDb = await getUserData(session.username) || createEmptyUserData();
+  const refreshed = await reloadUserOrganizationDataFromPostgres(session.username);
+  const expectedOrgStateVersion = refreshed?.meta.version ?? null;
+  const userDb = refreshed?.data || await getUserData(session.username) || createEmptyUserData();
 
   const { deletedIds, ...collections } = req.body;
 
@@ -1346,6 +2314,18 @@ app.post('/api/sync', async (req, res) => {
             }
           }
 
+          else if (key === 'supplierPayments') {
+            if (typeof item.supplierName !== 'string' || !item.supplierName.trim()) {
+              throw new Error(`Supplier payment ${item.id} requires a supplier name.`);
+            }
+            if (typeof item.amount !== 'number' || !Number.isFinite(item.amount) || item.amount <= 0) {
+              throw new Error(`Supplier payment ${item.id} amount must be a positive number.`);
+            }
+            if (item.method !== undefined && !['cash', 'bank', 'other'].includes(item.method)) {
+              throw new Error(`Supplier payment ${item.id} has invalid method.`);
+            }
+          }
+
           else if (key === 'tasks') {
             if (item.priority && !['high', 'medium', 'low'].includes(item.priority)) {
               throw new Error(`Task ${item.id} has invalid priority: ${item.priority}`);
@@ -1448,7 +2428,7 @@ app.post('/api/sync', async (req, res) => {
 
           else if (key === 'auditLogs') {
             const existingAudit = userDb.auditLogs.find((l: any) => l.id === item.id);
-            if (existingAudit) {
+            if (existingAudit && !auditLogContentMatches(existingAudit, item)) {
               throw new Error(`Audit Immutability: Modify log ${item.id} is forbidden.`);
             }
           }
@@ -1459,12 +2439,44 @@ app.post('/api/sync', async (req, res) => {
     return res.status(400).json({ error: err.message || 'Validation error' });
   }
 
+  try {
+    if (Array.isArray(collections.auditLogs)) {
+      collections.auditLogs = prepareAuditLogsForServerMerge(userDb.auditLogs || [], collections.auditLogs);
+    }
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'Audit validation error' });
+  }
+
   // Apply deletions, then merge with optimistic-concurrency conflict
   // detection. Conflicted items are not applied; everything else is.
   applyDeletions(userDb, deletedIds);
   const conflicts = mergeCollections(userDb, collections);
+  if (session.username === 'testuser1') {
+    pruneTestUserSeedDuplicates(userDb);
+  }
 
-  await saveUserData(session.username, userDb);
+  try {
+    await saveUserData(session.username, userDb, {
+      expectedVersion: expectedOrgStateVersion,
+      updatedBy: `api-sync:${session.username}`,
+    });
+  } catch (err) {
+    if (err instanceof OrganizationStateVersionConflictError) {
+      const latest = await reloadUserOrganizationDataFromPostgres(session.username);
+      if (latest) {
+        saveDB({ syncPostgres: false });
+        await setOrganizationStateHeaders(res, session.username);
+      }
+      return res.status(409).json({
+        code: 'org_state_conflict',
+        error: 'Organization data changed while saving. Please sync again before retrying.',
+        serverDb: latest?.data || userDb,
+      });
+    }
+    throw err;
+  }
+
+  await setOrganizationStateHeaders(res, session.username);
 
   if (conflicts.length > 0) {
     return res.json({ hasConflicts: true, conflicts, serverDb: userDb });
@@ -1482,11 +2494,13 @@ app.get('/api/db', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  let userDb = await getUserData(session.username);
+  const refreshed = await reloadUserOrganizationDataFromPostgres(session.username);
+  let userDb = refreshed?.data || await getUserData(session.username);
   if (!userDb) {
     userDb = createEmptyUserData();
     await saveUserData(session.username, userDb);
   }
+  await setOrganizationStateHeaders(res, session.username);
   res.json(userDb);
 });
 
@@ -1595,6 +2609,73 @@ function getAiClient(): GoogleGenAI {
   return aiClient;
 }
 
+// Helper to assemble rich historical context about the user's winery and vineyard
+export function getHistoricalContext(username: string): string {
+  const db = getDB();
+  const user = db.users.find(u => u.username === username);
+  const orgId = user?.activeOrganizationId;
+  const userData = orgId ? db.orgData[orgId] : null;
+  if (!userData) return "";
+
+  let context = "\n[HISTORICAL WINERY & VINEYARD CONTEXT]\n";
+
+  const blockName = (id: string) => (userData.blocks || []).find((b: any) => b.id === id)?.name || id;
+
+  // 1. Vineyard Blocks
+  if (userData.blocks && userData.blocks.length > 0) {
+    context += "\n* VINEYARD BLOCKS:\n";
+    userData.blocks.forEach((b: any) => {
+      context += `  - Block "${b.name}" (${b.grapeVariety}, ${b.area} ha): Stage is "${b.currentPhenology}", Est. Harvest: ${b.estimatedHarvestDate}. Spacing: ${b.spacing}, Training: ${b.trainingSystem}.\n`;
+    });
+  }
+
+  // 2. Recent Spraying and Scouting
+  if (userData.scoutings && userData.scoutings.length > 0) {
+    context += "\n* RECENT SCOUTING RECORDS:\n";
+    userData.scoutings.slice(-5).forEach((s: any) => {
+      context += `  - Date: ${s.date}, Block: "${blockName(s.blockId)}": Problem: ${s.problemType}, Severity: ${s.severity}. Findings: ${s.notes}\n`;
+    });
+  }
+  if (userData.sprays && userData.sprays.length > 0) {
+    context += "\n* RECENT SPRAY LOGS:\n";
+    userData.sprays.slice(-5).forEach((s: any) => {
+      context += `  - Date: ${s.date}, Block: "${blockName(s.blockId)}": Product: ${s.productName}, Target: ${s.targetProblem || 'N/A'}, Dose/ha: ${s.dosePerHa}.\n`;
+    });
+  }
+
+  // 3. Active Wine Lots and Vessels
+  if (userData.lots && userData.lots.length > 0) {
+    context += "\n* WINE LOTS & VESSEL LOCATIONS:\n";
+    userData.lots.forEach((l: any) => {
+      const vessels = (userData.vessels || []).filter((v: any) => v.assignedLotId === l.id);
+      const vesselNames = vessels.map((v: any) => `${v.name} (${v.type})`).join(', ') || "Not in vessel";
+      context += `  - Lot "${l.id}" (${l.name}, ${l.variety}, Vintage ${l.vintage}, Vol: ${l.currentVolume} L): Stage is "${l.stage}". Stored in: ${vesselNames}.\n`;
+      
+      // Add recent chemistry
+      const chemistry = (userData.lablogs || [])
+        .filter((c: any) => c.lotId === l.id)
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+      if (chemistry) {
+        context += `    - Last Chemistry (${chemistry.date}): pH: ${chemistry.ph}, Free SO2: ${chemistry.freeSo2} ppm, TA: ${chemistry.titratableAcidity} g/L, VA: ${chemistry.volatileAcid} g/L, Alc: ${chemistry.alcoholPct}%.\n`;
+      }
+
+      // Add recent fermentation readings
+      const fermentation = (userData.fermlogs || [])
+        .filter((f: any) => f.lotId === l.id)
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 3);
+      if (fermentation.length > 0) {
+        context += "    - Recent Fermentation Readings:\n";
+        fermentation.forEach((f: any) => {
+          context += `      * ${f.date}: SG/Density: ${f.density}, Temp: ${f.temperature}°C, pH: ${f.ph ?? 'N/A'}\n`;
+        });
+      }
+    });
+  }
+
+  return context;
+}
+
 // -------------------------------------------------------------
 // POST /api/gemini — Winemaker AI assistant
 // Consumed by the AI chat (AiWinemaker) and the Weather tab.
@@ -1609,12 +2690,23 @@ app.post('/api/gemini', async (req, res) => {
       });
     }
 
-    const SYSTEM_PROMPT = `You are the MaraniOS AI Winemaker Assistant, a world-class enological advisor, biochemist, and cellar processes expert.
+    const cookies = parseCookies(req.headers.cookie);
+    const session = verifySessionToken(cookies['maranios_session']);
+    const username = session?.username;
+
+    let historicalContext = "";
+    if (username) {
+      historicalContext = getHistoricalContext(username);
+    }
+
+    const SYSTEM_PROMPT = `You are the VinOS AI Winemaker Assistant (Copilot), a world-class enological advisor, biochemist, and cellar processes expert.
 You help winemakers worldwide with:
 1. Stuck and sluggish fermentation diagnostics (sugar curves, temperature, nitrogen, density) and restart protocols.
 2. Chemical additions and pH modeling: free SO2 calculations, potassium metabisulfite (KMBS) formulations, tartaric acid / calcium carbonate additions.
 3. Traditional Georgian winemaking in clay Qvevris: skin contact maceration times, lid sealing, lime water lining, buried marani temperature dynamics.
 4. Malolactic fermentation (MLF) management, volatile acidity (VA) mitigation, barrel aging, oak toast selections, and cellaring sanitation.
+
+You have access to the winemaker's real-time cellar state and historical data (fermentation logs, chemistry history, vineyard spray/scouting records) below. Use this data to provide highly personalized, context-aware advice, diagnose issues, and perform enological calculations automatically without asking the user to re-enter values unless needed.
 
 Provide highly professional, authentic, scientifically accurate enological advice. Answer concisely, using markdown tables or bullet points where helpful.`;
 
@@ -1633,7 +2725,7 @@ ${JSON.stringify(cellarState.sampleData || [], null, 2)}
 `;
     }
 
-    const fullPrompt = `${SYSTEM_PROMPT}\n\n${chemicalContext}\n\nWinemaker Query: ${prompt}\n\nAI Winemaker Response:\n`;
+    const fullPrompt = `${SYSTEM_PROMPT}\n\n${chemicalContext}\n\n${historicalContext}\n\nWinemaker Query: ${prompt}\n\nAI Winemaker Response:\n`;
 
     const client = getAiClient();
 
@@ -1686,10 +2778,16 @@ const server = http.createServer(app);
 
 if (isProd) {
   // Serve production build static files
-  app.use(express.static(path.resolve(__dirname, 'dist')));
+  app.use(express.static(path.resolve(__dirname, 'dist'), {
+    maxAge: '1y',
+    immutable: true,
+    index: false // Do not serve index.html with aggressive caching
+  }));
   app.get('*any', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
   });
+
 } else {
   // In development, load Vite middleware dynamically to provide live reload on same port!
   const { createServer: createViteServer } = await import('vite');
@@ -1707,10 +2805,12 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 // Hydrate the database from durable storage (GCS) before accepting traffic.
 // initDB() is a no-op unless GCS_BUCKET is set, so local/dev startup is unchanged.
-initDB()
-  .catch((err) => console.error('[db] initialisation failed, continuing with local state:', err))
-  .finally(() => {
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
+if (process.env.VITEST !== 'true') {
+  initDB()
+    .catch((err) => console.error('[db] initialisation failed, continuing with local state:', err))
+    .finally(() => {
+      server.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
+      });
     });
-  });
+}

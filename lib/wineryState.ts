@@ -256,6 +256,24 @@ export interface GrapeIntakeRecord {
   notes: string;
 }
 
+/**
+ * Payment to a grape supplier during rtveli. Settlements are derived, never
+ * stored: balance = Σ fruit cost of the supplier's intakes − Σ payments, so the
+ * ledger stays truthful when an intake is corrected after the fact.
+ */
+export type SupplierPaymentMethod = 'cash' | 'bank' | 'other';
+
+export interface SupplierPayment {
+  id: string;
+  date: string;            // YYYY-MM-DD
+  supplierName: string;    // matches GrapeIntakeRecord.supplierName
+  amount: number;          // in `currency`
+  currency: string;
+  method: SupplierPaymentMethod;
+  note?: string;
+  operator: string;
+}
+
 // Cellar-operation runtime helpers (estimateMustVolumeL, brixToPotentialAlcohol,
 // CELLAR_OPERATIONS, deductStock) live in ./wineryOperations; this module owns the types.
 
@@ -334,6 +352,7 @@ export interface VineyardBlock {
   currentPhenology: string;
   estimatedHarvestDate: string;
   notes: string;
+  boundary?: { lat: number; lng: number }[];
 }
 
 export interface PhenologyRecord {
@@ -465,6 +484,14 @@ export interface MaraniOSAuditLog {
   oldValue: string;
   newValue: string;
   notes: string;
+  /** 1-based position in the tamper-evident organization audit chain. */
+  chainSequence?: number;
+  /** Hash of the previous canonical audit record, or GENESIS for the first. */
+  previousHash?: string;
+  /** SHA-256 hash of previousHash + this record's canonical payload. */
+  chainHash?: string;
+  hashAlgorithm?: 'SHA-256' | string;
+  hashCanonicalVersion?: number;
 }
 
 // User Settings and Profile Type

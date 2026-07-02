@@ -14,5 +14,6 @@ describe('account data schema', () => {
     expect(data.stockMovements).toEqual([]);
     expect(data.salesDispatches).toEqual([]);
     expect(data.salesOrders).toEqual([]);
+    expect(data.supplierPayments).toEqual([]);
   });
 });

@@ -28,3 +28,11 @@ export interface ReservationPosition {
   lotId: string;
   reservedBottles: number;
 }
+
+export interface StockAvailabilityPosition {
+  locationId: string;
+  lotId: string;
+  onHandBottles: number;
+  reservedBottles: number;
+  availableBottles: number;
+}

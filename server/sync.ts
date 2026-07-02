@@ -93,6 +93,14 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
         continue;
       }
       if (sameContent(incoming, existing)) {
+        // Content is identical, but adopt the client's sync stamp: refusing a
+        // lastModified-only update makes the client see "server differs" on
+        // every response, re-stamp, and re-sync — an infinite request loop
+        // (observed as charts redrawing continuously). Metadata-only adoption
+        // converges in one round-trip.
+        if (incoming.lastModified && incoming.lastModified !== existing.lastModified) {
+          existing.lastModified = incoming.lastModified;
+        }
         continue;
       }
 

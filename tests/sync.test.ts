@@ -63,13 +63,16 @@ describe('mergeCollections', () => {
     expect(db.tasks).toHaveLength(1);
   });
 
-  it('ignores items with identical content regardless of timestamps', () => {
+  it('keeps identical content conflict-free but adopts the newer sync stamp', () => {
     const db: any = { tasks: [item('t1', { title: 'A', lastModified: '2026-06-01T00:00:00Z' })] };
     const conflicts = mergeCollections(db, {
       tasks: [item('t1', { title: 'A', lastModified: '2026-06-09T00:00:00Z' })],
     });
     expect(conflicts).toEqual([]);
-    expect(db.tasks[0].lastModified).toBe('2026-06-01T00:00:00Z');
+    expect(db.tasks[0].title).toBe('A');
+    // Refusing the stamp made the server echo differ from the client's copy,
+    // re-marking the collection dirty on every response — an infinite sync loop.
+    expect(db.tasks[0].lastModified).toBe('2026-06-09T00:00:00Z');
   });
 
   it('fast-forwards when the baseline matches the server version, stripping the baseline', () => {
@@ -169,5 +172,27 @@ describe('mergeCollections', () => {
     const db: any = { tasks: [] };
     mergeCollections(db, { exploits: [item('e1')] });
     expect(db.exploits).toBeUndefined();
+  });
+});
+
+describe('mergeCollections — sync-stamp convergence (chart-flashing loop fix)', () => {
+  it('adopts the client lastModified when content is identical but the server copy is stamp-less', () => {
+    const db: any = { tasks: [{ id: 't1', title: 'Rack T-3' }] }; // seeded without a stamp
+    const conflicts = mergeCollections(db, {
+      tasks: [{ id: 't1', title: 'Rack T-3', lastModified: '2026-07-02T10:00:00.000Z' }],
+    });
+    expect(conflicts).toEqual([]);
+    // Without adoption the response never matches the client's stamped copy,
+    // which re-marks the collection dirty on every pass → infinite sync loop.
+    expect(db.tasks[0].lastModified).toBe('2026-07-02T10:00:00.000Z');
+  });
+
+  it('does not touch content when only the stamp differs', () => {
+    const db: any = { tasks: [{ id: 't1', title: 'Rack T-3', lastModified: '2026-07-01T00:00:00.000Z' }] };
+    mergeCollections(db, {
+      tasks: [{ id: 't1', title: 'Rack T-3', lastModified: '2026-07-02T00:00:00.000Z' }],
+    });
+    expect(db.tasks[0].title).toBe('Rack T-3');
+    expect(db.tasks[0].lastModified).toBe('2026-07-02T00:00:00.000Z');
   });
 });

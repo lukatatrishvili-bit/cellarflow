@@ -6,4 +6,5 @@ export {
   reservationKey,
   reservedBottlesFor,
   reservedByLocationLot,
+  stockAvailabilityPosition,
 } from './engine';

@@ -1042,7 +1042,21 @@ export default function TransfersTab({
               ))}
 
               {pastTransfers.length === 0 && (
-                <p className="p-8 text-stone-400 italic font-serif text-center">No cellar transfer logs posted yet.</p>
+                <div className="flex flex-col items-center justify-center p-12 text-center border border-dashed border-stone-200 rounded-2xl bg-stone-50/50 dark:bg-stone-900/20 dark:border-stone-850">
+                  <svg className="w-16 h-16 text-stone-300 dark:text-stone-700 mb-4 stroke-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <circle cx="12" cy="12" r="10" strokeDasharray="4 4" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8m-8 4h8m-8 4h5" />
+                    <path d="M17 13l4 4m0 0l-4 4m4-4H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <h4 className="text-xs font-bold text-stone-700 dark:text-stone-300 uppercase tracking-wider font-mono">
+                    {lang === 'ka' ? 'ტრანსფერები არ არის ჩაწერილი' : 'No transfers recorded'}
+                  </h4>
+                  <p className="text-[11px] text-stone-400 dark:text-stone-500 font-serif max-w-xs mt-1.5 leading-relaxed">
+                    {lang === 'ka' 
+                      ? 'მარანში სითხის გადაღების ან ბლენდირების ჟურნალი ჯერ არ დაწყებულა.' 
+                      : 'Liquid transfer, racking, and blending operations will appear here in chronological order.'}
+                  </p>
+                </div>
               )}
             </div>
 

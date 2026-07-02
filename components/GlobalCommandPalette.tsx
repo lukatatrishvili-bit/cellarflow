@@ -151,8 +151,8 @@ export default function GlobalCommandPalette({
       id: `vessel-${vessel.id}`,
       kind: 'vessel',
       title: vessel.id,
-      subtitle: `${vessel.type.replace(/_/g, ' ')} · ${vessel.currentVolume.toLocaleString()} / ${vessel.capacity.toLocaleString()} L`,
-      keywords: `${vessel.id} ${vessel.type} ${vessel.assignedLotId || ''} ${vessel.locationDetails || ''} tank vessel qvevri barrel`,
+      subtitle: `${(vessel.type || 'vessel').replace(/_/g, ' ')} · ${(vessel.currentVolume || 0).toLocaleString()} / ${(vessel.capacity || 0).toLocaleString()} L`,
+      keywords: `${vessel.id} ${vessel.type || ''} ${vessel.assignedLotId || ''} ${vessel.locationDetails || ''} tank vessel qvevri barrel`,
       icon: Grape,
       run: () => {
         setActiveModule('gvino');
@@ -166,7 +166,7 @@ export default function GlobalCommandPalette({
       id: `inventory-${item.id}`,
       kind: 'inventory',
       title: item.name,
-      subtitle: `${item.category} · ${item.stock.toLocaleString()} ${item.unit}`,
+      subtitle: `${item.category} · ${(item.stock || 0).toLocaleString()} ${item.unit}`,
       keywords: `${item.id} ${item.name} ${item.category} ${item.supplierName} inventory additive packaging stock`,
       icon: Boxes,
       run: () => jump('gvino', 'inventory'),
@@ -186,7 +186,7 @@ export default function GlobalCommandPalette({
       id: `order-${order.id}`,
       kind: 'order',
       title: order.orderNumber || order.customerName,
-      subtitle: `${order.customerName} · ${order.bottles.toLocaleString()} btl · ${order.status}`,
+      subtitle: `${order.customerName} · ${(order.bottles || 0).toLocaleString()} btl · ${order.status}`,
       keywords: `${order.id} ${order.orderNumber || ''} ${order.customerName} ${order.lotId} ${order.lotName} ${order.status} reservation order sales`,
       icon: ShoppingCart,
       run: () => jump('sales'),
@@ -196,11 +196,12 @@ export default function GlobalCommandPalette({
       id: `dispatch-${dispatch.id}`,
       kind: 'dispatch',
       title: dispatch.customerName,
-      subtitle: `${dispatch.lotName} · ${dispatch.bottles.toLocaleString()} btl · ${dispatch.date}`,
+      subtitle: `${dispatch.lotName} · ${(dispatch.bottles || 0).toLocaleString()} btl · ${dispatch.date}`,
       keywords: `${dispatch.id} ${dispatch.customerName} ${dispatch.lotId} ${dispatch.lotName} dispatch sale revenue`,
       icon: Truck,
       run: () => jump('sales'),
     }));
+
 
     return [
       ...moduleCommands,

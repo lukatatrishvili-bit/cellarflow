@@ -11,6 +11,8 @@ import {
 import TankCapacityChart, { ChartTankData } from './TankCapacityChart';
 import CellarMap from './CellarMap';
 import VesselFill from './VesselFill';
+import { Stagger, StaggerItem } from './motion';
+import { useToast } from './ToastProvider';
 
 interface Props {
   lang: Language;
@@ -22,14 +24,16 @@ interface Props {
   setActiveTab?: (tab: string) => void;
   setPrefilledSourceId?: (id: string) => void;
   setPrefilledDestId?: (id: string) => void;
+  wineryName?: string;
 }
 
 export default function TanksVessels({ 
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
-  setActiveTab, setPrefilledSourceId, setPrefilledDestId
+  setActiveTab, setPrefilledSourceId, setPrefilledDestId, wineryName
 }: Props) {
   const t = translations[lang];
   const ka = lang === 'ka';
+  const { success, info } = useToast();
   const lText = (obj: Partial<Record<Language, string>>, fallback: string): string => {
     return obj[lang] || fallback;
   };
@@ -65,11 +69,14 @@ export default function TanksVessels({
       return v;
     });
     onUpdateVessels(updated);
+    success(ka ? `ჭურჭელი ${vId} წარმატებით გაირეცხა და დასუფთავდა` : `Vessel ${vId} sanitized successfully`);
   };
 
   const handleToggleCooling = (vId: string) => {
+    let stateActive = false;
     const updated = vessels.map(v => {
       if (v.id === vId) {
+        stateActive = !v.coolingJacketActive;
         return {
           ...v,
           coolingJacketActive: !v.coolingJacketActive,
@@ -79,6 +86,11 @@ export default function TanksVessels({
       return v;
     });
     onUpdateVessels(updated);
+    if (stateActive) {
+      success(ka ? `პერანგის გაგრილება ჩაირთო ჭურჭლისთვის: ${vId}` : `Active cooling enabled for ${vId}`);
+    } else {
+      info(ka ? `პერანგის გაგრილება გამოირთო ჭურჭლისთვის: ${vId}` : `Active cooling disabled for ${vId}`);
+    }
   };
 
   const handleSaveTemp = (vId: string) => {
@@ -94,11 +106,13 @@ export default function TanksVessels({
     });
     onUpdateVessels(updated);
     setEditingTempId(null);
+    success(ka ? `ტემპერატურა შეიცვალა: ${tempInputValue}°C` : `Target temperature set to ${tempInputValue}°C`);
   };
 
   const handleDeleteVessel = (vId: string) => {
     const filtered = vessels.filter(v => v.id !== vId);
     onUpdateVessels(filtered);
+    info(ka ? `ჭურჭელი ${vId} ამოღებულია ექსპლუატაციიდან` : `Vessel ${vId} decommissioned`);
   };
 
   const handleAddVessel = (e: React.FormEvent) => {
@@ -122,9 +136,11 @@ export default function TanksVessels({
     };
 
     onUpdateVessels([...vessels, newVessel]);
+    const addedId = newId;
     setNewId('');
     setNewLocation('');
     setShowAddForm(false);
+    success(ka ? `ახალი ჭურჭელი ${addedId} წარმატებით დაემატა` : `New vessel ${addedId} commissioned successfully`);
   };
 
   // Improved reactive filtering system with multi-criteria support
@@ -620,7 +636,7 @@ export default function TanksVessels({
         />
       ) : viewMode === 'grid' ? (
         /* Original Premium Glass Cards Grid View */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 lg:gap-8">
+        <Stagger className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 lg:gap-8">
           {filteredVessels.map(v => {
             const progress = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
             const assignedLot = lots.find(l => l.id === v.assignedLotId);
@@ -629,9 +645,9 @@ export default function TanksVessels({
             const isSelected = v.id === selectedTankId;
 
             return (
-              <div 
-                key={v.id} 
-                onClick={() => onSelectTank?.(v.id)}
+              <StaggerItem key={v.id}>
+                <div 
+                  onClick={() => onSelectTank?.(v.id)}
                 className={`bg-white border text-stone-800 rounded-xl overflow-hidden shadow-sm flex flex-col transition-all cursor-pointer ${
                   isSelected 
                     ? 'border-[#801323] ring-2 ring-[#801323]/10 scale-[1.01]' 
@@ -833,7 +849,7 @@ export default function TanksVessels({
                           </span>
                           <button 
                             onClick={() => handleToggleCooling(v.id)}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold transition-all border mt-0.5 cursor-pointer ${
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold transition-all border mt-0.5 cursor-pointer active:scale-95 hover:scale-[1.03] duration-150 ${
                               v.coolingJacketActive 
                                 ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] animate-pulse' 
                                 : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
@@ -874,7 +890,7 @@ export default function TanksVessels({
                     {needsCleaning && (
                       <button
                         onClick={() => handleClean(v.id)}
-                        className="inline-flex items-center gap-0.5 px-2 py-1 bg-[#4e0e15] text-white font-bold rounded hover:bg-[#6b151e] cursor-pointer text-[9px]"
+                        className="inline-flex items-center gap-0.5 px-2 py-1 bg-[#4e0e15] text-white font-bold rounded hover:bg-[#6b151e] cursor-pointer text-[9px] active:scale-95 hover:-translate-y-0.5 duration-150"
                       >
                         <RotateCw className="w-2.5 h-2.5" /> 
                         {({ en: 'Wash Vessel', ka: 'ჭურჭლის რეცხვა', it: 'Lava Recipiente', fr: 'Nettoyer la Cuve', de: 'Gefäß waschen' })[lang] || 'Wash Vessel'}
@@ -883,9 +899,10 @@ export default function TanksVessels({
                   </div>
                 </div>
               </div>
+            </StaggerItem>
             );
           })}
-        </div>
+        </Stagger>
       ) : (
         /* Executive Compact Interactive Wine-Table Layout */
         <div className="bg-white border border-[#e8dfd5] rounded-xl overflow-hidden shadow-xs">

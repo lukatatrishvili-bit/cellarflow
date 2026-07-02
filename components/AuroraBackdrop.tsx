@@ -11,8 +11,8 @@ import { ambientMotionEnabled } from './motion';
  *   variant="subtle"  → behind the whole app
  *   variant="rich"    → login / portal hero
  */
-export default function AuroraBackdrop({ variant = 'subtle' }: { variant?: 'subtle' | 'rich' }) {
-  const reduce = !ambientMotionEnabled(); // also holds still on Data Saver / slow links
+export default function AuroraBackdrop({ variant = 'subtle', shouldReduceMotion = false }: { variant?: 'subtle' | 'rich'; shouldReduceMotion?: boolean }) {
+  const reduce = !ambientMotionEnabled() || shouldReduceMotion; // also holds still on Data Saver / slow links or battery saver
   const rich = variant === 'rich';
   const baseOpacity = rich ? 0.55 : 0.22;
 
