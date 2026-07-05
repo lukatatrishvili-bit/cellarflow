@@ -36,7 +36,7 @@ Fixes applied:
 
 **Actions needing the owner:**
 - Add a `SESSION_SECRET` repository secret (`openssl rand -hex 32`) before the next Cloud Run deploy.
-- Decide the Fly.io app's fate: revive the account or remove `fly.toml` + `fly-deploy.yml` (currently fails on every `main` push).
+- ~~Decide the Fly.io app's fate~~ — decided 2026-07-06: Fly removed (`fly.toml` + `fly-deploy.yml` deleted); Cloud Run is the sole deployment target.
 - Longer term, provisioning Cloud SQL / any Postgres and setting `DATABASE_URL` remains the real fix (relational migration path in `docs/improvement-plan.md`); the GCS mitigations above make the current backend safe for account data in the meantime.
 
 ## Priority summary

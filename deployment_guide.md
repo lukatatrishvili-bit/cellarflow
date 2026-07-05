@@ -256,6 +256,10 @@ If you prefer cheap VPS hosting (e.g., DigitalOcean, Linode, Hetzner, AWS EC2):
 Below are some free‑tier services you can use to host the Vinea ERP app.
 
 ### Fly.io (Free tier)
+> **Note (2026-07):** this repo no longer targets Fly — the `fly.toml` and deploy
+> workflow were removed after the account trial ended; Cloud Run is the supported
+> path. The steps below remain as generic from-scratch guidance. `SESSION_SECRET`
+> is now also required in production alongside the variables listed below.
 * **Plan**: Free tier gives you 3 GB RAM, 1 vCPU, and a 1 GiB persistent volume.
 * **Setup**:
   1. Install the Fly CLI: `curl -L https://fly.io/install.sh | sh`.
