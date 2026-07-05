@@ -18,7 +18,7 @@ Phase 0 (item 1) and all of Phase 1 are **done**, plus a critical prod-boot cras
 - ✅ Security headers via `server/middleware/securityHeaders.ts`; CSP ships **Report-Only**, promote with `CSP_ENFORCE=true` after staging (item 6). `X-Powered-By` disabled.
 - ✅ Tests: `tests/auth.test.ts`, `tests/clientIp.test.ts` added; suite green (214 passing).
 
-**Still open:** Phase 3 exceljs (item 9). Branch committed (item 2, `27747fd`).
+**Still open:** nothing code-side. Branch committed (item 2, `27747fd`). Phase 3 (item 9) verified already satisfied: `exceljs` is loaded via dynamic `import()` in `lib/georgianForms/renderXlsx.ts` and `lib/costing/reportXlsx.ts`, so the 930 KB chunk is fetched only on export.
 
 ## Phase 2 findings & fixes — 2026-07-06
 
