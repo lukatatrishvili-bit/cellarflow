@@ -77,8 +77,13 @@ function recordDocumentHistory(collection: string, recordId: string, data: any, 
 /**
  * Merge client collections into the db (mutating it) and return any
  * conflicts. Conflicted items are left untouched on the server.
+ *
+ * `historyScope` namespaces the field-merge baseline history — pass the
+ * organization id. Without it, two organizations using the same record ids
+ * (seeded vessels like "T-101" are identical across estates) would read each
+ * other's baselines and silently merge against the wrong tenant's data.
  */
-export function mergeCollections(db: any, collections: Record<string, any>): SyncConflict[] {
+export function mergeCollections(db: any, collections: Record<string, any>, historyScope = ''): SyncConflict[] {
   const conflicts: SyncConflict[] = [];
 
   for (const key of Object.keys(collections)) {
@@ -96,6 +101,8 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
 
     const existingList: any[] = db[key] || [];
     const existingMap = new Map(existingList.map((item: any) => [item.id, item]));
+    // Tenant-scoped namespace for the baseline history (see docblock above).
+    const historyCollection = historyScope ? `${historyScope}:${key}` : key;
 
     for (const clientItem of collections[key]) {
       if (!clientItem || !clientItem.id) continue;
@@ -122,11 +129,11 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
 
       if (baselineTimestamp !== undefined && existing.lastModified !== undefined) {
         if (baselineTimestamp === existing.lastModified) {
-          recordDocumentHistory(key, existing.id, existing, existing.lastModified);
+          recordDocumentHistory(historyCollection, existing.id, existing, existing.lastModified);
           Object.assign(existing, incoming); // clean fast-forward
         } else {
           // Stale baseline: try field-level merge
-          const historyKey = `${key}:${clientItem.id}`;
+          const historyKey = `${historyCollection}:${clientItem.id}`;
           const historyList = documentHistory.get(historyKey) || [];
           const baselineEntry = historyList.find(entry => entry.lastModified === baselineTimestamp);
           
@@ -171,7 +178,7 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
             }
             
             if (!hasConflict) {
-              recordDocumentHistory(key, existing.id, existing, existing.lastModified);
+              recordDocumentHistory(historyCollection, existing.id, existing, existing.lastModified);
               Object.assign(existing, mergedRecord);
               existing.lastModified = incoming.lastModified;
               merged = true;
@@ -194,7 +201,7 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
       const clientTS = incoming.lastModified ? new Date(incoming.lastModified).getTime() : 0;
       const serverTS = existing.lastModified ? new Date(existing.lastModified).getTime() : 0;
       if (clientTS >= serverTS) {
-        recordDocumentHistory(key, existing.id, existing, existing.lastModified);
+        recordDocumentHistory(historyCollection, existing.id, existing, existing.lastModified);
         Object.assign(existing, incoming);
       }
     }

@@ -26,17 +26,13 @@ function pruneTestUserSeedDuplicates(userDb: any): void {
   }
 }
 
-// POST /api/sync
-router.post('/sync', checkWineryScope('write'), async (req, res) => {
-  const session = (req as any).wineryContext;
-
-  const refreshed = await reloadUserOrganizationDataFromPostgres(session.username);
-  const expectedOrgStateVersion = refreshed?.meta.version ?? null;
-  const userDb = refreshed?.data || await getUserData(session.username) || createEmptyUserData();
-
-  const { deletedIds, ...collections } = req.body;
-
-  try {
+/**
+ * Validate the incoming sync payload against the CURRENT server state (throws
+ * on violation). Extracted from the route handler so the merge/save retry loop
+ * can re-validate against freshly reloaded state after a version conflict.
+ */
+function validateSyncPayload(userDb: any, collections: Record<string, any>, deletedIds: any): void {
+  {
     // 1. Validate deletedIds syntax & block deletions of bottled lots or audit logs
     if (deletedIds !== undefined) {
       if (!Array.isArray(deletedIds)) {
@@ -686,52 +682,81 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
         }
       }
     }
-  } catch (err: any) {
-    return res.status(400).json({ error: err.message || 'Validation error' });
   }
+}
 
-  try {
-    if (Array.isArray(collections.auditLogs)) {
-      collections.auditLogs = prepareAuditLogsForServerMerge(userDb.auditLogs || [], collections.auditLogs);
+// POST /api/sync
+router.post('/sync', checkWineryScope('write'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  const { deletedIds, ...collections } = req.body;
+
+  // Optimistic-concurrency retry: a version conflict means another sync landed
+  // between our reload and save. Per-item baselines make the merge idempotent,
+  // so re-running it against the fresh state resolves the whole-document race
+  // server-side instead of bouncing a 409 to the client. True same-field
+  // conflicts are still reported per item via `conflicts`.
+  const MAX_SAVE_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
+    const refreshed = await reloadUserOrganizationDataFromPostgres(session.username);
+    const expectedOrgStateVersion = refreshed?.meta.version ?? null;
+    const userDb = refreshed?.data || await getUserData(session.username) || createEmptyUserData();
+
+    try {
+      validateSyncPayload(userDb, collections, deletedIds);
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || 'Validation error' });
     }
-  } catch (err: any) {
-    return res.status(400).json({ error: err.message || 'Audit validation error' });
-  }
 
-  // Apply deletions, then merge with optimistic-concurrency conflict detection.
-  applyDeletions(userDb, deletedIds);
-  const conflicts = mergeCollections(userDb, collections);
-  if (session.username === 'testuser1') {
-    pruneTestUserSeedDuplicates(userDb);
-  }
-
-  try {
-    await saveUserData(session.username, userDb, {
-      expectedVersion: expectedOrgStateVersion,
-      updatedBy: `api-sync:${session.username}`,
-    });
-  } catch (err) {
-    if (err instanceof OrganizationStateVersionConflictError) {
-      const latest = await reloadUserOrganizationDataFromPostgres(session.username);
-      if (latest) {
-        saveDB({ syncPostgres: false });
-        await setOrganizationStateHeaders(res, session.username);
+    // Never mutate the client payload: a retry must re-prepare from the
+    // original collections against whichever server state it reloaded.
+    const merging: Record<string, any> = { ...collections };
+    try {
+      if (Array.isArray(collections.auditLogs)) {
+        merging.auditLogs = prepareAuditLogsForServerMerge(
+          userDb.auditLogs || [],
+          collections.auditLogs.map((log: any) => ({ ...log })),
+        );
       }
-      return res.status(409).json({
-        code: 'org_state_conflict',
-        error: 'Organization data changed while saving. Please sync again before retrying.',
-        serverDb: latest?.data || userDb,
-      });
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || 'Audit validation error' });
     }
-    throw err;
-  }
 
-  await setOrganizationStateHeaders(res, session.username);
+    // Apply deletions, then merge with optimistic-concurrency conflict detection.
+    applyDeletions(userDb, deletedIds);
+    const conflicts = mergeCollections(userDb, merging, session.organizationId);
+    if (session.username === 'testuser1') {
+      pruneTestUserSeedDuplicates(userDb);
+    }
 
-  if (conflicts.length > 0) {
-    return res.json({ hasConflicts: true, conflicts, serverDb: userDb });
+    try {
+      await saveUserData(session.username, userDb, {
+        expectedVersion: expectedOrgStateVersion,
+        updatedBy: `api-sync:${session.username}`,
+      });
+    } catch (err) {
+      if (err instanceof OrganizationStateVersionConflictError) {
+        if (attempt < MAX_SAVE_ATTEMPTS) continue; // re-merge on the fresh state
+        const latest = await reloadUserOrganizationDataFromPostgres(session.username);
+        if (latest) {
+          saveDB({ syncPostgres: false });
+          await setOrganizationStateHeaders(res, session.username);
+        }
+        return res.status(409).json({
+          code: 'org_state_conflict',
+          error: 'Organization data changed while saving. Please sync again before retrying.',
+          serverDb: latest?.data || userDb,
+        });
+      }
+      throw err;
+    }
+
+    await setOrganizationStateHeaders(res, session.username);
+
+    if (conflicts.length > 0) {
+      return res.json({ hasConflicts: true, conflicts, serverDb: userDb });
+    }
+    return res.json(userDb);
   }
-  res.json(userDb);
 });
 
 // GET /api/db

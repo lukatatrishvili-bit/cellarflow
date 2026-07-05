@@ -197,6 +197,52 @@ describe('mergeCollections — sync-stamp convergence (chart-flashing loop fix)'
   });
 });
 
+describe('mergeCollections — tenant-scoped baseline history', () => {
+  it('does not leak field-merge baselines between organizations sharing record ids', () => {
+    // Org A: vessel T-900 at T0, fast-forward records a T0 baseline in history.
+    const orgA: any = {
+      vessels: [item('T-900', { temperature: 99, cleaningStatus: 'clean', lastModified: 'T0' })],
+    };
+    mergeCollections(orgA, {
+      vessels: [item('T-900', { temperature: 99, cleaningStatus: 'dirty', lastModified: 'T1', baselineTimestamp: 'T0' })],
+    }, 'org-a');
+
+    // Org B: a DIFFERENT vessel that happens to share the id and the T0 stamp
+    // (seeded estates all start from identical ids/stamps). Its server copy has
+    // since moved to T1; org B's own T0 was never recorded in history.
+    const orgB: any = {
+      vessels: [item('T-900', { temperature: 99, cleaningStatus: 'sanitizing', lastModified: 'T1' })],
+    };
+    const conflicts = mergeCollections(orgB, {
+      vessels: [item('T-900', { temperature: 15, cleaningStatus: 'sanitizing', lastModified: 'T2', baselineTimestamp: 'T0' })],
+    }, 'org-b');
+
+    // Without scoping, org B finds org A's T0 snapshot ({99, clean}) in the
+    // shared history: temperature looks client-only-changed (15 vs base 99,
+    // server 99 = base) and cleaningStatus looks convergent — a SILENT merge
+    // against the wrong tenant's baseline, writing temperature 15 with no
+    // conflict. With scoping there is no baseline for org B → honest conflict,
+    // server copy untouched.
+    expect(conflicts).toHaveLength(1);
+    expect(orgB.vessels[0].temperature).toBe(99);
+  });
+
+  it('still field-merges cleanly within the same organization scope', () => {
+    const db: any = {
+      vessels: [item('v1', { temperature: 20, cleaningStatus: 'clean', lastModified: 'T0' })],
+    };
+    mergeCollections(db, {
+      vessels: [item('v1', { temperature: 20, cleaningStatus: 'dirty', lastModified: 'T1', baselineTimestamp: 'T0' })],
+    }, 'org-x');
+    const conflicts = mergeCollections(db, {
+      vessels: [item('v1', { temperature: 18, cleaningStatus: 'clean', lastModified: 'T2', baselineTimestamp: 'T0' })],
+    }, 'org-x');
+    expect(conflicts).toEqual([]);
+    expect(db.vessels[0].temperature).toBe(18);
+    expect(db.vessels[0].cleaningStatus).toBe('dirty');
+  });
+});
+
 describe('mergeCollections — field-level merge resolution', () => {
   it('merges non-overlapping modified fields automatically without conflict', () => {
     const db: any = {

@@ -53,6 +53,15 @@ jobs:
       # REQUIRED: the server refuses to boot in production without it.
       # Generate with: openssl rand -hex 32
       SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      # Optional but strongly recommended: PostgreSQL connection string
+      # (Neon/Supabase free tier or Cloud SQL). When set, Postgres becomes the
+      # authoritative store (accounts + org state with optimistic locking)
+      # instead of the single GCS db.json object. Must not contain commas
+      # (gcloud env-var delimiter); standard postgres:// URLs never do.
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Optional: Cloud SQL instance connection name (project:region:instance).
+      # Only needed when DATABASE_URL points at Cloud SQL via a unix socket.
+      CLOUDSQL_INSTANCE: ${{ secrets.CLOUDSQL_INSTANCE }}
       GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
@@ -153,6 +162,15 @@ jobs:
             --update-env-vars "DEMO_LOGIN_ENABLED=$DEMO_LOGIN_ENABLED"
           )
 
+          if [ -n "$DATABASE_URL" ]; then
+            DEPLOY_ARGS+=(--update-env-vars "DATABASE_URL=$DATABASE_URL")
+            # Dockerfile CMD runs `prisma db push` before serving when both are set,
+            # so additive schema changes apply automatically on deploy.
+            DEPLOY_ARGS+=(--update-env-vars "PRISMA_DB_PUSH_ON_STARTUP=true")
+          fi
+          if [ -n "$CLOUDSQL_INSTANCE" ]; then
+            DEPLOY_ARGS+=(--add-cloudsql-instances "$CLOUDSQL_INSTANCE")
+          fi
           if [ -n "$GEMINI_API_KEY" ]; then DEPLOY_ARGS+=(--update-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY"); fi
           if [ -n "$GOOGLE_CLIENT_ID" ]; then DEPLOY_ARGS+=(--update-env-vars "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"); fi
           if [ -n "$GOOGLE_CLIENT_SECRET" ]; then DEPLOY_ARGS+=(--update-env-vars "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET"); fi

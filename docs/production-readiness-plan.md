@@ -34,6 +34,16 @@ Fixes applied:
 - ✅ `flushPendingGcsBackup()` + SIGTERM/SIGINT graceful shutdown in `server.ts` — the debounced winery-data backup is flushed during Cloud Run's 10s termination grace, the last guaranteed CPU window. (Verified by type/tests; SIGTERM delivery is untestable on Windows — Linux-only signal.)
 - ✅ `google-cloud-run.yml` passes `SESSION_SECRET` and **fails the deploy** if the repo secret is missing (required since the server now fail-fasts without it).
 
+## Phase 2b — concurrency & Postgres enablement — 2026-07-06
+
+Follow-up session targeting the "full ERP" ceilings:
+
+- ✅ **Cross-tenant merge-history bug fixed.** The field-level merge baseline history in `server/sync.ts` was keyed by `collection:recordId` with no organization id — two estates sharing seeded ids (every demo starts with `T-101`, `Q-01`…) could silently merge against each other's baselines. History keys are now org-scoped (`mergeCollections(db, collections, historyScope)`); regression test proves the unscoped behavior produced a silent wrong merge.
+- ✅ **Server-side merge-retry on version conflict.** `/api/sync` no longer bounces a 409 on the first whole-document version race: the ~650-line payload validation moved to `validateSyncPayload()`, and reload→validate→merge→save now runs in a bounded retry loop (3 attempts, full re-validation each pass). 409 only after exhausting retries. Verified end-to-end (demo login → sync → read-back) on a prod-mode boot.
+- ✅ **Turnkey Postgres.** `google-cloud-run.yml` now passes `DATABASE_URL` (+ auto `PRISMA_DB_PUSH_ON_STARTUP`) and optional `CLOUDSQL_INSTANCE`; `.env.example` documents Neon/Supabase/Cloud SQL forms. Enabling the relational backend is now purely: create a free Postgres, add one repo secret, redeploy.
+
+Remaining "full ERP" roadmap (unchanged, in `improvement-plan.md`): relational-authoritative migration (double-write → shadow-read → cutover), multi-instance scale-out, delta sync payloads.
+
 **Actions needing the owner:**
 - Add a `SESSION_SECRET` repository secret (`openssl rand -hex 32`) before the next Cloud Run deploy.
 - ~~Decide the Fly.io app's fate~~ — decided 2026-07-06: Fly removed (`fly.toml` + `fly-deploy.yml` deleted); Cloud Run is the sole deployment target.
