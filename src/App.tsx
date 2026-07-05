@@ -104,12 +104,12 @@ export default function App() {
 
   // Onboarding wizard toggling
   useEffect(() => {
-    if (state.isLoggedIn && !state.currentUser.enabledModules) {
+    if (state.isLoggedIn && (state.currentUser.registrationComplete === false || !state.currentUser.enabledModules)) {
       setShowOnboarding(true);
     } else {
       setShowOnboarding(false);
     }
-  }, [state.isLoggedIn, state.currentUser.enabledModules]);
+  }, [state.isLoggedIn, state.currentUser.enabledModules, state.currentUser.registrationComplete]);
 
   // Redirect active module if disabled
   useEffect(() => {
@@ -305,6 +305,9 @@ export default function App() {
   }
 
   const t = getShellTranslations(state.lang);
+  const needsRegistrationCompletion = state.currentUser.registrationComplete === false;
+  const defaultEnabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
+  const defaultEnabledWidgets = state.currentUser.enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'];
 
   // Derived stats for sidebar
   const activeFermsCount = state.lots.filter(l => l.stage === 'fermenting').length;
@@ -843,6 +846,19 @@ export default function App() {
                     const passcode = String(fd.get('passcode') || '');
                     const selectedRole = String(fd.get('role') || 'Viticulturist');
                     const rememberMe = fd.get('rememberMe') === 'true';
+                    const enabledModules = fd.getAll('enabledModules').map(String);
+                    const companyName = String(fd.get('companyName') || '').trim();
+                    const wineryName = String(fd.get('wineryName') || '').trim();
+                    const country = String(fd.get('country') || '').trim();
+                    const region = String(fd.get('region') || '').trim();
+                    const municipality = String(fd.get('municipality') || '').trim();
+                    const address = String(fd.get('address') || '').trim();
+                    const phone = String(fd.get('phone') || '').trim();
+                    const website = String(fd.get('website') || '').trim();
+                    if (enabledModules.length === 0) {
+                      state.setLoginError('Select at least one workspace module.');
+                      return;
+                    }
                     
                     let mappedRole: 'Owner/Admin' | 'Viticulturist' | 'Winemaker' | 'Lab Technician' | 'Cellar Worker' | 'Read-Only' = 'Viticulturist';
                     if (selectedRole === 'Winemaker') {
@@ -854,6 +870,23 @@ export default function App() {
                     }
 
                     const cleanUsername = user.toLowerCase().replace(/\s+/g, '_');
+                    const companySetup = {
+                      companyName,
+                      wineryName,
+                      country,
+                      region,
+                      municipality,
+                      address: regLocation?.label || address,
+                      contactEmail: email,
+                      phone,
+                      website,
+                      measurementUnits: 'metric' as const,
+                      currency: 'GEL',
+                      ...(regLocation ? {
+                        latitude: regLocation.latitude,
+                        longitude: regLocation.longitude,
+                      } : {}),
+                    };
                     await state.handleAuthRegister({
                       username: cleanUsername,
                       email: email,
@@ -861,21 +894,22 @@ export default function App() {
                       role: mappedRole,
                       language: state.lang === 'ka' ? 'ka' : 'en',
                       rememberMe: rememberMe,
-                      passcode: passcode
+                      passcode: passcode,
+                      companyProfile: companySetup,
+                      enabledModules,
+                      enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
                     });
 
-                    if (regLocation) {
-                      state.setCompanyProfile({
-                        ...state.companyProfile,
-                        latitude: regLocation.latitude,
-                        longitude: regLocation.longitude,
-                        ...(regLocation.label ? { address: regLocation.label } : {})
-                      });
-                    }
-                    if (mappedRole === 'Winemaker' || mappedRole === 'Cellar Worker') {
+                    state.setCompanyProfile({
+                      ...state.companyProfile,
+                      ...companySetup,
+                    });
+                    if (enabledModules.includes('gvino') && (mappedRole === 'Winemaker' || mappedRole === 'Cellar Worker' || !enabledModules.includes('vazi'))) {
                       state.setActiveModule('gvino');
-                    } else {
+                    } else if (enabledModules.includes('vazi')) {
                       state.setActiveModule('vazi');
+                    } else {
+                      state.setActiveModule('portal');
                     }
                   }} className="space-y-4 mt-4">
                     <div>
@@ -898,6 +932,18 @@ export default function App() {
                         type="email"
                         name="email"
                         placeholder={state.lang === 'ka' ? 'luka.t@vinea.ge' : 'luka.t@vinea.com'}
+                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                        {state.lang === 'ka' ? 'მამულის სახელი *' : 'Company / Estate Name *'}
+                      </label>
+                      <input
+                        type="text"
+                        name="companyName"
+                        placeholder="Kvareli Estate"
                         className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
                         required
                       />
@@ -942,8 +988,109 @@ export default function App() {
                     </div>
 
                     <div>
+                      <label className="text-[9px] uppercase font-mono block mb-2 font-bold text-slate-400 font-extrabold tracking-widest">
+                        {state.lang === 'ka' ? 'საჭირო მოდულები *' : 'Workspace Modules *'}
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label className="flex items-center gap-2 p-3 rounded-xl bg-stone-50/80 border border-stone-200 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            name="enabledModules"
+                            value="vazi"
+                            defaultChecked
+                            className="w-4 h-4 rounded border-stone-300 accent-emerald-700 cursor-pointer"
+                          />
+                          <span className="text-xs font-bold text-stone-800">
+                            {state.lang === 'ka' ? 'ვენახი / Vazi' : 'Vineyard / Vazi'}
+                          </span>
+                        </label>
+                        <label className="flex items-center gap-2 p-3 rounded-xl bg-stone-50/80 border border-stone-200 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            name="enabledModules"
+                            value="gvino"
+                            defaultChecked
+                            className="w-4 h-4 rounded border-stone-300 accent-[#4e0e15] cursor-pointer"
+                          />
+                          <span className="text-xs font-bold text-stone-800">
+                            {state.lang === 'ka' ? 'მარანი / Gvino' : 'Cellar / Gvino'}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                          {state.lang === 'ka' ? 'მარნის სახელი' : 'Winery / Brand Name'}
+                        </label>
+                        <input
+                          type="text"
+                          name="wineryName"
+                          placeholder="Marani"
+                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                          {state.lang === 'ka' ? 'ტელეფონი' : 'Phone'}
+                        </label>
+                        <input
+                          type="tel"
+                          name="phone"
+                          placeholder="+995"
+                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                          {state.lang === 'ka' ? 'ქვეყანა' : 'Country'}
+                        </label>
+                        <input
+                          type="text"
+                          name="country"
+                          placeholder="Georgia"
+                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                          {state.lang === 'ka' ? 'რეგიონი' : 'Region'}
+                        </label>
+                        <input
+                          type="text"
+                          name="region"
+                          placeholder="Kakheti"
+                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                          {state.lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}
+                        </label>
+                        <input
+                          type="text"
+                          name="municipality"
+                          placeholder="Kvareli"
+                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
+                          {state.lang === 'ka' ? 'ვებგვერდი' : 'Website'}
+                        </label>
+                        <input
+                          type="url"
+                          name="website"
+                          placeholder="https://"
+                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
                       <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'მამულის / ვენახის მდებარეობა' : 'Estate / Vineyard Location'}
+                        {state.lang === 'ka' ? 'მამულის / ვენახის მდებარეობა' : 'Estate / Vineyard Location (Optional)'}
                       </label>
                       <Suspense fallback={<div className="h-10 rounded-xl bg-stone-100 animate-pulse" />}>
                       <LocationPicker
@@ -989,7 +1136,7 @@ export default function App() {
                       type="submit"
                       className="w-full bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase tracking-widest py-3 rounded-xl cursor-pointer shadow-sm transition-all duration-155 text-xs mt-2"
                     >
-                      {state.lang === 'ka' ? 'რეგისტრაციის დასრულება' : 'Complete Registration & Enter'}
+                      {state.lang === 'ka' ? 'ანგარიშის შექმნა' : 'Create Account'}
                     </button>
 
                     <p className="text-center text-[10px] font-sans text-stone-405 mt-2">
@@ -1866,13 +2013,18 @@ export default function App() {
             
             <div className="px-8 py-6 border-b border-stone-200/80 dark:border-stone-850 bg-stone-50/50 dark:bg-stone-900/20">
               <h3 className="text-xl font-serif font-black text-[#4e0e15] dark:text-amber-100 flex items-center gap-2">
-                🍇 {state.lang === 'ka' ? 'მოარგეთ VinOS თქვენს საჭიროებებს' : 'Tailor your VinOS Workspace'}
+                🍇 {needsRegistrationCompletion
+                  ? (state.lang === 'ka' ? 'დაასრულეთ რეგისტრაცია' : 'Complete Your Registration')
+                  : (state.lang === 'ka' ? 'მოარგეთ VinOS თქვენს საჭიროებებს' : 'Tailor your VinOS Workspace')}
               </h3>
               <p className="text-xs text-slate-550 dark:text-stone-400 mt-1 leading-relaxed">
-                {state.lang === 'ka' 
-                  ? 'აირჩიეთ სასურველი მოდულები და მთავარი გვერდის ვიჯეტები თქვენი როლის შესაბამისად.' 
-                  : 'Choose which modules and home page widgets match your role.'
-                }
+                {needsRegistrationCompletion
+                  ? (state.lang === 'ka'
+                    ? 'შეავსეთ აუცილებელი სამუშაო სივრცის ინფორმაცია; დანარჩენი ველები შეგიძლიათ მოგვიანებით დაამატოთ.'
+                    : 'Add the required workspace details; optional fields can be filled later.')
+                  : (state.lang === 'ka'
+                    ? 'აირჩიეთ სასურველი მოდულები და მთავარი გვერდის ვიჯეტები თქვენი როლის შესაბამისად.'
+                    : 'Choose which modules and home page widgets match your role.')}
               </p>
             </div>
 
@@ -1886,6 +2038,42 @@ export default function App() {
                 alert(state.lang === 'ka' ? 'გთხოვთ აირჩიოთ მინიმუმ ერთი აქტიური მოდული.' : 'Please enable at least one active module.');
                 return;
               }
+
+              if (needsRegistrationCompletion) {
+                const fullName = String(fd.get('fullName') || state.currentUser.fullName || '').trim();
+                const role = String(fd.get('role') || 'Owner/Admin') as any;
+                const companyName = String(fd.get('companyName') || '').trim();
+                const companySetup = {
+                  companyName,
+                  wineryName: String(fd.get('wineryName') || '').trim(),
+                  country: String(fd.get('country') || '').trim(),
+                  region: String(fd.get('region') || '').trim(),
+                  municipality: String(fd.get('municipality') || '').trim(),
+                  address: regLocation?.label || String(fd.get('address') || '').trim(),
+                  contactEmail: String(fd.get('contactEmail') || state.currentUser.email || '').trim(),
+                  phone: String(fd.get('phone') || '').trim(),
+                  website: String(fd.get('website') || '').trim(),
+                  measurementUnits: 'metric' as const,
+                  currency: 'GEL',
+                  ...(regLocation ? {
+                    latitude: regLocation.latitude,
+                    longitude: regLocation.longitude,
+                  } : {}),
+                };
+                const completed = await state.handleCompleteRegistration({
+                  fullName,
+                  role,
+                  language: state.lang === 'ka' ? 'ka' : 'en',
+                  companyProfile: companySetup,
+                  enabledModules: modules,
+                  enabledWidgets: widgets,
+                });
+                if (completed) {
+                  state.setActiveModule(modules.includes('gvino') ? 'gvino' : modules.includes('vazi') ? 'vazi' : 'portal');
+                  setShowOnboarding(false);
+                }
+                return;
+              }
               
               await state.handleUpdateProfile({
                 enabledModules: modules,
@@ -1893,6 +2081,146 @@ export default function App() {
               });
               setShowOnboarding(false);
             }} className="p-8 overflow-y-auto space-y-6 flex-1 text-xs text-stone-700 dark:text-stone-300">
+              {needsRegistrationCompletion && (
+                <div className="space-y-4">
+                  <h4 className="text-[10px] font-mono uppercase tracking-widest text-[#c5a059] font-black border-b border-stone-150 pb-1">
+                    {state.lang === 'ka' ? 'აუცილებელი ინფორმაცია' : 'Required Registration Details'}
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'სრული სახელი *' : 'Full Name *'}
+                      </label>
+                      <input
+                        type="text"
+                        name="fullName"
+                        defaultValue={state.currentUser.fullName}
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'როლი *' : 'Role *'}
+                      </label>
+                      <select
+                        name="role"
+                        defaultValue={state.currentUser.role || 'Owner/Admin'}
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                        required
+                      >
+                        <option value="Owner/Admin">{state.lang === 'ka' ? 'მფლობელი / ადმინისტრატორი' : 'Owner / Admin'}</option>
+                        <option value="Viticulturist">{state.lang === 'ka' ? 'მევენახე' : 'Viticulturist'}</option>
+                        <option value="Winemaker">{state.lang === 'ka' ? 'მეღვინე' : 'Winemaker'}</option>
+                        <option value="Lab Technician">{state.lang === 'ka' ? 'ლაბორანტი' : 'Lab Technician'}</option>
+                        <option value="Cellar Worker">{state.lang === 'ka' ? 'მარნის თანამშრომელი' : 'Cellar Worker'}</option>
+                        <option value="Read-Only">{state.lang === 'ka' ? 'მხოლოდ ნახვა' : 'Read-Only'}</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'კომპანიის / მამულის სახელი *' : 'Company / Estate Name *'}
+                      </label>
+                      <input
+                        type="text"
+                        name="companyName"
+                        defaultValue={state.companyProfile.companyName}
+                        placeholder="Kvareli Estate"
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input type="hidden" name="contactEmail" value={state.currentUser.email} />
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'მარნის სახელი' : 'Winery / Brand Name'}
+                      </label>
+                      <input
+                        type="text"
+                        name="wineryName"
+                        defaultValue={state.companyProfile.wineryName}
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'ტელეფონი' : 'Phone'}
+                      </label>
+                      <input
+                        type="tel"
+                        name="phone"
+                        defaultValue={state.companyProfile.phone}
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'რეგიონი' : 'Region'}
+                      </label>
+                      <input
+                        type="text"
+                        name="region"
+                        defaultValue={state.companyProfile.region}
+                        placeholder="Kakheti"
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}
+                      </label>
+                      <input
+                        type="text"
+                        name="municipality"
+                        defaultValue={state.companyProfile.municipality}
+                        placeholder="Kvareli"
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'ქვეყანა' : 'Country'}
+                      </label>
+                      <input
+                        type="text"
+                        name="country"
+                        defaultValue={state.companyProfile.country}
+                        placeholder="Georgia"
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                        {state.lang === 'ka' ? 'ვებგვერდი' : 'Website'}
+                      </label>
+                      <input
+                        type="url"
+                        name="website"
+                        defaultValue={state.companyProfile.website}
+                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
+                      {state.lang === 'ka' ? 'მდებარეობა' : 'Location'}
+                    </label>
+                    <Suspense fallback={<div className="h-10 rounded-xl bg-stone-100 animate-pulse" />}>
+                      <LocationPicker
+                        latitude={regLocation?.latitude ?? state.companyProfile.latitude ?? 41.9056}
+                        longitude={regLocation?.longitude ?? state.companyProfile.longitude ?? 45.474}
+                        showManual={false}
+                        placeholder={state.lang === 'ka' ? 'მოძებნეთ ადგილი...' : 'Search your estate...'}
+                        onChange={(loc) => setRegLocation(loc)}
+                      />
+                    </Suspense>
+                  </div>
+                </div>
+              )}
               
               {/* Section 1: Modules Toggles */}
               <div className="space-y-3">
@@ -1911,7 +2239,7 @@ export default function App() {
                         type="checkbox" 
                         name="enabledModules" 
                         value="vazi" 
-                        defaultChecked 
+                        defaultChecked={defaultEnabledModules.includes('vazi')}
                         className="h-4.5 w-4.5 rounded border-stone-300 text-emerald-805 focus:ring-emerald-800 accent-emerald-800 cursor-pointer"
                       />
                     </div>
@@ -1933,7 +2261,7 @@ export default function App() {
                         type="checkbox" 
                         name="enabledModules" 
                         value="gvino" 
-                        defaultChecked 
+                        defaultChecked={defaultEnabledModules.includes('gvino')}
                         className="h-4.5 w-4.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
                       />
                     </div>
@@ -1973,7 +2301,7 @@ export default function App() {
                         type="checkbox" 
                         name="enabledWidgets" 
                         value={widget.id} 
-                        defaultChecked
+                        defaultChecked={defaultEnabledWidgets.includes(widget.id)}
                         className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600 cursor-pointer"
                       />
                       <div>
@@ -1995,7 +2323,9 @@ export default function App() {
                   type="submit"
                   className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-mono font-bold uppercase tracking-widest py-3.5 rounded-xl cursor-pointer text-xs justify-center flex items-center shadow-md transition-all duration-200"
                 >
-                  ✨ {state.lang === 'ka' ? 'პარამეტრების შენახვა და დაწყება' : 'Configure & Start Cellaring'} →
+                  ✨ {needsRegistrationCompletion
+                    ? (state.lang === 'ka' ? 'რეგისტრაციის დასრულება' : 'Finish Registration')
+                    : (state.lang === 'ka' ? 'პარამეტრების შენახვა და დაწყება' : 'Configure & Start Cellaring')} →
                 </button>
               </div>
 

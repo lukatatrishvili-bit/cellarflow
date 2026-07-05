@@ -25,6 +25,8 @@ let pendingGcsBackupJson: string | null = null;
 let pendingGcsBackupTimer: ReturnType<typeof setTimeout> | null = null;
 const organizationStateMeta = new Map<string, OrganizationStateMeta>();
 const GCS_BACKUP_MIN_INTERVAL_MS = 90_000;
+const DEFAULT_USER_MODULES = ['vazi', 'gvino'];
+const DEFAULT_USER_WIDGETS = ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'];
 
 export class OrganizationStateVersionConflictError extends Error {
   constructor(
@@ -393,6 +395,15 @@ function jsonForPrisma(value: unknown): any {
   return JSON.parse(JSON.stringify(value ?? null));
 }
 
+function stringArray(value: unknown, fallback: string[] = []): string[] {
+  if (!Array.isArray(value)) return [...fallback];
+  const cleaned = value
+    .filter((item): item is string => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean);
+  return cleaned.length > 0 ? cleaned : [...fallback];
+}
+
 function rememberOrganizationStateMeta(state: any, source: OrganizationStateMeta['source'] = 'postgres'): OrganizationStateMeta {
   const meta: OrganizationStateMeta = {
     organizationId: String(state.organizationId),
@@ -467,6 +478,9 @@ function dbFromPostgresRows(rows: {
       verifyTokenExpires: u.verifyTokenExpires ? Number(u.verifyTokenExpires) : null,
       isDemo: u.isDemo,
       activeOrganizationId: u.activeOrganizationId,
+      enabledModules: stringArray(u.enabledModules, DEFAULT_USER_MODULES),
+      enabledWidgets: stringArray(u.enabledWidgets, DEFAULT_USER_WIDGETS),
+      registrationComplete: u.registrationComplete ?? true,
       createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
       updatedAt: u.updatedAt ? new Date(u.updatedAt).toISOString() : undefined,
     })),
@@ -679,6 +693,9 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
+            enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
+            enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
+            registrationComplete: user.registrationComplete ?? true,
           },
           create: {
             id: user.id || undefined,
@@ -693,6 +710,9 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
+            enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
+            enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
+            registrationComplete: user.registrationComplete ?? true,
           },
         });
       }
@@ -919,6 +939,9 @@ async function persistFullDbToPostgres(
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
+            enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
+            enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
+            registrationComplete: user.registrationComplete ?? true,
           },
           create: {
             username: user.username,
@@ -932,6 +955,9 @@ async function persistFullDbToPostgres(
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
+            enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
+            enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
+            registrationComplete: user.registrationComplete ?? true,
           },
         });
       }
@@ -1263,6 +1289,98 @@ export async function saveOrganizationData(
         });
       }
     });
+
+    // Background double-writing of vessels and lots (safe, non-blocking)
+    void (async () => {
+      try {
+        const normalizedData = db.orgData[orgId];
+        // 1. Double-write vessels
+        for (const vessel of normalizedData.vessels || []) {
+          if (!vessel.id) continue;
+          await prisma.vessel.upsert({
+            where: { id: vessel.id },
+            update: {
+              type: vessel.type || '',
+              shape: vessel.shape || '',
+              capacity: Number(vessel.capacity) || 0,
+              currentVolume: Number(vessel.currentVolume) || 0,
+              assignedLotId: vessel.assignedLotId || null,
+              cleaningStatus: vessel.cleaningStatus || 'clean',
+              lastCleaned: vessel.lastCleaned || '',
+              temperature: Number(vessel.temperature) || 0,
+              coolingJacketActive: Boolean(vessel.coolingJacketActive),
+              targetTemperature: vessel.targetTemperature !== undefined && vessel.targetTemperature !== null ? Number(vessel.targetTemperature) : null,
+              lastOperation: vessel.lastOperation || '',
+              locationDetails: vessel.locationDetails || null,
+              xGrid: vessel.xGrid !== undefined && vessel.xGrid !== null ? Number(vessel.xGrid) : null,
+              yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
+              lastSealedDate: vessel.lastSealedDate || null,
+              soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
+            },
+            create: {
+              id: vessel.id,
+              organizationId: orgId,
+              type: vessel.type || '',
+              shape: vessel.shape || '',
+              capacity: Number(vessel.capacity) || 0,
+              currentVolume: Number(vessel.currentVolume) || 0,
+              assignedLotId: vessel.assignedLotId || null,
+              cleaningStatus: vessel.cleaningStatus || 'clean',
+              lastCleaned: vessel.lastCleaned || '',
+              temperature: Number(vessel.temperature) || 0,
+              coolingJacketActive: Boolean(vessel.coolingJacketActive),
+              targetTemperature: vessel.targetTemperature !== undefined && vessel.targetTemperature !== null ? Number(vessel.targetTemperature) : null,
+              lastOperation: vessel.lastOperation || '',
+              locationDetails: vessel.locationDetails || null,
+              xGrid: vessel.xGrid !== undefined && vessel.xGrid !== null ? Number(vessel.xGrid) : null,
+              yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
+              lastSealedDate: vessel.lastSealedDate || null,
+              soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
+            }
+          });
+        }
+        
+        // 2. Double-write lots
+        for (const lot of normalizedData.lots || []) {
+          if (!lot.id) continue;
+          await prisma.wineLot.upsert({
+            where: { id: lot.id },
+            update: {
+              name: lot.name || '',
+              vintage: Number(lot.vintage) || 0,
+              variety: lot.variety || '',
+              vineyardBlock: lot.vineyardBlock || '',
+              region: lot.region || '',
+              initialVolume: Number(lot.initialVolume) || 0,
+              currentVolume: Number(lot.currentVolume) || 0,
+              wineClass: lot.wineClass || '',
+              stage: lot.stage || '',
+              createdAt: lot.createdAt || new Date().toISOString(),
+              history: lot.history || [],
+              sensoryProfile: lot.sensoryProfile || null,
+            },
+            create: {
+              id: lot.id,
+              organizationId: orgId,
+              name: lot.name || '',
+              vintage: Number(lot.vintage) || 0,
+              variety: lot.variety || '',
+              vineyardBlock: lot.vineyardBlock || '',
+              region: lot.region || '',
+              initialVolume: Number(lot.initialVolume) || 0,
+              currentVolume: Number(lot.currentVolume) || 0,
+              wineClass: lot.wineClass || '',
+              stage: lot.stage || '',
+              createdAt: lot.createdAt || new Date().toISOString(),
+              history: lot.history || [],
+              sensoryProfile: lot.sensoryProfile || null,
+            }
+          });
+        }
+      } catch (relationalErr) {
+        console.error('[db] background relational double-write failed:', relationalErr);
+      }
+    })();
 
     lastPostgresSaveAt = new Date().toISOString();
     lastPostgresSaveError = null;

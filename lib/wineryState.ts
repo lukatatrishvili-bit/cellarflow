@@ -503,6 +503,7 @@ export interface UserProfile {
   language: 'en' | 'ka';
   enabledModules?: string[];
   enabledWidgets?: string[];
+  registrationComplete?: boolean;
 }
 
 export interface CompanyProfile {

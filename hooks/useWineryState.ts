@@ -45,6 +45,28 @@ export interface CellarNote {
   relatedLotId?: string;
 }
 
+interface RegistrationProfileData {
+  username: string;
+  email: string;
+  fullName: string;
+  role: UserProfile['role'];
+  language: UserProfile['language'];
+  rememberMe?: boolean;
+  passcode: string;
+  companyProfile: Partial<CompanyProfile>;
+  enabledModules: string[];
+  enabledWidgets?: string[];
+}
+
+interface CompleteRegistrationData {
+  fullName: string;
+  role: UserProfile['role'];
+  language: UserProfile['language'];
+  companyProfile: Partial<CompanyProfile>;
+  enabledModules: string[];
+  enabledWidgets?: string[];
+}
+
 const initialCellarNotes: CellarNote[] = [];
 
 export function useWineryState() {
@@ -74,7 +96,8 @@ export function useWineryState() {
     email: '',
     fullName: '',
     role: 'Read-Only',
-    language: 'en'
+    language: 'en',
+    registrationComplete: true,
   });
 
   const [organizations, setOrganizations] = useState<{ id: string; name: string; role: string; isActive: boolean }[]>([]);
@@ -518,7 +541,7 @@ export function useWineryState() {
     setSupplierPayments([]);
   };
 
-  const handleAuthRegister = async (profileData: { username: string, email: string, fullName: string, role: string, language: string, rememberMe?: boolean, passcode: string }) => {
+  const handleAuthRegister = async (profileData: RegistrationProfileData) => {
     setLoginError(null);
     setVerificationPending(null);
     try {
@@ -557,6 +580,42 @@ export function useWineryState() {
       }
     } catch (err) {
       setLoginError('Could not reach secure registration gateway');
+    }
+  };
+
+  const handleCompleteRegistration = async (setupData: CompleteRegistrationData): Promise<boolean> => {
+    setLoginError(null);
+    try {
+      const res = await fetch('/api/auth/complete_registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(setupData)
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const message = err.error || 'Registration setup failed';
+        setLoginError(message);
+        setToastMessage(`⚠️ ${message}`);
+        return false;
+      }
+
+      const updated = await res.json();
+      setCurrentUser(updated);
+      setCompanyProfile(prev => ({
+        ...prev,
+        ...setupData.companyProfile,
+      }));
+      await fetchOrganizations();
+
+      const dbData = await SyncQueueManager.sync({});
+      if (dbData) updateAllStates(dbData);
+      setToastMessage(lang === 'ka' ? 'პროფილი მზად არის.' : 'Workspace setup complete.');
+      return true;
+    } catch (err) {
+      console.error('Failed to complete registration:', err);
+      setLoginError('Could not complete registration setup');
+      setToastMessage('⚠️ Could not complete registration setup.');
+      return false;
     }
   };
 
@@ -1762,6 +1821,7 @@ export function useWineryState() {
     handleDemoLogin,
     handleAuthLogout,
     handleAuthRegister,
+    handleCompleteRegistration,
     handleResendVerification,
     handleUpdateProfile,
     organizations,

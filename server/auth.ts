@@ -1,25 +1,73 @@
 import crypto from 'crypto';
 
-const ITERATIONS = 10000;
+const CURRENT_ITERATIONS = 210000; // OWASP 2023 guidance for PBKDF2-HMAC-SHA512
+const LEGACY_ITERATIONS = 10000;   // pre-2026 hashes stored as `salt:hash`
 const KEY_LENGTH = 64;
 const DIGEST = 'sha512';
-const SECRET_KEY = process.env.SESSION_SECRET || 'vinea-cellar-secret-key-signature-2026';
+
+/**
+ * Resolve the HMAC signing secret for session tokens. In production a real
+ * secret is mandatory — falling back to a hardcoded value would let anyone with
+ * source access forge a session for any user (including the master admin), so
+ * we fail fast at startup instead. Dev/test use a fixed, clearly-marked value.
+ */
+export function resolveSessionSecret(): string {
+  const configured = (process.env.SESSION_SECRET || '').trim();
+  if (configured) return configured;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'SESSION_SECRET must be set in production. Generate one with: openssl rand -hex 32',
+    );
+  }
+  return 'vinea-cellar-dev-only-secret-do-not-use-in-prod';
+}
+
+const SECRET_KEY = resolveSessionSecret();
 
 export function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
-  return `${salt}:${hash}`;
+  const hash = crypto.pbkdf2Sync(password, salt, CURRENT_ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
+  return `${CURRENT_ITERATIONS}:${salt}:${hash}`;
+}
+
+/** Parse both the current `iterations:salt:hash` and legacy `salt:hash` formats. */
+function parseStoredHash(storedHash: string): { iterations: number; salt: string; hash: string } | null {
+  const parts = storedHash.split(':');
+  if (parts.length === 3) {
+    const iterations = parseInt(parts[0], 10);
+    if (!Number.isInteger(iterations) || iterations <= 0) return null;
+    return { iterations, salt: parts[1], hash: parts[2] };
+  }
+  if (parts.length === 2) {
+    return { iterations: LEGACY_ITERATIONS, salt: parts[0], hash: parts[1] };
+  }
+  return null;
 }
 
 export function verifyPassword(password: string, storedHash: string): boolean {
   try {
-    const [salt, hash] = storedHash.split(':');
-    if (!salt || !hash) return false;
-    const verifyHash = crypto.pbkdf2Sync(password, salt, ITERATIONS, KEY_LENGTH, DIGEST).toString('hex');
-    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(verifyHash, 'hex'));
+    const parsed = parseStoredHash(storedHash);
+    if (!parsed || !parsed.salt || !parsed.hash) return false;
+    const verifyHash = crypto
+      .pbkdf2Sync(password, parsed.salt, parsed.iterations, KEY_LENGTH, DIGEST)
+      .toString('hex');
+    const a = Buffer.from(parsed.hash, 'hex');
+    const b = Buffer.from(verifyHash, 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
+}
+
+/**
+ * True when a stored hash was produced with an older/weaker parameter set and
+ * should be transparently re-hashed after a successful login.
+ */
+export function passwordNeedsUpgrade(storedHash: string): boolean {
+  const parsed = parseStoredHash(storedHash);
+  if (!parsed) return false;
+  return parsed.iterations < CURRENT_ITERATIONS;
 }
 
 export function createSessionToken(payload: any, rememberMe?: boolean): string {
@@ -35,19 +83,21 @@ export function verifySessionToken(token: string): any {
   try {
     const [encodedPayload, signature] = token.split('.');
     if (!encodedPayload || !signature) return null;
-    
+
     const data = Buffer.from(encodedPayload, 'base64').toString('utf8');
     const expectedSignature = crypto.createHmac('sha256', SECRET_KEY).update(data).digest('hex');
-    
-    if (signature !== expectedSignature) {
+
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expBuf = Buffer.from(expectedSignature, 'hex');
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
       return null;
     }
-    
+
     const payload = JSON.parse(data);
     if (payload.expiresAt < Date.now()) {
       return null; // Expired
     }
-    
+
     return payload;
   } catch {
     return null;

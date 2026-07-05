@@ -58,6 +58,22 @@ export function applyDeletions(db: any, deletedIds: string[] | undefined): void 
   }
 }
 
+const documentHistory = new Map<string, Array<{ data: any; lastModified: string }>>();
+
+function recordDocumentHistory(collection: string, recordId: string, data: any, lastModified: string) {
+  const key = `${collection}:${recordId}`;
+  let list = documentHistory.get(key);
+  if (!list) {
+    list = [];
+    documentHistory.set(key, list);
+  }
+  if (list.some(entry => entry.lastModified === lastModified)) return;
+  list.push({ data: JSON.parse(JSON.stringify(data)), lastModified });
+  if (list.length > 20) {
+    list.shift();
+  }
+}
+
 /**
  * Merge client collections into the db (mutating it) and return any
  * conflicts. Conflicted items are left untouched on the server.
@@ -106,14 +122,70 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
 
       if (baselineTimestamp !== undefined && existing.lastModified !== undefined) {
         if (baselineTimestamp === existing.lastModified) {
+          recordDocumentHistory(key, existing.id, existing, existing.lastModified);
           Object.assign(existing, incoming); // clean fast-forward
         } else {
-          conflicts.push({
-            collection: toClientKey(key),
-            recordId: clientItem.id,
-            local: incoming,
-            server: { ...existing },
-          });
+          // Stale baseline: try field-level merge
+          const historyKey = `${key}:${clientItem.id}`;
+          const historyList = documentHistory.get(historyKey) || [];
+          const baselineEntry = historyList.find(entry => entry.lastModified === baselineTimestamp);
+          
+          let merged = false;
+          if (baselineEntry) {
+            const baseline = baselineEntry.data;
+            const mergedRecord = { ...existing };
+            let hasConflict = false;
+            
+            const allKeys = new Set([
+              ...Object.keys(incoming),
+              ...Object.keys(existing),
+              ...Object.keys(baseline)
+            ]);
+            
+            for (const k of allKeys) {
+              if (k === 'lastModified' || k === 'baselineTimestamp' || k === 'id') continue;
+              
+              const localVal = incoming[k];
+              const serverVal = existing[k];
+              const baseVal = baseline[k];
+              
+              const localChanged = JSON.stringify(localVal) !== JSON.stringify(baseVal);
+              const serverChanged = JSON.stringify(serverVal) !== JSON.stringify(baseVal);
+              
+              if (localChanged && serverChanged) {
+                // Both modified this field
+                if (JSON.stringify(localVal) === JSON.stringify(serverVal)) {
+                  mergedRecord[k] = localVal;
+                } else {
+                  // Conflicting modifications to the same field
+                  hasConflict = true;
+                  break;
+                }
+              } else if (localChanged) {
+                // Only local changed
+                mergedRecord[k] = localVal;
+              } else {
+                // Either only server changed, or neither changed
+                mergedRecord[k] = serverVal;
+              }
+            }
+            
+            if (!hasConflict) {
+              recordDocumentHistory(key, existing.id, existing, existing.lastModified);
+              Object.assign(existing, mergedRecord);
+              existing.lastModified = incoming.lastModified;
+              merged = true;
+            }
+          }
+          
+          if (!merged) {
+            conflicts.push({
+              collection: toClientKey(key),
+              recordId: clientItem.id,
+              local: incoming,
+              server: { ...existing },
+            });
+          }
         }
         continue;
       }
@@ -122,6 +194,7 @@ export function mergeCollections(db: any, collections: Record<string, any>): Syn
       const clientTS = incoming.lastModified ? new Date(incoming.lastModified).getTime() : 0;
       const serverTS = existing.lastModified ? new Date(existing.lastModified).getTime() : 0;
       if (clientTS >= serverTS) {
+        recordDocumentHistory(key, existing.id, existing, existing.lastModified);
         Object.assign(existing, incoming);
       }
     }

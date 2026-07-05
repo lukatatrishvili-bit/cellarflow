@@ -32,7 +32,7 @@ describe('demo account configuration', () => {
     const user = createDemoUser(config);
 
     expect(user.username).toBe('demo');
-    expect(user.passwordHash).toMatch(/^[a-f0-9]+:[a-f0-9]+$/);
+    expect(user.passwordHash).toMatch(/^\d+:[a-f0-9]+:[a-f0-9]+$/);
     expect(user.enabledModules).toEqual(['vazi', 'gvino']);
     expect(user).not.toHaveProperty('vessels');
     expect(user).not.toHaveProperty('lots');
