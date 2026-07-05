@@ -50,6 +50,9 @@ jobs:
       DEMO_LOGIN_ENABLED: ${{ inputs.demo_login_enabled }}
       RUNTIME_SERVICE_ACCOUNT_INPUT: ${{ inputs.runtime_service_account }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # REQUIRED: the server refuses to boot in production without it.
+      # Generate with: openssl rand -hex 32
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
       GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
@@ -64,6 +67,13 @@ jobs:
       SMTP_PASS: ${{ secrets.SMTP_PASS }}
       MAIL_FROM: ${{ secrets.MAIL_FROM }}
     steps:
+      - name: Require SESSION_SECRET
+        if: env.SESSION_SECRET == ''
+        run: |
+          echo "SESSION_SECRET repository secret is not set. The server fails fast without it in production."
+          echo "Generate one with: openssl rand -hex 32  — then add it under Settings > Secrets and variables > Actions."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud with Workload Identity
@@ -136,6 +146,7 @@ jobs:
             --max-instances 1
             --service-account "$RUNTIME_SERVICE_ACCOUNT"
             --update-env-vars "NODE_ENV=production"
+            --update-env-vars "SESSION_SECRET=$SESSION_SECRET"
             --update-env-vars "GOOGLE_CLOUD_REGION=$REGION"
             --update-env-vars "GCS_BUCKET=$GCS_BUCKET"
             --update-env-vars "GCS_DB_OBJECT=$GCS_DB_OBJECT"

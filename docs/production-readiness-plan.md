@@ -18,7 +18,26 @@ Phase 0 (item 1) and all of Phase 1 are **done**, plus a critical prod-boot cras
 - ✅ Security headers via `server/middleware/securityHeaders.ts`; CSP ships **Report-Only**, promote with `CSP_ENFORCE=true` after staging (item 6). `X-Powered-By` disabled.
 - ✅ Tests: `tests/auth.test.ts`, `tests/clientIp.test.ts` added; suite green (214 passing).
 
-**Still open:** commit the branch (item 2), Phase 2 durability + Google-user investigation (items 7–8), Phase 3 exceljs (item 9). Remaining action needing you: set `SESSION_SECRET` and confirm `DATABASE_URL` in the Fly environment.
+**Still open:** Phase 3 exceljs (item 9). Branch committed (item 2, `27747fd`).
+
+## Phase 2 findings & fixes — 2026-07-06
+
+**Root cause of items 7–8 found and fixed.** The live deployment is **Cloud Run** (the `google-cloud-run.yml` workflow), running the **GCS/local-JSON backend — there is no `DATABASE_URL`** in the deploy pipeline. The Fly.io app is dead (trial ended; `fly secrets list` refuses; `fly-deploy.yml` will fail on every push to `main`).
+
+The Google-users symptom was a durability bug, not a filter:
+1. `saveCoreMetadata('auth-google-register')` fell through to `backupJsonToGcs()` — a **fire-and-forget upload behind a 90-second debounce timer**.
+2. Cloud Run **throttles CPU to ~0 after the response is sent**, so that timer routinely never fires.
+3. On scale-to-zero the instance is reaped; the next boot hydrates a **stale** `db.json` from GCS — recently registered accounts (Google or email) silently vanish. Google accounts were simply noticed first.
+
+Fixes applied:
+- ✅ `saveCoreMetadata` now **awaits** `backupJsonToGcsNow()` when Postgres is unconfigured — account writes are durable before the HTTP response. (`server/db.ts`)
+- ✅ `flushPendingGcsBackup()` + SIGTERM/SIGINT graceful shutdown in `server.ts` — the debounced winery-data backup is flushed during Cloud Run's 10s termination grace, the last guaranteed CPU window. (Verified by type/tests; SIGTERM delivery is untestable on Windows — Linux-only signal.)
+- ✅ `google-cloud-run.yml` passes `SESSION_SECRET` and **fails the deploy** if the repo secret is missing (required since the server now fail-fasts without it).
+
+**Actions needing the owner:**
+- Add a `SESSION_SECRET` repository secret (`openssl rand -hex 32`) before the next Cloud Run deploy.
+- Decide the Fly.io app's fate: revive the account or remove `fly.toml` + `fly-deploy.yml` (currently fails on every `main` push).
+- Longer term, provisioning Cloud SQL / any Postgres and setting `DATABASE_URL` remains the real fix (relational migration path in `docs/improvement-plan.md`); the GCS mitigations above make the current backend safe for account data in the meantime.
 
 ## Priority summary
 

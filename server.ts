@@ -3,7 +3,7 @@ import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { initDB } from './server/db';
+import { initDB, flushPendingGcsBackup } from './server/db';
 import authRouter, { orgRouter } from './server/routes/auth';
 import syncRouter from './server/routes/sync';
 import telemetryRouter from './server/routes/telemetry';
@@ -83,6 +83,34 @@ if (process.env.VITEST !== 'true') {
         console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
       });
     });
+
+  // Cloud Run sends SIGTERM with a 10s grace period before reaping an idle
+  // instance. CPU is throttled between requests, so a debounced GCS backup may
+  // still be pending — this is the last guaranteed chance to persist it.
+  let shuttingDown = false;
+  const gracefulShutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[server] ${signal} received, flushing pending backup before exit...`);
+    server.close();
+    const timeout = setTimeout(() => {
+      console.error('[server] shutdown flush timed out, exiting.');
+      process.exit(1);
+    }, 8000);
+    flushPendingGcsBackup()
+      .then(() => {
+        console.log('[server] shutdown flush complete.');
+        clearTimeout(timeout);
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error('[server] shutdown flush failed:', err);
+        clearTimeout(timeout);
+        process.exit(1);
+      });
+  };
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 }
 
 // Re-export for test compatibility

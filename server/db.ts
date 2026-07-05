@@ -457,6 +457,24 @@ function backupJsonToGcs(jsonStr: string): void {
   }, delayMs || GCS_BACKUP_MIN_INTERVAL_MS);
 }
 
+/**
+ * Upload any debounced-but-not-yet-written GCS backup immediately. Called from
+ * the SIGTERM handler: Cloud Run throttles CPU between requests, so a pending
+ * debounce timer may never fire — the shutdown grace period is the last
+ * guaranteed CPU window before the instance (and its buffered writes) is gone.
+ */
+export async function flushPendingGcsBackup(): Promise<void> {
+  if (!gcsEnabled) return;
+  if (pendingGcsBackupTimer) {
+    clearTimeout(pendingGcsBackupTimer);
+    pendingGcsBackupTimer = null;
+  }
+  const latestJson = pendingGcsBackupJson;
+  pendingGcsBackupJson = null;
+  if (!latestJson) return;
+  await backupJsonToGcsNow(latestJson);
+}
+
 function dbFromPostgresRows(rows: {
   users: any[];
   organizations: any[];
@@ -796,7 +814,11 @@ export async function saveCoreMetadata(source = 'core-metadata'): Promise<void> 
 
   const prisma = await getPrisma();
   if (!prisma) {
-    backupJsonToGcs(jsonStr);
+    // Without Postgres, GCS is the only durable store. Account metadata is
+    // rare but must never be lost, so upload synchronously within the request
+    // — Cloud Run throttles CPU after the response, so a debounced background
+    // upload may never run and the account would vanish on instance recycle.
+    await backupJsonToGcsNow(jsonStr);
     return;
   }
 
