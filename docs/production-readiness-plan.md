@@ -44,8 +44,17 @@ Follow-up session targeting the "full ERP" ceilings:
 
 Remaining "full ERP" roadmap (unchanged, in `improvement-plan.md`): relational-authoritative migration (double-write → shadow-read → cutover), multi-instance scale-out, delta sync payloads.
 
+## Phase 2c — live-environment audit corrections — 2026-07-06
+
+Inspecting the actual GCP project (`cellarflow`) revised the Phase 2 story:
+
+- **Production already has Postgres provisioned.** The live `cellarflow-app` service (europe-west1) wires `SESSION_SECRET`, `DATABASE_URL`, Gemini, OAuth, admin and SMTP-pass from **GCP Secret Manager** (`cellarflow-*` secrets), and `cellarflow-database-url` is a correct Cloud SQL unix-socket URL for the RUNNABLE `cellarflow-postgres` (POSTGRES_16) instance, which is attached to the service. The Phase 2 claim "no DATABASE_URL in prod" was true of the *workflow file*, not the live service (configured out-of-band).
+- **Open question — is Prisma actually connecting on the deployed revision?** If `prisma db push` never ran, the schema is missing, Prisma fails, and the app silently falls back to GCS-json with the (now fixed) debounce loss — which would still explain the vanishing Google accounts. The workflow now sets `PRISMA_DB_PUSH_ON_STARTUP=true`; after deploying this branch, check **Master Admin → System Health** (`db.activeBackendLabel` should read postgres, `postgresReadiness.ok` true).
+- ✅ **Workflow aligned with Secret Manager.** `google-cloud-run.yml` now passes all sensitive values via `--update-secrets` (gcloud refuses to overwrite a secret-reference env var with a literal `--update-env-vars` value, so the previous GitHub-secret approach would have broken deploys). The temporary `SESSION_SECRET` GitHub repo secret was created and then removed as unnecessary.
+- ⚠️ **Rotate two credentials.** The stale `cellarflow` service in **us-central1** stores `GOOGLE_CLIENT_SECRET` and the Gmail `SMTP_PASS` as plaintext env vars (they surfaced during the audit). Recommend: delete the us-central1 service (`gcloud run services delete cellarflow --region us-central1`), rotate the Google OAuth client secret (Cloud Console → Credentials) and the Gmail app password, updating the `cellarflow-google-client-secret` / `cellarflow-smtp-pass` Secret Manager entries.
+
 **Actions needing the owner:**
-- Add a `SESSION_SECRET` repository secret (`openssl rand -hex 32`) before the next Cloud Run deploy.
+- ~~Add a `SESSION_SECRET` repository secret~~ — superseded: Secret Manager already holds it; the workflow now references it directly.
 - ~~Decide the Fly.io app's fate~~ — decided 2026-07-06: Fly removed (`fly.toml` + `fly-deploy.yml` deleted); Cloud Run is the sole deployment target.
 - Longer term, provisioning Cloud SQL / any Postgres and setting `DATABASE_URL` remains the real fix (relational migration path in `docs/improvement-plan.md`); the GCS mitigations above make the current backend safe for account data in the meantime.
 

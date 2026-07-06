@@ -49,40 +49,22 @@ jobs:
       GCS_DB_OBJECT: ${{ inputs.gcs_db_object }}
       DEMO_LOGIN_ENABLED: ${{ inputs.demo_login_enabled }}
       RUNTIME_SERVICE_ACCOUNT_INPUT: ${{ inputs.runtime_service_account }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      # REQUIRED: the server refuses to boot in production without it.
-      # Generate with: openssl rand -hex 32
-      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
-      # Optional but strongly recommended: PostgreSQL connection string
-      # (Neon/Supabase free tier or Cloud SQL). When set, Postgres becomes the
-      # authoritative store (accounts + org state with optimistic locking)
-      # instead of the single GCS db.json object. Must not contain commas
-      # (gcloud env-var delimiter); standard postgres:// URLs never do.
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      # Optional: Cloud SQL instance connection name (project:region:instance).
-      # Only needed when DATABASE_URL points at Cloud SQL via a unix socket.
-      CLOUDSQL_INSTANCE: ${{ secrets.CLOUDSQL_INSTANCE }}
-      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-      ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
-      ADMIN_PASSCODE: ${{ secrets.ADMIN_PASSCODE }}
-      # Optional SMTP for verification email. Without these the verification gate
+      # All sensitive values (SESSION_SECRET, DATABASE_URL, GEMINI_API_KEY,
+      # GOOGLE_CLIENT_ID/SECRET, ADMIN_USERNAME/PASSCODE, SMTP_PASS) are wired
+      # from GCP Secret Manager via --update-secrets in the deploy step — NOT
+      # from GitHub secrets. The live service stores them as secret references,
+      # and gcloud refuses to overwrite a secret-reference env var with a
+      # literal --update-env-vars value.
+      #
+      # Optional non-secret SMTP settings. Without SMTP the verification gate
       # falls back to logging the link server-side (new email/password signups
       # cannot verify in production; Google sign-in still works).
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}
       MAIL_FROM: ${{ secrets.MAIL_FROM }}
     steps:
-      - name: Require SESSION_SECRET
-        if: env.SESSION_SECRET == ''
-        run: |
-          echo "SESSION_SECRET repository secret is not set. The server fails fast without it in production."
-          echo "Generate one with: openssl rand -hex 32  — then add it under Settings > Secrets and variables > Actions."
-          exit 1
-
       - uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud with Workload Identity
@@ -144,9 +126,9 @@ jobs:
       - name: Deploy to Cloud Run from source
         run: |
           # --update-env-vars (not --set-env-vars) so values set out-of-band
-          # (e.g. SMTP, APP_URL) are preserved across deploys instead of wiped.
-          # For stronger secret hygiene, move the sensitive values to Secret
-          # Manager and pass them with --set-secrets instead of --update-env-vars.
+          # (e.g. APP_URL) are preserved across deploys instead of wiped.
+          # Sensitive values come from GCP Secret Manager via --update-secrets;
+          # the secret names below must exist in the target project.
           DEPLOY_ARGS=(
             --source .
             --project "$PROJECT_ID"
@@ -155,32 +137,31 @@ jobs:
             --max-instances 1
             --service-account "$RUNTIME_SERVICE_ACCOUNT"
             --update-env-vars "NODE_ENV=production"
-            --update-env-vars "SESSION_SECRET=$SESSION_SECRET"
+            # SESSION_SECRET is required at boot; DATABASE_URL activates the
+            # PostgreSQL (Cloud SQL) backend.
+            --update-secrets "SESSION_SECRET=cellarflow-session-secret:latest"
+            --update-secrets "DATABASE_URL=cellarflow-database-url:latest"
+            --update-secrets "GEMINI_API_KEY=cellarflow-gemini-api-key:latest"
+            --update-secrets "GOOGLE_CLIENT_ID=cellarflow-google-client-id:latest"
+            --update-secrets "GOOGLE_CLIENT_SECRET=cellarflow-google-client-secret:latest"
+            --update-secrets "ADMIN_USERNAME=cellarflow-admin-username:latest"
+            --update-secrets "ADMIN_PASSCODE=cellarflow-admin-passcode:latest"
+            --update-secrets "SMTP_PASS=cellarflow-smtp-pass:latest"
+            # Run additive `prisma db push` before serving so the Cloud SQL
+            # schema exists/stays current (a missing schema makes Prisma fail
+            # and the app silently fall back to the GCS json backend).
+            --update-env-vars "PRISMA_DB_PUSH_ON_STARTUP=true"
+            --add-cloudsql-instances "cellarflow:europe-west1:cellarflow-postgres"
             --update-env-vars "GOOGLE_CLOUD_REGION=$REGION"
             --update-env-vars "GCS_BUCKET=$GCS_BUCKET"
             --update-env-vars "GCS_DB_OBJECT=$GCS_DB_OBJECT"
             --update-env-vars "DEMO_LOGIN_ENABLED=$DEMO_LOGIN_ENABLED"
           )
 
-          if [ -n "$DATABASE_URL" ]; then
-            DEPLOY_ARGS+=(--update-env-vars "DATABASE_URL=$DATABASE_URL")
-            # Dockerfile CMD runs `prisma db push` before serving when both are set,
-            # so additive schema changes apply automatically on deploy.
-            DEPLOY_ARGS+=(--update-env-vars "PRISMA_DB_PUSH_ON_STARTUP=true")
-          fi
-          if [ -n "$CLOUDSQL_INSTANCE" ]; then
-            DEPLOY_ARGS+=(--add-cloudsql-instances "$CLOUDSQL_INSTANCE")
-          fi
-          if [ -n "$GEMINI_API_KEY" ]; then DEPLOY_ARGS+=(--update-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY"); fi
-          if [ -n "$GOOGLE_CLIENT_ID" ]; then DEPLOY_ARGS+=(--update-env-vars "GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID"); fi
-          if [ -n "$GOOGLE_CLIENT_SECRET" ]; then DEPLOY_ARGS+=(--update-env-vars "GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET"); fi
-          if [ -n "$ADMIN_USERNAME" ]; then DEPLOY_ARGS+=(--update-env-vars "ADMIN_USERNAME=$ADMIN_USERNAME"); fi
-          if [ -n "$ADMIN_PASSCODE" ]; then DEPLOY_ARGS+=(--update-env-vars "ADMIN_PASSCODE=$ADMIN_PASSCODE"); fi
           if [ -n "$SMTP_HOST" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_HOST=$SMTP_HOST"); fi
           if [ -n "$SMTP_PORT" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_PORT=$SMTP_PORT"); fi
           if [ -n "$SMTP_SECURE" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_SECURE=$SMTP_SECURE"); fi
           if [ -n "$SMTP_USER" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_USER=$SMTP_USER"); fi
-          if [ -n "$SMTP_PASS" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_PASS=$SMTP_PASS"); fi
           if [ -n "$MAIL_FROM" ]; then DEPLOY_ARGS+=(--update-env-vars "MAIL_FROM=$MAIL_FROM"); fi
 
           gcloud run deploy "$SERVICE" "${DEPLOY_ARGS[@]}"
