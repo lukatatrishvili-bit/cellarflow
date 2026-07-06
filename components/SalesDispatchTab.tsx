@@ -424,7 +424,7 @@ export default function SalesDispatchTab({
     return 'bg-blue-100 text-blue-800 border-blue-200';
   };
 
-  const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
+  const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-500 dark:text-stone-400 tracking-widest';
   const inputCls = 'w-full bg-stone-50 border border-stone-200 px-2.5 py-2 rounded-lg text-xs font-semibold text-stone-700 outline-none focus:border-[#4e0e15] dark:bg-stone-900 dark:border-stone-800 dark:text-amber-50';
 
   return (
@@ -437,7 +437,7 @@ export default function SalesDispatchTab({
           <Truck className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'Sales Orders & Dispatch' : 'Sales Orders & Dispatch'}
         </h3>
-        <p className="text-xs text-stone-400 font-semibold mt-0.5">
+        <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5">
           Reserve bottled stock before physical dispatch, then fulfill orders into auditable stock movements.
         </p>
       </div>
@@ -451,7 +451,7 @@ export default function SalesDispatchTab({
           { label: 'Gross profit', value: dispatchTotals.grossProfit, accent: dispatchTotals.grossProfit >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600', money: true },
         ].map((card, i) => (
           <div key={i} className="bg-white border border-[#e8dfd5] rounded-2xl p-4 dark:bg-stone-900 dark:border-stone-800">
-            <span className="text-[9px] uppercase font-mono text-stone-400 font-bold tracking-widest">{card.label}</span>
+            <span className="text-[9px] uppercase font-mono text-stone-500 dark:text-stone-400 font-bold tracking-widest">{card.label}</span>
             <strong className={`block mt-1 text-2xl font-serif font-black ${card.accent}`}>
               <CountUp value={card.value} format={(n) => card.money ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : n.toLocaleString()} /> {card.money ? currency : ''}
             </strong>
@@ -466,7 +466,7 @@ export default function SalesDispatchTab({
               <CalendarClock className="w-4 h-4" /> Reserve stock / sales order
             </h4>
             {availableRows.length === 0 ? (
-              <div className="text-center py-8 text-stone-400 text-xs font-semibold">
+              <div className="text-center py-8 text-stone-500 dark:text-stone-400 text-xs font-semibold">
                 <PackageCheck className="w-10 h-10 mx-auto mb-2 opacity-40" />
                 No unreserved bottled stock available for new reservations.
               </div>
@@ -546,7 +546,7 @@ export default function SalesDispatchTab({
               <ShoppingCart className="w-4 h-4" /> Record dispatch now
             </h4>
             {availableRows.length === 0 ? (
-              <div className="text-center py-8 text-stone-400 text-xs font-semibold">
+              <div className="text-center py-8 text-stone-500 dark:text-stone-400 text-xs font-semibold">
                 <PackageCheck className="w-10 h-10 mx-auto mb-2 opacity-40" />
                 No unreserved bottled stock available for direct dispatch.
               </div>
@@ -624,17 +624,17 @@ export default function SalesDispatchTab({
               <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
                 <CalendarClock className="w-4 h-4" /> Sales orders / reservations
               </span>
-              <span className="text-[9px] font-mono text-stone-400">{orders.length} records</span>
+              <span className="text-[9px] font-mono text-stone-500 dark:text-stone-400">{orders.length} records</span>
             </div>
             {orders.length === 0 ? (
-              <div className="text-center py-12 text-stone-400 text-xs font-semibold">
+              <div className="text-center py-12 text-stone-500 dark:text-stone-400 text-xs font-semibold">
                 No reservations created yet
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[11px]">
                   <thead>
-                    <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-400 font-bold dark:bg-stone-950">
+                    <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-500 dark:text-stone-400 font-bold dark:bg-stone-950">
                       <th className="p-2.5">Order / Customer</th>
                       <th className="p-2.5">Lot / Location</th>
                       <th className="p-2.5 text-right">Bottles</th>
@@ -649,11 +649,11 @@ export default function SalesDispatchTab({
                         <td className="p-2.5">
                           <span className="font-mono text-stone-500">{o.orderNumber || o.orderDate}</span>
                           <span className="block font-bold text-stone-800 dark:text-amber-50">{o.customerName}</span>
-                          {o.reservedUntil && <span className="block text-[9px] text-stone-400">reserved until {o.reservedUntil}</span>}
+                          {o.reservedUntil && <span className="block text-[9px] text-stone-500 dark:text-stone-400">reserved until {o.reservedUntil}</span>}
                         </td>
                         <td className="p-2.5">
                           <span className="font-bold text-stone-700 dark:text-stone-200">{o.lotName}</span>
-                          <span className="block text-[9px] font-mono text-stone-400">{o.locationName}</span>
+                          <span className="block text-[9px] font-mono text-stone-500 dark:text-stone-400">{o.locationName}</span>
                         </td>
                         <td className="p-2.5 text-right font-bold">{o.bottles.toLocaleString()}</td>
                         <td className="p-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">{fmtMoney(o.revenue || 0)}</td>
@@ -689,17 +689,17 @@ export default function SalesDispatchTab({
               <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
                 <BadgeDollarSign className="w-4 h-4" /> Recent dispatches
               </span>
-              <span className="text-[9px] font-mono text-stone-400">{dispatches.length} records</span>
+              <span className="text-[9px] font-mono text-stone-500 dark:text-stone-400">{dispatches.length} records</span>
             </div>
             {dispatches.length === 0 ? (
-              <div className="text-center py-12 text-stone-400 text-xs font-semibold">
+              <div className="text-center py-12 text-stone-500 dark:text-stone-400 text-xs font-semibold">
                 No sales dispatches recorded yet
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[11px]">
                   <thead>
-                    <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-400 font-bold dark:bg-stone-950">
+                    <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-500 dark:text-stone-400 font-bold dark:bg-stone-950">
                       <th className="p-2.5">Date / Customer</th>
                       <th className="p-2.5">Lot / Location</th>
                       <th className="p-2.5 text-right">Bottles</th>
@@ -718,7 +718,7 @@ export default function SalesDispatchTab({
                         </td>
                         <td className="p-2.5">
                           <span className="font-bold text-stone-700 dark:text-stone-200">{d.lotName}</span>
-                          <span className="block text-[9px] font-mono text-stone-400">{d.locationName}</span>
+                          <span className="block text-[9px] font-mono text-stone-500 dark:text-stone-400">{d.locationName}</span>
                         </td>
                         <td className="p-2.5 text-right font-bold">{d.bottles.toLocaleString()}</td>
                         <td className="p-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">{fmtMoney(d.revenue || 0)}</td>

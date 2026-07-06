@@ -168,6 +168,21 @@ and a note appended to this file under "Progress log".
 
 ## Progress log
 
+- 2026-07-06 — **W1 core DONE (axe-driven pass):** all five top-level modules
+  (Dashboard, Vineyard, Cellar, Business, Documents) now report **zero
+  serious/critical axe-core violations** (was: 23+ across contrast, select-name,
+  label, progressbar-name, scrollable-region-focusable). Fixes: language
+  select + OfficialDocsTab filters got bilingual aria-labels; SetupJourney
+  progressbar named; `text-stone-400/450`, `text-slate-400`, `#c5a059`, and
+  emerald/amber-600 micro-labels darkened to AA on light with `dark:` variants
+  preserved; scrollable lists/tables got `tabIndex={0}`. Verification gotcha
+  worth remembering: run axe only ~4.5s after navigation (entrance-animation
+  opacity blending causes false contrast failures) and beware stale Vite tabs.
+  Remaining W1 (tracked, not blocking): repo-wide `text-stone-400` sweep in
+  less-trafficked components (needs per-file compound-class care;
+  MasterAdminPortal is dark-fixed — skip), modal focus-trap/Escape audit,
+  heading-order (moderate), full keyboard walkthrough in KA.
+
 - 2026-07-06 — Audit performed; splash, lazyRetry, ErrorBoundary, manifest
   rebrand, dev .env loader shipped and verified (commits `c1dffa7`, `821e294`).
 - 2026-07-06 — **W3 DONE:** hourly `registration.update()` + `controllerchange`

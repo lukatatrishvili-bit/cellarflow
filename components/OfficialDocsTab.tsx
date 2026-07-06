@@ -151,7 +151,7 @@ export default function OfficialDocsTab(props: Props) {
   const errorCount = doc?.warnings.filter(w => w.level === 'error').length ?? 0;
   const warnCount = doc?.warnings.filter(w => w.level === 'warning').length ?? 0;
 
-  const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
+  const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-500 dark:text-stone-400 tracking-widest';
   const inputCls = 'w-full bg-stone-50 border border-stone-200 px-2.5 py-2 rounded-lg text-xs font-semibold text-stone-700 outline-none focus:border-[#4e0e15] dark:bg-stone-900 dark:border-stone-800';
 
   return (
@@ -165,7 +165,7 @@ export default function OfficialDocsTab(props: Props) {
           <ShieldCheck className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'ოფიციალური დოკუმენტები' : 'Official Documents'}
         </h3>
-        <p className="text-xs text-stone-400 font-semibold mt-0.5">
+        <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5">
           {ka
             ? 'მევენახეობა-მეღვინეობის ტექნოლოგიური პროცესების აღრიცხვა — დანართები №1–№20'
             : 'Viticulture & winemaking traceability forms — Annexes №1–№20'}
@@ -178,7 +178,7 @@ export default function OfficialDocsTab(props: Props) {
           {/* Form picker */}
           <div className="bg-white border border-[#e8dfd5] p-4 rounded-2xl shadow-sm dark:bg-stone-900 dark:border-stone-800">
             <label className={labelCls}>{ka ? 'დოკუმენტის ტიპი' : 'Document type'}</label>
-            <select value={formId} onChange={e => setFormId(e.target.value)} className={inputCls}>
+            <select value={formId} onChange={e => setFormId(e.target.value)} className={inputCls} aria-label={ka ? 'დოკუმენტის ტიპი' : 'Document type'}>
               {forms.map(f => (
                 <option key={f.id} value={f.id}>
                   №{f.annexNumber} — {ka ? f.titleKa : f.titleEn}
@@ -213,7 +213,7 @@ export default function OfficialDocsTab(props: Props) {
                 <label className={labelCls}>{ka ? 'ცარიელი სტრიქონები' : 'Blank rows'}</label>
                 <input type="number" min={1} max={60} value={blankRows}
                   onChange={e => setBlankRows(Math.max(1, Math.min(60, parseInt(e.target.value) || 1)))}
-                  className={inputCls} />
+                  className={inputCls} aria-label={ka ? 'ცარიელი სტრიქონები' : 'Blank rows'} />
               </div>
             )}
             {/* Demo data — preview/test exports without touching real synced data */}
@@ -234,11 +234,11 @@ export default function OfficialDocsTab(props: Props) {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className={labelCls}>{ka ? 'დან' : 'From'}</label>
-                  <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
+                  <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} aria-label={ka ? 'თარიღიდან' : 'From date'} />
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'მდე' : 'To'}</label>
-                  <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} />
+                  <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} aria-label={ka ? 'თარიღამდე' : 'To date'} />
                 </div>
               </div>
             )}
@@ -246,14 +246,14 @@ export default function OfficialDocsTab(props: Props) {
             {(has('accountingYear') || has('season')) && (
               <div>
                 <label className={labelCls}>{ka ? 'სააღრიცხვო წელი' : 'Accounting year'}</label>
-                <input type="number" value={accountingYear} onChange={e => setAccountingYear(e.target.value)} className={inputCls} />
+                <input type="number" value={accountingYear} onChange={e => setAccountingYear(e.target.value)} className={inputCls} aria-label={ka ? 'სააღრიცხვო წელი' : 'Accounting year'} />
               </div>
             )}
 
             {has('vineyardBlock') && (
               <div>
                 <label className={labelCls}>{ka ? 'ნაკვეთი' : 'Vineyard block'}</label>
-                <select value={blockId} onChange={e => setBlockId(e.target.value)} className={inputCls}>
+                <select value={blockId} onChange={e => setBlockId(e.target.value)} className={inputCls} aria-label={ka ? 'ნაკვეთი' : 'Vineyard block'}>
                   <option value="">{ka ? 'ყველა' : 'All blocks'}</option>
                   {pools.blocks.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
@@ -263,7 +263,7 @@ export default function OfficialDocsTab(props: Props) {
             {has('wineLot') && (
               <div>
                 <label className={labelCls}>{ka ? 'ღვინის ლოტი' : 'Wine lot'}</label>
-                <select value={lotId} onChange={e => setLotId(e.target.value)} className={inputCls}>
+                <select value={lotId} onChange={e => setLotId(e.target.value)} className={inputCls} aria-label={ka ? 'ღვინის ლოტი' : 'Wine lot'}>
                   <option value="">{ka ? 'ყველა ლოტი' : 'All lots'}</option>
                   {pools.lots.map(l => <option key={l.id} value={l.id}>{l.name} ({l.id})</option>)}
                 </select>
@@ -273,7 +273,7 @@ export default function OfficialDocsTab(props: Props) {
             {has('tank') && (
               <div>
                 <label className={labelCls}>{ka ? 'ჭურჭელი / ცისტერნა' : 'Tank / vessel'}</label>
-                <select value={tankId} onChange={e => setTankId(e.target.value)} className={inputCls}>
+                <select value={tankId} onChange={e => setTankId(e.target.value)} className={inputCls} aria-label={ka ? 'ჭურჭელი / ცისტერნა' : 'Tank / vessel'}>
                   <option value="">{ka ? 'ყველა' : 'All tanks'}</option>
                   {pools.vessels.map(v => <option key={v.id} value={v.id}>{v.id}</option>)}
                 </select>
@@ -311,7 +311,7 @@ export default function OfficialDocsTab(props: Props) {
               {ka ? 'Excel (XLSX) ექსპორტი' : 'Export Excel (XLSX)'}
             </button>
             {xlsxError && <p className="text-[10px] text-rose-600 font-bold">{xlsxError}</p>}
-            <p className="text-[9px] text-stone-400 font-mono pt-1">
+            <p className="text-[9px] text-stone-500 dark:text-stone-400 font-mono pt-1">
               <FileDown className="w-3 h-3 inline mr-1" />
               {buildFilename(template, ctx, 'pdf')}
             </p>
@@ -331,7 +331,7 @@ export default function OfficialDocsTab(props: Props) {
                 {errorCount > 0 && <span className="text-[10px] font-bold bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">{errorCount} {ka ? 'შეცდომა' : 'errors'}</span>}
                 {warnCount > 0 && <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{warnCount} {ka ? 'გაფრთხილება' : 'warnings'}</span>}
               </div>
-              <ul className="space-y-1 max-h-40 overflow-y-auto">
+              <ul className="space-y-1 max-h-40 overflow-y-auto" tabIndex={0}>
                 {doc.warnings.slice(0, 40).map((w, i) => (
                   <li key={i} className={`text-[11px] flex gap-1.5 ${w.level === 'error' ? 'text-rose-700' : 'text-amber-700'}`}>
                     <span className="shrink-0">{w.level === 'error' ? '⛔' : '⚠️'}</span>
@@ -348,7 +348,7 @@ export default function OfficialDocsTab(props: Props) {
               <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
                 <FileText className="w-4 h-4" /> {ka ? 'წინასწარი ხედი' : 'Preview'} — დანართი №{template.annexNumber}
               </span>
-              <span className="text-[9px] font-mono text-stone-400 uppercase">
+              <span className="text-[9px] font-mono text-stone-500 dark:text-stone-400 uppercase">
                 {template.orientation === 'landscape' ? (ka ? 'ჰორიზონტალური' : 'Landscape') : (ka ? 'ვერტიკალური' : 'Portrait')} · A4 · v{template.version}
               </span>
             </div>

@@ -627,7 +627,7 @@ export default function App() {
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-serif tracking-[0.25em] text-[#1b1715] font-black dark:text-amber-100">VinOS</h1>
             </div>
-            <p className="text-[10px] text-[#c5a059] font-mono tracking-widest font-extrabold uppercase mt-0.5">{state.companyProfile.companyName}</p>
+            <p className="text-[10px] text-[#8a6425] dark:text-[#c5a059] font-mono tracking-widest font-extrabold uppercase mt-0.5">{state.companyProfile.companyName}</p>
           </div>
         </div>
 
@@ -713,6 +713,7 @@ export default function App() {
             <Languages className="w-3.5 h-3.5 text-stone-550 shrink-0" />
             <select
               value={state.lang}
+              aria-label={state.lang === 'ka' ? 'ენის არჩევა' : 'Select language'}
               onChange={(e) => {
                 const nextLang = e.target.value as Language;
                 state.setLang(nextLang);
@@ -744,7 +745,7 @@ export default function App() {
             <div className="flex items-center gap-3.5 pl-3.5 border-l border-stone-200 dark:border-stone-800">
               <div className="text-right hidden sm:block">
                 <span className="font-bold text-xs text-stone-850 block leading-tight dark:text-amber-100">{state.currentUser.fullName}</span>
-                <span className="text-[8px] uppercase font-mono text-[#c5a059] font-extrabold block mt-0.5 tracking-wider">
+                <span className="text-[8px] uppercase font-mono text-[#8a6425] dark:text-[#c5a059] font-extrabold block mt-0.5 tracking-wider">
                   {state.currentUser.role === 'Viticulturist' ? (t.signin_role_viticulturist || 'Lead Viticulturist') :
                    state.currentUser.role === 'Winemaker' ? (t.signin_role_winemaker || 'Head Winemaker') :
                    (t.signin_role_owner || 'Owner & ERP Admin')}
@@ -2502,7 +2503,7 @@ export default function App() {
 
 
 
-      <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-400 font-mono font-medium">
+      <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-500 dark:text-slate-400 font-mono font-medium">
         VinOS • Operational Winemaking Control Loop • Offline-capable traceability
       </footer>
     </div>

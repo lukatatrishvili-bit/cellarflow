@@ -42,7 +42,7 @@ export default function SetupJourney({ lang, journey, onNavigate, onDismiss }: P
               <Sparkles className="w-4.5 h-4.5 text-[#c5a059]" />
               {ka ? 'აამუშავეთ თქვენი მარანი' : 'Bring your marani online'}
             </h3>
-            <p className="text-xs text-stone-400 font-semibold mt-0.5 max-w-md">
+            <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5 max-w-md">
               {ka
                 ? 'ექვსი ნაბიჯი სრულ მიკვლევადობამდე — ვენახიდან ლაბორატორიამდე.'
                 : 'Six steps to full traceability — from vineyard to lab.'}
@@ -61,6 +61,7 @@ export default function SetupJourney({ lang, journey, onNavigate, onDismiss }: P
 
         {/* Progress bar */}
         <div className="mt-4 h-1.5 rounded-full bg-stone-100 overflow-hidden dark:bg-stone-800" role="progressbar"
+          aria-label={lang === 'ka' ? 'გამართვის პროგრესი' : 'Setup progress'}
           aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
           <motion.div
             className="h-full rounded-full bg-gradient-to-r from-[#c5a059] to-[#801323]"
@@ -116,7 +117,7 @@ export default function SetupJourney({ lang, journey, onNavigate, onDismiss }: P
                       {ka ? step.ka : step.en}
                     </span>
                     {isNext && (
-                      <span className="block text-[11px] text-stone-400 leading-snug mt-0.5">
+                      <span className="block text-[11px] text-stone-500 dark:text-stone-400 leading-snug mt-0.5">
                         {ka ? step.kaHint : step.enHint}
                       </span>
                     )}

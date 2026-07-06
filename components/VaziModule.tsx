@@ -625,7 +625,7 @@ export default function VaziModule({
                   >
                     <div>
                       <strong className="text-xs font-serif font-bold text-[#4e0e15] group-hover:text-emerald-900 duration-100">{b.name}</strong>
-                      <span className="block text-[10px] font-mono text-slate-400 mt-0.5">{b.area} ha • {b.grapeVariety}</span>
+                      <span className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">{b.area} ha • {b.grapeVariety}</span>
                     </div>
                     <span className="text-[10px] font-bold bg-amber-50 text-amber-700 font-mono px-2 py-0.5 rounded border border-amber-100 font-semibold">{b.currentPhenology}</span>
                   </button>
@@ -641,7 +641,7 @@ export default function VaziModule({
                     <Layers className="w-4 h-4 text-emerald-700" />
                     {lang === 'ka' ? 'ვენახის ინტერაქტიული რუკა და მიკროკლიმატი' : 'Interactive Estate Block Map & Microclimate'}
                   </h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                     {lang === 'ka' ? 'აგრონომიული რუკის ფენები და კავშირი საველე მეტეო სადგურებთან' : 'Interactive block layers & real-time field weather parameters'}
                   </p>
                 </div>
@@ -764,19 +764,19 @@ export default function VaziModule({
 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-stone-850">
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Temperature</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Temperature</span>
                             <strong className="text-sm font-black mt-0.5 block">{temp}°C</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Rain Today</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Rain Today</span>
                             <strong className="text-sm font-black mt-0.5 block">{rainMm} mm</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Wind Max</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Wind Max</span>
                             <strong className="text-sm font-black mt-0.5 block">{wind} km/h</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-400 block uppercase">Humidity</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Humidity</span>
                             <strong className="text-sm font-black mt-0.5 block">{humidity}%</strong>
                           </div>
                         </div>
@@ -812,10 +812,10 @@ export default function VaziModule({
                 de: 'Aktuelle Weinberg-Aktivitäten'
               }[lang] || 'Latest Field Management Logs'}
             </h3>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" tabIndex={0}>
               <table className="w-full text-left text-xs text-stone-600 font-sans border-collapse">
                 <thead>
-                  <tr className="border-b border-stone-100 text-[9px] font-mono uppercase text-slate-400">
+                  <tr className="border-b border-stone-100 text-[9px] font-mono uppercase text-slate-500 dark:text-slate-400">
                     <th className="py-2">
                       {{ en: 'Date', ka: 'თარიღი', it: 'Data', fr: 'Date', de: 'Datum' }[lang] || 'Date'}
                     </th>
@@ -894,7 +894,7 @@ export default function VaziModule({
                     )}
                     <div className="flex items-center justify-between">
                       <strong className="text-xs font-serif font-black text-stone-900 dark:text-amber-100">{b.name}</strong>
-                      <span className="text-[9px] font-mono text-slate-400 font-bold">{b.area} ha</span>
+                      <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400 font-bold">{b.area} ha</span>
                     </div>
                     <div className="flex justify-between items-center mt-2 font-mono text-[9px] text-stone-500">
                       <span>{b.grapeVariety}</span>
@@ -932,11 +932,11 @@ export default function VaziModule({
                   {/* Local Quick actions */}
                   <div className="bg-neutral-50 border border-stone-200/55 p-3 rounded-xl flex items-center gap-3 w-fit text-[10px] font-mono shrink-0">
                     <div className="text-center shrink-0 pr-3 border-r border-stone-150">
-                      <span className="text-[9px] uppercase font-normal text-slate-400 block">Variety Status</span>
+                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Variety Status</span>
                       <strong className="text-xs block text-[#4e0e15] font-bold font-serif">{selectedBlock.grapeVariety}</strong>
                     </div>
                     <div>
-                      <span className="text-[9px] uppercase font-normal text-slate-400 block">Farming</span>
+                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Farming</span>
                       <strong className="text-xs uppercase block text-emerald-750 font-bold">{selectedBlock.farmingStatus}</strong>
                     </div>
                   </div>
@@ -950,7 +950,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Block Name</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Block Name</label>
                         <input 
                           type="text" required
                           value={editBlockName} onChange={(e) => setEditBlockName(e.target.value)}
@@ -958,7 +958,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vineyard Name</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vineyard Name</label>
                         <input 
                           type="text" required
                           value={editVineyardName} onChange={(e) => setEditVineyardName(e.target.value)}
@@ -966,7 +966,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Location Name</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Location Name</label>
                         <input 
                           type="text" required
                           value={editLocationName} onChange={(e) => setEditLocationName(e.target.value)}
@@ -977,7 +977,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Area (ha)</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Area (ha)</label>
                         <input 
                           type="number" step="0.01" required
                           value={editArea} onChange={(e) => setEditArea(Number(e.target.value) || 0)}
@@ -985,7 +985,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Elevation (m)</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Elevation (m)</label>
                         <input 
                           type="number" required
                           value={editElevation} onChange={(e) => setEditElevation(Number(e.target.value) || 0)}
@@ -993,7 +993,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Slope</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Slope</label>
                         <input 
                           type="text" required
                           value={editSlope} onChange={(e) => setEditSlope(e.target.value)}
@@ -1001,7 +1001,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Aspect</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Aspect</label>
                         <input 
                           type="text" required
                           value={editAspect} onChange={(e) => setEditAspect(e.target.value)}
@@ -1012,7 +1012,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Grape Variety</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Grape Variety</label>
                         <input 
                           type="text" required
                           value={editGrapeVariety} onChange={(e) => setEditGrapeVariety(e.target.value)}
@@ -1020,7 +1020,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Planting Year</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Planting Year</label>
                         <input 
                           type="number" required
                           value={editPlantingYear} onChange={(e) => setEditPlantingYear(Number(e.target.value) || 2018)}
@@ -1028,7 +1028,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Training System</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Training System</label>
                         <input 
                           type="text" required
                           value={editTrainingSystem} onChange={(e) => setEditTrainingSystem(e.target.value)}
@@ -1039,7 +1039,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Spacing</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Spacing</label>
                         <input 
                           type="text" required
                           value={editSpacing} onChange={(e) => setEditSpacing(e.target.value)}
@@ -1047,7 +1047,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Rows Count</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Rows Count</label>
                         <input 
                           type="number" required
                           value={editRowsCount} onChange={(e) => setEditRowsCount(Number(e.target.value) || 0)}
@@ -1055,7 +1055,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vines Count</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vines Count</label>
                         <input 
                           type="number" required
                           value={editVinesCount} onChange={(e) => setEditVinesCount(Number(e.target.value) || 0)}
@@ -1063,7 +1063,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Farming Status</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Farming Status</label>
                         <input 
                           type="text" required
                           value={editFarmingStatus} onChange={(e) => setEditFarmingStatus(e.target.value)}
@@ -1074,7 +1074,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="sm:col-span-2">
-                        <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Soil Type</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Soil Type</label>
                         <input 
                           type="text" required
                           value={editSoilType} onChange={(e) => setEditSoilType(e.target.value)}
@@ -1092,7 +1092,7 @@ export default function VaziModule({
                     </div>
 
                     <div>
-                      <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Block Notes / Description</label>
+                      <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Block Notes / Description</label>
                       <textarea 
                         value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
                         className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none h-16"
@@ -1129,23 +1129,23 @@ export default function VaziModule({
                     </h4>
                     <ul className="text-xs space-y-2 font-medium">
                       <li className="flex justify-between">
-                        <span className="text-slate-400">Altitude / Elevation:</span>
+                        <span className="text-slate-500 dark:text-slate-400">Altitude / Elevation:</span>
                         <span className="font-mono text-stone-800">{selectedBlock.elevation} Meters</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-400">Slope Profile:</span>
+                        <span className="text-slate-500 dark:text-slate-400">Slope Profile:</span>
                         <span className="font-mono text-stone-800">{selectedBlock.slope}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-400">Aspect Exposure:</span>
+                        <span className="text-slate-500 dark:text-slate-400">Aspect Exposure:</span>
                         <span className="font-mono text-stone-800">{selectedBlock.aspect}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-400">Planting Spacing:</span>
+                        <span className="text-slate-500 dark:text-slate-400">Planting Spacing:</span>
                         <span className="font-mono text-stone-800">{selectedBlock.spacing}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-400">Soil Geological Profile:</span>
+                        <span className="text-slate-500 dark:text-slate-400">Soil Geological Profile:</span>
                         <span className="font-serif text-[11px] text-[#4e0e15] text-right font-bold inline-block max-w-40">{selectedBlock.soilType}</span>
                       </li>
                     </ul>
@@ -1160,7 +1160,7 @@ export default function VaziModule({
                           Interactive Digital Block Polygon Map
                         </span>
                       </h4>
-                      <div className="text-[10px] text-slate-400 font-mono mt-1">
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1">
                         GPS: Lat {selectedBlock.latitude.toFixed(4)}, Lng {selectedBlock.longitude.toFixed(4)}
                       </div>
                     </div>
@@ -1233,18 +1233,18 @@ export default function VaziModule({
                         <Sprout className="w-3.5 h-3.5" />
                         Growing Degree Days Phenological Predictor
                       </h4>
-                      <p className="text-[9px] text-slate-400 mt-0.5">Automated heat sum index algorithms mapping current vegetative progression</p>
+                      <p className="text-[9px] text-slate-500 dark:text-slate-400 mt-0.5">Automated heat sum index algorithms mapping current vegetative progression</p>
                     </div>
                     <span className="text-[9px] font-mono bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded font-extrabold">Active Prediction Model</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
-                      <span className="text-[9px] text-slate-400 uppercase block font-sans">Accumulated GDD Heat</span>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Accumulated GDD Heat</span>
                       <strong className="text-base text-emerald-950 block mt-0.5">{computedGDD} °C-Days</strong>
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono flex flex-col justify-between items-center">
-                      <span className="text-[9px] text-slate-400 uppercase block font-sans">Estimated Canopy Stage</span>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Estimated Canopy Stage</span>
                       <select
                         value={selectedBlock.currentPhenology}
                         onChange={(e) => onUpdateBlock(selectedBlock.id, { currentPhenology: e.target.value })}
@@ -1360,7 +1360,7 @@ export default function VaziModule({
               }
             }} className="space-y-3">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Target Problem / Disease *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Target Problem / Disease *</label>
                 <input 
                   type="text" 
                   name="targetProblem" 
@@ -1371,7 +1371,7 @@ export default function VaziModule({
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Chemical Product / Compound *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Chemical Product / Compound *</label>
                 <input 
                   type="text" 
                   name="productName" 
@@ -1383,39 +1383,39 @@ export default function VaziModule({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Active Ingredient</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Active Ingredient</label>
                   <input type="text" name="activeIngredient" placeholder="Copper hydroxide" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Operator</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Operator</label>
                   <input type="text" name="operator" placeholder="Nugzar Jincharadze" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Dose/ha (kg/L)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Dose/ha (kg/L)</label>
                   <input type="number" step="0.1" name="dosePerHa" defaultValue="2.0" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Water volume/ha (L)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Water volume/ha (L)</label>
                   <input type="number" step="10" name="waterVolumePerHa" defaultValue="400" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">PHI (Pre-Harvest Days)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">PHI (Pre-Harvest Days)</label>
                   <input type="number" name="phi" defaultValue="21" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">REI (Re-Entry Hours)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">REI (Re-Entry Hours)</label>
                   <input type="number" name="rei" defaultValue="24" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Tractor & Sprayer Unit</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Tractor & Sprayer Unit</label>
                 <input type="text" name="machineryUsed" placeholder="Fendt 207V with Hardi Sprayer" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
               </div>
 
@@ -1439,7 +1439,7 @@ export default function VaziModule({
           {/* Spraying History list */}
           <div className="lg:col-span-2 bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
             <h4 className="font-serif font-bold text-sm text-[#4e0e15]">Pesticide and Spraying Logbook — {selectedBlock.name}</h4>
-            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
+            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1" tabIndex={0}>
               {sprays.filter(s => s.blockId === selectedBlock.id).map(spray => (
                 <div key={spray.id} className="p-4 border border-stone-100 rounded-xl hover:bg-stone-50/50 transition-all font-sans space-y-2 relative">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1449,7 +1449,7 @@ export default function VaziModule({
                     <span className="text-[9px] bg-sky-100 text-sky-850 px-2 py-0.5 rounded font-mono font-bold">
                       REI: {spray.reEntryIntervalHours} hours
                     </span>
-                    <span className="text-[10px] text-slate-400 font-mono ml-auto">{spray.date} • Operator {spray.operator}</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{spray.date} • Operator {spray.operator}</span>
                   </div>
                   
                   <h5 className="font-bold text-stone-900 text-sm leading-tight">Applied: {spray.productName} ({spray.activeIngredient})</h5>
@@ -1512,7 +1512,7 @@ export default function VaziModule({
               }
             }} className="space-y-3">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Pathogen / Problem Type *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Pathogen / Problem Type *</label>
                 <select name="problemType" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1.5 outline-none font-bold text-stone-800">
                   <option value="Downy mildew">🌾 Downy Mildew</option>
                   <option value="Powdery mildew">🌫️ Powdery Mildew</option>
@@ -1529,7 +1529,7 @@ export default function VaziModule({
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Field Row / Location detail *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Field Row / Location detail *</label>
                 <input 
                   type="text" 
                   name="locationDetails" 
@@ -1540,7 +1540,7 @@ export default function VaziModule({
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Observed Severity</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Observed Severity</label>
                 <div className="flex gap-2">
                   {['low', 'medium', 'high'].map(s => (
                     <label key={s} className="flex-1 text-center py-1.5 border border-stone-200 rounded-lg cursor-pointer hover:bg-stone-50 font-mono text-[10px] font-bold block uppercase">
@@ -1558,7 +1558,7 @@ export default function VaziModule({
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Recommended Action Plan</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Recommended Action Plan</label>
                 <textarea 
                   name="recommendedAction" 
                   placeholder="e.g. Schedule systemic protective spraying immediately..." 
@@ -1567,7 +1567,7 @@ export default function VaziModule({
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Scouting Observations / Count</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Scouting Observations / Count</label>
                 <textarea 
                   name="notes" 
                   placeholder="e.g. Faint oil spots on lower leaf surface detected..." 
@@ -1601,7 +1601,7 @@ export default function VaziModule({
                       <span className="text-[10px] bg-slate-100 text-stone-600 font-mono px-1.5 py-0.2 rounded font-semibold">
                         Location: {scout.locationDetails}
                       </span>
-                      <span className="text-[9px] text-slate-400 font-mono ml-auto">{scout.date}</span>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{scout.date}</span>
                     </div>
 
                     <h5 className="font-black text-stone-900 text-sm leading-tight">Detected Problem: <span className="text-[#801323]">{scout.problemType}</span></h5>
@@ -1670,27 +1670,27 @@ export default function VaziModule({
               }
             }} className="grid grid-cols-2 md:grid-cols-6 gap-4 text-xs">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Sugar Density (°Brix) *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Sugar Density (°Brix) *</label>
                 <input type="number" step="0.1" name="brix" defaultValue="19.5" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
               </div>
               
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Active pH *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Active pH *</label>
                 <input type="number" step="0.01" name="ph" defaultValue="3.15" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Total Acidity (g/L Tartaric)</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Total Acidity (g/L Tartaric)</label>
                 <input type="number" step="0.1" name="ta" defaultValue="7.4" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Average Berry Wt (grams)</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Average Berry Wt (grams)</label>
                 <input type="number" step="0.01" name="weight" defaultValue="1.20" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Seed Lignified Status</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Seed Lignified Status</label>
                 <select name="seed" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none">
                   <option value="Green">🟢 Hydrated Green</option>
                   <option value="Yellow-brown">🟡 Semi-Brown</option>
@@ -1767,13 +1767,13 @@ export default function VaziModule({
                 <BarChart3 className="w-4 h-4 text-[#801323]" />
                 Micro-Yield Calculator Estimates
               </h4>
-              <p className="text-[10px] text-slate-400 mt-0.5">Predicted grape crop kilograms, tons per acre, and anticipated total juice volumes</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Predicted grape crop kilograms, tons per acre, and anticipated total juice volumes</p>
             </div>
 
             {/* Interactive sliders for robust yield estimation */}
             <div className="space-y-4 text-xs font-semibold text-stone-700">
               <div>
-                <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-400 mb-1">Total Vine Count on Block</label>
+                <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Total Vine Count on Block</label>
                 <div className="bg-stone-50 border border-stone-200 p-2 text-[#4e0e15] text-sm font-black rounded font-mono">
                   {selectedBlock.vinesCount.toLocaleString()} Vines
                 </div>
@@ -1781,11 +1781,11 @@ export default function VaziModule({
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-400 mb-1">Avg Grape Clusters per Vine</label>
+                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Avg Grape Clusters per Vine</label>
                   <input type="number" defaultValue="15" className="w-full bg-stone-50 border border-stone-200 px-2 py-1.5 font-mono" id="cluster-count" />
                 </div>
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-400 mb-1">Avg Bunch Weight (gr)</label>
+                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Avg Bunch Weight (gr)</label>
                   <input type="number" defaultValue="125" className="w-full bg-stone-50 border border-stone-200 px-2 py-1.5 font-mono" id="bunch-weight" />
                 </div>
               </div>
@@ -1818,19 +1818,19 @@ export default function VaziModule({
               {/* Outputs grid */}
               <div className="grid grid-cols-2 gap-4 font-mono">
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-400 uppercase block font-sans">Predicted Kg</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Predicted Kg</span>
                   <strong className="text-base text-stone-800 block mt-1" id="pred-kg">{(selectedBlock.vinesCount * 15 * 0.125).toLocaleString()} Kg</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-400 uppercase block font-sans">Predicted Tons</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Predicted Tons</span>
                   <strong className="text-base text-stone-800 block mt-1" id="pred-tons">{Math.round(((selectedBlock.vinesCount * 15 * 0.125) / 1000) * 10) / 10} Tons</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-400 uppercase block font-sans">Yield per Hectare</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Yield per Hectare</span>
                   <strong className="text-base text-amber-700 block mt-1" id="pred-ha">{Math.round(((((selectedBlock.vinesCount * 15 * 0.125) / 1000)) / selectedBlock.area) * 10) / 10} t/ha</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-400 uppercase block font-sans">Est. Wine Juice Recovery</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Est. Wine Juice Recovery</span>
                   <strong className="text-base text-emerald-800 block mt-1" id="pred-juice">{Math.round(selectedBlock.vinesCount * 15 * 0.125 * 0.70).toLocaleString()} L</strong>
                 </div>
               </div>
@@ -1844,7 +1844,7 @@ export default function VaziModule({
                 <Calendar className="w-4 h-4 text-emerald-800" />
                 Active Crop Harvest & Traceability Links
               </h4>
-              <p className="text-[10px] text-slate-400 mt-0.5">Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing</p>
             </div>
 
             <div className="space-y-4">
@@ -1873,7 +1873,7 @@ export default function VaziModule({
                       </div>
                     ) : (
                       <div className="pt-2">
-                        <label className="text-[9px] uppercase font-mono block text-slate-400 mb-1 font-bold">Input Actual Crop Harvest Weight (Kg)</label>
+                        <label className="text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold">Input Actual Crop Harvest Weight (Kg)</label>
                         <div className="flex gap-2">
                           <input 
                             type="number" 
@@ -2010,11 +2010,11 @@ export default function VaziModule({
             }} className="p-5 space-y-3 max-h-[80vh] overflow-y-auto pr-2">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Block Name*</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Block Name*</label>
                   <input type="text" name="name" placeholder="e.g. Mukuzani Sector A" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded text-stone-900" required />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Estate/Vineyard Name*</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Estate/Vineyard Name*</label>
                   <input type="text" name="vineyardName" defaultValue="Anaklia Hills" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded" required />
                 </div>
               </div>
@@ -2099,7 +2099,7 @@ export default function VaziModule({
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Latitude</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Latitude</label>
                   <input 
                     type="number" 
                     step="0.0001" 
@@ -2110,7 +2110,7 @@ export default function VaziModule({
                   />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Longitude</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Longitude</label>
                   <input 
                     type="number" 
                     step="0.0001" 
@@ -2121,25 +2121,25 @@ export default function VaziModule({
                   />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Area (ha)*</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Area (ha)*</label>
                   <input type="number" step="0.1" name="area" defaultValue="2.5" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" required />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Elevation (Meters)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Elevation (Meters)</label>
                   <input type="number" name="elevation" value={addBlockElev} onChange={(e) => setAddBlockElev(parseInt(e.target.value) || 0)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Location Name</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Location Name</label>
                   <input type="text" name="locationName" value={addBlockLocName} onChange={(e) => setAddBlockLocName(e.target.value)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Grape Variety *</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Grape Variety *</label>
                   <select name="variety" className="w-full bg-stone-55 border border-slate-200 px-2 py-1 outline-none font-bold text-stone-800">
                     <option value="Saperavi">🍇 Saperavi (Georgian Red)</option>
                     <option value="Rkatsiteli">🥂 Rkatsiteli (Amber/White)</option>
@@ -2149,22 +2149,22 @@ export default function VaziModule({
                   </select>
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Planting Year</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Year</label>
                   <input type="number" name="plantYear" defaultValue="2008" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Rows count</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Rows count</label>
                   <input type="number" name="rows" defaultValue="60" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Planting Spacing & Row density</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Spacing & Row density</label>
                 <input type="text" name="spacing" defaultValue="2.5m x 1.0m" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Agronomist Remarks</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Agronomist Remarks</label>
                 <textarea name="notes" placeholder="Old Saperavi clones on 5C rootstocks..." className="w-full bg-stone-50 border border-slate-200 p-2.5 h-16 outline-none" />
               </div>
 

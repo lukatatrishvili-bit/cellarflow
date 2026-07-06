@@ -282,12 +282,12 @@ export default function WineryDashboardTab({
 
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950/40">
-                <span className="block text-[9px] font-mono font-bold uppercase text-stone-400">Ready soon</span>
+                <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">Ready soon</span>
                 <strong className="mt-1 block text-xl font-black text-stone-900 dark:text-amber-50">{readyForBottling.length}</strong>
                 <span className="text-[10px] font-semibold text-stone-500">lots near bottling</span>
               </div>
               <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950/40">
-                <span className="block text-[9px] font-mono font-bold uppercase text-stone-400">Chemistry</span>
+                <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">Chemistry</span>
                 <strong className={`mt-1 block text-xl font-black ${lowSO2Alerts.length || highVAAlerts.length ? 'text-rose-700' : 'text-emerald-700'}`}>
                   {lowSO2Alerts.length + highVAAlerts.length}
                 </strong>
@@ -367,8 +367,8 @@ export default function WineryDashboardTab({
                     className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-stone-300 accent-[#4e0e15]"
                   />
                   <span className="min-w-0 flex-1">
-                    <strong className={`block text-xs font-black ${task.status === 'completed' ? 'text-stone-400 line-through' : 'text-stone-900 dark:text-amber-50'}`}>{task.title}</strong>
-                    <span className="mt-1 block text-[10px] font-mono font-bold text-stone-400">
+                    <strong className={`block text-xs font-black ${task.status === 'completed' ? 'text-stone-500 dark:text-stone-400 line-through' : 'text-stone-900 dark:text-amber-50'}`}>{task.title}</strong>
+                    <span className="mt-1 block text-[10px] font-mono font-bold text-stone-500 dark:text-stone-400">
                       Due {task.dueDate} · {task.assignedTo || 'Unassigned'} · {task.priority}
                     </span>
                   </span>
@@ -394,7 +394,7 @@ export default function WineryDashboardTab({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <strong className="block truncate font-black text-stone-900 dark:text-amber-50">{lot?.name || log.lotId}</strong>
-                        <span className="block text-[10px] font-mono font-bold text-stone-400">{log.date}</span>
+                        <span className="block text-[10px] font-mono font-bold text-stone-500 dark:text-stone-400">{log.date}</span>
                       </div>
                       <StatusBadge tone="info">{log.temperature} °C</StatusBadge>
                     </div>

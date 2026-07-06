@@ -183,18 +183,18 @@ export default function DashboardTab({
         <div className="flex flex-wrap gap-3 text-[11px] font-mono pl-3 md:pl-0 items-center">
           {/* Precision Live Clock */}
           <div className="bg-[#FAF8F5]/85 dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left shadow-2xs">
-            <span className="text-stone-400 dark:text-stone-500 block text-[9px] uppercase tracking-widest font-extrabold flex items-center gap-1">
+            <span className="text-stone-500 dark:text-stone-400 block text-[9px] uppercase tracking-widest font-extrabold flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
               Oenology Clock
             </span>
             <LiveClock className="text-stone-900 dark:text-amber-200 block mt-1 font-mono font-bold text-xs text-[#4e0e15]" />
           </div>
           <div className="bg-[#fcfbf9] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left">
-            <span className="text-stone-400 dark:text-stone-500 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_appellation || 'Active Appellation'}</span>
-            <strong className="text-[#c5a059] block mt-1 font-display font-extrabold text-xs">{estateLocation}</strong>
+            <span className="text-stone-500 dark:text-stone-400 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_appellation || 'Active Appellation'}</span>
+            <strong className="text-[#8a6425] dark:text-[#c5a059] block mt-1 font-display font-extrabold text-xs">{estateLocation}</strong>
           </div>
           <div className="bg-[#fcfbf9] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left">
-            <span className="text-stone-400 dark:text-stone-500 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_role || 'Active Role'}</span>
+            <span className="text-stone-500 dark:text-stone-400 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_role || 'Active Role'}</span>
             <strong className="text-stone-950 dark:text-amber-100 block mt-1 font-display font-black text-xs">
               {currentUser.role === 'Viticulturist' ? (t.signin_role_viticulturist || 'Lead Viticulturist') :
                currentUser.role === 'Winemaker' ? (t.signin_role_winemaker || 'Head Winemaker') :
@@ -300,7 +300,7 @@ export default function DashboardTab({
               onClick={item.action}
               className="rounded-2xl border border-[#e8dfd5] bg-white p-4 text-left shadow-xs transition-transform hover:-translate-y-0.5 cursor-pointer dark:bg-stone-900 dark:border-stone-800"
             >
-              <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-450">{item.label}</span>
+              <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-600 dark:text-stone-400">{item.label}</span>
               <strong className={`mt-2 block text-3xl font-sans font-black ${item.tone}`}>{item.value}</strong>
               <span className="mt-1 block text-[11px] font-medium text-stone-500 dark:text-stone-400">{item.detail}</span>
             </button>
@@ -325,7 +325,7 @@ export default function DashboardTab({
                 <span className="text-[10px] uppercase font-mono bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 px-4 py-1 rounded-full font-black border border-emerald-100 dark:border-emerald-900">
                   ✨ {t.portal_module_agri || 'Agricultural Module'}
                 </span>
-                <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 font-mono">
+                <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-500 font-mono">
                   <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
                   {blocks.length} {blocks.length === 1 ? 'BLOCK' : 'BLOCKS'} RECORDED
                 </span>
@@ -339,15 +339,15 @@ export default function DashboardTab({
               {/* Sub-metrics */}
               <div className="grid grid-cols-3 gap-4 border-t border-stone-100 dark:border-stone-800 pt-5 font-sans text-stone-600">
                 <div>
-                  <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_blocks_count || 'Registered Blocks'}</span>
+                  <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400 block pb-0.5">{t.portal_blocks_count || 'Registered Blocks'}</span>
                   <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={blocks.length} /> {lang === 'ka' ? 'ნაკვეთი' : 'Sectors'}</strong>
                 </div>
                 <div>
-                  <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_total_area || 'Total Area'}</span>
+                  <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400 block pb-0.5">{t.portal_total_area || 'Total Area'}</span>
                   <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={totalArea} decimals={1} /> ha</strong>
                 </div>
                 <div>
-                  <span className="text-[10px] uppercase text-stone-400 block pb-0.5 font-bold">{t.portal_scout_status || 'Scouting Reports'}</span>
+                  <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400 block pb-0.5 font-bold">{t.portal_scout_status || 'Scouting Reports'}</span>
                   <strong className={`text-lg lg:text-xl font-display font-extrabold block mt-0.5 ${highRiskScoutings.length ? 'text-rose-700' : 'text-emerald-800 dark:text-emerald-400'}`}>
                     {scoutings.length === 0 ? 'No reports' : highRiskScoutings.length ? `${highRiskScoutings.length} high risk` : `${scoutings.length} recorded`}
                   </strong>
@@ -380,7 +380,7 @@ export default function DashboardTab({
                 <span className="text-[10px] uppercase font-mono bg-rose-50 dark:bg-stone-950/40 text-rose-850 dark:text-rose-300 px-4 py-1 rounded-full font-black border border-rose-100 dark:border-stone-800">
                   🍇 {t.portal_module_wine || 'Winery & Oenology'}
                 </span>
-                <span className="flex items-center gap-1.5 text-[10px] font-bold text-amber-600 font-mono">
+                <span className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 dark:text-amber-500 font-mono">
                   <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
                   {vessels.filter((vessel) => vessel.currentVolume > 0).length} ACTIVE VESSELS
                 </span>
@@ -394,15 +394,15 @@ export default function DashboardTab({
               {/* Sub-metrics */}
               <div className="grid grid-cols-3 gap-4 border-t border-stone-100 dark:border-stone-800 pt-5 font-sans text-stone-600">
                 <div>
-                  <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_total_capacity || 'Total Capacity'}</span>
+                  <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400 block pb-0.5">{t.portal_total_capacity || 'Total Capacity'}</span>
                   <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={totalCapacity} format={(n) => Math.round(n).toLocaleString()} /> L</strong>
                 </div>
                 <div>
-                  <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_active_lots || 'Active Lots'}</span>
+                  <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400 block pb-0.5">{t.portal_active_lots || 'Active Lots'}</span>
                   <strong className="text-lg lg:text-xl font-display font-extrabold text-stone-900 dark:text-amber-100 block mt-0.5"><CountUp value={lots.length} /> {lang === 'ka' ? 'ჯიში' : 'Lots'}</strong>
                 </div>
                 <div>
-                  <span className="text-[10px] uppercase text-stone-400 block pb-0.5">{t.portal_fermenting_vessels || 'Fermenting'}</span>
+                  <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400 block pb-0.5">{t.portal_fermenting_vessels || 'Fermenting'}</span>
                   <strong className="text-lg lg:text-xl font-display font-extrabold text-amber-600 block mt-0.5">🔥 <CountUp value={activeFermsCount} /> {lang === 'ka' ? 'ჭურჭელი' : 'Vessels'}</strong>
                 </div>
               </div>
@@ -484,7 +484,7 @@ export default function DashboardTab({
                         <strong className="block text-stone-900 dark:text-amber-100 font-display font-extrabold text-sm">
                           {[companyProfile.municipality, companyProfile.region].filter(Boolean).join(', ') || 'Estate location'}
                         </strong>
-                        <span className="block text-[10px] text-slate-400 font-mono mt-1">
+                        <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1">
                           GPS: {companyProfile.latitude?.toFixed(3)}, {companyProfile.longitude?.toFixed(3)} · Open-Meteo
                         </span>
                         <span className="block text-[11px] text-stone-600 dark:text-stone-300 mt-1">
@@ -535,7 +535,7 @@ export default function DashboardTab({
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
                 🔥 {lang === 'ka' ? 'აქტიური დუღილის ჩანაწერები' : 'Active Fermentation Readings'}
               </h4>
-              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
+              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar" tabIndex={0}>
                 {lots.filter(l => l.stage === 'fermenting').length > 0 ? (
                   lots.filter(l => l.stage === 'fermenting').map(lot => {
                     const vessel = vessels.find(v => v.assignedLotId === lot.id);
@@ -546,7 +546,7 @@ export default function DashboardTab({
                       <div key={lot.id} className="p-4 bg-stone-50/50 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex justify-between items-center hover-glow transition-all">
                         <div>
                           <strong className="text-xs text-stone-900 dark:text-amber-100 block font-display font-extrabold">{lot.name} ({lot.variety})</strong>
-                          <span className="text-[10px] text-slate-400 block font-mono mt-1">Vessel: {vessel ? vessel.id : 'Unassigned'} • Vol: {lot.currentVolume} L</span>
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono mt-1">Vessel: {vessel ? vessel.id : 'Unassigned'} • Vol: {lot.currentVolume} L</span>
                         </div>
                         <div className="text-right font-mono">
                           <span className="text-sm font-black text-red-800 dark:text-red-400 block">{vessel ? `${vessel.temperature}°C` : '--'}</span>
@@ -558,7 +558,7 @@ export default function DashboardTab({
                     );
                   })
                 ) : (
-                  <p className="text-xs text-slate-400 italic font-mono py-6 text-center">No active fermentations logged in the system.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">No active fermentations logged in the system.</p>
                 )}
               </div>
             </div>
@@ -572,12 +572,12 @@ export default function DashboardTab({
               <h4 className="font-display font-black text-sm text-emerald-900 dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
                 🌿 {lang === 'ka' ? 'ვენახის კანოპის (ფოთლის) რადარი' : 'Vineyard Canopy Status Radar'}
               </h4>
-              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
+              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar" tabIndex={0}>
                 {blocks.slice(0, 4).map(block => (
                   <div key={block.id} className="p-4 bg-stone-50/50 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex justify-between items-center hover-glow transition-all">
                     <div>
                       <strong className="text-xs text-stone-900 dark:text-amber-100 block font-display font-extrabold">{block.name} ({block.grapeVariety})</strong>
-                      <span className="text-[10px] text-slate-400 block font-mono mt-1">{block.area} ha • Plant Year: {block.plantingYear}</span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono mt-1">{block.area} ha • Plant Year: {block.plantingYear}</span>
                     </div>
                     <span className="text-[10px] font-mono bg-emerald-50 dark:bg-emerald-955/25 text-emerald-800 dark:text-emerald-300 px-3 py-1 rounded-lg border border-emerald-150 dark:border-emerald-900 font-bold shrink-0">
                       {block.currentPhenology}
@@ -596,7 +596,7 @@ export default function DashboardTab({
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
                 📋 {t.portal_tasklist || 'Unified Operations Tasklist Checklist'}
               </h4>
-              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
+              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1" tabIndex={0}>
                 {pendingTasks.length > 0 ? (
                   pendingTasks.map(task => (
                     <div key={task.id} className="flex items-start gap-3 border-b border-stone-100 dark:border-stone-850 pb-3 last:border-0 font-medium">
@@ -608,14 +608,14 @@ export default function DashboardTab({
                       />
                       <div className="flex-grow">
                         <span className={`block font-extrabold text-stone-900 dark:text-amber-100 text-xs ${task.status === 'completed' ? 'line-through text-stone-400 font-normal' : ''}`}>{task.title}</span>
-                        <span className="block text-[10px] font-mono text-slate-400 font-bold mt-1">
+                        <span className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 font-bold mt-1">
                           {t.task_assign || 'Assignee'}: {task.assignedTo || 'Unassigned'} • {t.task_due || 'Due'}: {task.dueDate} • Priority: <span className={`uppercase font-black ${task.priority === 'high' ? 'text-red-700' : task.priority === 'medium' ? 'text-amber-600' : 'text-stone-500'}`}>{task.priority === 'high' ? (t.task_high || 'High') : task.priority === 'medium' ? (t.task_med || 'Medium') : (t.task_low || 'Low')}</span>
                         </span>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <p className="text-xs text-slate-400 italic font-mono py-6 text-center">No operations tasks currently scheduled.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">No operations tasks currently scheduled.</p>
                 )}
               </div>
             </div>
@@ -630,7 +630,7 @@ export default function DashboardTab({
                 🛡️ {t.portal_audit_history || 'Immutable Audit Trail Ledger History'}
               </h4>
               
-              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar">
+              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar" tabIndex={0}>
                 {auditLogs.length > 0 ? (
                   auditLogs.slice(0, 10).map(log => (
                     <div key={log.id} className="p-4 bg-[#fdfdfb] dark:bg-stone-950/20 border border-stone-200 dark:border-stone-850 rounded-2xl space-y-1.5 hover-glow transition-all text-xs">
@@ -643,7 +643,7 @@ export default function DashboardTab({
                     </div>
                   ))
                 ) : (
-                  <p className="text-xs text-slate-400 italic font-mono py-6 text-center">No system operations logged.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">No system operations logged.</p>
                 )}
               </div>
             </div>
