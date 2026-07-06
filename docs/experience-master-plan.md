@@ -169,4 +169,16 @@ and a note appended to this file under "Progress log".
 ## Progress log
 
 - 2026-07-06 — Audit performed; splash, lazyRetry, ErrorBoundary, manifest
-  rebrand, dev .env loader shipped and verified (commits `c1dffa7` + current).
+  rebrand, dev .env loader shipped and verified (commits `c1dffa7`, `821e294`).
+- 2026-07-06 — **W3 DONE:** hourly `registration.update()` + `controllerchange`
+  detection (first-install guarded) in `src/main.tsx`; bilingual bottom banner
+  with Reload/dismiss in `src/App.tsx`. Verified end to end on a prod-mode
+  boot: bumped dist/sw.js VERSION → update() → banner appeared → Reload landed
+  in the new version, banner gone.
+  **W2 DONE:** Noto Sans Georgian (unicode-range subsetted) added to
+  `globals.css`, `index.html`, and sw.js precache; wired into all four font
+  vars. Also fixed a pre-existing SW gap: cross-origin requests were never
+  intercepted, so precached font CSS was unreachable offline — Google Fonts
+  origins now get stale-while-revalidate. Verified live: KA UI renders in
+  Noto Sans Georgian (`document.fonts.check` true, screenshot). SW VERSION
+  bumped v4→v5. Remaining KA-coverage audit merged into W1's checklist.

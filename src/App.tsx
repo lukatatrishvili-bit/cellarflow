@@ -179,6 +179,15 @@ export default function App() {
     };
   }, [state.lang]);
 
+  // A new service worker took over mid-session (event from src/main.tsx).
+  // Show a persistent banner; never auto-reload — the user may be mid-form.
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => {
+    const onSwUpdated = () => setUpdateReady(true);
+    window.addEventListener('vinos:sw-updated', onSwUpdated);
+    return () => window.removeEventListener('vinos:sw-updated', onSwUpdated);
+  }, []);
+
   // Real-time telemetry state
   const [activeTelemetry, setActiveTelemetry] = useState<any[]>([]);
 
@@ -461,6 +470,36 @@ export default function App() {
               className="px-2.5 py-1 bg-white hover:bg-stone-50 text-rose-700 rounded-lg text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer shadow-3xs active:scale-95 shrink-0"
             >
               🔄 {state.lang === 'ka' ? 'ხელახლა ცდა' : 'Retry'}
+            </button>
+          </motion.div>
+        )}
+        {updateReady && (
+          <motion.div
+            key="sw-update-banner"
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[1000] bg-[#4e0e15] text-[#fbf9f6] rounded-2xl shadow-xl py-2.5 px-4 flex items-center gap-3 max-w-[92vw]"
+            role="status"
+          >
+            <span className="text-xs font-semibold">
+              {state.lang === 'ka'
+                ? 'ხელმისაწვდომია ახალი ვერსია.'
+                : 'A new version of VinOS is ready.'}
+            </span>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-3 py-1 bg-white text-[#4e0e15] rounded-lg text-[10px] font-black tracking-wide uppercase cursor-pointer active:scale-95 transition-transform shrink-0"
+            >
+              {state.lang === 'ka' ? 'განახლება' : 'Reload'}
+            </button>
+            <button
+              onClick={() => setUpdateReady(false)}
+              aria-label={state.lang === 'ka' ? 'დახურვა' : 'Dismiss'}
+              className="text-white/60 hover:text-white text-sm leading-none cursor-pointer shrink-0"
+            >
+              ×
             </button>
           </motion.div>
         )}

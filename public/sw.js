@@ -1,5 +1,5 @@
 // Bump the version to invalidate all caches on deploy of a new SW.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL_CACHE = `vinea-shell-${VERSION}`;
 const ASSET_CACHE = `vinea-assets-${VERSION}`;
 const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
@@ -11,7 +11,7 @@ const SHELL_URLS = [
   '/', 
   '/manifest.webmanifest', 
   '/icon.svg',
-  'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap'
+  'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap'
 ];
 
 self.addEventListener('install', (event) => {
@@ -37,6 +37,29 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
+
+  // Google Fonts (css + woff2): stale-while-revalidate so typography — incl.
+  // Noto Sans Georgian — keeps working offline. Without this branch the
+  // cross-origin early-return below made the SHELL precache of the font CSS
+  // unreachable and fonts silently fell back offline.
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+    event.respondWith(
+      caches.match(request, { cacheName: SHELL_CACHE }).then((cached) => {
+        const refresh = fetch(request)
+          .then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(SHELL_CACHE).then((cache) => cache.put(request, clone));
+            }
+            return response;
+          })
+          .catch(() => cached);
+        return cached || refresh;
+      })
+    );
+    return;
+  }
+
   if (url.origin !== self.location.origin) return;
 
   // Never intercept the AI stream or Vite dev-server internals.
