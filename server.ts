@@ -1,3 +1,4 @@
+import './server/loadEnv'; // must stay the FIRST import — fills process.env from .env in dev
 import express from 'express';
 import http from 'http';
 import path from 'path';

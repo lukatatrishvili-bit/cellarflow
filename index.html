@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22 width=%22100%22 height=%22100%22><text y=%220.9em%22 font-size=%2290%22>🍇</text></svg>" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <title>VinOS | Unified Winery &amp; Vineyard Control</title>
 
     <!-- PWA: installable + offline cellar use -->
@@ -26,7 +26,52 @@
     <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   </head>
   <body class="antialiased bg-[#fbf9f6] text-[#1e1915]">
-    <div id="root"></div>
+    <!-- Instant splash: pure inline CSS inside #root, so the very first React
+         render replaces it with zero cleanup code. Gives slow cellar tablets a
+         branded first paint instead of a white page while the JS bundle parses. -->
+    <style>
+      #root:empty { display: none; }
+      .boot-splash {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 18px;
+        background: #fbf9f6; color: #4e0e15; z-index: 9999;
+      }
+      .boot-splash__mark {
+        width: 64px; height: 64px; border-radius: 9999px;
+        border: 2px solid rgba(78, 14, 21, 0.25);
+        display: flex; align-items: center; justify-content: center;
+        animation: boot-pulse 1.6s ease-in-out infinite;
+      }
+      .boot-splash__mark svg { display: block; }
+      .boot-splash__word {
+        font-family: 'Cormorant Garamond', Georgia, serif;
+        font-size: 28px; letter-spacing: 0.14em; font-weight: 600;
+      }
+      .boot-splash__hint {
+        font-family: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+        font-size: 12px; letter-spacing: 0.28em; text-transform: uppercase;
+        color: rgba(30, 25, 21, 0.45);
+      }
+      @keyframes boot-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.07); opacity: 0.75; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash__mark { animation: none; }
+      }
+    </style>
+    <div id="root">
+      <div class="boot-splash" role="status" aria-label="Loading VinOS">
+        <div class="boot-splash__mark">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3c1.5 2 4.5 2.5 7 2-1 6-3.5 9.5-7 11-3.5-1.5-6-5-7-11 2.5.5 5.5 0 7-2z" />
+            <path d="M12 16v5" />
+          </svg>
+        </div>
+        <div class="boot-splash__word">VinOS</div>
+        <div class="boot-splash__hint">Winery &amp; Vineyard OS</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
     <!-- Service worker is registered in src/main.tsx (production builds only) so
          it never interferes with the dev server's HMR. -->
