@@ -19,6 +19,65 @@ interface TelemetryReading {
 
 let simulatedTelemetry: Record<string, Record<string, TelemetryReading>> = {};
 
+// ── Client error telemetry ─────────────────────────────────────────────────
+// In-memory ring buffer of the most recent client-side crashes (ErrorBoundary
+// renders, lazy-chunk give-ups). Diagnostic data only — deliberately not
+// persisted: it resets on instance recycle, which is fine for "what broke
+// recently" and avoids growing the durable store from a public endpoint.
+
+export interface ClientErrorReport {
+  at: string;
+  source: string;   // 'render-error' | 'chunk-load' | ...
+  message: string;
+  stack: string;
+  url: string;
+  userAgent: string;
+  appVersion: string;
+  username: string | null;
+}
+
+const MAX_CLIENT_ERRORS = 100;
+const clientErrors: ClientErrorReport[] = [];
+// Public endpoint → aggressive per-IP throttle so it cannot be used to spam.
+const clientErrorHits = new Map<string, { count: number; windowStart: number }>();
+const CLIENT_ERROR_WINDOW_MS = 60_000;
+const CLIENT_ERROR_MAX_PER_WINDOW = 5;
+
+const clip = (v: unknown, max: number) => String(v ?? '').slice(0, max);
+
+export function getRecentClientErrors(): ClientErrorReport[] {
+  return [...clientErrors].reverse(); // newest first
+}
+
+router.post('/client-error', (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  const hit = clientErrorHits.get(ip);
+  if (!hit || now - hit.windowStart > CLIENT_ERROR_WINDOW_MS) {
+    clientErrorHits.set(ip, { count: 1, windowStart: now });
+  } else if (++hit.count > CLIENT_ERROR_MAX_PER_WINDOW) {
+    return res.status(429).json({ ok: false });
+  }
+  if (clientErrorHits.size > 1000) clientErrorHits.clear(); // cheap leak guard
+
+  const cookies = parseCookies(req.headers.cookie);
+  const session = verifySessionToken(cookies['maranios_session']);
+
+  clientErrors.push({
+    at: new Date().toISOString(),
+    source: clip(req.body?.source, 40) || 'unknown',
+    message: clip(req.body?.message, 500),
+    stack: clip(req.body?.stack, 4000),
+    url: clip(req.body?.url, 300),
+    userAgent: clip(req.headers['user-agent'], 200),
+    appVersion: clip(req.body?.appVersion, 40),
+    username: session?.username ? String(session.username) : null,
+  });
+  if (clientErrors.length > MAX_CLIENT_ERRORS) clientErrors.shift();
+
+  res.status(204).end();
+});
+
 function initTelemetry(username: string, userDb: any) {
   const fermentingLots = userDb.lots.filter((l: any) => l.stage === 'fermenting');
   if (!simulatedTelemetry[username]) {

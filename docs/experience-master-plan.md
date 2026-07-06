@@ -168,6 +168,16 @@ and a note appended to this file under "Progress log".
 
 ## Progress log
 
+- 2026-07-06 — **W5 core DONE:** `POST /api/telemetry/client-error` (in-memory
+  ring buffer of 100, 4KB stack clip, 5/min/IP throttle, session-aware
+  username) + master-admin-gated `GET /api/admin/client-errors`; wired into
+  ErrorBoundary.componentDidCatch and both lazyRetry failure paths
+  (`chunk-load-retry` / `chunk-load-fatal`) via fire-and-forget
+  `src/errorTelemetry.ts` (keepalive fetch, can never throw). Verified live:
+  report → 204, unauthenticated admin read → 401, admin read returns the row,
+  6th report in a minute → 429. Remaining tail: render the list in
+  MasterAdminPortal's diagnostics tab (API is ready) and offline queueing.
+
 - 2026-07-06 — **W1 core DONE (axe-driven pass):** all five top-level modules
   (Dashboard, Vineyard, Cellar, Business, Documents) now report **zero
   serious/critical axe-core violations** (was: 23+ across contrast, select-name,

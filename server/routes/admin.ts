@@ -17,6 +17,7 @@ import {
   getDbRuntimeStatus,
 } from '../db';
 import { getSeederData } from '../seedTestUser';
+import { getRecentClientErrors } from './telemetry';
 import { loginLimiter, sessionCookie, parseCookies } from '../middleware/auth';
 import { hashPassword, verifySessionToken, createSessionToken } from '../auth';
 import { isValidEmail } from '../emailVerification';
@@ -182,6 +183,14 @@ router.get('/stats', async (req, res) => {
     persistenceMode: dbStatus.activeBackendLabel,
     nodeEnv: process.env.NODE_ENV || 'development'
   });
+});
+
+// GET /api/admin/client-errors — recent client-side crashes (ErrorBoundary /
+// chunk-load reports), newest first. In-memory ring buffer, see telemetry.ts.
+router.get('/client-errors', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+  res.json({ ok: true, errors: getRecentClientErrors() });
 });
 
 // GET /api/admin/users

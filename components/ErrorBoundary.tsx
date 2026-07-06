@@ -1,4 +1,5 @@
 import React from 'react';
+import { reportClientError } from '../src/errorTelemetry';
 
 /**
  * Last-line-of-defense error boundary. Without it, ANY render error anywhere
@@ -24,6 +25,7 @@ export default class ErrorBoundary extends React.Component<React.PropsWithChildr
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] render error:', error, info.componentStack);
+    reportClientError('render-error', error);
   }
 
   render() {

@@ -1,5 +1,6 @@
 import { lazy } from 'react';
 import type { ComponentType } from 'react';
+import { reportClientError } from './errorTelemetry';
 
 const RELOAD_FLAG = 'cf_chunk_reload';
 
@@ -29,6 +30,7 @@ export function lazyRetry<T extends ComponentType<any>>(
           if (!alreadyReloaded) globalThis.sessionStorage?.setItem(RELOAD_FLAG, '1');
         } catch { /* without storage we cannot guard a loop, so never auto-reload */ }
 
+        reportClientError(alreadyReloaded ? 'chunk-load-fatal' : 'chunk-load-retry', error);
         if (!alreadyReloaded) {
           globalThis.location?.reload();
           // The page is reloading — never settle so React keeps showing the
