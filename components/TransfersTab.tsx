@@ -1051,10 +1051,10 @@ export default function TransfersTab({
                   <h4 className="text-xs font-bold text-stone-700 dark:text-stone-300 uppercase tracking-wider font-mono">
                     {lang === 'ka' ? 'ტრანსფერები არ არის ჩაწერილი' : 'No transfers recorded'}
                   </h4>
-                  <p className="text-[11px] text-stone-400 dark:text-stone-500 font-serif max-w-xs mt-1.5 leading-relaxed">
-                    {lang === 'ka' 
-                      ? 'მარანში სითხის გადაღების ან ბლენდირების ჟურნალი ჯერ არ დაწყებულა.' 
-                      : 'Liquid transfer, racking, and blending operations will appear here in chronological order.'}
+                  <p className="text-[11px] text-stone-500 dark:text-stone-400 font-serif max-w-xs mt-1.5 leading-relaxed">
+                    {lang === 'ka'
+                      ? 'მარანში სითხის გადაღების ან ბლენდირების ჟურნალი ჯერ არ დაწყებულა. ჯერ დაარეგისტრირეთ ჭურჭელი და მიიღეთ ყურძენი — შემდეგ აქ დააფიქსირებთ გადაღებას ჭურჭლიდან ჭურჭელში.'
+                      : 'Liquid transfer, racking, and blending operations will appear here in chronological order. Register vessels and receive grapes first — then record vessel-to-vessel movements from the form above.'}
                   </p>
                 </div>
               )}

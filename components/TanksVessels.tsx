@@ -593,32 +593,49 @@ export default function TanksVessels({
         <div className="p-12 text-center bg-[#FAF8F5] border border-dashed border-[#e8dfd5] rounded-2xl">
           <Database className="w-10 h-10 mx-auto text-stone-300 mb-3" />
           <h4 className="text-sm font-serif font-bold text-stone-700 mb-1">
-            {({
-              en: 'No matching cellar vessels found',
-              ka: 'იდენტური ჭურჭელი ვერ მოიძებნა',
-              it: 'Nessun recipiente trovato',
-              fr: 'Aucune cuve trouvée',
-              de: 'Keine passenden Behälter gefunden'
-            })[lang] || 'No matching cellar vessels found'}
+            {vessels.length === 0
+              ? (({ en: 'No vessels registered yet', ka: 'ჭურჭელი ჯერ არ არის დარეგისტრირებული', it: 'Nessun recipiente registrato', fr: 'Aucune cuve enregistrée', de: 'Noch keine Behälter registriert' })[lang] || 'No vessels registered yet')
+              : (({
+                  en: 'No matching cellar vessels found',
+                  ka: 'იდენტური ჭურჭელი ვერ მოიძებნა',
+                  it: 'Nessun recipiente trovato',
+                  fr: 'Aucune cuve trouvée',
+                  de: 'Keine passenden Behälter gefunden'
+                })[lang] || 'No matching cellar vessels found')}
           </h4>
-          <p className="text-xs text-slate-400 max-w-md mx-auto mb-4">
-            {({
-              en: 'Adjust your active material filters, search queries, or cleaning statuses to expose commissioned cellar units.',
-              ka: 'შეცვალეთ ფილტრაციის პარამეტრები ან საძიებო სიტყვა.',
-              it: 'Modifica i filtri o la ricerca per mostrare i recipienti disponibili.',
-              fr: 'Ajustez vos filtres ou votre terme de recherche.',
-              de: 'Passen Sie Ihre Filter oder Ihren Suchbegriff an.'
-            })[lang] || 'Adjust your active material filters, search queries, or cleaning statuses to expose commissioned cellar units.'}
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mb-4">
+            {vessels.length === 0
+              ? (({
+                  en: 'Tanks, qvevri, and barrels registered here become the destinations for grape intake, transfers, and fermentation tracking.',
+                  ka: 'აქ დარეგისტრირებული ავზები, ქვევრები და კასრები გამოჩნდება მიღების, გადატანისა და დუღილის აღრიცხვისას.',
+                  it: 'Serbatoi, qvevri e botti registrati qui diventano le destinazioni per conferimenti, travasi e fermentazioni.',
+                  fr: 'Les cuves, qvevri et fûts enregistrés ici deviennent les destinations des réceptions, soutirages et fermentations.',
+                  de: 'Hier registrierte Tanks, Qvevri und Fässer werden zu Zielen für Traubenannahme, Umzüge und Gärverfolgung.',
+                })[lang] || 'Tanks, qvevri, and barrels registered here become the destinations for grape intake, transfers, and fermentation tracking.')
+              : (({
+                  en: 'Adjust your active material filters, search queries, or cleaning statuses to expose commissioned cellar units.',
+                  ka: 'შეცვალეთ ფილტრაციის პარამეტრები ან საძიებო სიტყვა.',
+                  it: 'Modifica i filtri o la ricerca per mostrare i recipienti disponibili.',
+                  fr: 'Ajustez vos filtres ou votre terme de recherche.',
+                  de: 'Passen Sie Ihre Filter oder Ihren Suchbegriff an.'
+                })[lang] || 'Adjust your active material filters, search queries, or cleaning statuses to expose commissioned cellar units.')}
           </p>
-          <button 
+          <button
             onClick={() => {
+              if (vessels.length === 0) {
+                setShowAddForm(true);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                return;
+              }
               setSearchTerm('');
               setFilterType('all');
               setStatusFilter('all');
             }}
             className="px-3.5 py-1.5 bg-[#4e0e15] text-white hover:bg-[#6b151e] rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
           >
-            {({ en: 'Clear Active Filters', ka: 'ფილტრების გასუფთავება', it: 'Azzera Filtri', fr: 'Effacer Filtres', de: 'Filter zurücksetzen' })[lang] || 'Clear Active Filters'}
+            {vessels.length === 0
+              ? (({ en: '+ Register your first vessel', ka: '+ დაარეგისტრირეთ პირველი ჭურჭელი', it: '+ Registra il primo recipiente', fr: '+ Enregistrer la première cuve', de: '+ Ersten Behälter registrieren' })[lang] || '+ Register your first vessel')
+              : (({ en: 'Clear Active Filters', ka: 'ფილტრების გასუფთავება', it: 'Azzera Filtri', fr: 'Effacer Filtres', de: 'Filter zurücksetzen' })[lang] || 'Clear Active Filters')}
           </button>
         </div>
       ) : viewMode === 'map' ? (

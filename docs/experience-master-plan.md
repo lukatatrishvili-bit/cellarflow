@@ -168,6 +168,17 @@ and a note appended to this file under "Progress log".
 
 ## Progress log
 
+- 2026-07-06 — **W4 first slice DONE (cellar dead-ends):** audit of all 15
+  cellar sub-tabs on an empty org found 4 dead-end empty states; intake,
+  inventory, fermentation, lots, operations already had good CTAs. Fixed:
+  TanksVessels now distinguishes "zero vessels registered" (first-run copy +
+  "+ Register your first vessel" CTA that opens the add form — verified live)
+  from "filters match nothing"; LabsTab rendered a blank area when empty →
+  branded empty state; Transfers/Bottling empty states now explain their
+  prerequisites. Remaining W4 tail: cross-tab CTAs (needs an onNavigate prop
+  threaded through App.tsx), Vazi + Business sub-tab audit, inline SVG
+  illustration pass, dashboard KPI → setup-journey deep links.
+
 - 2026-07-06 — **W5 core DONE:** `POST /api/telemetry/client-error` (in-memory
   ring buffer of 100, 4KB stack clip, 5/min/IP throttle, session-aware
   username) + master-admin-gated `GET /api/admin/client-errors`; wired into

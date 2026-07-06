@@ -296,9 +296,14 @@ export default function BottlingTab({
         {/* ── Bottling form ─────────────────────────────── */}
         <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
           {bottleable.length === 0 ? (
-            <div className="text-center py-10 text-stone-400">
+            <div className="text-center py-10 text-stone-500 dark:text-stone-400">
               <Wine className="w-10 h-10 mx-auto mb-2 opacity-40" />
               <p className="text-xs font-bold">{ka ? 'ჩამოსასხმელი ლოტი არ მოიძებნა' : 'No lots available to bottle'}</p>
+              <p className="text-[11px] mt-1.5 max-w-xs mx-auto leading-relaxed">
+                {ka
+                  ? 'ჩამოსხმა ხელმისაწვდომი გახდება, როცა ლოტს ექნება მოცულობა — დაიწყეთ ყურძნის მიღებით და დუღილით.'
+                  : 'Bottling unlocks once a wine lot holds volume — start with grape intake and fermentation, then return here.'}
+              </p>
             </div>
           ) : (
             <>
