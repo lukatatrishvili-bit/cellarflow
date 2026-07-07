@@ -17,6 +17,7 @@ interface Props {
   onUpdateCostEntries: (entries: CostEntry[]) => void;
   pricing: WinePricing;
   onUpdatePricing: (pricing: WinePricing) => void;
+  onNavigate?: (target: { module: string; tab?: string }) => void;
 }
 
 const CATEGORIES: Array<{ id: CostCategory; ka: string; en: string }> = [
@@ -54,6 +55,7 @@ export default function CostsTab({
   onUpdateCostEntries,
   pricing,
   onUpdatePricing,
+  onNavigate,
 }: Props) {
   const ka = lang === 'ka';
   const currency = company.currency || 'GEL';
@@ -218,7 +220,18 @@ export default function CostsTab({
           <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><Plus className="w-4 h-4" /> {ka ? 'ხარჯის დამატება' : 'Add cost'}</h4>
 
           {lots.length === 0 ? (
-            <p className="text-xs text-stone-400 py-6 text-center">{ka ? 'ჯერ არ არის ლოტი' : 'No wine lots yet'}</p>
+            <div className="text-center py-6">
+              <Wine className="w-9 h-9 mx-auto mb-2 text-stone-300" />
+              <p className="text-xs font-bold text-stone-500">{ka ? 'ჯერ არ არის ლოტი' : 'No wine lots yet'}</p>
+              <p className="mt-1 text-[11px] text-stone-400">Costs need a wine lot before they can be assigned.</p>
+              <button
+                type="button"
+                onClick={() => onNavigate?.({ module: 'gvino', tab: 'lots' })}
+                className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+              >
+                <Wine className="w-3.5 h-3.5" /> {ka ? 'ლოტები' : 'Open wine lots'}
+              </button>
+            </div>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-2">
@@ -354,7 +367,26 @@ export default function CostsTab({
               <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><FlaskConical className="w-4 h-4" /> {ka ? 'ხარჯების ჟურნალი' : 'Cost ledger'}</span>
             </div>
             {costEntries.length === 0 ? (
-              <div className="text-center py-10 text-stone-400 text-xs font-semibold">{ka ? 'ჯერ არ არის ხარჯი აღრიცხული' : 'No costs recorded yet'}</div>
+              <div className="text-center py-10 text-stone-400 text-xs font-semibold">
+                <Coins className="w-9 h-9 mx-auto mb-2 opacity-40" />
+                <p>{ka ? 'ჯერ არ არის ხარჯი აღრიცხული' : 'No costs recorded yet'}</p>
+                <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'gvino', tab: 'inventory' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-stone-700 hover:bg-stone-50 dark:bg-stone-950 dark:border-stone-800 dark:text-stone-200"
+                  >
+                    <FlaskConical className="w-3.5 h-3.5" /> {ka ? 'ინვენტარი' : 'Open inventory'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'storage' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+                  >
+                    <Wine className="w-3.5 h-3.5" /> {ka ? 'მარაგი' : 'Open storage'}
+                  </button>
+                </div>
+              </div>
             ) : (
               <>
               <div className="md:hidden divide-y divide-stone-100 dark:divide-stone-800">

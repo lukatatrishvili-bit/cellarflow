@@ -16,6 +16,7 @@ interface Props {
   onUpdateLocations: (locations: StorageLocation[]) => void;
   onUpdateMovements: (movements: StockMovement[]) => void;
   setToastMessage?: (message: string) => void;
+  onNavigate?: (target: { module: string; tab?: string }) => void;
 }
 
 const TYPES: Array<{ id: StorageType; ka: string; en: string }> = [
@@ -38,6 +39,7 @@ export default function StorageTab({
   onUpdateLocations,
   onUpdateMovements,
   setToastMessage,
+  onNavigate,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
@@ -232,6 +234,25 @@ export default function StorageTab({
             <div className="bg-white border border-dashed border-[#e8dfd5] rounded-2xl p-12 text-center text-stone-400 dark:bg-stone-900 dark:border-stone-800">
               <Warehouse className="w-10 h-10 mx-auto mb-2 opacity-40" />
               <p className="text-xs font-bold">{ka ? 'დაამატეთ პირველი ლოკაცია' : 'Add your first storage location'}</p>
+              <p className="mt-1 text-[11px] text-stone-400">
+                {ka ? 'ჩამოსხმული მარაგის განთავსებამდე საჭიროა შენახვის ადგილი.' : 'Create a place to receive bottled stock, or return to bottling first.'}
+              </p>
+              <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.({ module: 'gvino', tab: 'bottling' })}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-stone-700 hover:bg-stone-50 dark:bg-stone-950 dark:border-stone-800 dark:text-stone-200"
+                >
+                  <PackagePlus className="w-3.5 h-3.5" /> {ka ? 'ჩამოსხმა' : 'Open bottling'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.({ module: 'sales' })}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+                >
+                  <Boxes className="w-3.5 h-3.5" /> {ka ? 'გაყიდვები' : 'Open sales'}
+                </button>
+              </div>
             </div>
           ) : locations.map(loc => {
             const s = stock.get(loc.id);
