@@ -10,6 +10,7 @@ import { useWineryState } from '../hooks/useWineryState';
 import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
 import { usePerformanceManager } from '../hooks/usePerformanceManager';
+import { useFocusTrap } from '../components/useFocusTrap';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -104,6 +105,8 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
+  const aiDrawerRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(aiDrawerRef, { active: isAiDrawerOpen, onClose: () => setIsAiDrawerOpen(false) });
 
   // Onboarding wizard toggling
   useEffect(() => {
@@ -2455,7 +2458,12 @@ export default function App() {
                 />
 
                 <motion.div
+                  ref={aiDrawerRef}
                   key="ai-drawer"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="ai-winemaker-drawer-title"
+                  tabIndex={-1}
                   initial={{ x: '100%' }}
                   animate={{ x: 0 }}
                   exit={{ x: '100%' }}
@@ -2467,7 +2475,7 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <span className="text-xl">🔮</span>
                       <div>
-                        <h2 className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 tracking-wide">
+                        <h2 id="ai-winemaker-drawer-title" className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 tracking-wide">
                           AI Winemaker Assistant
                         </h2>
                         <p className="text-[10px] text-slate-400 font-mono mt-0.5">
@@ -2477,6 +2485,7 @@ export default function App() {
                     </div>
                     <button
                       onClick={() => setIsAiDrawerOpen(false)}
+                      aria-label={state.lang === 'ka' ? 'AI ასისტენტის დახურვა' : 'Close AI assistant'}
                       className="p-1.5 rounded-full hover:bg-stone-200/50 dark:hover:bg-stone-850 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 transition-colors cursor-pointer"
                     >
                       <X className="w-4 h-4" />
@@ -2569,6 +2578,8 @@ function SyncTroubleshooterModal({
   onRetry
 }: SyncTroubleshooterProps) {
   const [offlineMutCount, setOfflineMutCount] = useState<number>(0);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(dialogRef, { active: true, onClose });
   const dirtyCollections = (() => {
     try {
       return JSON.parse(localStorage.getItem('vinea_dirty_collections') || '[]');
@@ -2583,16 +2594,24 @@ function SyncTroubleshooterModal({
 
   return (
     <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-[#140d0e] max-w-md w-full rounded-2xl border border-stone-200 dark:border-[#2a191b] shadow-2xl overflow-hidden animate-scale-up text-stone-850 dark:text-stone-100 font-sans">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sync-troubleshooter-title"
+        tabIndex={-1}
+        className="bg-white dark:bg-[#140d0e] max-w-md w-full rounded-2xl border border-stone-200 dark:border-[#2a191b] shadow-2xl overflow-hidden animate-scale-up text-stone-850 dark:text-stone-100 font-sans"
+      >
         
         {/* Header */}
         <div className="px-5 py-4 border-b border-stone-100 dark:border-stone-800 flex justify-between items-center bg-stone-50 dark:bg-stone-950/40">
-          <h3 className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-2">
+          <h3 id="sync-troubleshooter-title" className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-2">
             <RefreshCw className="w-4 h-4 text-[#801323] dark:text-amber-400 animate-spin" style={{ animationDuration: '3s' }} />
             {lang === 'ka' ? 'სინქრონიზაციის შეცდომების დიაგნოსტიკა' : 'Sync Rejection Troubleshooter'}
           </h3>
           <button
             onClick={onClose}
+            aria-label={lang === 'ka' ? 'სინქრონიზაციის დიაგნოსტიკის დახურვა' : 'Close sync troubleshooter'}
             className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 transition-colors"
           >
             <X className="w-4 h-4" />

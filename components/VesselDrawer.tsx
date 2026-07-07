@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Thermometer, RefreshCw } from 'lucide-react';
 import type { Language } from '../lib/i18n';
@@ -6,6 +6,7 @@ import type { Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import QvevriCrossSection from './QvevriCrossSection';
 import { ambientMotionEnabled, prefersReducedMotion } from './motion';
+import { useFocusTrap } from './useFocusTrap';
 
 const WINE_COLORS: Record<string, { liquid: string; surface: string }> = {
   red: { liquid: '#5a1020', surface: '#7c1c30' },
@@ -353,6 +354,7 @@ export default function VesselDrawer({
 
   const [aiInsights, setAiInsights] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
+  const drawerRef = useRef<HTMLDivElement | null>(null);
 
   // Edit States
   const [isEditing, setIsEditing] = useState(false);
@@ -457,6 +459,8 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
     return list;
   })();
 
+  useFocusTrap(drawerRef, { active: !!selectedTankId && !!selectedVessel, onClose });
+
   return (
     <AnimatePresence>
       {selectedTankId && selectedVessel && (
@@ -471,7 +475,12 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
           />
 
           <motion.div
+            ref={drawerRef}
             key="vessel-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vessel-drawer-title"
+            tabIndex={-1}
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
@@ -494,7 +503,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                       ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
                     </button>
                   </div>
-                  <h2 className="text-xl font-serif font-bold text-[#4e0e15] mt-1">{selectedVessel.id}</h2>
+                  <h2 id="vessel-drawer-title" className="text-xl font-serif font-bold text-[#4e0e15] mt-1">{selectedVessel.id}</h2>
                   <p className="text-xs text-slate-500 font-mono mt-0.5">{selectedVessel.locationDetails || 'Cellar Room A, main row'}</p>
                   {onLogOperation && (
                     <button
@@ -507,6 +516,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                 </div>
                 <button
                   onClick={onClose}
+                  aria-label={lang === 'ka' ? 'დახურვა' : 'Close vessel details'}
                   className="p-1.5 rounded-full hover:bg-stone-200/50 text-stone-505 hover:text-stone-800 transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />

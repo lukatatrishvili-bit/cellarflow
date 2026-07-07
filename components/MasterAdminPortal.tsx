@@ -5,6 +5,7 @@ import {
   Server, User, Users, Check, X, ShieldCheck, Terminal, AlertTriangle, KeyRound,
   Eye, Mail, ScrollText, Unlock, Download, Wrench, Gauge, SearchCode
 } from 'lucide-react';
+import { useFocusTrap } from './useFocusTrap';
 
 interface MasterAdminPortalProps {
   lang: string;
@@ -215,6 +216,10 @@ export default function MasterAdminPortal({
     `[${new Date().toISOString()}] Routing interface active. CPU monitoring thread started.`
   ]);
   const terminalBottomRef = useRef<HTMLDivElement>(null);
+  const editUserDialogRef = useRef<HTMLDivElement | null>(null);
+  const deleteUserDialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(editUserDialogRef, { active: !!editingUser, onClose: () => setEditingUser(null) });
+  useFocusTrap(deleteUserDialogRef, { active: !!deletingUsername, onClose: () => setDeletingUsername(null) });
 
   // Fetch Data
   const fetchData = async () => {
@@ -1537,14 +1542,19 @@ export default function MasterAdminPortal({
 
             <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
               <motion.div
+                ref={editUserDialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="master-admin-edit-user-title"
+                tabIndex={-1}
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
                 className="bg-[#0c090a] border border-cyan-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 text-left"
               >
                 <div className="flex justify-between items-center pb-2 border-b border-stone-900">
-                  <h3 className="text-xs uppercase font-bold text-cyan-400 tracking-wider">Configure Account: @{editingUser.username}</h3>
-                  <button onClick={() => setEditingUser(null)} className="text-stone-500 hover:text-stone-200">✕</button>
+                  <h3 id="master-admin-edit-user-title" className="text-xs uppercase font-bold text-cyan-400 tracking-wider">Configure Account: @{editingUser.username}</h3>
+                  <button onClick={() => setEditingUser(null)} aria-label="Close edit user dialog" className="text-stone-500 hover:text-stone-200">✕</button>
                 </div>
 
                 <form onSubmit={handleSaveUserEdit} className="space-y-4">
@@ -1646,17 +1656,22 @@ export default function MasterAdminPortal({
 
             <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
               <motion.div
+                ref={deleteUserDialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="master-admin-delete-user-title"
+                tabIndex={-1}
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.95, opacity: 0 }}
                 className="bg-[#0c090a] border border-red-500/30 rounded-2xl p-6 max-w-sm w-full space-y-4 text-left"
               >
                 <div className="flex justify-between items-center pb-2 border-b border-stone-900">
-                  <h3 className="text-xs uppercase font-bold text-red-500 tracking-wider flex items-center gap-1.5">
+                  <h3 id="master-admin-delete-user-title" className="text-xs uppercase font-bold text-red-500 tracking-wider flex items-center gap-1.5">
                     <AlertTriangle className="w-4 h-4 text-red-500 animate-pulse" />
                     Confirm Account Deletion
                   </h3>
-                  <button onClick={() => setDeletingUsername(null)} className="text-stone-500 hover:text-stone-200">✕</button>
+                  <button onClick={() => setDeletingUsername(null)} aria-label="Close delete user dialog" className="text-stone-500 hover:text-stone-200">✕</button>
                 </div>
 
                 <div className="space-y-2 text-xs text-stone-400">

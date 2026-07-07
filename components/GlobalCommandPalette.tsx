@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import type { InventoryItem, SalesDispatchRecord, SalesOrderRecord, Task, Vessel, WineLot } from '../lib/wineryState';
+import { useFocusTrap } from './useFocusTrap';
 
 type CommandKind = 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
 
@@ -82,6 +83,9 @@ export default function GlobalCommandPalette({
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const close = () => onOpenChange(false);
+  useFocusTrap(dialogRef, { active: open, onClose: close });
 
   useEffect(() => {
     if (!open) return;
@@ -96,7 +100,6 @@ export default function GlobalCommandPalette({
     }
   }, [open]);
 
-  const close = () => onOpenChange(false);
   const jump = (moduleId: string, tabId?: string) => {
     setActiveModule(moduleId);
     if (tabId) setActiveTab(tabId);
@@ -248,6 +251,11 @@ export default function GlobalCommandPalette({
   return (
     <div className="fixed inset-0 z-[90] bg-stone-950/35 backdrop-blur-sm p-4 sm:p-8" onMouseDown={close}>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Global command palette"
+        tabIndex={-1}
         className="mx-auto mt-10 max-w-2xl overflow-hidden rounded-3xl border border-[#e8dfd5] bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950"
         onMouseDown={(event) => event.stopPropagation()}
       >
