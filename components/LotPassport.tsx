@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import type { WineLot, DailyFermLog, LabAnalysis, CompanyProfile } from '../lib/wineryState';
 import { buildPassportHtml } from '../lib/lotPassport';
 import { X, Printer, FileText } from 'lucide-react';
+import { useFocusTrap } from './useFocusTrap';
 
 interface Props {
   lot: WineLot;
@@ -15,7 +16,9 @@ interface Props {
 
 export default function LotPassport({ lot, fermLogs, labLogs, company, generatedBy, onClose }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  useFocusTrap(dialogRef, { active: true, onClose });
 
   const deepLink =
     typeof window !== 'undefined'
@@ -41,12 +44,6 @@ export default function LotPassport({ lot, fermLogs, labLogs, company, generated
     [lot, fermLogs, labLogs, company, generatedBy, qrDataUrl]
   );
 
-  useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onEsc);
-    return () => window.removeEventListener('keydown', onEsc);
-  }, [onClose]);
-
   const handlePrint = () => {
     const w = iframeRef.current?.contentWindow;
     if (!w) return;
@@ -60,11 +57,16 @@ export default function LotPassport({ lot, fermLogs, labLogs, company, generated
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="lot-passport-title"
+        tabIndex={-1}
         className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-3 bg-[#4e0e15] text-amber-50 flex items-center justify-between shrink-0">
-          <span className="text-sm font-serif font-black uppercase tracking-widest flex items-center gap-2 min-w-0">
+          <span id="lot-passport-title" className="text-sm font-serif font-black uppercase tracking-widest flex items-center gap-2 min-w-0">
             <FileText className="w-4 h-4 text-amber-300 shrink-0" />
             <span className="truncate">Lot Passport — {lot.id}</span>
           </span>

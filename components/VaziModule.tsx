@@ -15,6 +15,7 @@ import type { Language } from '../lib/i18n';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
 import IpmPhenoscheme from './IpmPhenoscheme';
+import { useFocusTrap } from './useFocusTrap';
 import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
 
 interface MapPolygonProps {
@@ -169,6 +170,8 @@ export default function VaziModule({
 
   // Adding state
   const [showAddBlockModal, setShowAddBlockModal] = useState(false);
+  const addBlockDialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(addBlockDialogRef, { active: showAddBlockModal, onClose: () => setShowAddBlockModal(false) });
   const [addBlockLat, setAddBlockLat] = useState<number>(41.9567);
   const [addBlockLng, setAddBlockLng] = useState<number>(45.4851);
   const [addBlockLocName, setAddBlockLocName] = useState<string>('Kakheti, Georgia');
@@ -2101,10 +2104,17 @@ export default function VaziModule({
           ========================================== */}
       {showAddBlockModal && (
         <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-55 animate-fade-in font-sans">
-          <div className="bg-white w-full max-w-lg rounded-2xl border border-stone-200 shadow-xl overflow-hidden text-xs text-stone-600 space-y-4">
+          <div
+            ref={addBlockDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vazi-add-block-title"
+            tabIndex={-1}
+            className="bg-white w-full max-w-lg rounded-2xl border border-stone-200 shadow-xl overflow-hidden text-xs text-stone-600 space-y-4"
+          >
             <div className="bg-emerald-950 text-white p-4 flex justify-between items-center font-serif">
-              <strong className="text-sm font-bold block">{label.addBlock}</strong>
-              <button onClick={() => setShowAddBlockModal(false)} className="text-white hover:text-stone-300 text-lg cursor-pointer">✕</button>
+              <strong id="vazi-add-block-title" className="text-sm font-bold block">{label.addBlock}</strong>
+              <button onClick={() => setShowAddBlockModal(false)} aria-label={lang === 'ka' ? 'ბლოკის დამატების ფანჯრის დახურვა' : 'Close add block dialog'} className="text-white hover:text-stone-300 text-lg cursor-pointer">✕</button>
             </div>
 
             <form onSubmit={(e) => {
