@@ -168,6 +168,18 @@ and a note appended to this file under "Progress log".
 
 ## Progress log
 
+- 2026-07-07 — **W7 local half DONE:** critical-path audit of the production
+  build — only 5 chunks load eagerly (~494 KB raw / ~150 KB gz JS: react 177,
+  app shell 167, motion 110, icons 36, runtime 1 + 188 KB CSS); RxDB/exceljs/
+  module tabs are all correctly lazy. Prod-mode boot measured FCP 52ms /
+  LCP 140ms locally — no render-blocking pathology; real-world load is
+  network-bound and covered by the boot splash. Added
+  `tests/bundleBudget.test.ts`: fails the suite if critical-path JS exceeds
+  600 KB raw / CSS 260 KB, or if exceljs/storage-dexie/VaziModule/recharts
+  ever leak into the eager graph (skips when dist/ absent). Remaining W7
+  (needs the deploy): Lighthouse ≥90 against the live URL, 60fps @4× CPU
+  throttle screen check on Dashboard + TanksVessels.
+
 - 2026-07-07 — **W6 core DONE (375px walkthrough):** all six top-level screens
   measured at 375×812 — **zero horizontal overflow everywhere** (body-level
   clipping already handled it; flagged elements were decorative absolutes).
