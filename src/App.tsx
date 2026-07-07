@@ -14,6 +14,7 @@ import { usePerformanceManager } from '../hooks/usePerformanceManager';
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
 const ProfileSettingsTab = lazyRetry(() => import('../components/ProfileSettingsTab'));
+const IntegrationHubTab = lazyRetry(() => import('../components/IntegrationHubTab'));
 const AuditTrailTab = lazyRetry(() => import('../components/AuditTrailTab'));
 const LotPassport = lazyRetry(() => import('../components/LotPassport'));
 const VaziModule = lazyRetry(() => import('../components/VaziModule'));
@@ -83,7 +84,8 @@ import {
   Sun,
   Moon,
   RefreshCw,
-  Search
+  Search,
+  PlugZap
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -418,8 +420,11 @@ export default function App() {
       id: 'settings',
       label: t.nav_settings || 'Settings',
       icon: ClipboardList,
-      primary: 'settings',
-      modules: [{ id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList }],
+      primary: 'integrations',
+      modules: [
+        { id: 'integrations', label: 'Integration Hub', icon: PlugZap },
+        { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList },
+      ],
     },
   ].filter(group => {
     const enabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
@@ -602,6 +607,7 @@ export default function App() {
         animate={{ height: showHeader ? 'auto' : 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 34 }}
         style={{ overflow: 'visible' }}
+        className="sticky top-3 z-40"
       >
       <header
         style={{
@@ -610,7 +616,7 @@ export default function App() {
           pointerEvents: showHeader ? 'auto' : 'none',
           transition: 'transform 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease',
         }}
-        className="relative max-w-[1720px] w-full mx-auto mt-4 px-6 md:px-8 py-3.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 sticky top-3 z-40 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
+        className="relative max-w-[1720px] w-full mx-auto mt-4 px-6 md:px-8 py-3.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
         {/* Luxury Top Wine Edge Border */}
         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-[#801323] via-[#4e0e15] to-[#c5a059]" />
 
@@ -630,65 +636,6 @@ export default function App() {
             <p className="text-[10px] text-[#8a6425] dark:text-[#c5a059] font-mono tracking-widest font-extrabold uppercase mt-0.5">{state.companyProfile.companyName}</p>
           </div>
         </div>
-
-        {/* Module Nav Switcher (Available once logged in) */}
-        {state.isLoggedIn && (
-          <nav className="flex flex-col gap-1 bg-stone-50 border border-[#e8dfd5] p-1 rounded-2xl text-xs font-semibold dark:bg-stone-900 dark:border-stone-800">
-            <div className="flex flex-wrap items-center gap-1">
-              {moduleGroups.map(group => {
-                const Icon = group.icon;
-                const isActive = activeModuleGroup.id === group.id;
-                return (
-                  <button
-                    key={group.id}
-                    onClick={() => switchModule(group.primary)}
-                    title={group.label}
-                    aria-label={group.label}
-                    aria-current={isActive ? 'page' : undefined}
-                    className={`relative px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
-                      isActive
-                        ? 'text-amber-50'
-                        : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 dark:hover:bg-stone-800'
-                    }`}
-                  >
-                    {isActive && (
-                      <motion.span
-                        layoutId="module-nav-pill"
-                        className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md"
-                        transition={{ type: 'spring', stiffness: 480, damping: 38 }}
-                      />
-                    )}
-                    <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15]'}`} />
-                    <span className="relative z-10 hidden lg:inline">{group.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {activeModuleGroup.modules.length > 1 && (
-              <div className="flex flex-wrap items-center gap-1 border-t border-stone-200/70 pt-1 dark:border-stone-800">
-                {activeModuleGroup.modules.map(mod => {
-                  const Icon = mod.icon;
-                  const isActive = state.activeModule === mod.id;
-                  return (
-                    <button
-                      key={mod.id}
-                      onClick={() => switchModule(mod.id)}
-                      title={mod.label}
-                      className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide cursor-pointer transition-colors ${
-                        isActive
-                          ? 'bg-white text-[#4e0e15] shadow-sm ring-1 ring-[#e8dfd5] dark:bg-stone-800 dark:text-amber-100 dark:ring-stone-700'
-                          : 'text-stone-500 hover:text-stone-900 hover:bg-white/70 dark:hover:bg-stone-800 dark:hover:text-amber-100'
-                      }`}
-                    >
-                      <Icon className="w-3 h-3" />
-                      <span className="hidden xl:inline">{mod.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </nav>
-        )}
 
         {/* Toolbar Controls: Language, Dark Mode, Notifications, and Profile */}
         <div className="flex items-center gap-3 justify-end">
@@ -777,6 +724,75 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* 1b. Module Nav Window — its own floating glass bar, detached from the
+          header. Shares the sticky wrapper so both retract together. */}
+      {state.isLoggedIn && (
+        <nav
+          style={{
+            transform: showHeader ? 'translateY(0)' : 'translateY(-130%)',
+            opacity: showHeader ? 1 : 0,
+            pointerEvents: showHeader ? 'auto' : 'none',
+            transition: 'transform 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease',
+          }}
+          aria-label={state.lang === 'ka' ? 'მოდულების ნავიგაცია' : 'Module navigation'}
+          className="relative max-w-[1720px] w-full mx-auto mt-2 px-3 py-1.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 rounded-2xl shadow-[0_10px_32px_-14px_rgba(78,14,21,0.22)] flex flex-col gap-1 text-xs font-semibold dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_10px_32px_-12px_rgba(0,0,0,0.6)]"
+        >
+          <div className="flex flex-wrap items-center justify-center gap-1">
+            {moduleGroups.map(group => {
+              const Icon = group.icon;
+              const isActive = activeModuleGroup.id === group.id;
+              return (
+                <button
+                  key={group.id}
+                  onClick={() => switchModule(group.primary)}
+                  title={group.label}
+                  aria-label={group.label}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`relative px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
+                    isActive
+                      ? 'text-amber-50'
+                      : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 dark:hover:bg-stone-800'
+                  }`}
+                >
+                  {isActive && (
+                    <motion.span
+                      layoutId="module-nav-pill"
+                      className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md"
+                      transition={{ type: 'spring', stiffness: 480, damping: 38 }}
+                    />
+                  )}
+                  <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15]'}`} />
+                  <span className="relative z-10 hidden md:inline">{group.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          {activeModuleGroup.modules.length > 1 && (
+            <div className="flex flex-wrap items-center justify-center gap-1 border-t border-stone-200/70 pt-1 dark:border-stone-800">
+              {activeModuleGroup.modules.map(mod => {
+                const Icon = mod.icon;
+                const isActive = state.activeModule === mod.id;
+                return (
+                  <button
+                    key={mod.id}
+                    onClick={() => switchModule(mod.id)}
+                    title={mod.label}
+                    className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide cursor-pointer transition-colors ${
+                      isActive
+                        ? 'bg-white text-[#4e0e15] shadow-sm ring-1 ring-[#e8dfd5] dark:bg-stone-800 dark:text-amber-100 dark:ring-stone-700'
+                        : 'text-stone-500 hover:text-stone-900 hover:bg-white/70 dark:hover:bg-stone-800 dark:hover:text-amber-100'
+                    }`}
+                  >
+                    <Icon className="w-3 h-3" />
+                    <span className="hidden lg:inline">{mod.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </nav>
+      )}
       </motion.div>
 
       {/* 2. Main Shell Layout */}
@@ -1400,9 +1416,15 @@ export default function App() {
             onOpenOnboarding={() => setShowOnboarding(true)}
           />
         </Suspense>
+      ) : state.activeModule === 'integrations' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <IntegrationHubTab
+            setToastMessage={state.setToastMessage}
+          />
+        </Suspense>
       ) : state.activeModule === 'settings' ? (
         <Suspense fallback={<ModuleLoader />}>
-          <ProfileSettingsTab
+          <ProfileSettingsTab 
             lang={state.lang}
             currentUser={state.currentUser}
             setCurrentUser={state.setCurrentUser}
