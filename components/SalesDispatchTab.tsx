@@ -43,6 +43,7 @@ interface Props {
   currency: string;
   currentUserName: string;
   setToastMessage?: (message: string) => void;
+  onNavigate?: (target: { module: string; tab?: string }) => void;
 }
 
 interface StockRow {
@@ -73,6 +74,7 @@ export default function SalesDispatchTab({
   currency,
   currentUserName,
   setToastMessage,
+  onNavigate,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
@@ -468,7 +470,23 @@ export default function SalesDispatchTab({
             {availableRows.length === 0 ? (
               <div className="text-center py-8 text-stone-500 dark:text-stone-400 text-xs font-semibold">
                 <PackageCheck className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                No unreserved bottled stock available for new reservations.
+                <p>No unreserved bottled stock available for new reservations.</p>
+                <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'storage' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+                  >
+                    <PackageCheck className="w-3.5 h-3.5" /> Open storage
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'gvino', tab: 'bottling' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-stone-700 hover:bg-stone-50 dark:bg-stone-950 dark:border-stone-800 dark:text-stone-200"
+                  >
+                    <Truck className="w-3.5 h-3.5" /> Open bottling
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -548,7 +566,23 @@ export default function SalesDispatchTab({
             {availableRows.length === 0 ? (
               <div className="text-center py-8 text-stone-500 dark:text-stone-400 text-xs font-semibold">
                 <PackageCheck className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                No unreserved bottled stock available for direct dispatch.
+                <p>No unreserved bottled stock available for direct dispatch.</p>
+                <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'storage' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+                  >
+                    <PackageCheck className="w-3.5 h-3.5" /> Open storage
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'costs' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-stone-700 hover:bg-stone-50 dark:bg-stone-950 dark:border-stone-800 dark:text-stone-200"
+                  >
+                    <BadgeDollarSign className="w-3.5 h-3.5" /> Open pricing
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -628,7 +662,15 @@ export default function SalesDispatchTab({
             </div>
             {orders.length === 0 ? (
               <div className="text-center py-12 text-stone-500 dark:text-stone-400 text-xs font-semibold">
-                No reservations created yet
+                <ShoppingCart className="w-9 h-9 mx-auto mb-2 opacity-40" />
+                <p>No reservations created yet</p>
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.({ module: 'storage' })}
+                  className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+                >
+                  <PackageCheck className="w-3.5 h-3.5" /> Check stock
+                </button>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -693,7 +735,24 @@ export default function SalesDispatchTab({
             </div>
             {dispatches.length === 0 ? (
               <div className="text-center py-12 text-stone-500 dark:text-stone-400 text-xs font-semibold">
-                No sales dispatches recorded yet
+                <Truck className="w-9 h-9 mx-auto mb-2 opacity-40" />
+                <p>No sales dispatches recorded yet</p>
+                <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'sales' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-stone-700 hover:bg-stone-50 dark:bg-stone-950 dark:border-stone-800 dark:text-stone-200"
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5" /> Create reservation
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate?.({ module: 'storage' })}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+                  >
+                    <PackageCheck className="w-3.5 h-3.5" /> Open storage
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="overflow-x-auto">

@@ -439,6 +439,10 @@ export default function App() {
       state.setActiveTab('dashboard');
     }
   };
+  const handleNavigate = (target: { module: string; tab?: string }) => {
+    state.setActiveModule(target.module as any);
+    if (target.tab) state.setActiveTab(target.tab);
+  };
 
   return (
     <ToastProvider>
@@ -1387,6 +1391,7 @@ export default function App() {
               onAddFertilizer={state.handleAddFertilizer}
               setActiveModule={state.setActiveModule}
               setActiveTab={state.setActiveTab}
+              onNavigate={handleNavigate}
               setPrefilledTaskTitle={state.setPrefilledTaskTitle}
               setPrefilledTaskPriority={state.setPrefilledTaskPriority}
               setPrefilledTaskDesc={state.setPrefilledTaskDesc}
@@ -1456,6 +1461,7 @@ export default function App() {
             onUpdateCostEntries={state.setCostEntries}
             pricing={state.winePricing}
             onUpdatePricing={state.setWinePricing}
+            onNavigate={handleNavigate}
           />
         </Suspense>
       ) : state.activeModule === 'storage' ? (
@@ -1468,6 +1474,7 @@ export default function App() {
             movements={state.stockMovements}
             onUpdateLocations={state.setStorageLocations}
             onUpdateMovements={state.setStockMovements}
+            onNavigate={handleNavigate}
           />
         </Suspense>
       ) : state.activeModule === 'sales' ? (
@@ -1488,6 +1495,7 @@ export default function App() {
             currency={state.companyProfile.currency || 'GEL'}
             currentUserName={state.currentUser.fullName}
             setToastMessage={state.setToastMessage}
+            onNavigate={handleNavigate}
           />
         </Suspense>
       ) : state.activeModule === 'analytics' ? (
@@ -1503,6 +1511,7 @@ export default function App() {
             dispatches={state.salesDispatches}
             orders={state.salesOrders}
             currency={state.companyProfile.currency || 'GEL'}
+            onNavigate={handleNavigate}
           />
         </Suspense>
       ) : state.activeModule === 'docs' ? (

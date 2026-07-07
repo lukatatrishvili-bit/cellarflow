@@ -42,6 +42,7 @@ interface Props {
   dispatches: SalesDispatchRecord[];
   orders: SalesOrderRecord[];
   currency: string;
+  onNavigate?: (target: { module: string; tab?: string }) => void;
 }
 
 const categoryLabels: Record<string, string> = {
@@ -113,6 +114,7 @@ export default function YearComparisonTab({
   dispatches,
   orders,
   currency,
+  onNavigate,
 }: Props) {
   const ka = lang === 'ka';
   const nowYear = new Date().getFullYear();
@@ -233,7 +235,32 @@ export default function YearComparisonTab({
 
       {!hasAnyData && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-900/60 dark:text-amber-100">
-          No comparable production data yet. Add real harvest/intake, bottling, storage, cost, reservation, or dispatch records and this report will populate automatically.
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+            <p>No comparable production data yet. Add real harvest/intake, bottling, storage, cost, reservation, or dispatch records and this report will populate automatically.</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onNavigate?.({ module: 'gvino', tab: 'intake' })}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-900 ring-1 ring-amber-200 hover:bg-amber-100 dark:bg-stone-950 dark:ring-amber-900"
+              >
+                <Grape className="w-3.5 h-3.5" /> Intake
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate?.({ module: 'gvino', tab: 'bottling' })}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-900 ring-1 ring-amber-200 hover:bg-amber-100 dark:bg-stone-950 dark:ring-amber-900"
+              >
+                <Boxes className="w-3.5 h-3.5" /> Bottling
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate?.({ module: 'costs' })}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+              >
+                <BadgeDollarSign className="w-3.5 h-3.5" /> Costs
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -337,7 +364,17 @@ export default function YearComparisonTab({
               <Scale className="w-4 h-4" /> Cost breakdown
             </span>
             {costCategories.length === 0 ? (
-              <div className="text-center py-8 text-stone-400 text-xs font-semibold">No cost entries for these years yet</div>
+              <div className="text-center py-8 text-stone-400 text-xs font-semibold">
+                <Scale className="w-9 h-9 mx-auto mb-2 opacity-40" />
+                <p>No cost entries for these years yet</p>
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.({ module: 'costs' })}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+                >
+                  <BadgeDollarSign className="w-3.5 h-3.5" /> Open costs
+                </button>
+              </div>
             ) : (
               <div className="mt-3 space-y-2">
                 {costCategories.map(category => {
@@ -372,7 +409,15 @@ export default function YearComparisonTab({
         </div>
         {comparison.current.wines.length === 0 ? (
           <div className="text-center py-12 text-stone-400 text-xs font-semibold">
-            No wine lots match this comparison year yet
+            <Wine className="w-9 h-9 mx-auto mb-2 opacity-40" />
+            <p>No wine lots match this comparison year yet</p>
+            <button
+              type="button"
+              onClick={() => onNavigate?.({ module: 'gvino', tab: 'lots' })}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 hover:bg-[#34070a]"
+            >
+              <Wine className="w-3.5 h-3.5" /> Open wine lots
+            </button>
           </div>
         ) : (
           <div className="overflow-x-auto">

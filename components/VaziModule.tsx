@@ -68,6 +68,11 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
 
+type NavigationTarget = {
+  module: 'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics';
+  tab?: string;
+};
+
 interface VaziModuleProps {
   lang: Language;
   currentUser: UserProfile;
@@ -92,8 +97,9 @@ interface VaziModuleProps {
   onSendHarvestToGvino: (blockId: string, harvestedKg: number, variety: string, vintage: number, harvestedDate: string) => string; // Returns Gvino Lot ID
   onAddIrrigation: (rec: Omit<IrrigationRecord, 'id'>) => void;
   onAddFertilizer: (rec: Omit<FertilizationRecord, 'id'>) => void;
-  setActiveModule?: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
+  setActiveModule?: (mod: NavigationTarget['module']) => void;
   setActiveTab?: (tab: string) => void;
+  onNavigate?: (target: NavigationTarget) => void;
   setPrefilledTaskTitle?: (title: string) => void;
   setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
   setPrefilledTaskDesc?: (desc: string) => void;
@@ -124,6 +130,7 @@ export default function VaziModule({
   onAddFertilizer,
   setActiveModule,
   setActiveTab,
+  onNavigate,
   setPrefilledTaskTitle,
   setPrefilledTaskPriority,
   setPrefilledTaskDesc
@@ -318,6 +325,20 @@ export default function VaziModule({
   const selectedBlock = useMemo(() => {
     return blocks.find(b => b.id === selectedBlockId) || null;
   }, [blocks, selectedBlockId]);
+
+  const navigateTo = (target: NavigationTarget) => {
+    if (onNavigate) {
+      onNavigate(target);
+      return;
+    }
+    setActiveModule?.(target.module);
+    if (target.tab) setActiveTab?.(target.tab);
+  };
+
+  const openVaziTab = (tab: typeof vaziTab, blockId = selectedBlockId || blocks[0]?.id) => {
+    if (blockId) setSelectedBlockId(blockId);
+    setVaziTab(tab);
+  };
 
   // Block Edit States
   const [isEditingBlock, setIsEditingBlock] = useState(false);
@@ -594,6 +615,32 @@ export default function VaziModule({
         })}
       </div>
 
+      {(['spraying', 'scouting', 'sampling', 'yield'] as const).includes(vaziTab as any) && !selectedBlock && (
+        <div className="rounded-2xl border border-dashed border-[#e8dfd5] bg-white p-10 text-center shadow-sm">
+          <Layers className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+          <h3 className="text-sm font-serif font-black text-[#4e0e15]">Select a vineyard block first</h3>
+          <p className="mt-1 text-xs text-stone-500 max-w-md mx-auto">
+            Spraying, scouting, sampling, and harvest planning are recorded against a specific block.
+          </p>
+          <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => openVaziTab('blocks')}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+            >
+              <ArrowRight className="w-3.5 h-3.5" /> Open blocks
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAddBlockModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add block
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ==========================================
           TAB 1: PORTAL DASHBOARD
           ========================================== */}
@@ -630,6 +677,20 @@ export default function VaziModule({
                     <span className="text-[10px] font-bold bg-amber-50 text-amber-700 font-mono px-2 py-0.5 rounded border border-amber-100 font-semibold">{b.currentPhenology}</span>
                   </button>
                 ))}
+                {blocks.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 p-5 text-center">
+                    <Layers className="w-9 h-9 text-emerald-700/40 mx-auto mb-2" />
+                    <p className="text-xs font-bold text-emerald-950">No vineyard blocks yet</p>
+                    <p className="mt-1 text-[11px] text-stone-500">Create the first block before scouting, sampling, sprays, or harvest planning.</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddBlockModal(true)}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-900"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add block
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1305,7 +1366,25 @@ export default function VaziModule({
             ) : (
               <div className="bg-stone-50 border border-dashed border-[#e8dfd5] text-center p-12 rounded-xl italic font-serif text-sm text-[#4e0e15]/60 flex flex-col items-center justify-center">
                 <Layers className="w-12 h-12 text-stone-300 mb-3" />
-                Select a vineyard block from the sidebar registry to deploy the viticulture control station.
+                <span>Select a vineyard block from the sidebar registry to deploy the viticulture control station.</span>
+                <div className="mt-4 flex flex-col sm:flex-row gap-2 not-italic font-sans">
+                  {blocks.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => openVaziTab('blocks', blocks[0].id)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> Select first block
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowAddBlockModal(true)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-50"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add block
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1470,6 +1549,27 @@ export default function VaziModule({
                 <div className="text-center py-12 text-stone-400 italic font-mono text-xs">
                   <Wind className="w-10 h-10 text-stone-200 mx-auto mb-2" />
                   No chemical treatments recorded for this block.
+                  <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2 not-italic font-sans">
+                    <button
+                      type="button"
+                      onClick={() => openVaziTab('scouting', selectedBlock.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
+                    >
+                      <CheckSquare className="w-3.5 h-3.5" /> Scout first
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrefilledTaskTitle?.(`Plan spray campaign for ${selectedBlock.name}`);
+                        setPrefilledTaskPriority?.('medium');
+                        setPrefilledTaskDesc?.(`Review canopy conditions for ${selectedBlock.name} and schedule treatment if disease pressure warrants it.`);
+                        navigateTo({ module: 'gvino', tab: 'tasks' });
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> Create task
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1622,6 +1722,27 @@ export default function VaziModule({
                 <div className="text-center py-12 text-stone-400 italic font-mono text-xs">
                   <CheckSquare className="w-10 h-10 text-stone-200 mx-auto mb-2" />
                   Your canopy scouting reports are perfectly clean. No pathogens spotted!
+                  <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2 not-italic font-sans">
+                    <button
+                      type="button"
+                      onClick={() => openVaziTab('spraying', selectedBlock.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
+                    >
+                      <Wind className="w-3.5 h-3.5" /> Open sprays
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrefilledTaskTitle?.(`Scout ${selectedBlock.name}`);
+                        setPrefilledTaskPriority?.('low');
+                        setPrefilledTaskDesc?.(`Walk ${selectedBlock.name}, record disease pressure, and update the Vazi scouting log.`);
+                        navigateTo({ module: 'gvino', tab: 'tasks' });
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> Create task
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1905,6 +2026,7 @@ export default function VaziModule({
                                 associatedLotId: grapeLotId
                               });
                               alert(`Traceability secured! Harvest of ${harvestedQty} Kg Ripe ${selectedBlock.grapeVariety} dispatched as Gvino Lot: ${grapeLotId}. Open Gvino to view the fermentation lot!`);
+                              navigateTo({ module: 'gvino', tab: 'lots' });
                             }}
                             className="flex-1 bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold text-[10px] uppercase font-mono px-3.5 py-1.5 rounded cursor-pointer duration-100 flex items-center justify-center gap-1.5"
                           >
@@ -1916,6 +2038,29 @@ export default function VaziModule({
                   </div>
                 </div>
               ))}
+              {harvests.filter(h => h.blockId === selectedBlock.id).length === 0 && (
+                <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/50 p-8 text-center">
+                  <Calendar className="w-10 h-10 text-amber-500/60 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-amber-950">No harvest plans for this block yet</p>
+                  <p className="mt-1 text-[11px] text-amber-900/70">Use sampling to judge readiness, then send picked fruit to Gvino intake when harvest starts.</p>
+                  <div className="mt-4 flex flex-col sm:flex-row justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openVaziTab('sampling', selectedBlock.id)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-amber-900 transition-colors hover:bg-amber-100"
+                    >
+                      <FlaskConical className="w-3.5 h-3.5" /> Open sampling
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigateTo({ module: 'gvino', tab: 'intake' })}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5" /> Open Gvino intake
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
