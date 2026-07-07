@@ -151,7 +151,7 @@ export function useWineryState() {
     currency: 'GEL'
   });
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
+  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Datasets

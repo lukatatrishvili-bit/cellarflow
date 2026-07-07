@@ -31,7 +31,7 @@ export function PageHeader({
             {title}
           </h2>
           {description && (
-            <p className="text-xs text-stone-400 font-semibold mt-0.5 max-w-3xl">
+            <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5 max-w-3xl">
               {description}
             </p>
           )}
@@ -68,7 +68,7 @@ export function SectionCard({
                 {title}
               </h3>
             )}
-            {subtitle && <p className="text-[11px] text-stone-400 mt-0.5">{subtitle}</p>}
+            {subtitle && <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">{subtitle}</p>}
           </div>
           {actions && <div className="shrink-0">{actions}</div>}
         </div>
@@ -104,7 +104,7 @@ export function MetricCard({
   const inner = (
     <>
       <div className="flex items-start justify-between gap-3">
-        <span className="block text-[10px] font-mono font-black uppercase tracking-[0.16em] text-stone-400">
+        <span className="block text-[10px] font-mono font-black uppercase tracking-[0.16em] text-stone-500 dark:text-stone-400">
           {label}
         </span>
         {Icon && (
@@ -117,7 +117,7 @@ export function MetricCard({
         {value}
       </strong>
       {detail && (
-        <span className="mt-2 block text-[11px] font-semibold leading-snug text-stone-500 dark:text-stone-400">
+        <span className="mt-2 block text-[11px] font-semibold leading-snug text-stone-500 dark:text-stone-500 dark:text-stone-400">
           {detail}
         </span>
       )}
@@ -180,7 +180,7 @@ export function ProgressBar({
   return (
     <div>
       {label && (
-        <div className="mb-1 flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-wide text-stone-400">
+        <div className="mb-1 flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-wide text-stone-500 dark:text-stone-400">
           <span>{label}</span>
           <span>{Math.round(pct)}%</span>
         </div>
@@ -204,7 +204,7 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="text-center py-12 px-4 text-stone-400">
+    <div className="text-center py-12 px-4 text-stone-500 dark:text-stone-400">
       {Icon && <Icon className="w-10 h-10 mx-auto mb-3 opacity-40" />}
       <h3 className="text-sm font-bold text-stone-600 dark:text-stone-300">{title}</h3>
       {description && <p className="text-xs mt-1 max-w-md mx-auto leading-relaxed">{description}</p>}
@@ -236,7 +236,7 @@ export function FormSection({
         )}
         <div className="min-w-0">
           <h4 className="text-xs font-black uppercase tracking-wide text-stone-800 dark:text-amber-100">{title}</h4>
-          {description && <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-stone-400">{description}</p>}
+          {description && <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-stone-500 dark:text-stone-400">{description}</p>}
         </div>
       </div>
       <div className="space-y-3">{children}</div>
@@ -253,7 +253,7 @@ export function FieldLabel({
   required?: boolean;
 }) {
   return (
-    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest">
+    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-stone-500 dark:text-stone-400 tracking-widest">
       {children}
       {required && <span className="ml-1 text-rose-600">*</span>}
     </label>

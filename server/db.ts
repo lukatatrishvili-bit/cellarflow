@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { PrismaClient as PrismaClientType } from '@prisma/client';
 import { downloadDb, uploadDb, gcsEnabled, gcsTarget } from './gcsStore';
+import { createEmptyIntegrationHubState, ensureIntegrationHubState, type IntegrationHubState } from '../lib/integrations';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -238,6 +239,7 @@ export interface UserDataState {
   salesDispatches: any[];
   salesOrders: any[];
   supplierPayments: any[];
+  integrationHub?: IntegrationHubState;
   companyProfile: any;
 }
 
@@ -279,6 +281,7 @@ export function createEmptyUserData(): UserDataState {
     salesDispatches: [],
     salesOrders: [],
     supplierPayments: [],
+    integrationHub: createEmptyIntegrationHubState(),
     companyProfile: {
       companyName: '',
       wineryName: '',
@@ -328,6 +331,7 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     salesDispatches: Array.isArray(data.salesDispatches) ? data.salesDispatches : [],
     salesOrders: Array.isArray(data.salesOrders) ? data.salesOrders : [],
     supplierPayments: Array.isArray(data.supplierPayments) ? data.supplierPayments : [],
+    integrationHub: ensureIntegrationHubState(data.integrationHub),
     companyProfile: data.companyProfile && typeof data.companyProfile === 'object'
       ? { ...empty.companyProfile, ...data.companyProfile }
       : empty.companyProfile,
