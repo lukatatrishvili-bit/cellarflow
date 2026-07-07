@@ -631,7 +631,40 @@ export default function SalesDispatchTab({
                 No reservations created yet
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              <div className="md:hidden divide-y divide-stone-100 dark:divide-stone-800">
+                {orders.map(o => (
+                  <div key={o.id} className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-mono text-[10px] text-stone-500">{o.orderNumber || o.orderDate}</p>
+                        <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{o.customerName}</h4>
+                        {o.reservedUntil && <p className="text-[10px] text-stone-500 dark:text-stone-400">reserved until {o.reservedUntil}</p>}
+                      </div>
+                      <span className={`shrink-0 inline-flex px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase ${statusClass(o)}`}>
+                        {statusLabel(o)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Lot</span><strong className="block truncate">{o.lotName}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Location</span><strong className="block truncate">{o.locationName}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Bottles</span><strong>{o.bottles.toLocaleString()}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Value</span><strong>{fmtMoney(o.revenue || 0)}</strong></div>
+                    </div>
+                    {o.status === 'reserved' && (
+                      <div className="flex gap-2">
+                        <button onClick={() => fulfillOrder(o.id)} className="flex-1 rounded-lg bg-emerald-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white" title="Fulfill into dispatch">
+                          Fulfill
+                        </button>
+                        <button onClick={() => cancelOrder(o.id)} className="flex-1 rounded-lg border border-stone-200 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-stone-600 dark:border-stone-800 dark:text-stone-300" title="Cancel reservation">
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left text-[11px]">
                   <thead>
                     <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-500 dark:text-stone-400 font-bold dark:bg-stone-950">
@@ -681,6 +714,7 @@ export default function SalesDispatchTab({
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
 
@@ -696,7 +730,34 @@ export default function SalesDispatchTab({
                 No sales dispatches recorded yet
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              <div className="md:hidden divide-y divide-stone-100 dark:divide-stone-800">
+                {dispatches.map(d => (
+                  <div key={d.id} className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-mono text-[10px] text-stone-500">{d.date}</p>
+                        <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{d.customerName}</h4>
+                        {d.salesOrderId && <p className="text-[10px] text-blue-500">from reservation</p>}
+                      </div>
+                      <button onClick={() => deleteDispatch(d.id)} className="shrink-0 text-stone-300 hover:text-rose-600 cursor-pointer" title="Delete dispatch">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Lot</span><strong className="block truncate">{d.lotName}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Location</span><strong className="block truncate">{d.locationName}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Bottles</span><strong>{d.bottles.toLocaleString()}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Margin</span><strong>{d.marginPct != null ? `${d.marginPct}%` : '—'}</strong></div>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 p-2 text-[11px] dark:border-emerald-900/60 dark:bg-emerald-950/20">
+                      <span className="block text-[9px] uppercase font-bold text-emerald-700 dark:text-emerald-400">Revenue</span>
+                      <strong className="font-mono text-emerald-800 dark:text-emerald-300">{fmtMoney(d.revenue || 0)}</strong>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left text-[11px]">
                   <thead>
                     <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-500 dark:text-stone-400 font-bold dark:bg-stone-950">
@@ -733,6 +794,7 @@ export default function SalesDispatchTab({
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         </div>

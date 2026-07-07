@@ -646,7 +646,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                     </div>
 
                     {/* Stock Refill / Reduce micro adjustments bar */}
-                    <div className="mt-4 flex items-center justify-between border-t border-dashed border-[#e8dfd5] pt-2 text-[10px] gap-2">
+                    <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-dashed border-[#e8dfd5] pt-2 text-[10px] gap-2">
                       {lowStock ? (
                         <span className="text-red-650 font-bold uppercase animate-pulse flex items-center gap-0.5">
                           ⚠️ LOW STOCK
@@ -657,18 +657,18 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                         </span>
                       )}
 
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex w-full sm:w-auto items-center gap-1 shrink-0">
                         <button
                           title="Consume Item (-Qty)"
                           onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? -50 : -2.5)}
-                          className="px-2 py-1 bg-stone-100 text-stone-700 text-[10px] font-bold rounded-lg hover:bg-stone-200 border border-stone-200 cursor-pointer"
+                          className="flex-1 sm:flex-none px-2 py-1 bg-stone-100 text-stone-700 text-[10px] font-bold rounded-lg hover:bg-stone-200 border border-stone-200 cursor-pointer"
                         >
                           - Consume
                         </button>
                         <button
                           title="Refill Stock (+Qty)"
                           onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? 100 : 5)}
-                          className="px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer flex items-center gap-0.5"
+                          className="flex-1 sm:flex-none px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer flex items-center justify-center gap-0.5"
                         >
                           + Refill
                         </button>
@@ -680,7 +680,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
               })}
 
               {filteredItems.length === 0 && (
-                <div className="col-span-2 py-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
+                <div className="md:col-span-2 py-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
                   <p>No materials found in the &ldquo;{selectedCategory}&rdquo; category.</p>
                   <button
                     onClick={() => setShowItemForm(true)}

@@ -281,7 +281,35 @@ export default function CostsTab({
                 </button>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            {lots.length === 0 ? (
+              <div className="md:hidden p-6 text-center text-stone-400 italic text-xs">{ka ? 'მონაცემები არ არის' : 'No data'}</div>
+            ) : (
+              <div className="md:hidden divide-y divide-stone-100 dark:divide-stone-800">
+                {reportRows.map(r => (
+                  <div key={r.lotId} className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{r.lotName}</h4>
+                        <p className="text-[10px] font-mono text-stone-400">{r.lotId}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${r.marginPct == null ? 'bg-stone-100 text-stone-400' : r.marginPct >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-700'}`}>
+                        {r.marginPct != null ? `${r.marginPct}%` : 'no margin'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Total</span><strong>{fmt(r.totalCost)}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">/Bottle</span><strong>{r.perBottle != null ? fmt(r.perBottle) : '—'}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Bottles</span><strong>{r.bottles || '—'}</strong></div>
+                      <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Profit</span><strong>{r.pricePerBottle != null ? fmt(r.grossProfit) : '—'}</strong></div>
+                    </div>
+                    <label className="block text-[9px] uppercase font-mono font-bold text-stone-400">Price / bottle</label>
+                    <input type="number" min={0} step="0.01" value={draftPricing[r.lotId] ?? ''} onChange={e => updatePriceDraft(r.lotId, e.target.value)} onBlur={() => savePrice(r.lotId)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') resetPriceDraft(r.lotId); }}
+                      placeholder="—" className="w-full bg-stone-50 border border-stone-200 dark:bg-stone-800 dark:border-stone-700 rounded-lg px-2.5 py-2 text-right text-xs font-mono outline-none focus:border-[#4e0e15]" />
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-[11px] whitespace-nowrap">
                 <thead>
                   <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-400 font-bold dark:bg-stone-950">
@@ -328,7 +356,28 @@ export default function CostsTab({
             {costEntries.length === 0 ? (
               <div className="text-center py-10 text-stone-400 text-xs font-semibold">{ka ? 'ჯერ არ არის ხარჯი აღრიცხული' : 'No costs recorded yet'}</div>
             ) : (
-              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <>
+              <div className="md:hidden divide-y divide-stone-100 dark:divide-stone-800">
+                {costEntries.map(e => (
+                  <div key={e.id} className="p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-mono text-stone-400">{e.date}</p>
+                        <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{lotName(e.lotId)}</h4>
+                      </div>
+                      <button onClick={() => remove(e.id)} className="shrink-0 text-stone-300 hover:text-rose-600 cursor-pointer" title="Delete cost">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2 py-0.5 bg-stone-100 dark:bg-stone-800 rounded-full text-[9px] font-bold uppercase">{catLabel(e.category, ka)}</span>
+                      <strong className={`ml-auto font-mono ${e.amount < 0 ? 'text-rose-600' : 'text-stone-800 dark:text-amber-200'}`}>{fmt(e.amount)}</strong>
+                    </div>
+                    <p className="text-xs text-stone-500 dark:text-stone-300 break-words">{e.description}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden md:block overflow-x-auto max-h-96 overflow-y-auto">
                 <table className="w-full text-left text-[11px]">
                   <thead className="sticky top-0">
                     <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-400 font-bold dark:bg-stone-950">
@@ -354,6 +403,7 @@ export default function CostsTab({
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         </div>
