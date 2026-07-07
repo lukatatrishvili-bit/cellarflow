@@ -580,11 +580,69 @@ export function getSeederData(orgId: string): UserDataState {
     },
   ]);
 
-  const transfers = [
-    { id: 'TR-MUK-23-BARREL', sourceId: 'T-104', destId: 'B-01', volume: 225, loss: 3, operator: OPERATOR, category: 'racking', date: '2023-11-15', pump: 'Enopump E-400', details: 'MUK-23 გადაღებულია ფრანგულ მუხის კასრში რეზერვის დავარგებისთვის.' },
-    { id: 'TR-OJ-24-BARREL', sourceId: 'B-03', destId: 'B-03', volume: 225, loss: 1, operator: OPERATOR, category: 'topping', date: '2024-11-02', pump: 'Gravity', details: 'OJ-24 კასრის შევსება აორთქლების დანაკარგის შემდეგ.' },
-    { id: 'TR-MTS-24-STAB', sourceId: 'T-102', destId: 'T-102', volume: 3000, loss: 0, operator: OPERATOR, category: 'stabilization', date: '2024-10-20', pump: 'Cooling loop', details: 'MTS-24 ცივი სტაბილიზაციის ციკლი.' },
-  ];
+  const transfers = lotSpecs.flatMap((spec, index) => {
+    const lotTransfers = [];
+    const sourceVessel = spec.intakeVesselId;
+    const destVessel = spec.vesselId || spec.intakeVesselId;
+
+    // 1. Initial Racking (universal first transfer after fermentation / pressing)
+    lotTransfers.push({
+      id: `TR-${spec.id}-RACK`,
+      sourceId: sourceVessel,
+      destId: destVessel,
+      volume: spec.initialVolume,
+      loss: index % 2 === 0 ? round(spec.initialVolume * 0.005, 1) : 0,
+      operator: OPERATOR,
+      category: 'racking',
+      date: addDays(spec.intakeDate, 15),
+      pump: 'Enopump E-400',
+      details: `${spec.name} - დუღილის შემდგომი გადაღება ლექიდან სუფთა ფრაქციის გამოსაყოფად და დასაწმენდად.`
+    });
+
+    // 2. Secondary Operation (e.g., topping for aging, cold stabilization, or final racking before bottling)
+    if (spec.stage === 'aging') {
+      lotTransfers.push({
+        id: `TR-${spec.id}-TOP`,
+        sourceId: destVessel,
+        destId: destVessel,
+        volume: spec.currentVolume,
+        loss: 1.5,
+        operator: OPERATOR,
+        category: 'topping',
+        date: addDays(spec.intakeDate, 45),
+        pump: 'Gravity',
+        details: `${spec.name} - კასრის/ქვევრის შევსება აორთქლების დანაკარგის კომპენსაციისთვის.`
+      });
+    } else if (spec.stage === 'stabilization') {
+      lotTransfers.push({
+        id: `TR-${spec.id}-STAB`,
+        sourceId: destVessel,
+        destId: destVessel,
+        volume: spec.currentVolume,
+        loss: 0,
+        operator: OPERATOR,
+        category: 'stabilization',
+        date: addDays(spec.intakeDate, 30),
+        pump: 'Cooling loop',
+        details: `${spec.name} - ცივი სტაბილიზაციის ციკლი ტარტარატების დასალექად.`
+      });
+    } else if (spec.stage === 'bottled') {
+      lotTransfers.push({
+        id: `TR-${spec.id}-BOTTLING-RACK`,
+        sourceId: destVessel,
+        destId: 'T-104',
+        volume: spec.initialVolume,
+        loss: index % 2 === 0 ? 2 : 0,
+        operator: OPERATOR,
+        category: 'filtration',
+        date: addDays(spec.intakeDate, 120),
+        pump: 'Enopump E-400',
+        details: `${spec.name} - ფილტრაცია და გადატანა ჩამოსასხმელ რეზერვუარში.`
+      });
+    }
+
+    return lotTransfers;
+  });
 
   const bottlingRuns = [
     {
