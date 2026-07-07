@@ -12,6 +12,8 @@ import telemetryRouter from './server/routes/telemetry';
 import adminRouter, { seedTestUserHandler } from './server/routes/admin';
 import winemakerRouter from './server/routes/winemaker';
 import { securityHeaders } from './server/middleware/securityHeaders';
+import { demoAccountConfig } from './server/config';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +46,14 @@ app.get('/api/dev/seed-testuser1', seedTestUserHandler);
 app.get('/api/health', (_req, res) => {
   res.status(200).json({ ok: true });
 });
+
+// Public config endpoint for frontend hydration
+app.get('/api/config', (_req, res) => {
+  res.json({
+    demoLoginEnabled: demoAccountConfig.enabled
+  });
+});
+
 
 // Serve frontend
 const isProd = process.env.NODE_ENV === 'production';
