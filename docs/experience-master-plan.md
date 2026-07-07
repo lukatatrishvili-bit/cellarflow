@@ -168,6 +168,17 @@ and a note appended to this file under "Progress log".
 
 ## Progress log
 
+- 2026-07-07 — **W6 core DONE (375px walkthrough):** all six top-level screens
+  measured at 375×812 — **zero horizontal overflow everywhere** (body-level
+  clipping already handled it; flagged elements were decorative absolutes).
+  Real finding: 8–12 sub-32px tap targets per screen, all from two shared
+  spots — module-nav group buttons (42×30) and header icon buttons (31×31).
+  Fixed with mobile-first `min-w/min-h` (44px nav / 40px header + sub-pills)
+  that reset at `md:` so desktop density is unchanged. Re-measured: 0 tiny
+  targets on all six screens. Remaining W6 tail: per-sub-tab card layouts for
+  the densest tables (Inventory/Costs/Sales render fine but scroll within
+  their own containers), landscape-tablet pass.
+
 - 2026-07-06 — **W4 first slice DONE (cellar dead-ends):** audit of all 15
   cellar sub-tabs on an empty org found 4 dead-end empty states; intake,
   inventory, fermentation, lots, operations already had good CTAs. Fixed:

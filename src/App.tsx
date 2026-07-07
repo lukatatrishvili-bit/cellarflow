@@ -679,7 +679,7 @@ export default function App() {
           {/* Dark Mode Switcher */}
           <button
             onClick={() => setDarkMode(!darkMode)}
-            className="p-2 bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
+            className="p-2 min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 flex items-center justify-center bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
             title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
           >
             {darkMode ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5" />}
@@ -716,7 +716,7 @@ export default function App() {
           {/* Retract the header */}
           <button
             onClick={() => setHeaderHidden(true)}
-            className="p-2 bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
+            className="p-2 min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 flex items-center justify-center bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
             title={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
             aria-label={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
           >
@@ -749,7 +749,7 @@ export default function App() {
                   title={group.label}
                   aria-label={group.label}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`relative px-3.5 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
+                  className={`relative px-3.5 py-2 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 justify-center md:justify-start rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
                     isActive
                       ? 'text-amber-50'
                       : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 dark:hover:bg-stone-800'
@@ -778,7 +778,7 @@ export default function App() {
                     key={mod.id}
                     onClick={() => switchModule(mod.id)}
                     title={mod.label}
-                    className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide cursor-pointer transition-colors ${
+                    className={`px-2.5 py-1 min-h-[40px] min-w-[40px] md:min-h-0 md:min-w-0 justify-center md:justify-start rounded-lg flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide cursor-pointer transition-colors ${
                       isActive
                         ? 'bg-white text-[#4e0e15] shadow-sm ring-1 ring-[#e8dfd5] dark:bg-stone-800 dark:text-amber-100 dark:ring-stone-700'
                         : 'text-stone-500 hover:text-stone-900 hover:bg-white/70 dark:hover:bg-stone-800 dark:hover:text-amber-100'
