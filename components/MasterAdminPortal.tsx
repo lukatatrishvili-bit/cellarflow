@@ -64,6 +64,17 @@ interface AdminAction {
   detail?: string;
 }
 
+interface ClientErrorReport {
+  at: string;
+  source: string;
+  message: string;
+  stack: string;
+  url: string;
+  userAgent: string;
+  appVersion: string;
+  username: string | null;
+}
+
 interface OrgInspection {
   organization: { id: string; name: string; createdAt: string };
   wineryName: string;
@@ -170,11 +181,12 @@ export default function MasterAdminPortal({
   onClose,
   setToastMessage
 }: MasterAdminPortalProps) {
-  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'ops' | 'audit' | 'terminal'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'ops' | 'audit' | 'client-errors' | 'terminal'>('stats');
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [orgs, setOrgs] = useState<OrgRecord[]>([]);
+  const [clientErrors, setClientErrors] = useState<ClientErrorReport[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Search & Filters
@@ -220,13 +232,14 @@ export default function MasterAdminPortal({
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [statsRes, usersRes, orgsRes, healthRes, lockoutsRes, actionsRes] = await Promise.all([
+      const [statsRes, usersRes, orgsRes, healthRes, lockoutsRes, actionsRes, clientErrorsRes] = await Promise.all([
         fetch('/api/admin/stats'),
         fetch('/api/admin/users'),
         fetch('/api/admin/orgs'),
         fetch('/api/admin/system-health'),
         fetch('/api/admin/lockouts'),
-        fetch('/api/admin/actions')
+        fetch('/api/admin/actions'),
+        fetch('/api/admin/client-errors')
       ]);
 
       if (statsRes.ok && usersRes.ok && orgsRes.ok) {
@@ -236,6 +249,7 @@ export default function MasterAdminPortal({
         const healthData = healthRes.ok ? await healthRes.json() : null;
         const lockoutsData = lockoutsRes.ok ? await lockoutsRes.json() : null;
         const actionsData = actionsRes.ok ? await actionsRes.json() : null;
+        const clientErrorsData = clientErrorsRes.ok ? await clientErrorsRes.json() : null;
 
         setStats(statsData);
         setSystemHealth(healthData);
@@ -243,6 +257,7 @@ export default function MasterAdminPortal({
         setOrgs(orgsData.organizations);
         if (lockoutsData) { setLockouts(lockoutsData.entries || []); setLockoutsBackend(lockoutsData.backend || ''); }
         if (actionsData) setAdminTrail(actionsData.actions || []);
+        if (clientErrorsData) setClientErrors(clientErrorsData.errors || []);
       } else {
         setToastMessage(lang === 'ka' ? 'შეცდომა ადმინ მონაცემების ჩატვირთვისას' : 'Failed to fetch admin console data');
       }
@@ -287,7 +302,7 @@ export default function MasterAdminPortal({
 
     let reply = '';
     if (cmd === 'help') {
-      reply = 'Available commands: help | stats | users | orgs | lockouts | audit | sync | clear';
+      reply = 'Available commands: help | stats | users | orgs | lockouts | audit | errors | sync | clear';
     } else if (cmd === 'lockouts') {
       reply = lockouts.length
         ? `Active limiter entries (${lockouts.length}): ` + lockouts.map(l => `${l.key} [${l.count}x${l.remainingSeconds ? `, locked ${l.remainingSeconds}s` : ''}]`).join(' | ')
@@ -296,6 +311,10 @@ export default function MasterAdminPortal({
       reply = adminTrail.length
         ? `Recent admin actions: ` + adminTrail.slice(0, 5).map(a => `${a.at.slice(11, 19)} ${a.actor} ${a.action}${a.target ? ` → ${a.target}` : ''}`).join(' | ')
         : 'No admin actions recorded this process.';
+    } else if (cmd === 'errors') {
+      reply = clientErrors.length
+        ? `Recent client errors (${clientErrors.length}): ` + clientErrors.slice(0, 5).map(e => `${e.at.slice(11, 19)} ${e.source}: ${e.message.slice(0, 80)}`).join(' | ')
+        : 'No client-side errors recorded this process.';
     } else if (cmd === 'stats') {
       reply = stats 
         ? `Uptime: ${stats.uptimeSeconds}s | Users: ${stats.usersCount} | Orgs: ${stats.orgsCount} | Heap: ${stats.memoryHeapUsedMB}MB/${stats.memoryHeapTotalMB}MB`
@@ -521,6 +540,25 @@ export default function MasterAdminPortal({
     }
   };
 
+  const formatTelemetryUrl = (value: string | null | undefined) => {
+    if (!value) return 'Unknown page';
+    try {
+      const url = new URL(value, window.location.origin);
+      return `${url.pathname}${url.hash ? '#...' : ''}`;
+    } catch {
+      return value.split('?')[0].slice(0, 120);
+    }
+  };
+
+  const summarizeUserAgent = (value: string | null | undefined) => {
+    if (!value) return 'Unknown client';
+    const browserMatch = value.match(/(Chrome|Firefox|Safari|Edg|OPR)\/[\d.]+/);
+    const platformMatch = value.match(/\(([^)]+)\)/);
+    return [browserMatch?.[0], platformMatch?.[1]?.split(';').slice(0, 2).join(';')]
+      .filter(Boolean)
+      .join(' - ') || value.slice(0, 80);
+  };
+
   const formatBytes = (bytes: number | null | undefined) => {
     if (!bytes) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
@@ -598,6 +636,7 @@ export default function MasterAdminPortal({
             { id: 'orgs', label: 'Wineries / Orgs', icon: Users },
             { id: 'ops', label: 'Ops & Security', icon: Wrench },
             { id: 'audit', label: 'Admin Trail', icon: ScrollText },
+            { id: 'client-errors', label: 'Client Errors', icon: ShieldAlert },
             { id: 'terminal', label: 'Command Line', icon: Terminal }
           ].map(tab => {
             const Icon = tab.icon;
@@ -1474,6 +1513,87 @@ export default function MasterAdminPortal({
                           ))}
                         </tbody>
                       </table>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Tab: Client Errors */}
+              {activeTab === 'client-errors' && (
+                <motion.div
+                  key="client-errors"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-4 text-left"
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
+                    <div>
+                      <h2 className="text-xs uppercase font-bold text-cyan-400 tracking-wider">Client Error Telemetry</h2>
+                      <p className="mt-1 text-[11px] text-stone-500">
+                        Recent browser crashes and chunk-load failures from the in-process diagnostic buffer.
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-mono text-stone-500">
+                      {clientErrors.length} recorded - newest first - resets on deploy/recycle
+                    </span>
+                  </div>
+
+                  <div className="bg-[#0c090a] border border-cyan-900/20 rounded-2xl overflow-hidden">
+                    {clientErrors.length === 0 ? (
+                      <div className="px-5 py-10 text-center text-stone-600 text-xs">
+                        No client-side crashes or lazy chunk failures have been reported since this server process started.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[980px] text-xs text-left">
+                          <thead>
+                            <tr className="border-b border-stone-900 bg-stone-950/80 text-stone-400 uppercase text-[9px] font-bold tracking-widest">
+                              <th className="px-5 py-3">Timestamp</th>
+                              <th className="px-5 py-3">Source</th>
+                              <th className="px-5 py-3">User</th>
+                              <th className="px-5 py-3">Message</th>
+                              <th className="px-5 py-3">Page</th>
+                              <th className="px-5 py-3">Client</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-stone-900/50">
+                            {clientErrors.map((error, index) => (
+                              <tr key={`${error.at}-${index}`} className="align-top hover:bg-stone-900/30 transition-colors">
+                                <td className="px-5 py-3 font-mono text-stone-400 whitespace-nowrap">{formatDateTime(error.at)}</td>
+                                <td className="px-5 py-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                                    error.source.includes('chunk')
+                                      ? 'bg-amber-950/30 border-amber-500/30 text-amber-300'
+                                      : 'bg-red-950/30 border-red-500/30 text-red-300'
+                                  }`}>{error.source || 'unknown'}</span>
+                                  {error.appVersion ? (
+                                    <div className="mt-1 text-[9px] font-mono text-stone-600">v{error.appVersion}</div>
+                                  ) : null}
+                                </td>
+                                <td className="px-5 py-3 font-bold text-cyan-400 whitespace-nowrap">
+                                  {error.username ? `@${error.username}` : 'anonymous'}
+                                </td>
+                                <td className="px-5 py-3 min-w-[20rem] max-w-xl">
+                                  <div className="text-stone-200 leading-relaxed break-words">{error.message || 'No message provided'}</div>
+                                  {error.stack ? (
+                                    <details className="mt-2">
+                                      <summary className="cursor-pointer text-[10px] uppercase tracking-widest font-bold text-stone-500 hover:text-cyan-400">
+                                        Stack trace
+                                      </summary>
+                                      <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-stone-850 bg-black/35 p-3 text-[10px] leading-relaxed text-stone-400">
+                                        {error.stack}
+                                      </pre>
+                                    </details>
+                                  ) : null}
+                                </td>
+                                <td className="px-5 py-3 font-mono text-stone-400 break-all max-w-xs">{formatTelemetryUrl(error.url)}</td>
+                                <td className="px-5 py-3 text-stone-500 max-w-xs">{summarizeUserAgent(error.userAgent)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     )}
                   </div>
                 </motion.div>
