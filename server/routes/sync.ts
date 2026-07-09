@@ -19,7 +19,9 @@ import {
   isSupportedAttachmentFileName,
   isValidAttachmentChecksum,
   MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_TOTAL_INLINE_ATTACHMENT_BYTES,
   normalizeExternalAttachmentUrl,
+  sumInlineAttachmentBytes,
 } from '../../lib/attachments';
 import { can, canAccess, canSyncCollection, moduleForAttachmentKind, moduleForSyncCollection, type PermissionAction } from '../permissions';
 
@@ -945,6 +947,9 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     const refreshed = await reloadUserOrganizationDataFromPostgres(session.username);
     const expectedOrgStateVersion = refreshed?.meta.version ?? null;
     const userDb = refreshed?.data || await getUserData(session.username) || createEmptyUserData();
+    // Baseline inline-attachment footprint before this sync mutates state, so
+    // the budget guard below can allow shrinking syncs even when already at cap.
+    const inlineBytesBefore = sumInlineAttachmentBytes(userDb.attachments);
 
     const permissionError = authorizeSyncPayload(session.role, userDb, collections, deletedIds);
     if (permissionError) {
@@ -976,6 +981,19 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     const conflicts = mergeCollections(userDb, merging, session.organizationId);
     if (session.username === 'testuser1') {
       pruneTestUserSeedDuplicates(userDb);
+    }
+
+    // Org-wide inline-attachment budget. Inline blobs accumulate in the JSONB
+    // state, so block syncs that GROW the footprint past the cap — but always
+    // allow syncs that keep it flat or shrink it, so a user who is already at
+    // the limit can still delete/externalize attachments to recover.
+    const inlineBytesAfter = sumInlineAttachmentBytes(userDb.attachments);
+    if (inlineBytesAfter > MAX_TOTAL_INLINE_ATTACHMENT_BYTES && inlineBytesAfter > inlineBytesBefore) {
+      const capMb = (MAX_TOTAL_INLINE_ATTACHMENT_BYTES / 1_000_000).toFixed(0);
+      return res.status(413).json({
+        code: 'inline_attachment_budget_exceeded',
+        error: `Inline attachment storage for this winery would exceed ${capMb} MB. Use an external HTTPS link or metadata-only storage for large files, or remove existing inline attachments.`,
+      });
     }
 
     try {

@@ -12,8 +12,10 @@ import {
   isSupportedAttachmentFileName,
   isValidAttachmentChecksum,
   MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_TOTAL_INLINE_ATTACHMENT_BYTES,
   normalizeAttachmentMimeType,
   normalizeExternalAttachmentUrl,
+  sumInlineAttachmentBytes,
 } from '../lib/attachments';
 
 describe('document attachments', () => {
@@ -194,5 +196,27 @@ describe('document attachments', () => {
       fileName: 'metadata.pdf',
       storage: { kind: 'metadata_only' },
     })).toBeNull();
+  });
+
+  it('sums only inline attachment bytes toward the org budget', () => {
+    const list = [
+      { sizeBytes: 1_000_000, storage: { kind: 'inline' as const, dataUrl: 'data:application/pdf;base64,AAAA' } },
+      { sizeBytes: 2_000_000, storage: { kind: 'inline' as const, dataUrl: 'data:image/png;base64,BBBB' } },
+      { sizeBytes: 9_000_000, storage: { kind: 'external' as const, url: 'https://example.test/big.pdf' } },
+      { storage: { kind: 'metadata_only' as const } },
+    ];
+    // external + metadata_only cost ~0; only the two inline files count.
+    expect(sumInlineAttachmentBytes(list)).toBe(3_000_000);
+    expect(sumInlineAttachmentBytes(undefined)).toBe(0);
+    expect(sumInlineAttachmentBytes([])).toBe(0);
+  });
+
+  it('falls back to data URL length when an inline size is missing', () => {
+    const dataUrl = `data:application/pdf;base64,${'A'.repeat(500)}`;
+    expect(sumInlineAttachmentBytes([{ storage: { kind: 'inline', dataUrl } }])).toBe(dataUrl.length);
+  });
+
+  it('sets a total inline budget above the single-file cap', () => {
+    expect(MAX_TOTAL_INLINE_ATTACHMENT_BYTES).toBeGreaterThan(MAX_INLINE_ATTACHMENT_BYTES);
   });
 });

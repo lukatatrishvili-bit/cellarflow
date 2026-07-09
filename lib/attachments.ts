@@ -6,6 +6,30 @@ import type {
 import { sha256Hex } from './auditHash';
 
 export const MAX_INLINE_ATTACHMENT_BYTES = 2_500_000;
+// Total inline attachment bytes allowed per organization. Inline attachments
+// live in the whole-org JSONB blob that is fully serialized on every sync and
+// written to a single GCS object, so unbounded growth degrades every sync and
+// eventually exceeds the request body limit. Beyond this budget, large files
+// must use `external` (HTTPS link) or `metadata_only` storage instead.
+export const MAX_TOTAL_INLINE_ATTACHMENT_BYTES = 25_000_000;
+
+/** Sum the stored bytes of all inline attachments (external/metadata cost ~0). */
+export function sumInlineAttachmentBytes(
+  attachments: ReadonlyArray<Pick<DocumentAttachment, 'sizeBytes' | 'storage'>> | undefined,
+): number {
+  if (!Array.isArray(attachments)) return 0;
+  let total = 0;
+  for (const a of attachments) {
+    if (a?.storage?.kind !== 'inline') continue;
+    const declared = Number(a.sizeBytes);
+    if (Number.isFinite(declared) && declared > 0) {
+      total += declared;
+    } else if (typeof a.storage.dataUrl === 'string') {
+      total += a.storage.dataUrl.length; // conservative fallback (base64 chars)
+    }
+  }
+  return total;
+}
 const ATTACHMENT_CHECKSUM_RE = /^[a-f0-9]{64}$/;
 const INLINE_ATTACHMENT_MIME_TYPES = new Set([
   'application/pdf',
