@@ -171,8 +171,9 @@ describe('document attachments', () => {
   });
 
   it('normalizes external attachment URLs and rejects unsafe storage URLs', () => {
-    expect(normalizeExternalAttachmentUrl(' http://example.test/file.pdf ')).toBe('http://example.test/file.pdf');
     expect(normalizeExternalAttachmentUrl('https://example.test/file.pdf')).toBe('https://example.test/file.pdf');
+    // http:// is rejected: mixed-content-blocked on the HTTPS app + downgrade risk.
+    expect(normalizeExternalAttachmentUrl(' http://example.test/file.pdf ')).toBeNull();
     expect(normalizeExternalAttachmentUrl('javascript:alert(1)')).toBeNull();
     expect(normalizeExternalAttachmentUrl('/relative/file.pdf')).toBeNull();
 
@@ -180,7 +181,7 @@ describe('document attachments', () => {
       fileName: 'unsafe.pdf',
       module: 'official_docs',
       storage: { kind: 'external', url: 'javascript:alert(1)' },
-    })).toThrow(/http\(s\)/i);
+    })).toThrow(/https/i);
   });
 
   it('does not expose unsafe or metadata-only attachment links', () => {

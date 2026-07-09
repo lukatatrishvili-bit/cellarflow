@@ -170,7 +170,9 @@ export function normalizeExternalAttachmentUrl(url: unknown): string | null {
   if (typeof url !== 'string' || !url.trim()) return null;
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    // HTTPS only: http:// links are mixed-content-blocked on the (HTTPS) app
+    // and a downgrade risk, so they are never a valid external attachment.
+    if (parsed.protocol !== 'https:') return null;
     return parsed.toString();
   } catch {
     return null;
@@ -234,7 +236,7 @@ export function createDocumentAttachmentRecord(input: DocumentAttachmentInput): 
   }
   const externalUrl = kind === 'external' ? normalizeExternalAttachmentUrl(storage.url) : null;
   if (kind === 'external' && !externalUrl) {
-    throw new Error('External attachment requires a valid HTTP(S) URL.');
+    throw new Error('External attachment requires a valid HTTPS URL.');
   }
   if (input.checksum !== undefined && !isValidAttachmentChecksum(input.checksum)) {
     throw new Error('Attachment checksum must be a SHA-256 hex digest.');
