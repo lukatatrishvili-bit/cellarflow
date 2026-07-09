@@ -1,8 +1,26 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
-import type { WineLot, DailyFermLog, LabAnalysis, CompanyProfile } from '../lib/wineryState';
+import type {
+  BottlingRunRecord,
+  CellarOperation,
+  CellarTransferRecord,
+  CertificationRecord,
+  CompanyProfile,
+  DailyFermLog,
+  GrapeIntakeRecord,
+  HarvestRecord,
+  LabAnalysis,
+  MaraniOSAuditLog,
+  SalesDispatchRecord,
+  SalesOrderRecord,
+  Vessel,
+  VineyardBlock,
+  WineLot,
+  DocumentAttachment,
+} from '../lib/wineryState';
+import type { StorageLocation, StockMovement } from '../lib/storage';
 import { buildPassportHtml } from '../lib/lotPassport';
-import { X, Printer, FileText } from 'lucide-react';
+import { GitMerge, X, Printer, FileText } from 'lucide-react';
 import { useFocusTrap } from './useFocusTrap';
 
 interface Props {
@@ -11,10 +29,47 @@ interface Props {
   labLogs: LabAnalysis[];
   company: CompanyProfile;
   generatedBy: string;
+  blocks?: VineyardBlock[];
+  harvests?: HarvestRecord[];
+  grapeIntakes?: GrapeIntakeRecord[];
+  vessels?: Vessel[];
+  cellarOps?: CellarOperation[];
+  transfers?: CellarTransferRecord[];
+  bottlingRuns?: BottlingRunRecord[];
+  storageLocations?: StorageLocation[];
+  stockMovements?: StockMovement[];
+  salesOrders?: SalesOrderRecord[];
+  salesDispatches?: SalesDispatchRecord[];
+  certificationRecords?: CertificationRecord[];
+  attachments?: DocumentAttachment[];
+  auditLogs?: MaraniOSAuditLog[];
+  onOpenLineage?: (lotId: string) => void;
   onClose: () => void;
 }
 
-export default function LotPassport({ lot, fermLogs, labLogs, company, generatedBy, onClose }: Props) {
+export default function LotPassport({
+  lot,
+  fermLogs,
+  labLogs,
+  company,
+  generatedBy,
+  blocks = [],
+  harvests = [],
+  grapeIntakes = [],
+  vessels = [],
+  cellarOps = [],
+  transfers = [],
+  bottlingRuns = [],
+  storageLocations = [],
+  stockMovements = [],
+  salesOrders = [],
+  salesDispatches = [],
+  certificationRecords = [],
+  attachments = [],
+  auditLogs = [],
+  onOpenLineage,
+  onClose,
+}: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
@@ -40,8 +95,50 @@ export default function LotPassport({ lot, fermLogs, labLogs, company, generated
   }, [deepLink]);
 
   const html = useMemo(
-    () => buildPassportHtml({ lot, fermLogs, labLogs, company, generatedBy, qrDataUrl }),
-    [lot, fermLogs, labLogs, company, generatedBy, qrDataUrl]
+    () => buildPassportHtml({
+      lot,
+      fermLogs,
+      labLogs,
+      company,
+      generatedBy,
+      qrDataUrl,
+      blocks,
+      harvests,
+      grapeIntakes,
+      vessels,
+      cellarOps,
+      transfers,
+      bottlingRuns,
+      storageLocations,
+      stockMovements,
+      salesOrders,
+      salesDispatches,
+      certificationRecords,
+      attachments,
+      auditLogs,
+    }),
+    [
+      lot,
+      fermLogs,
+      labLogs,
+      company,
+      generatedBy,
+      qrDataUrl,
+      blocks,
+      harvests,
+      grapeIntakes,
+      vessels,
+      cellarOps,
+      transfers,
+      bottlingRuns,
+      storageLocations,
+      stockMovements,
+      salesOrders,
+      salesDispatches,
+      certificationRecords,
+      attachments,
+      auditLogs,
+    ]
   );
 
   const handlePrint = () => {
@@ -71,6 +168,14 @@ export default function LotPassport({ lot, fermLogs, labLogs, company, generated
             <span className="truncate">Lot Passport — {lot.id}</span>
           </span>
           <div className="flex items-center gap-2 shrink-0">
+            {onOpenLineage && (
+              <button
+                onClick={() => onOpenLineage(lot.id)}
+                className="flex items-center gap-1.5 bg-white/10 hover:bg-white/15 text-amber-50 text-[11px] font-bold uppercase tracking-wide px-3 py-1.5 rounded-lg cursor-pointer transition-colors"
+              >
+                <GitMerge className="w-3.5 h-3.5" /> Open lineage
+              </button>
+            )}
             <button
               onClick={handlePrint}
               className="flex items-center gap-1.5 bg-amber-400/90 hover:bg-amber-300 text-[#4e0e15] text-[11px] font-bold uppercase tracking-wide px-3 py-1.5 rounded-lg cursor-pointer transition-colors"

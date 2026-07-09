@@ -10,6 +10,7 @@ import type {
   BottlingRunRecord,
   CellarOperation,
   CellarTransferRecord,
+  CertificationRecord,
   GrapeIntakeRecord,
   SalesDispatchRecord,
   SalesOrderRecord,
@@ -73,6 +74,9 @@ const input = {
   salesDispatches: [
     { id: 'sale-1', date: '2027-03-01', customerName: 'Restaurant', lotId: 'BLEND-1', lotName: 'Assembly: Lot A / Lot B', locationId: 'loc-1', locationName: 'Main Warehouse', bottles: 100, pricePerBottle: 20, currency: 'GEL', revenue: 2000, cogs: 500, grossProfit: 1500, marginPct: 75, stockMovementId: 'mov-out', operator: 'Nino' },
   ] as SalesDispatchRecord[],
+  certificationRecords: [
+    { id: 'cert-1', lotId: 'BLEND-1', productType: 'wine', samplePrepared: true, sampleDate: '2027-02-10', labProtocolUploaded: true, applicationStatus: 'approved', balanceCheckStatus: 'passed', organolepticResult: 'passed', certificateNumber: 'CERT-1', issueDate: '2027-02-20', purpose: 'export' },
+  ] as CertificationRecord[],
   asOfDate: '2027-02-20',
 };
 
@@ -96,11 +100,12 @@ describe('wine lineage graph', () => {
     expect(connectedLotIds(graph, 'BLEND-1')).toEqual(['BLEND-1', 'LOT-A', 'LOT-B']);
   });
 
-  it('includes downstream bottling, storage, reservation, and dispatch nodes', () => {
+  it('includes downstream bottling, storage, reservation, dispatch, and certification nodes', () => {
     const graph = buildLotLineageGraph(input, 'LOT-A');
-    expect(graph.nodes.map(n => n.type)).toEqual(expect.arrayContaining(['bottling', 'storage', 'reservation', 'dispatch']));
+    expect(graph.nodes.map(n => n.type)).toEqual(expect.arrayContaining(['bottling', 'storage', 'reservation', 'dispatch', 'certification']));
     expect(graph.edges).toContainEqual(expect.objectContaining({ from: 'lot:BLEND-1', to: 'bottling:bot-1', type: 'bottled' }));
     expect(graph.edges).toContainEqual(expect.objectContaining({ from: 'bottling:bot-1', to: 'storage:loc-1:BLEND-1', type: 'stored' }));
+    expect(graph.edges).toContainEqual(expect.objectContaining({ from: 'lot:BLEND-1', to: 'cert:cert-1', type: 'certified' }));
   });
 
   it('lays out the graph horizontally and detects cycles defensively', () => {

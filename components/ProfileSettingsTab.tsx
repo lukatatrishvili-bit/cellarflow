@@ -1,7 +1,17 @@
 import React from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
-import type { UserProfile, CompanyProfile } from '../lib/wineryState';
+import type { UserProfile, CompanyProfile, CrmLeadRecord } from '../lib/wineryState';
+import { GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
+import { crmLeadContactLine } from '../lib/crm';
+import {
+  directoryRecordToCrmLead,
+  directoryRecordLabel,
+  importWineryDirectoryRecord,
+  parseWineryDirectoryText,
+  type WineryCrmLead,
+  type WineryDirectoryRecord
+} from '../lib/wineryDirectoryImport';
 
 interface ProfileSettingsTabProps {
   lang: Language;
@@ -12,6 +22,12 @@ interface ProfileSettingsTabProps {
   setToastMessage: (val: string | null) => void;
   onClearAllData?: () => void;
   onUpdateProfile?: (updates: Partial<UserProfile>) => Promise<void>;
+  crmLeads?: CrmLeadRecord[];
+  onSaveCrmLead?: (lead: WineryCrmLead) => void;
+  onUpdateCrmLeadStatus?: (leadId: string, status: CrmLeadRecord['status']) => void;
+  onDeleteCrmLead?: (leadId: string) => void;
+  canManageProfile?: boolean;
+  canManageCrm?: boolean;
   organizations?: { id: string; name: string; role: string; isActive: boolean }[];
   onSwitchOrganization?: (orgId: string) => Promise<boolean>;
   manualLowPower: boolean;
@@ -27,6 +43,12 @@ export default function ProfileSettingsTab({
   setToastMessage,
   onClearAllData,
   onUpdateProfile,
+  crmLeads = [],
+  onSaveCrmLead,
+  onUpdateCrmLeadStatus,
+  onDeleteCrmLead,
+  canManageProfile = true,
+  canManageCrm = true,
   organizations,
   onSwitchOrganization,
   manualLowPower,
@@ -40,8 +62,16 @@ export default function ProfileSettingsTab({
   const [invitingEmail, setInvitingEmail] = React.useState('');
   const [invitingRole, setInvitingRole] = React.useState('Winemaker');
   const [inviteResult, setInviteResult] = React.useState<string | null>(null);
+  const [profileFormVersion, setProfileFormVersion] = React.useState(0);
+  const [directoryText, setDirectoryText] = React.useState('');
+  const [directoryRecords, setDirectoryRecords] = React.useState<WineryDirectoryRecord[]>([]);
+  const [selectedDirectoryId, setSelectedDirectoryId] = React.useState('');
+  const [directoryMessage, setDirectoryMessage] = React.useState<string | null>(null);
 
   const activeOrg = organizations?.find(o => o.isActive);
+  const selectedDirectoryRecord = directoryRecords.find(record => record.directoryId === selectedDirectoryId) || directoryRecords[0] || null;
+  const selectedLead = selectedDirectoryRecord ? directoryRecordToCrmLead(selectedDirectoryRecord, 'manual_directory_import') : null;
+  const savedLeadIds = new Set(crmLeads.map(lead => lead.id));
 
   const fetchMembers = async () => {
     if (!currentUser) return;
@@ -91,6 +121,39 @@ export default function ProfileSettingsTab({
     }
   };
 
+  const handleParseDirectory = () => {
+    const parsed = parseWineryDirectoryText(directoryText);
+    setDirectoryRecords(parsed.records);
+    setSelectedDirectoryId(parsed.records[0]?.directoryId || '');
+    setDirectoryMessage(parsed.records.length > 0
+      ? `${parsed.records.length} directory record(s) ready. ${parsed.warnings.join(' ')}`
+      : parsed.warnings.join(' '));
+  };
+
+  const handleApplyDirectory = () => {
+    if (!canManageProfile) {
+      setDirectoryMessage('Your role can view directory data but cannot update the company profile.');
+      return;
+    }
+    const selected = selectedDirectoryRecord;
+    if (!selected) {
+      setDirectoryMessage('Parse a directory row before applying it.');
+      return;
+    }
+    const imported = importWineryDirectoryRecord(selected, companyProfile);
+    setCompanyProfile(imported.profile);
+    setProfileFormVersion(version => version + 1);
+    const warningText = imported.warnings.length > 0 ? ` ${imported.warnings.join(' ')}` : '';
+    setDirectoryMessage(`Imported ${imported.changes.length} profile field(s).${warningText}`);
+    setToastMessage(lang === 'ka' ? 'Directory profile imported.' : 'Directory profile imported.');
+  };
+
+  const handleSaveLead = () => {
+    if (!selectedLead || !onSaveCrmLead) return;
+    onSaveCrmLead(selectedLead);
+    setDirectoryMessage(`Saved CRM lead: ${selectedLead.displayName}`);
+  };
+
 
   return (
     <main className="flex-1 max-w-4xl w-full mx-auto p-4 lg:p-6 flex flex-col space-y-6 font-sans text-stone-700 text-xs animate-fade-in">
@@ -104,16 +167,29 @@ export default function ProfileSettingsTab({
           </p>
         </div>
 
-        <form onSubmit={(e) => {
+        <form key={profileFormVersion} onSubmit={(e) => {
           e.preventDefault();
+          if (!canManageProfile) {
+            setToastMessage('Your role can view profile settings but cannot save changes.');
+            return;
+          }
           const fd = new FormData(e.currentTarget);
           setCompanyProfile({
+            ...companyProfile,
             companyName: fd.get('companyName') as string,
             wineryName: fd.get('wineryName') as string,
             country: fd.get('country') as string,
             region: fd.get('region') as string,
             municipality: fd.get('municipality') as string,
             address: fd.get('address') as string,
+            identificationCode: fd.get('identificationCode') as string,
+            wineAgencyRegistrationCode: fd.get('wineAgencyRegistrationCode') as string,
+            legalAddress: (fd.get('legalAddress') as string) || (fd.get('address') as string),
+            factualAddress: (fd.get('factualAddress') as string) || (fd.get('address') as string),
+            certificateContactPerson: fd.get('certificateContactPerson') as string,
+            certificatePhone: fd.get('certificatePhone') as string,
+            certificateEmail: fd.get('certificateEmail') as string,
+            producerRegistrationNotes: fd.get('producerRegistrationNotes') as string,
             contactEmail: fd.get('contactEmail') as string,
             phone: fd.get('phone') as string,
             website: fd.get('website') as string,
@@ -140,6 +216,118 @@ export default function ProfileSettingsTab({
           
           setToastMessage(lang === 'ka' ? 'კონფიგურაცია წარმატებით შეინახა!' : 'Configurations saved successfully!');
         }} className="space-y-4">
+          <datalist id="georgian-region-options">
+            {GEORGIAN_WINE_REGIONS.map(region => (
+              <option key={region.id} value={region.name} />
+            ))}
+          </datalist>
+
+          <div className="bg-stone-50/70 border border-[#e8dfd5] p-4 rounded-xl space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#c5a059] pl-2 font-black tracking-wider text-slate-500">
+                Winery Directory Import
+              </h4>
+              <span className="text-[9px] font-mono text-stone-400">{directoryRecords.length} parsed</span>
+            </div>
+            <textarea
+              value={directoryText}
+              onChange={(e) => setDirectoryText(e.target.value)}
+              rows={3}
+              placeholder="Company,Winery,Identification Code,Wine Agency Code,Region,Municipality,Address,Email,Phone"
+              className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-[10.5px] font-mono outline-none resize-y"
+            />
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2 items-center">
+              <select
+                value={selectedDirectoryId}
+                onChange={(e) => setSelectedDirectoryId(e.target.value)}
+                className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-[10.5px] font-semibold outline-none"
+              >
+                <option value="">No parsed record selected</option>
+                {directoryRecords.map(record => (
+                  <option key={record.directoryId} value={record.directoryId}>
+                    {directoryRecordLabel(record)}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleParseDirectory}
+                className="px-3 py-2 border border-[#d8c6b4] bg-white hover:bg-stone-100 text-[#4e0e15] text-[10px] font-mono font-bold rounded cursor-pointer"
+              >
+                Parse
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyDirectory}
+                disabled={directoryRecords.length === 0 || !canManageProfile}
+                className="px-3 py-2 bg-[#4e0e15] hover:bg-[#801323] text-white text-[10px] font-mono font-bold rounded cursor-pointer disabled:opacity-50"
+              >
+                Apply
+              </button>
+            </div>
+            {directoryMessage && (
+              <p className="text-[10px] font-mono text-stone-500 leading-relaxed">
+                {directoryMessage}
+              </p>
+            )}
+            {selectedLead && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-[10.5px] leading-relaxed text-emerald-950">
+                <div className="font-mono text-[9px] font-black uppercase tracking-wider text-emerald-800">
+                  CRM Lead Preview
+                </div>
+                <div className="mt-1 font-bold">{selectedLead.displayName}</div>
+                <div className="mt-1 text-emerald-900/80">
+                  {[selectedLead.contactEmail, selectedLead.phone, selectedLead.website].filter(Boolean).join(' · ') || 'No contact details in row'}
+                </div>
+                <div className="mt-1 font-mono text-[9px] text-emerald-800">
+                  {selectedLead.tags.join(', ')}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveLead}
+                  disabled={!onSaveCrmLead || !canManageCrm || savedLeadIds.has(selectedLead.id)}
+                  className="mt-2 px-2.5 py-1 rounded bg-emerald-800 text-white text-[9px] font-mono font-black uppercase disabled:opacity-50"
+                >
+                  {savedLeadIds.has(selectedLead.id) ? 'Saved lead' : 'Save lead'}
+                </button>
+              </div>
+            )}
+            {crmLeads.length > 0 && (
+              <div className="rounded-lg border border-[#e8dfd5] bg-white p-3">
+                <div className="text-[9px] font-mono font-black uppercase tracking-wider text-stone-500">
+                  Saved CRM Leads
+                </div>
+                <div className="mt-2 space-y-2">
+                  {crmLeads.slice(0, 4).map(lead => (
+                    <div key={lead.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 text-[10.5px]">
+                      <div className="min-w-0">
+                        <div className="truncate font-bold text-stone-800">{lead.displayName}</div>
+                        <div className="truncate text-stone-500">{crmLeadContactLine(lead)}</div>
+                      </div>
+                      <select
+                        value={lead.status}
+                        disabled={!canManageCrm || !onUpdateCrmLeadStatus}
+                        onChange={event => onUpdateCrmLeadStatus?.(lead.id, event.target.value as CrmLeadRecord['status'])}
+                        className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[8.5px] font-mono font-black uppercase text-stone-600 disabled:opacity-50"
+                      >
+                        {['new', 'contacted', 'qualified', 'customer', 'archived'].map(status => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!canManageCrm || !onDeleteCrmLead}
+                        onClick={() => onDeleteCrmLead?.(lead.id)}
+                        className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-[8.5px] font-mono font-black uppercase text-rose-700 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           
           <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#4e0e15] pl-2 font-black tracking-wider text-slate-400">
             {lang === 'ka' ? 'საწარმოს ოფიციალური რეკვიზიტები' : 'Agricultural Corporate Enterprise Specifications'}
@@ -155,6 +343,41 @@ export default function ProfileSettingsTab({
             </div>
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'საიდენტიფიკაციო კოდი' : 'Company identification code'}</label>
+              <input type="text" name="identificationCode" defaultValue={companyProfile.identificationCode || ''} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+            </div>
+            <div>
+              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'ღვინის სააგენტოს რეგ. კოდი' : 'Wine Agency registration code'}</label>
+              <input type="text" name="wineAgencyRegistrationCode" defaultValue={companyProfile.wineAgencyRegistrationCode || ''} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+            </div>
+            <div>
+              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'იურიდიული მისამართი' : 'Legal address'}</label>
+              <input type="text" name="legalAddress" defaultValue={companyProfile.legalAddress || companyProfile.address || ''} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+            </div>
+            <div>
+              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'ფაქტობრივი მისამართი' : 'Factual address'}</label>
+              <input type="text" name="factualAddress" defaultValue={companyProfile.factualAddress || companyProfile.address || ''} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+            </div>
+            <div>
+              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'სერტიფიკატის საკონტაქტო პირი' : 'Certificate contact person'}</label>
+              <input type="text" name="certificateContactPerson" defaultValue={companyProfile.certificateContactPerson || ''} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+            </div>
+            <div>
+              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'სერტიფიკატის ტელ./ელფოსტა' : 'Certificate phone / email'}</label>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="text" name="certificatePhone" defaultValue={companyProfile.certificatePhone || companyProfile.phone || ''} placeholder={lang === 'ka' ? 'ტელეფონი' : 'Phone'} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+                <input type="email" name="certificateEmail" defaultValue={companyProfile.certificateEmail || companyProfile.contactEmail || ''} placeholder={lang === 'ka' ? 'ელფოსტა' : 'Email'} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'მწარმოებლის / რეგისტრაციის შენიშვნები' : 'Producer / registration notes'}</label>
+            <input type="text" name="producerRegistrationNotes" defaultValue={companyProfile.producerRegistrationNotes || ''} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-semibold" />
+          </div>
+
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{t.settings_country || 'Country'}</label>
@@ -162,7 +385,7 @@ export default function ProfileSettingsTab({
             </div>
             <div>
               <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{t.settings_region || 'PDO Region'}</label>
-              <input type="text" name="region" defaultValue={companyProfile.region} className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none" />
+              <input type="text" name="region" defaultValue={companyProfile.region} list="georgian-region-options" className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none" />
             </div>
             <div>
               <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{t.settings_district || 'District'}</label>
@@ -370,7 +593,8 @@ export default function ProfileSettingsTab({
 
           <button 
             type="submit"
-            className="w-full bg-emerald-850 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors"
+            disabled={!canManageProfile}
+            className="w-full bg-emerald-850 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {t.settings_save || 'Save Configurations'}
           </button>

@@ -11,6 +11,7 @@ import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
 import { usePerformanceManager } from '../hooks/usePerformanceManager';
 import { useFocusTrap } from '../components/useFocusTrap';
+import { canAccess, type PermissionModule } from '../server/permissions';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -21,6 +22,7 @@ const LotPassport = lazyRetry(() => import('../components/LotPassport'));
 const VaziModule = lazyRetry(() => import('../components/VaziModule'));
 const WineryDashboardTab = lazyRetry(() => import('../components/WineryDashboardTab'));
 const TanksVessels = lazyRetry(() => import('../components/TanksVessels'));
+const QvevriPassportTab = lazyRetry(() => import('../components/QvevriPassportTab'));
 const GrapeReceivingTab = lazyRetry(() => import('../components/GrapeReceivingTab'));
 const WineLotsTrace = lazyRetry(() => import('../components/WineLotsTrace'));
 const LotLineageGraphTab = lazyRetry(() => import('../components/LotLineageGraphTab'));
@@ -35,6 +37,7 @@ const AiWinemaker = lazyRetry(() => import('../components/AiWinemaker'));
 const TasksTab = lazyRetry(() => import('../components/TasksTab'));
 const NotesTab = lazyRetry(() => import('../components/NotesTab'));
 const OfficialDocsTab = lazyRetry(() => import('../components/OfficialDocsTab'));
+const CertificationManagerTab = lazyRetry(() => import('../components/CertificationManagerTab'));
 const CostsTab = lazyRetry(() => import('../components/CostsTab'));
 const StorageTab = lazyRetry(() => import('../components/StorageTab'));
 const SalesDispatchTab = lazyRetry(() => import('../components/SalesDispatchTab'));
@@ -86,7 +89,8 @@ import {
   Moon,
   RefreshCw,
   Search,
-  PlugZap
+  PlugZap,
+  BadgeCheck
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -95,6 +99,43 @@ function ModuleLoader() {
       <Loader2 className="w-6 h-6 animate-spin text-[#4e0e15]" />
     </div>
   );
+}
+
+function permissionModuleFor(moduleId: string, tabId?: string): PermissionModule {
+  if (moduleId === 'gvino') {
+    switch (tabId) {
+      case 'intake': return 'grape_intake';
+      case 'lots':
+      case 'lineage': return 'lots';
+      case 'vessels':
+      case 'qvevri': return 'vessels';
+      case 'operations': return 'operations';
+      case 'transfers': return 'transfers';
+      case 'fermentation': return 'fermentation';
+      case 'labs':
+      case 'calculators': return 'lab';
+      case 'bottling': return 'bottling';
+      case 'inventory': return 'inventory';
+      case 'tasks':
+      case 'ai': return 'tasks';
+      case 'notes': return 'notes';
+      default: return 'reports';
+    }
+  }
+  const moduleMap: Record<string, PermissionModule> = {
+    portal: 'reports',
+    vazi: 'vineyard',
+    docs: 'official_docs',
+    certification: 'certification',
+    audit: 'audit',
+    costs: 'costs',
+    storage: 'storage',
+    sales: 'sales',
+    analytics: 'reports',
+    integrations: 'company_profile',
+    settings: 'company_profile',
+  };
+  return moduleMap[moduleId] || 'reports';
 }
 
 export default function App() {
@@ -355,6 +396,7 @@ export default function App() {
       label: state.lang === 'ka' ? 'მარანი' : 'Cellar work',
       tabs: [
         { id: 'vessels', label: t.tanks, icon: Container },
+        { id: 'qvevri', label: state.lang === 'ka' ? 'ქვევრის პასპორტი' : 'Qvevri Passport', icon: FileText },
         { id: 'operations', label: t.cellar_operations || 'Operations', icon: Workflow },
         { id: 'transfers', label: t.transfers, icon: GitCommit },
         { id: 'fermentation', label: t.fermentation, icon: Activity },
@@ -373,6 +415,10 @@ export default function App() {
       ],
     },
   ];
+  const canViewModule = (moduleId: string, tabId?: string) => canAccess(state.currentUser.role, permissionModuleFor(moduleId, tabId), 'view');
+  const activePermissionModule = permissionModuleFor(state.activeModule, state.activeTab);
+  const canManageCurrentArea = canAccess(state.currentUser.role, activePermissionModule, 'create')
+    || canAccess(state.currentUser.role, activePermissionModule, 'update');
   const moduleGroups = [
     {
       id: 'dashboard',
@@ -416,6 +462,7 @@ export default function App() {
       primary: 'docs',
       modules: [
         { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
+        { id: 'certification', label: state.lang === 'ka' ? 'Certification' : 'Certification', icon: BadgeCheck },
         { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
       ],
     },
@@ -429,13 +476,24 @@ export default function App() {
         { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList },
       ],
     },
-  ].filter(group => {
+  ].map(group => {
+    const modules = group.modules.filter(mod => canViewModule(mod.id));
+    const primary = modules.some(mod => mod.id === group.primary) ? group.primary : modules[0]?.id || group.primary;
+    return { ...group, modules, primary };
+  }).filter(group => {
     const enabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
     if (group.requires === 'vazi' && !enabledModules.includes('vazi')) return false;
     if (group.requires === 'gvino' && !enabledModules.includes('gvino')) return false;
+    if (group.modules.length === 0) return false;
     return true;
   });
   const activeModuleGroup = moduleGroups.find(group => group.modules.some(mod => mod.id === state.activeModule)) || moduleGroups[0];
+  useEffect(() => {
+    if (!state.isLoggedIn) return;
+    if (canViewModule(state.activeModule, state.activeTab)) return;
+    state.setActiveModule((moduleGroups[0]?.primary || 'portal') as any);
+  }, [state.isLoggedIn, state.currentUser.role, state.activeModule, state.activeTab]);
+
   const switchModule = (moduleId: string) => {
     state.setActiveModule(moduleId as any);
     if (moduleId === 'gvino') {
@@ -569,6 +627,26 @@ export default function App() {
               labLogs={state.labLogs.filter(l => l.lotId === passportLot.id)}
               company={state.companyProfile}
               generatedBy={state.currentUser.fullName}
+              blocks={state.blocks}
+              harvests={state.harvests}
+              grapeIntakes={state.grapeIntakes}
+              vessels={state.vessels}
+              cellarOps={state.cellarOps}
+              transfers={state.transfers}
+              bottlingRuns={state.bottlingRuns}
+              storageLocations={state.storageLocations}
+              stockMovements={state.stockMovements}
+              salesOrders={state.salesOrders}
+              salesDispatches={state.salesDispatches}
+              certificationRecords={state.certificationRecords}
+              attachments={state.attachments}
+              auditLogs={state.auditLogs}
+              onOpenLineage={(lotId) => {
+                setLineageFocusLotId(lotId);
+                state.setPassportLotId(null);
+                state.setActiveModule('gvino');
+                state.setActiveTab('lineage');
+              }}
               onClose={() => state.setPassportLotId(null)}
             />
           </Suspense>
@@ -799,6 +877,11 @@ export default function App() {
             </div>
           )}
         </nav>
+      )}
+      {state.isLoggedIn && !canManageCurrentArea && (
+        <div className="relative max-w-[1720px] w-full mx-auto mt-2 px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[10px] font-mono font-bold uppercase tracking-wide text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          View-only access in this area: {activePermissionModule.replace(/_/g, ' ')}
+        </div>
       )}
       </motion.div>
 
@@ -1377,12 +1460,15 @@ export default function App() {
               sprays={state.sprays}
               scoutings={state.scoutings}
               soilRecords={state.soilRecords}
+              vineyardProjects={state.vineyardProjects}
               samplings={state.samplings}
               harvests={state.harvests}
               irrigationLogs={state.irrigationLogs}
               fertilizerLogs={state.fertilizerLogs}
               onAddBlock={state.handleAddBlock}
               onUpdateBlock={state.handleUpdateBlock}
+              onAddVineyardProject={state.handleAddVineyardProject}
+              onUpdateVineyardProject={state.handleUpdateVineyardProject}
               onAddPhenologyLog={state.handleAddPhenologyLog}
               onAddSprayRecord={state.handleAddSprayRecord}
               onAddScoutingRecord={state.handleAddScoutingRecord}
@@ -1441,6 +1527,14 @@ export default function App() {
             setToastMessage={state.setToastMessage}
             onClearAllData={state.clearAllData}
             onUpdateProfile={state.handleUpdateProfile}
+            crmLeads={state.crmLeads}
+            onSaveCrmLead={state.handleSaveCrmLead}
+            onUpdateCrmLeadStatus={state.handleUpdateCrmLeadStatus}
+            onDeleteCrmLead={state.handleDeleteCrmLead}
+            canManageProfile={canAccess(state.currentUser.role, 'company_profile', 'update')}
+            canManageCrm={canAccess(state.currentUser.role, 'sales', 'create') || canAccess(state.currentUser.role, 'sales', 'update')}
+            organizations={state.organizations}
+            onSwitchOrganization={state.handleSwitchOrganization}
             manualLowPower={perf.manualLowPower}
             onToggleLowPower={perf.toggleManualLowPower}
           />
@@ -1450,6 +1544,26 @@ export default function App() {
           <AuditTrailTab
             lang={state.lang}
             auditLogs={state.auditLogs}
+          />
+        </Suspense>
+      ) : state.activeModule === 'certification' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <CertificationManagerTab
+            lang={state.lang}
+            lots={state.lots}
+            blocks={state.blocks}
+            grapeIntakes={state.grapeIntakes}
+            labLogs={state.labLogs}
+            bottlingRuns={state.bottlingRuns}
+            certificationRecords={state.certificationRecords}
+            attachments={state.attachments}
+            onUpdateCertificationRecords={state.setCertificationRecords}
+            onUpdateLots={state.setLots}
+            onAddAttachment={state.handleAddAttachment}
+            onDeleteAttachment={state.handleDeleteAttachment}
+            canManageCertification={canAccess(state.currentUser.role, 'certification', 'update') || canAccess(state.currentUser.role, 'certification', 'create')}
+            setActiveModule={state.setActiveModule}
+            setToastMessage={state.setToastMessage}
           />
         </Suspense>
       ) : state.activeModule === 'costs' ? (
@@ -1534,6 +1648,10 @@ export default function App() {
             cellarOps={state.cellarOps}
             bottlingRuns={state.bottlingRuns}
             salesDispatches={state.salesDispatches}
+            attachments={state.attachments}
+            onAddAttachment={state.handleAddAttachment}
+            onDeleteAttachment={state.handleDeleteAttachment}
+            canManageOfficialDocs={canAccess(state.currentUser.role, 'official_docs', 'create') || canAccess(state.currentUser.role, 'official_docs', 'update')}
           />
         </Suspense>
       ) : (
@@ -1707,6 +1825,23 @@ export default function App() {
               </div>
             )}
 
+            {/* B1. QVEVRI PASSPORT */}
+            {state.activeTab === 'qvevri' && (
+              <QvevriPassportTab
+                lang={state.lang}
+                vessels={state.vessels}
+                lots={state.lots}
+                fermentationLogs={state.fermLogs}
+                cellarOps={state.cellarOps}
+                certificationRecords={state.certificationRecords}
+                onUpdateVessels={state.setVessels}
+                setActiveTab={state.setActiveTab}
+                setSelectedTankId={state.setSelectedTankId}
+                setToastMessage={state.setToastMessage}
+                currentUserName={state.currentUser.fullName}
+              />
+            )}
+
             {/* B2. GRAPE RECEIVING / INTAKE */}
             {state.activeTab === 'intake' && (
               <GrapeReceivingTab
@@ -1758,6 +1893,7 @@ export default function App() {
                 stockMovements={state.stockMovements}
                 salesOrders={state.salesOrders}
                 salesDispatches={state.salesDispatches}
+                certificationRecords={state.certificationRecords}
                 focusLotId={lineageFocusLotId}
               />
             )}
@@ -1912,6 +2048,9 @@ export default function App() {
                     })
                   }}
                   onAddNewTask={state.handleAddNewTask}
+                  draftQueue={state.aiDrafts}
+                  onSaveDraftActions={state.handleSaveAiDraftActions}
+                  onUpdateDraftStatus={state.handleUpdateAiDraftStatus}
                 />
               </Suspense>
             )}
@@ -2531,6 +2670,9 @@ export default function App() {
                           })
                         }}
                         onAddNewTask={state.handleAddNewTask}
+                        draftQueue={state.aiDrafts}
+                        onSaveDraftActions={state.handleSaveAiDraftActions}
+                        onUpdateDraftStatus={state.handleUpdateAiDraftStatus}
                       />
                     </Suspense>
                   </div>

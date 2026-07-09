@@ -219,6 +219,7 @@ export interface UserDataState {
   tasks: any[];
   notes: any[];
   blocks: any[];
+  vineyardProjects: any[];
   phenologyLogs: any[];
   sprays: any[];
   scoutings: any[];
@@ -239,6 +240,10 @@ export interface UserDataState {
   salesDispatches: any[];
   salesOrders: any[];
   supplierPayments: any[];
+  certificationRecords: any[];
+  attachments: any[];
+  crmLeads: any[];
+  aiDrafts: any[];
   integrationHub?: IntegrationHubState;
   companyProfile: any;
 }
@@ -261,6 +266,7 @@ export function createEmptyUserData(): UserDataState {
     tasks: [],
     notes: [],
     blocks: [],
+    vineyardProjects: [],
     phenologyLogs: [],
     sprays: [],
     scoutings: [],
@@ -281,6 +287,10 @@ export function createEmptyUserData(): UserDataState {
     salesDispatches: [],
     salesOrders: [],
     supplierPayments: [],
+    certificationRecords: [],
+    attachments: [],
+    crmLeads: [],
+    aiDrafts: [],
     integrationHub: createEmptyIntegrationHubState(),
     companyProfile: {
       companyName: '',
@@ -289,6 +299,14 @@ export function createEmptyUserData(): UserDataState {
       region: '',
       municipality: '',
       address: '',
+      identificationCode: '',
+      wineAgencyRegistrationCode: '',
+      legalAddress: '',
+      factualAddress: '',
+      certificateContactPerson: '',
+      certificatePhone: '',
+      certificateEmail: '',
+      producerRegistrationNotes: '',
       contactEmail: '',
       phone: '',
       website: '',
@@ -311,6 +329,7 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     tasks: Array.isArray(data.tasks) ? data.tasks : [],
     notes: Array.isArray(data.notes) ? data.notes : [],
     blocks: Array.isArray(data.blocks) ? data.blocks : [],
+    vineyardProjects: Array.isArray(data.vineyardProjects) ? data.vineyardProjects : [],
     phenologyLogs: Array.isArray(data.phenologyLogs) ? data.phenologyLogs : [],
     sprays: Array.isArray(data.sprays) ? data.sprays : [],
     scoutings: Array.isArray(data.scoutings) ? data.scoutings : [],
@@ -331,6 +350,10 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     salesDispatches: Array.isArray(data.salesDispatches) ? data.salesDispatches : [],
     salesOrders: Array.isArray(data.salesOrders) ? data.salesOrders : [],
     supplierPayments: Array.isArray(data.supplierPayments) ? data.supplierPayments : [],
+    certificationRecords: Array.isArray(data.certificationRecords) ? data.certificationRecords : [],
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
+    crmLeads: Array.isArray(data.crmLeads) ? data.crmLeads : [],
+    aiDrafts: Array.isArray(data.aiDrafts) ? data.aiDrafts : [],
     integrationHub: ensureIntegrationHubState(data.integrationHub),
     companyProfile: data.companyProfile && typeof data.companyProfile === 'object'
       ? { ...empty.companyProfile, ...data.companyProfile }
@@ -1323,6 +1346,26 @@ export async function saveOrganizationData(
         // 1. Double-write vessels
         for (const vessel of normalizedData.vessels || []) {
           if (!vessel.id) continue;
+          const qvevriFields = {
+            qvevriNumber: vessel.qvevriNumber || null,
+            maraniLocation: vessel.maraniLocation || null,
+            buried: vessel.buried !== undefined && vessel.buried !== null ? Boolean(vessel.buried) : null,
+            lastWashingDate: vessel.lastWashingDate || null,
+            limeWashStatus: vessel.limeWashStatus || null,
+            waxingStatus: vessel.waxingStatus || null,
+            inspectionNotes: vessel.inspectionNotes || null,
+            fillingDate: vessel.fillingDate || null,
+            grapeVariety: vessel.grapeVariety || null,
+            chachaPercentage: vessel.chachaPercentage !== undefined && vessel.chachaPercentage !== null ? Number(vessel.chachaPercentage) : null,
+            stemInclusion: vessel.stemInclusion !== undefined && vessel.stemInclusion !== null ? Boolean(vessel.stemInclusion) : null,
+            mixingFrequency: vessel.mixingFrequency || null,
+            dailyMixingLog: jsonForPrisma(Array.isArray(vessel.dailyMixingLog) ? vessel.dailyMixingLog : []),
+            sealingDate: vessel.sealingDate || null,
+            openingDate: vessel.openingDate || null,
+            skinContactDurationDays: vessel.skinContactDurationDays !== undefined && vessel.skinContactDurationDays !== null ? Number(vessel.skinContactDurationDays) : null,
+            firstRackingDate: vessel.firstRackingDate || null,
+            sanitationHistory: jsonForPrisma(Array.isArray(vessel.sanitationHistory) ? vessel.sanitationHistory : []),
+          };
           await prisma.vessel.upsert({
             where: { id: vessel.id },
             update: {
@@ -1342,6 +1385,7 @@ export async function saveOrganizationData(
               yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
               lastSealedDate: vessel.lastSealedDate || null,
               soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
+              ...qvevriFields,
             },
             create: {
               id: vessel.id,
@@ -1362,6 +1406,7 @@ export async function saveOrganizationData(
               yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
               lastSealedDate: vessel.lastSealedDate || null,
               soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
+              ...qvevriFields,
             }
           });
         }

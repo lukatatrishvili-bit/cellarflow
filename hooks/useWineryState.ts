@@ -15,6 +15,7 @@ import type {
   IrrigationRecord,
   FertilizationRecord,
   SoilAnalysisRecord,
+  VineyardPlantingProject,
   GrapeSamplingRecord,
   HarvestRecord,
   MaraniOSAuditLog,
@@ -22,11 +23,14 @@ import type {
   CompanyProfile,
   BottlingRunRecord,
   CellarTransferRecord,
+  CertificationRecord,
   SalesDispatchRecord,
   SalesOrderRecord,
   SupplierPayment,
   GrapeIntakeRecord,
   CellarOperation,
+  DocumentAttachment,
+  CrmLeadRecord,
 } from '../lib/wineryState';
 import { CELLAR_OPERATIONS, deductStock, estimateMustVolumeL } from '../lib/wineryOperations';
 import { signAuditEntries } from '../lib/auditHash';
@@ -34,6 +38,16 @@ import type { CostEntry } from '../lib/costing';
 import { grapeIntakeCostEntry, materialCostEntryFromOperation } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
 import type { StorageLocation, StockMovement } from '../lib/storage';
+import { PDO_RULES } from '../lib/pdo';
+import { createDocumentAttachmentRecord, type DocumentAttachmentInput } from '../lib/attachments';
+import { createCrmLeadRecord, upsertCrmLeadRecord, type CrmLeadRecordInput } from '../lib/crm';
+import {
+  createAiDraftQueueItems,
+  upsertAiDraftQueueItems,
+  type AiDraftAction,
+  type AiDraftQueueItem,
+  type AiDraftQueueStatus,
+} from '../lib/aiDraftActions';
 
 export interface CellarNote {
   id: string;
@@ -66,6 +80,26 @@ interface CompleteRegistrationData {
   enabledModules: string[];
   enabledWidgets?: string[];
 }
+
+const cleanText = (value: unknown): string | undefined => {
+  const text = String(value || '').trim();
+  return text.length > 0 ? text : undefined;
+};
+
+const textMatches = (left: string, right: string): boolean => {
+  const a = left.trim().toLowerCase();
+  const b = right.trim().toLowerCase();
+  return Boolean(a && b) && (a.includes(b) || b.includes(a));
+};
+
+const inferPdoClassification = (microzone: string | undefined): WineLot['classification'] | undefined => {
+  if (!microzone) return undefined;
+  return PDO_RULES.some(rule => rule.microzones.some(zone => textMatches(zone, microzone))) ? 'PDO' : undefined;
+};
+
+const inferOriginProofStatus = (...values: Array<string | undefined>): WineLot['originProofStatus'] => {
+  return values.some(Boolean) ? 'partial' : 'missing';
+};
 
 const initialCellarNotes: CellarNote[] = [];
 
@@ -144,6 +178,14 @@ export function useWineryState() {
     region: '',
     municipality: '',
     address: '',
+    identificationCode: '',
+    wineAgencyRegistrationCode: '',
+    legalAddress: '',
+    factualAddress: '',
+    certificateContactPerson: '',
+    certificatePhone: '',
+    certificateEmail: '',
+    producerRegistrationNotes: '',
     contactEmail: '',
     phone: '',
     website: '',
@@ -151,7 +193,7 @@ export function useWineryState() {
     currency: 'GEL'
   });
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
+  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Datasets
@@ -165,6 +207,7 @@ export function useWineryState() {
 
   // Vazi Viticulture Datasets
   const [blocks, setBlocks] = useState<VineyardBlock[]>([]);
+  const [vineyardProjects, setVineyardProjects] = useState<VineyardPlantingProject[]>([]);
   const [phenologyLogs, setPhenologyLogs] = useState<PhenologyRecord[]>([]);
   const [sprays, setSprays] = useState<SprayRecord[]>([]);
   const [scoutings, setScoutings] = useState<ScoutingRecord[]>([]);
@@ -185,6 +228,10 @@ export function useWineryState() {
   const [salesDispatches, setSalesDispatches] = useState<SalesDispatchRecord[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrderRecord[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([]);
+  const [certificationRecords, setCertificationRecords] = useState<CertificationRecord[]>([]);
+  const [attachments, setAttachments] = useState<DocumentAttachment[]>([]);
+  const [crmLeads, setCrmLeads] = useState<CrmLeadRecord[]>([]);
+  const [aiDrafts, setAiDrafts] = useState<AiDraftQueueItem[]>([]);
 
   // Daily fermentation inputs
   const [logTankId, setLogTankId] = useState('');
@@ -270,6 +317,7 @@ export function useWineryState() {
     setSafe(setTasks, data.tasks, 'tasks', 'cf_tasks');
     setSafe(setNotesList, data.notes, 'notesList', 'cf_notes');
     setSafe(setBlocks, data.blocks, 'blocks', 'vinea_blocks');
+    setSafe(setVineyardProjects, data.vineyardProjects, 'vineyardProjects', 'vinea_projects');
     setSafe(setPhenologyLogs, data.phenologyLogs, 'phenologyLogs', 'vinea_phenology');
     setSafe(setSprays, data.sprays, 'sprays', 'vinea_sprays');
     setSafe(setScoutings, data.scoutings, 'scoutings', 'vinea_scoutings');
@@ -290,6 +338,10 @@ export function useWineryState() {
     setSafe(setSalesDispatches, data.salesDispatches, 'salesDispatches', 'cf_sales_dispatches');
     setSafe(setSalesOrders, data.salesOrders, 'salesOrders', 'cf_sales_orders');
     setSafe(setSupplierPayments, data.supplierPayments, 'supplierPayments', 'cf_supplier_payments');
+    setSafe(setCertificationRecords, data.certificationRecords, 'certificationRecords', 'cf_certification_records');
+    setSafe(setAttachments, data.attachments, 'attachments', 'cf_attachments');
+    setSafe(setCrmLeads, data.crmLeads, 'crmLeads', 'cf_crm_leads');
+    setSafe(setAiDrafts, data.aiDrafts, 'aiDrafts', 'cf_ai_drafts');
     setSafe(setCompanyProfile, data.companyProfile, 'companyProfile', 'vinea_company_profile');
     const syncedAt = new Date().toISOString();
     setLastSyncAt(syncedAt);
@@ -309,9 +361,9 @@ export function useWineryState() {
     try {
       const latestState = forcePayload || {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
-        blocks, phenologyLogs, sprays, scoutings, soilRecords,
+        blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
         companyProfile
       };
 
@@ -490,6 +542,7 @@ export function useWineryState() {
     localStorage.removeItem('cf_tasks');
     localStorage.removeItem('cf_notes');
     localStorage.removeItem('vinea_blocks');
+    localStorage.removeItem('vinea_projects');
     localStorage.removeItem('vinea_phenology');
     localStorage.removeItem('vinea_sprays');
     localStorage.removeItem('vinea_scoutings');
@@ -507,6 +560,10 @@ export function useWineryState() {
     localStorage.removeItem('cf_storage_movements');
     localStorage.removeItem('cf_sales_dispatches');
     localStorage.removeItem('cf_sales_orders');
+    localStorage.removeItem('cf_certification_records');
+    localStorage.removeItem('cf_attachments');
+    localStorage.removeItem('cf_crm_leads');
+    localStorage.removeItem('cf_ai_drafts');
     localStorage.removeItem('vinea_company_profile');
     localStorage.removeItem('vinea_deleted_ids');
     
@@ -519,6 +576,7 @@ export function useWineryState() {
     setTasks([]);
     setNotesList([]);
     setBlocks([]);
+    setVineyardProjects([]);
     setPhenologyLogs([]);
     setSprays([]);
     setScoutings([]);
@@ -539,6 +597,10 @@ export function useWineryState() {
     setSalesDispatches([]);
     setSalesOrders([]);
     setSupplierPayments([]);
+    setCertificationRecords([]);
+    setAttachments([]);
+    setCrmLeads([]);
+    setAiDrafts([]);
   };
 
   const handleAuthRegister = async (profileData: RegistrationProfileData) => {
@@ -566,9 +628,9 @@ export function useWineryState() {
         const hasOfflineChanges = SyncQueueManager.getDirtyCollections().size > 0;
         const initialDB = await SyncQueueManager.sync(hasOfflineChanges ? {
           vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
-          blocks, phenologyLogs, sprays, scoutings, soilRecords,
+          blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
           samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments,
+          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
           companyProfile
         } : {});
         if (initialDB) {
@@ -659,6 +721,7 @@ export function useWineryState() {
         localStorage.removeItem('cf_tasks');
         localStorage.removeItem('cf_notes');
         localStorage.removeItem('vinea_blocks');
+        localStorage.removeItem('vinea_projects');
         localStorage.removeItem('vinea_phenology');
         localStorage.removeItem('vinea_sprays');
         localStorage.removeItem('vinea_scoutings');
@@ -676,6 +739,10 @@ export function useWineryState() {
         localStorage.removeItem('cf_storage_movements');
         localStorage.removeItem('cf_sales_dispatches');
         localStorage.removeItem('cf_sales_orders');
+        localStorage.removeItem('cf_certification_records');
+        localStorage.removeItem('cf_attachments');
+        localStorage.removeItem('cf_crm_leads');
+        localStorage.removeItem('cf_ai_drafts');
         localStorage.removeItem('vinea_company_profile');
         localStorage.removeItem('vinea_deleted_ids');
 
@@ -742,8 +809,13 @@ export function useWineryState() {
       setSalesDispatches(parseCached('cf_sales_dispatches', defaults.initialSalesDispatches));
       setSalesOrders(parseCached('cf_sales_orders', defaults.initialSalesOrders));
       setSupplierPayments(parseCached('cf_supplier_payments', defaults.initialSupplierPayments));
+      setCertificationRecords(parseCached('cf_certification_records', defaults.initialCertificationRecords));
+      setAttachments(parseCached('cf_attachments', []));
+      setCrmLeads(parseCached('cf_crm_leads', []));
+      setAiDrafts(parseCached('cf_ai_drafts', []));
 
       setBlocks(parseCached('vinea_blocks', defaults.initialVineyardBlocks));
+      setVineyardProjects(parseCached('vinea_projects', defaults.initialVineyardPlantingProjects));
       setPhenologyLogs(parseCached('vinea_phenology', defaults.initialPhenologyRecords));
       setSprays(parseCached('vinea_sprays', defaults.initialSprayRecords));
       setScoutings(parseCached('vinea_scoutings', defaults.initialScoutingRecords));
@@ -930,6 +1002,7 @@ export function useWineryState() {
       tasks: setTasks,
       notesList: setNotesList,
       blocks: setBlocks,
+      vineyardProjects: setVineyardProjects,
       phenologyLogs: setPhenologyLogs,
       sprays: setSprays,
       scoutings: setScoutings,
@@ -941,7 +1014,11 @@ export function useWineryState() {
       auditLogs: setAuditLogs,
       salesDispatches: setSalesDispatches,
       salesOrders: setSalesOrders,
-      supplierPayments: setSupplierPayments
+      supplierPayments: setSupplierPayments,
+      certificationRecords: setCertificationRecords,
+      attachments: setAttachments,
+      crmLeads: setCrmLeads,
+      aiDrafts: setAiDrafts
     };
 
     const setter = setters[key];
@@ -990,9 +1067,9 @@ export function useWineryState() {
 
       const currentFullState = {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
-        blocks, phenologyLogs, sprays, scoutings, soilRecords,
+        blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
         companyProfile
       };
       
@@ -1021,6 +1098,10 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('salesDispatches', 'cf_sales_dispatches', salesDispatches); }, [salesDispatches, isClient]);
   useEffect(() => { handleCollectionUpdate('salesOrders', 'cf_sales_orders', salesOrders); }, [salesOrders, isClient]);
   useEffect(() => { handleCollectionUpdate('supplierPayments', 'cf_supplier_payments', supplierPayments); }, [supplierPayments, isClient]);
+  useEffect(() => { handleCollectionUpdate('certificationRecords', 'cf_certification_records', certificationRecords); }, [certificationRecords, isClient]);
+  useEffect(() => { handleCollectionUpdate('attachments', 'cf_attachments', attachments); }, [attachments, isClient]);
+  useEffect(() => { handleCollectionUpdate('crmLeads', 'cf_crm_leads', crmLeads); }, [crmLeads, isClient]);
+  useEffect(() => { handleCollectionUpdate('aiDrafts', 'cf_ai_drafts', aiDrafts); }, [aiDrafts, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
@@ -1029,6 +1110,7 @@ export function useWineryState() {
   useEffect(() => { if (isClient) localStorage.setItem('vinea_active_module', activeModule); }, [activeModule, isClient]);
 
   useEffect(() => { handleCollectionUpdate('blocks', 'vinea_blocks', blocks); }, [blocks, isClient]);
+  useEffect(() => { handleCollectionUpdate('vineyardProjects', 'vinea_projects', vineyardProjects); }, [vineyardProjects, isClient]);
   useEffect(() => { handleCollectionUpdate('phenologyLogs', 'vinea_phenology', phenologyLogs); }, [phenologyLogs, isClient]);
   useEffect(() => { handleCollectionUpdate('sprays', 'vinea_sprays', sprays); }, [sprays, isClient]);
   useEffect(() => { handleCollectionUpdate('scoutings', 'vinea_scoutings', scoutings); }, [scoutings, isClient]);
@@ -1098,6 +1180,15 @@ export function useWineryState() {
     setBlocks(prev => prev.map(b => b.id === id ? { ...b, ...updated } : b));
   };
 
+  const handleAddVineyardProject = (project: Omit<VineyardPlantingProject, 'id'>) => {
+    const id = sanitizeId(`vp-${Date.now()}`);
+    setVineyardProjects(prev => [...prev, { ...project, id }]);
+  };
+
+  const handleUpdateVineyardProject = (id: string, updated: Partial<VineyardPlantingProject>) => {
+    setVineyardProjects(prev => prev.map(project => project.id === id ? { ...project, ...updated } : project));
+  };
+
   const handleAddPhenologyLog = (log: Omit<PhenologyRecord, 'id'>) => {
     const id = `ph-${Date.now()}`;
     setPhenologyLogs(prev => [...prev, { ...log, id }]);
@@ -1148,7 +1239,13 @@ export function useWineryState() {
     const lotId = sanitizeId(rawLotId);
     const assocBlock = blocks.find(b => b.id === blockId);
     const lotName = `${variety} - ${assocBlock ? assocBlock.name : 'Ridge'} Crop`;
-    
+    const intendedAppellation = cleanText(assocBlock?.microzone);
+    const cadastralCode = cleanText(assocBlock?.cadastralCode);
+    const originDetails = [
+      cadastralCode ? `cadastre ${cadastralCode}` : '',
+      intendedAppellation ? `microzone ${intendedAppellation}` : '',
+      cleanText(assocBlock?.village) ? `village ${cleanText(assocBlock?.village)}` : '',
+    ].filter(Boolean).join(', ');
     const newLot: WineLot = {
       id: lotId,
       name: lotName,
@@ -1161,11 +1258,15 @@ export function useWineryState() {
       wineClass: 'red',
       stage: 'crushing',
       createdAt: harvestedDate,
+      intendedAppellation,
+      classification: inferPdoClassification(intendedAppellation),
+      originProofStatus: inferOriginProofStatus(cadastralCode, intendedAppellation, cleanText(assocBlock?.village)),
+      marketStatus: 'unknown',
       history: [
         {
           date: harvestedDate,
           type: 'Harvest Dispatch',
-          description: `Secured full viticulture-to-enology traceability link. Saperavi grape yield of ${harvestedKg.toLocaleString()} Kg.`,
+          description: `Secured full viticulture-to-enology traceability link. ${variety} grape yield of ${harvestedKg.toLocaleString()} Kg.${originDetails ? ` Origin mirror: ${originDetails}.` : ''}`,
           operator: currentUser.fullName
         }
       ]
@@ -1199,7 +1300,7 @@ export function useWineryState() {
       changedItem: 'WineLots & Harvest',
       oldValue: 'None (Agricultural)',
       newValue: `Gvino WineLot: ${lotId}`,
-      notes: `Secured full viticulture-to-enology traceability link: Saperavi grape yield of ${harvestedKg} Kg.`
+      notes: `Secured full viticulture-to-enology traceability link: ${variety} grape yield of ${harvestedKg} Kg.`
     };
     setAuditLogs(prev => [signAuditEntries([audit], prev)[0], ...prev]);
 
@@ -1238,6 +1339,15 @@ export function useWineryState() {
       wineClass: input.wineClass,
       stage: 'crushing',
       createdAt: input.date,
+      intendedAppellation: cleanText(input.microzone),
+      classification: inferPdoClassification(cleanText(input.microzone)),
+      originProofStatus: inferOriginProofStatus(
+        cleanText(input.cadastralCode),
+        cleanText(input.municipality),
+        cleanText(input.village),
+        cleanText(input.microzone),
+      ),
+      marketStatus: 'unknown',
       history: [
         {
           date: input.date,
@@ -1584,6 +1694,66 @@ export function useWineryState() {
     } catch { /* ignore */ }
   };
 
+  const handleAddAttachment = (input: DocumentAttachmentInput): DocumentAttachment => {
+    const attachment = createDocumentAttachmentRecord({
+      ...input,
+      uploadedBy: input.uploadedBy || currentUser.fullName || currentUser.username,
+    });
+    setAttachments(prev => [attachment, ...prev.filter(item => item.id !== attachment.id)]);
+    setToastMessage(lang === 'ka' ? 'Attachment saved for review.' : 'Attachment saved for review.');
+    return attachment;
+  };
+
+  const handleDeleteAttachment = (attachmentId: string) => {
+    recordDeletion(attachmentId);
+    setAttachments(prev => prev.filter(item => item.id !== attachmentId));
+    setToastMessage(lang === 'ka' ? 'Attachment removed.' : 'Attachment removed.');
+  };
+
+  const handleSaveCrmLead = (input: CrmLeadRecordInput): CrmLeadRecord => {
+    const lead = createCrmLeadRecord({
+      ...input,
+      owner: input.owner || currentUser.fullName || currentUser.username,
+    });
+    setCrmLeads(prev => upsertCrmLeadRecord(prev, lead));
+    setToastMessage(lang === 'ka' ? 'CRM lead saved.' : 'CRM lead saved.');
+    return lead;
+  };
+
+  const handleUpdateCrmLeadStatus = (leadId: string, status: CrmLeadRecord['status']) => {
+    setCrmLeads(prev => prev.map(lead => (
+      lead.id === leadId
+        ? { ...lead, status, updatedAt: new Date().toISOString() }
+        : lead
+    )));
+  };
+
+  const handleDeleteCrmLead = (leadId: string) => {
+    recordDeletion(leadId);
+    setCrmLeads(prev => prev.filter(lead => lead.id !== leadId));
+    setToastMessage(lang === 'ka' ? 'CRM lead removed.' : 'CRM lead removed.');
+  };
+
+  const handleSaveAiDraftActions = (actions: AiDraftAction[], dueDate?: string): number => {
+    const items = createAiDraftQueueItems(actions, {
+      createdBy: currentUser.fullName || currentUser.username,
+      dueDate,
+      sourceModule: activeModule,
+      sourceTab: activeTab,
+    });
+    setAiDrafts(prev => upsertAiDraftQueueItems(prev, items));
+    setToastMessage(lang === 'ka' ? 'AI draft actions saved for review.' : 'AI draft actions saved for review.');
+    return items.length;
+  };
+
+  const handleUpdateAiDraftStatus = (draftId: string, status: AiDraftQueueStatus) => {
+    setAiDrafts(prev => prev.map(draft => (
+      draft.id === draftId
+        ? { ...draft, status }
+        : draft
+    )));
+  };
+
   const handleDeleteTask = (taskId: string) => {
     recordDeletion(taskId);
     setTasks(prev => prev.filter(t => t.id !== taskId));
@@ -1681,6 +1851,7 @@ export function useWineryState() {
       tasks: db.tasks || tasks,
       notesList: db.notes || notesList,
       blocks: db.blocks || blocks,
+      vineyardProjects: db.vineyardProjects || vineyardProjects,
       phenologyLogs: db.phenologyLogs || phenologyLogs,
       sprays: db.sprays || sprays,
       scoutings: db.scoutings || scoutings,
@@ -1699,6 +1870,10 @@ export function useWineryState() {
       salesDispatches: db.salesDispatches || salesDispatches,
       salesOrders: db.salesOrders || salesOrders,
       supplierPayments: db.supplierPayments || supplierPayments,
+      certificationRecords: db.certificationRecords || certificationRecords,
+      attachments: db.attachments || attachments,
+      crmLeads: db.crmLeads || crmLeads,
+      aiDrafts: db.aiDrafts || aiDrafts,
       companyProfile: db.companyProfile || companyProfile
     };
 
@@ -1731,6 +1906,7 @@ export function useWineryState() {
     tasks, setTasks,
     notesList, setNotesList,
     blocks, setBlocks,
+    vineyardProjects, setVineyardProjects,
     phenologyLogs, setPhenologyLogs,
     sprays, setSprays,
     scoutings, setScoutings,
@@ -1751,6 +1927,10 @@ export function useWineryState() {
     salesDispatches, setSalesDispatches,
     salesOrders, setSalesOrders,
     supplierPayments, setSupplierPayments,
+    certificationRecords, setCertificationRecords,
+    attachments, setAttachments,
+    crmLeads, setCrmLeads,
+    aiDrafts, setAiDrafts,
 
     // Inputs
     logTankId, setLogTankId,
@@ -1796,6 +1976,8 @@ export function useWineryState() {
     handleToggleSanitation,
     handleAddBlock,
     handleUpdateBlock,
+    handleAddVineyardProject,
+    handleUpdateVineyardProject,
     handleAddPhenologyLog,
     handleAddSprayRecord,
     handleAddScoutingRecord,
@@ -1813,6 +1995,13 @@ export function useWineryState() {
     handleAddLabLog,
     handleToggleTaskStatus,
     handleAddNewTask,
+    handleAddAttachment,
+    handleDeleteAttachment,
+    handleSaveCrmLead,
+    handleUpdateCrmLeadStatus,
+    handleDeleteCrmLead,
+    handleSaveAiDraftActions,
+    handleUpdateAiDraftStatus,
     handleDeleteTask,
     handleAddNewNote,
     handleDeleteNote,

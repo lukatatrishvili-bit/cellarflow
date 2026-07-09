@@ -149,6 +149,7 @@ async function main() {
     await seedCollection(prisma.task, userData.tasks);
     await seedCollection(prisma.note, userData.notes);
     await seedCollection(prisma.vineyardBlock, userData.blocks);
+    await seedCollection(prisma.vineyardPlantingProject, userData.vineyardProjects);
     await seedCollection(prisma.phenologyRecord, userData.phenologyLogs);
     await seedCollection(prisma.sprayRecord, userData.sprays);
     await seedCollection(prisma.scoutingRecord, userData.scoutings);

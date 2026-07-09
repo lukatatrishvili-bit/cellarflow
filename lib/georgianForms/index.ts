@@ -29,9 +29,9 @@ function resolveHeaderValue(field: HeaderFieldDef, ctx: ExportContext): string {
   switch (field.source) {
     case 'companyName': return c.companyName || '';
     case 'wineryName': return c.wineryName || c.companyName || '';
-    case 'legalAddress': return c.address || '';
-    case 'factualAddress': return c.address || '';
-    case 'idCode': return ''; // TODO: company identification code not in CompanyProfile
+    case 'legalAddress': return c.legalAddress || c.address || '';
+    case 'factualAddress': return c.factualAddress || c.address || '';
+    case 'idCode': return c.identificationCode || '';
     case 'region': return [c.region, c.country].filter(Boolean).join(', ');
     case 'accountingYear': return ctx.accountingYear || String(new Date(ctx.dateRange.to || Date.now()).getFullYear());
     case 'dateRange': return ctx.dateRange.from && ctx.dateRange.to ? `${ctx.dateRange.from} — ${ctx.dateRange.to}` : '';

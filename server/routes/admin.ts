@@ -22,6 +22,12 @@ import { loginLimiter, sessionCookie, parseCookies } from '../middleware/auth';
 import { hashPassword, verifySessionToken, createSessionToken } from '../auth';
 import { isValidEmail } from '../emailVerification';
 import { sendMail } from '../mailer';
+import {
+  summarizeAiDrafts,
+  summarizeAttachments,
+  summarizeCrmLeads,
+  summarizeOrgData,
+} from '../adminOrgSummary';
 
 const router = express.Router();
 
@@ -168,6 +174,9 @@ router.get('/stats', async (req, res) => {
   const memoryUsage = process.memoryUsage();
   const uptime = process.uptime();
   const dbStatus = getDbRuntimeStatus();
+  const orgSummaries = Object.values(db.orgData || {}).map(data => summarizeOrgData(data as any));
+  const sumOrgMetric = (key: keyof ReturnType<typeof summarizeOrgData>) =>
+    orgSummaries.reduce((total, summary) => total + Number(summary[key] || 0), 0);
 
   res.json({
     ok: true,
@@ -175,6 +184,10 @@ router.get('/stats', async (req, res) => {
     orgsCount: db.organizations?.length || 0,
     membershipsCount: db.memberships?.length || 0,
     invitationsCount: db.invitations?.length || 0,
+    attachmentsCount: sumOrgMetric('attachmentsCount'),
+    crmLeadsCount: sumOrgMetric('crmLeadsCount'),
+    aiDraftsCount: sumOrgMetric('aiDraftsCount'),
+    inlineAttachmentBytes: sumOrgMetric('inlineAttachmentBytes'),
     memoryHeapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
     memoryHeapTotalMB: Math.round(memoryUsage.heapTotal / 1024 / 1024),
     memoryRssMB: Math.round(memoryUsage.rss / 1024 / 1024),
@@ -324,18 +337,22 @@ router.get('/orgs', async (req, res) => {
   const orgList = db.organizations?.map(org => {
     const members = db.memberships?.filter(m => m.organizationId === org.id) || [];
     const orgData = db.orgData?.[org.id] || {};
-    const tanksCount = orgData.vessels?.length || 0;
-    const lotsCount = orgData.lots?.length || 0;
-    const dataSize = JSON.stringify(orgData).length;
+    const summary = summarizeOrgData(orgData);
 
     return {
       id: org.id,
       name: org.name,
       createdAt: org.createdAt,
       membersCount: members.length,
-      tanksCount,
-      lotsCount,
-      dataSize
+      tanksCount: summary.tanksCount,
+      lotsCount: summary.lotsCount,
+      certificationRecordsCount: summary.certificationRecordsCount,
+      attachmentsCount: summary.attachmentsCount,
+      crmLeadsCount: summary.crmLeadsCount,
+      aiDraftsCount: summary.aiDraftsCount,
+      inlineAttachmentBytes: summary.inlineAttachmentBytes,
+      attachmentChecksumCoveragePct: summary.attachmentChecksumCoveragePct,
+      dataSize: summary.dataSizeBytes,
     };
   }) || [];
 
@@ -490,14 +507,19 @@ router.get('/orgs/inspect', async (req, res) => {
   collections.sort((a, b) => b.count - a.count);
 
   const members = db.memberships?.filter(m => m.organizationId === orgId) || [];
+  const operationalSummary = summarizeOrgData(data);
   res.json({
     ok: true,
     organization: { id: org.id, name: org.name, createdAt: org.createdAt },
     wineryName: data.companyProfile?.wineryName || data.companyProfile?.companyName || '',
     members: members.map(m => ({ username: m.userId, role: m.role })),
-    dataSizeBytes: JSON.stringify(data).length,
+    dataSizeBytes: operationalSummary.dataSizeBytes,
     lastActivity,
     collections,
+    operationalSummary,
+    attachmentSummary: summarizeAttachments(data),
+    crmSummary: summarizeCrmLeads(data),
+    aiDraftSummary: summarizeAiDrafts(data),
   });
 });
 

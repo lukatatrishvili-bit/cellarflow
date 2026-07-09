@@ -1,5 +1,6 @@
 import type {
   CellarOperation,
+  CertificationRecord,
   DailyFermLog,
   GrapeIntakeRecord,
   GrapeSamplingRecord,
@@ -19,6 +20,7 @@ import type {
   Task,
   Vessel,
   VineyardBlock,
+  VineyardPlantingProject,
   WineLot,
 } from './wineryState';
 
@@ -34,8 +36,10 @@ export const initialGrapeIntakes: GrapeIntakeRecord[] = [];
 export const initialSalesDispatches: SalesDispatchRecord[] = [];
 export const initialSalesOrders: SalesOrderRecord[] = [];
 export const initialSupplierPayments: SupplierPayment[] = [];
+export const initialCertificationRecords: CertificationRecord[] = [];
 
 export const initialVineyardBlocks: VineyardBlock[] = [];
+export const initialVineyardPlantingProjects: VineyardPlantingProject[] = [];
 export const initialPhenologyRecords: PhenologyRecord[] = [];
 export const initialSprayRecords: SprayRecord[] = [];
 export const initialScoutingRecords: ScoutingRecord[] = [];

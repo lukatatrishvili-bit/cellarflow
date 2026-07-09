@@ -10,7 +10,12 @@ import { findNegativeBalances, toNum } from './balance';
 const REQUIRED_BY_KEY: Record<string, { ka: string; en: string }> = {
   date: { ka: 'თარიღი', en: 'date' },
   placeDate: { ka: 'ჩაყენების თარიღი', en: 'placement date' },
+  parcelCadastral: { ka: 'საკადასტრო კოდი', en: 'cadastral code' },
+  municipality: { ka: 'მუნიციპალიტეტი', en: 'municipality' },
+  village: { ka: 'სოფელი', en: 'village' },
   variety: { ka: 'ვაზის ჯიში', en: 'grape variety' },
+  transport: { ka: 'ტრანსპორტი', en: 'transport name/number' },
+  analysisNo: { ka: 'ანალიზის ნომერი', en: 'analysis number' },
   netto: { ka: 'ნეტო წონა', en: 'net weight' },
   tons: { ka: 'ყურძნის რაოდენობა', en: 'grape quantity' },
   fillQty: { ka: 'ჩამოსხმის რაოდენობა', en: 'bottled quantity' },
@@ -40,6 +45,29 @@ export function validateDocument(
       messageEn: 'No data found for the chosen filters — the document will be empty.',
     });
     return warnings;
+  }
+
+  for (const field of template.headerFields) {
+    const source = field.source;
+    const label = ctx.lang === 'ka' ? field.labelKa : (field.labelEn || field.labelKa);
+    const value =
+      source === 'companyName' ? ctx.company.companyName :
+      source === 'wineryName' ? (ctx.company.wineryName || ctx.company.companyName) :
+      source === 'legalAddress' ? (ctx.company.legalAddress || ctx.company.address) :
+      source === 'factualAddress' ? (ctx.company.factualAddress || ctx.company.address) :
+      source === 'idCode' ? ctx.company.identificationCode :
+      source === 'region' ? (ctx.company.region || ctx.company.country) :
+      source === 'accountingYear' ? ctx.accountingYear :
+      source === 'dateRange' ? (ctx.dateRange.from && ctx.dateRange.to ? 'set' : '') :
+      source === 'product' ? ctx.productName :
+      'manual';
+    if (source !== 'input' && source !== 'product' && !value) {
+      warnings.push({
+        level: source === 'idCode' || source === 'legalAddress' ? 'warning' : 'warning',
+        messageKa: `ზედა ველი აკლია: ${field.labelKa}.`,
+        messageEn: `Header field missing: ${label}.`,
+      });
+    }
   }
 
   // Per-row required-field checks for the columns this template actually has.

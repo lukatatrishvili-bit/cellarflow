@@ -2,6 +2,7 @@ import type {
   BottlingRunRecord,
   CellarOperation,
   CellarTransferRecord,
+  CertificationRecord,
   GrapeIntakeRecord,
   SalesDispatchRecord,
   SalesOrderRecord,
@@ -26,6 +27,7 @@ export interface BuildLineageInput {
   stockMovements: StockMovement[];
   salesOrders: SalesOrderRecord[];
   salesDispatches: SalesDispatchRecord[];
+  certificationRecords?: CertificationRecord[];
   asOfDate?: string;
 }
 
@@ -379,6 +381,36 @@ export function buildAllLineageGraph(input: BuildLineageInput): LineageGraph {
       label: `${dispatch.bottles.toLocaleString()} btl`,
       bottles: positive(dispatch.bottles),
       date: safeDate(dispatch.date),
+    });
+  }
+
+  for (const cert of input.certificationRecords || []) {
+    if (!lotsById.has(cert.lotId)) continue;
+    const id = nodeId('cert', cert.id);
+    addNode(nodes, {
+      id,
+      type: 'certification',
+      label: cert.certificateNumber || cert.applicationStatus || 'Certification',
+      subtitle: cert.purpose ? cert.purpose.replace(/_/g, ' ') : cert.productType.replace(/_/g, ' '),
+      lotId: cert.lotId,
+      date: safeDate(cert.issueDate || cert.sampleDate),
+      metadata: {
+        productType: cert.productType,
+        samplePrepared: cert.samplePrepared,
+        applicationStatus: cert.applicationStatus,
+        balanceCheckStatus: cert.balanceCheckStatus,
+        organolepticResult: cert.organolepticResult,
+        certificateFileName: cert.certificateFileName,
+      },
+    });
+    const from = nodeId('lot', cert.lotId);
+    addEdge(edges, {
+      id: edgeId('certified', from, id),
+      from,
+      to: id,
+      type: 'certified',
+      label: cert.applicationStatus,
+      date: safeDate(cert.issueDate || cert.sampleDate),
     });
   }
 

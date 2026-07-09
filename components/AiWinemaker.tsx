@@ -6,6 +6,14 @@ import type { Language } from '../lib/i18n';
 import { Sparkles, Send, Bot, HelpCircle, Loader2, ClipboardList, CheckSquare, X, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Skeleton } from './motion';
+import {
+  deriveAiDraftActions,
+  draftActionLabel,
+  formatDraftTaskDescription,
+  type AiDraftAction,
+  type AiDraftQueueItem,
+  type AiDraftQueueStatus
+} from '../lib/aiDraftActions';
 
 interface Props {
   lang: Language;
@@ -18,6 +26,9 @@ interface Props {
     sampleData: Array<{ id: string; lotCode: string; currentVolume: number; wineName: string; stage: string }>;
   };
   onAddNewTask?: (title: string, priority: 'high' | 'medium' | 'low', dueDate: string, description: string) => void;
+  draftQueue?: AiDraftQueueItem[];
+  onSaveDraftActions?: (actions: AiDraftAction[], dueDate?: string) => number | void;
+  onUpdateDraftStatus?: (draftId: string, status: AiDraftQueueStatus) => void;
   contextTab?: string;
   contextModule?: string;
   className?: string;
@@ -36,7 +47,17 @@ interface TempTask {
   priority: 'high' | 'medium' | 'low';
 }
 
-export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTab, contextModule, className }: Props) {
+export default function AiWinemaker({
+  lang,
+  cellarState,
+  onAddNewTask,
+  draftQueue = [],
+  onSaveDraftActions,
+  onUpdateDraftStatus,
+  contextTab,
+  contextModule,
+  className
+}: Props) {
   const t = translations[lang];
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMsg, setInputMsg] = useState('');
@@ -81,6 +102,11 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
     tomorrow.setDate(tomorrow.getDate() + 1);
     return tomorrow.toISOString().split('T')[0];
   });
+  const [showDraftActionsModal, setShowDraftActionsModal] = useState(false);
+  const [showDraftQueueModal, setShowDraftQueueModal] = useState(false);
+  const [draftActions, setDraftActions] = useState<AiDraftAction[]>([]);
+  const [selectedDraftIds, setSelectedDraftIds] = useState<string[]>([]);
+  const activeDraftQueue = draftQueue.filter(item => item.status === 'draft');
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -206,6 +232,45 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
     alert(`Deployed ${selected.length} tasks successfully to MaraniOS checklist!`);
   };
 
+  const handleReviewDraftActions = (content: string) => {
+    const actions = deriveAiDraftActions(content, { contextModule, contextTab, cellarState });
+    setDraftActions(actions);
+    setSelectedDraftIds(actions.map(action => action.id));
+    setShowDraftActionsModal(true);
+  };
+
+  const handleToggleDraft = (id: string) => {
+    setSelectedDraftIds(prev => (
+      prev.includes(id) ? prev.filter(existing => existing !== id) : [...prev, id]
+    ));
+  };
+
+  const handleCreateDraftTasks = () => {
+    if (!onAddNewTask) return;
+    const selected = draftActions.filter(action => selectedDraftIds.includes(action.id));
+    selected.forEach(action => {
+      const taskTitle = action.type === 'task' ? action.title : `Review AI draft: ${action.title}`;
+      onAddNewTask(taskTitle, action.priority, taskDueDate, formatDraftTaskDescription(action));
+    });
+    setShowDraftActionsModal(false);
+    alert(`Created ${selected.length} reviewed AI draft tasks.`);
+  };
+
+  const handleSaveDraftQueue = () => {
+    if (!onSaveDraftActions) return;
+    const selected = draftActions.filter(action => selectedDraftIds.includes(action.id));
+    const count = onSaveDraftActions(selected, taskDueDate) || selected.length;
+    setShowDraftActionsModal(false);
+    alert(`Saved ${count} AI draft action${count === 1 ? '' : 's'} for review.`);
+  };
+
+  const handleCreateQueuedTask = (action: AiDraftQueueItem) => {
+    if (!onAddNewTask) return;
+    const taskTitle = action.type === 'task' ? action.title : `Review AI draft: ${action.title}`;
+    onAddNewTask(taskTitle, action.priority, action.dueDate || taskDueDate, formatDraftTaskDescription(action));
+    onUpdateDraftStatus?.(action.id, 'converted_to_task');
+  };
+
   const quickPrompts = useMemo(() => {
     const defaultPrompts = [
       { label: 'Stuck Ferment Protocol', query: 'My Cabernet Sauvignon EC-1118 fermentation is sluggish at 1.015 density. Present a step-by-step stuck fermentation restart protocol.' },
@@ -250,6 +315,15 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
       ];
     }
 
+    if (contextModule === 'docs' || contextModule === 'certification' || contextTab === 'docs') {
+      return [
+        { label: 'Explain Missing Fields', query: 'Explain what official Georgian document fields are missing, which source modules should fill them, and which gaps block export submission.' },
+        { label: 'Certification Readiness', query: 'Review certification readiness and list missing lab, sample, balance, certificate, and document evidence as review-only draft actions.' },
+        { label: 'Annex Export Warnings', query: 'Explain Annex export warnings and separate critical missing data from non-blocking review warnings.' },
+        { label: 'Lot Document Sources', query: 'Summarize which lot, intake, vineyard, lab, bottling, and sales records feed official document fields.' }
+      ];
+    }
+
     return defaultPrompts;
   }, [contextTab, contextModule]);
 
@@ -265,6 +339,14 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowDraftQueueModal(true)}
+            className="px-2 py-0.5 bg-[#ffffff1d] hover:bg-[#ffffff30] text-[10px] rounded text-stone-100 flex items-center gap-1 transition-colors cursor-pointer border-0"
+            title="Review saved AI drafts"
+          >
+            Queue {activeDraftQueue.length}
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -306,7 +388,15 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
               </div>
               
               {m.role === 'assistant' && idx > 0 && !isLoading && (
-                <div className="mt-2.5 pt-2 border-t border-[#d9cebf]/80 flex justify-end">
+                <div className="mt-2.5 pt-2 border-t border-[#d9cebf]/80 flex flex-wrap justify-end gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleReviewDraftActions(m.content)}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-[#fbf7f0] text-[#4e0e15] border border-[#d8c6b4] rounded text-[10px] font-bold font-mono transition-colors shadow-2xs cursor-pointer"
+                  >
+                    <CheckSquare className="w-3 h-3" />
+                    Review Draft Actions
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleGenerateWorkOrder(m.content)}
@@ -471,6 +561,188 @@ export default function AiWinemaker({ lang, cellarState, onAddNewTask, contextTa
                 <Check className="w-3.5 h-3.5" />
                 Deploy Selected Tasks
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review-only draft actions modal */}
+      {showDraftActionsModal && (
+        <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-stone-200 rounded-xl shadow-2xl w-full max-w-lg max-h-[90%] flex flex-col overflow-hidden text-stone-850">
+            <div className="px-4 py-3 bg-stone-50 border-b border-stone-200 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <CheckSquare className="w-4 h-4 text-[#4e0e15]" />
+                <strong className="text-xs font-serif font-black uppercase tracking-wider text-[#4e0e15]">
+                  AI Draft Actions
+                </strong>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDraftActionsModal(false)}
+                className="text-stone-400 hover:text-stone-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 flex-1 overflow-y-auto space-y-3">
+              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-lg text-[10.5px] leading-relaxed text-amber-900">
+                Drafts are staged for review only. Creating task drafts adds checklist items; it does not update lab, vineyard, document, lot, or cellar-operation records.
+              </div>
+
+              <div className="space-y-2.5">
+                {draftActions.map(action => (
+                  <label key={action.id} className="block p-3 border border-stone-200 bg-[#FCFAF9] rounded-lg space-y-2 cursor-pointer">
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedDraftIds.includes(action.id)}
+                        onChange={() => handleToggleDraft(action.id)}
+                        className="w-3.5 h-3.5 accent-[#4e0e15] cursor-pointer mt-0.5"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[9px] uppercase tracking-wider font-mono font-black text-[#4e0e15]">
+                            {draftActionLabel(action.type)}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black font-mono ${
+                            action.priority === 'high'
+                              ? 'bg-rose-100 text-rose-700'
+                              : action.priority === 'medium'
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            {action.priority}
+                          </span>
+                        </div>
+                        <h4 className="mt-1 text-xs font-bold text-[#231f1d] leading-snug">
+                          {action.title}
+                        </h4>
+                        <p className="mt-1 text-[10.5px] leading-relaxed text-stone-550">
+                          {action.description}
+                        </p>
+                      </div>
+                    </div>
+
+                    {action.warnings.length > 0 && (
+                      <ul className="pl-5 space-y-1 text-[9.5px] leading-relaxed text-amber-900">
+                        {action.warnings.map(warning => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </label>
+                ))}
+              </div>
+
+              <div className="border-t border-stone-150 pt-3 flex items-center justify-between text-[11px]">
+                <span className="text-stone-500 font-bold">Task Due Date:</span>
+                <input
+                  type="date"
+                  value={taskDueDate}
+                  onChange={(e) => setTaskDueDate(e.target.value)}
+                  className="px-2 py-1 border border-stone-200 rounded font-bold text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="px-4 py-3 bg-stone-50 border-t border-stone-200 flex justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowDraftActionsModal(false)}
+                className="px-3 py-1.5 border border-stone-200 hover:bg-stone-100 text-stone-700 text-xs font-bold rounded-lg cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateDraftTasks}
+                disabled={!onAddNewTask || selectedDraftIds.length === 0}
+                className="px-3 py-1.5 bg-[#4e0e15] hover:bg-[#801323] text-white text-xs font-bold rounded-lg cursor-pointer transition-colors flex items-center gap-1 shadow-xs disabled:opacity-50"
+              >
+                <Check className="w-3.5 h-3.5" />
+                Create Selected Task Drafts
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveDraftQueue}
+                disabled={!onSaveDraftActions || selectedDraftIds.length === 0}
+                className="px-3 py-1.5 bg-stone-800 hover:bg-stone-950 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors flex items-center gap-1 shadow-xs disabled:opacity-50"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                Save to Draft Queue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Persistent draft queue modal */}
+      {showDraftQueueModal && (
+        <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-stone-200 rounded-xl shadow-2xl w-full max-w-lg max-h-[90%] flex flex-col overflow-hidden text-stone-850">
+            <div className="px-4 py-3 bg-stone-50 border-b border-stone-200 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <CheckSquare className="w-4 h-4 text-[#4e0e15]" />
+                <strong className="text-xs font-serif font-black uppercase tracking-wider text-[#4e0e15]">
+                  Saved AI Draft Queue
+                </strong>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDraftQueueModal(false)}
+                className="text-stone-400 hover:text-stone-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 flex-1 overflow-y-auto space-y-3">
+              {activeDraftQueue.length === 0 ? (
+                <div className="p-4 rounded-lg border border-stone-200 bg-stone-50 text-xs text-stone-500">
+                  No saved AI drafts are waiting for review.
+                </div>
+              ) : (
+                activeDraftQueue.map(action => (
+                  <div key={action.id} className="p-3 border border-stone-200 bg-[#FCFAF9] rounded-lg space-y-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[9px] uppercase tracking-wider font-mono font-black text-[#4e0e15]">
+                        {draftActionLabel(action.type)}
+                      </span>
+                      <span className={`px-1.5 py-0.5 rounded text-[8.5px] uppercase font-black font-mono ${
+                        action.priority === 'high'
+                          ? 'bg-rose-100 text-rose-700'
+                          : action.priority === 'medium'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {action.priority}
+                      </span>
+                    </div>
+                    <h4 className="text-xs font-bold text-[#231f1d] leading-snug">{action.title}</h4>
+                    <p className="text-[10.5px] leading-relaxed text-stone-550">{action.description}</p>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onUpdateDraftStatus?.(action.id, 'dismissed')}
+                        disabled={!onUpdateDraftStatus}
+                        className="px-2.5 py-1 border border-stone-200 hover:bg-white text-stone-600 text-[10px] font-bold rounded cursor-pointer disabled:opacity-50"
+                      >
+                        Dismiss
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCreateQueuedTask(action)}
+                        disabled={!onAddNewTask}
+                        className="px-2.5 py-1 bg-[#4e0e15] hover:bg-[#801323] text-white text-[10px] font-bold rounded cursor-pointer disabled:opacity-50"
+                      >
+                        Create Task
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

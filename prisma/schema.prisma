@@ -47,6 +47,7 @@ model Organization {
   tasks            Task[]
   notes            Note[]
   blocks           VineyardBlock[]
+  vineyardProjects VineyardPlantingProject[]
   phenologyLogs    PhenologyRecord[]
   sprays           SprayRecord[]
   scoutings        ScoutingRecord[]
@@ -154,6 +155,24 @@ model Vessel {
   yGrid               Int?
   lastSealedDate      String?
   soilTemperature     Float?
+  qvevriNumber        String?
+  maraniLocation      String?
+  buried              Boolean?
+  lastWashingDate     String?
+  limeWashStatus      String?
+  waxingStatus        String?
+  inspectionNotes     String?
+  fillingDate         String?
+  grapeVariety        String?
+  chachaPercentage    Float?
+  stemInclusion       Boolean?
+  mixingFrequency     String?
+  dailyMixingLog      Json         @default("[]")
+  sealingDate         String?
+  openingDate         String?
+  skinContactDurationDays Int?
+  firstRackingDate    String?
+  sanitationHistory   Json         @default("[]")
 }
 
 model WineLot {
@@ -257,6 +276,16 @@ model VineyardBlock {
   name                 String
   vineyardName         String
   locationName         String
+  cadastralCode        String?
+  officialCadastreDocumentName String?
+  landOwner            String?
+  grower               String?
+  municipality         String?
+  community            String?
+  village              String?
+  microzone            String?
+  parcelName           String?
+  parcelArea           Float?
   latitude             Float
   longitude            Float
   area                 Float
@@ -279,6 +308,38 @@ model VineyardBlock {
   estimatedHarvestDate String
   notes                String
   boundary             Json?
+  gpsPolygon           Json?
+  vineyardCondition    String?
+}
+
+model VineyardPlantingProject {
+  id                              String       @id
+  organizationId                  String
+  organization                    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectName                     String
+  landOwnershipDocumentName       String?
+  cadastralMapDocumentName        String?
+  soilAnalysisDocumentName        String?
+  agrotechnicalQuestionnaireName  String?
+  plannedVarieties                Json         @default("[]")
+  rootstock                       String?
+  spacing                         String?
+  rowDirection                    String?
+  irrigationPlan                  String?
+  nurseryInvoiceDocumentName      String?
+  applicationStatus               String
+  approvalDate                    String?
+  approvalValidUntil              String?
+  soilDepth                       Float?
+  pH                              Float?
+  organicMatter                   Float?
+  caco3                           Float?
+  texture                         String?
+  ec                              Float?
+  exchangeableCa                  Float?
+  exchangeableMg                  Float?
+  exchangeableNa                  Float?
+  hygroscopicWater                Float?
 }
 
 model PhenologyRecord {

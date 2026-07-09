@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  BadgeCheck,
   Boxes,
   GitMerge,
   Grape,
@@ -20,6 +21,7 @@ import type {
   BottlingRunRecord,
   CellarOperation,
   CellarTransferRecord,
+  CertificationRecord,
   GrapeIntakeRecord,
   SalesDispatchRecord,
   SalesOrderRecord,
@@ -49,6 +51,7 @@ interface Props {
   stockMovements: StockMovement[];
   salesOrders: SalesOrderRecord[];
   salesDispatches: SalesDispatchRecord[];
+  certificationRecords?: CertificationRecord[];
   focusLotId?: string;
 }
 
@@ -132,6 +135,14 @@ const typeMeta: Record<LineageNodeType, {
     badge: 'bg-teal-100 text-teal-800 border-teal-200',
     line: '#0d9488',
   },
+  certification: {
+    label: 'Certification',
+    labelKa: 'Certification',
+    icon: BadgeCheck,
+    card: 'border-emerald-200 bg-emerald-50/80 dark:border-emerald-900 dark:bg-emerald-950/20',
+    badge: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    line: '#16a34a',
+  },
 };
 
 const edgeLabel: Record<LineageEdge['type'], { en: string; ka: string }> = {
@@ -143,6 +154,7 @@ const edgeLabel: Record<LineageEdge['type'], { en: string; ka: string }> = {
   stored: { en: 'stored', ka: 'შენახვა' },
   reserved: { en: 'reserved', ka: 'ჯავშანი' },
   sold: { en: 'sold', ka: 'გაიყიდა' },
+  certified: { en: 'certified', ka: 'Certification' },
 };
 
 function nodeMeta(node: LineageNode) {
@@ -388,6 +400,7 @@ export default function LotLineageGraphTab({
   stockMovements,
   salesOrders,
   salesDispatches,
+  certificationRecords = [],
   focusLotId,
 }: Props) {
   const ka = lang === 'ka';
@@ -429,8 +442,9 @@ export default function LotLineageGraphTab({
       stockMovements,
       salesOrders,
       salesDispatches,
+      certificationRecords,
     }, selectedLotId);
-  }, [bottlingRuns, cellarOps, grapeIntakes, lots, salesDispatches, salesOrders, selectedLotId, stockMovements, storageLocations, transfers]);
+  }, [bottlingRuns, cellarOps, certificationRecords, grapeIntakes, lots, salesDispatches, salesOrders, selectedLotId, stockMovements, storageLocations, transfers]);
 
   const positioned = useMemo(() => layoutLineageGraph(graph), [graph]);
   const nodesById = useMemo(() => new Map(positioned.nodes.map(n => [n.id, n])), [positioned.nodes]);

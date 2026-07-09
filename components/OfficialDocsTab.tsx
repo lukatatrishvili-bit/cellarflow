@@ -1,16 +1,33 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
-  FileSpreadsheet, FileText, Printer, AlertTriangle, ShieldCheck, FileDown, Loader2, Info,
+  FileSpreadsheet, FileText, Printer, AlertTriangle, ShieldCheck, FileDown, Loader2, Info, CalendarDays,
+  UploadCloud, Paperclip, Trash2, Download, ExternalLink,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type {
   CompanyProfile, UserProfile, VineyardBlock, WineLot, Vessel, HarvestRecord,
   GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord, CellarOperation,
-  BottlingRunRecord, SalesDispatchRecord,
+  BottlingRunRecord, SalesDispatchRecord, DocumentAttachment,
 } from '../lib/wineryState';
 import {
   listForms, buildDocument, buildFilename, type ExportContext, type FilterId, type FormTemplate,
 } from '../lib/georgianForms';
+import {
+  evaluateAccountingYear,
+  evaluateCompanyProfile,
+  evaluateDocumentReadiness,
+  evaluateLotCompliance,
+  type ComplianceReadiness,
+} from '../lib/compliance';
+import { buildAgencyDeadlineCalendar } from '../lib/agencyCalendar';
+import {
+  attachmentsForRecord,
+  checksumAttachmentDataUrl,
+  formatAttachmentSize,
+  getAttachmentAccess,
+  MAX_INLINE_ATTACHMENT_BYTES,
+  type DocumentAttachmentInput,
+} from '../lib/attachments';
 import { renderDocumentHtml } from '../lib/georgianForms/renderHtml';
 import { demoPools } from '../lib/georgianForms/demoData';
 
@@ -29,6 +46,10 @@ interface Props {
   cellarOps: CellarOperation[];
   bottlingRuns: BottlingRunRecord[];
   salesDispatches: SalesDispatchRecord[];
+  attachments?: DocumentAttachment[];
+  onAddAttachment?: (attachment: DocumentAttachmentInput) => DocumentAttachment;
+  onDeleteAttachment?: (attachmentId: string) => void;
+  canManageOfficialDocs?: boolean;
 }
 
 function loadTransfers(): TransferEvent[] {
@@ -44,6 +65,28 @@ const yearStartISO = () => `${new Date().getFullYear()}-01-01`;
 // Annual traceability forms default to the full accounting year, so a whole
 // season's data (e.g. an autumn harvest) is captured without adjusting dates.
 const yearEndISO = () => `${new Date().getFullYear()}-12-31`;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Could not read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function badgeClass(badge: ComplianceReadiness['badge']): string {
+  if (badge === 'Ready') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  if (badge === 'Exportable with warnings') return 'bg-amber-100 text-amber-800 border-amber-200';
+  if (badge === 'Missing critical data' || badge === 'Not ready') return 'bg-rose-100 text-rose-800 border-rose-200';
+  return 'bg-stone-100 text-stone-700 border-stone-200';
+}
+
+function missingPreview(readiness: ComplianceReadiness, lang: Language): string {
+  const list = readiness.missing.slice(0, 3);
+  if (list.length === 0) return lang === 'ka' ? 'ყველა ძირითადი ველი მზადაა' : 'Core fields are ready';
+  return list.join(', ');
+}
 
 export default function OfficialDocsTab(props: Props) {
   const { lang, company, currentUser } = props;
@@ -68,6 +111,10 @@ export default function OfficialDocsTab(props: Props) {
 
   const realTransfers = useMemo(loadTransfers, []);
   const template = useMemo(() => forms.find(f => f.id === formId)!, [forms, formId]);
+  const documentAttachments = useMemo(
+    () => attachmentsForRecord(props.attachments || [], 'officialDocument', formId),
+    [props.attachments, formId],
+  );
 
   // Data pools: the user's real (synced) data, or a self-contained demo set.
   const pools = useDemo ? demoPools : {
@@ -109,6 +156,52 @@ export default function OfficialDocsTab(props: Props) {
     try { return buildDocument(formId, ctx); } catch { return null; }
   }, [formId, ctx]);
 
+  const companyReadiness = useMemo(() => evaluateCompanyProfile(company), [company]);
+  const selectedLotForReadiness = useMemo(
+    () => (lotId ? pools.lots.find(l => l.id === lotId) : pools.lots[0]) || null,
+    [lotId, pools.lots],
+  );
+  const lotReadiness = useMemo(
+    () => selectedLotForReadiness
+      ? evaluateLotCompliance({
+        lot: selectedLotForReadiness,
+        company,
+        grapeIntakes: pools.grapeIntakes,
+        blocks: pools.blocks,
+        labLogs: pools.labLogs,
+        bottlingRuns: pools.bottlingRuns,
+      })
+      : null,
+    [selectedLotForReadiness, company, pools.grapeIntakes, pools.blocks, pools.labLogs, pools.bottlingRuns],
+  );
+  const documentReadiness = useMemo(
+    () => doc ? evaluateDocumentReadiness({ template, rows: doc.rows, warnings: doc.warnings }) : null,
+    [doc, template],
+  );
+  const accountingYearReadiness = useMemo(
+    () => evaluateAccountingYear({
+      year: Number(accountingYear) || new Date().getFullYear(),
+      company,
+      blocks: pools.blocks,
+      lots: pools.lots,
+      grapeIntakes: pools.grapeIntakes,
+      bottlingRuns: pools.bottlingRuns,
+    }),
+    [accountingYear, company, pools.blocks, pools.lots, pools.grapeIntakes, pools.bottlingRuns],
+  );
+  const agencyReminders = useMemo(() => {
+    const readinessByFormId: Record<string, ComplianceReadiness> = {};
+    for (const f of forms.filter(form => form.category === 'notification')) {
+      try {
+        const d = buildDocument(f.id, { ...ctx, mode: 'filled' });
+        readinessByFormId[f.id] = evaluateDocumentReadiness({ template: f, rows: d.rows, warnings: d.warnings });
+      } catch {
+        // Leave absent; the calendar helper will show Not ready.
+      }
+    }
+    return buildAgencyDeadlineCalendar(Number(accountingYear) || new Date().getFullYear(), readinessByFormId);
+  }, [forms, ctx, accountingYear]);
+
   const html = useMemo(() => (doc ? renderDocumentHtml(doc) : ''), [doc]);
 
   // Keep the preview iframe in sync.
@@ -148,6 +241,34 @@ export default function OfficialDocsTab(props: Props) {
     }
   };
 
+  const handleDocumentAttachmentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!props.onAddAttachment) return;
+    if (file.size > MAX_INLINE_ATTACHMENT_BYTES) {
+      setXlsxError(`File is too large for local sync (${formatAttachmentSize(file.size)}).`);
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      props.onAddAttachment({
+        fileName: file.name,
+        mimeType: file.type || undefined,
+        sizeBytes: file.size,
+        module: 'official_docs',
+        linkedRecordType: 'officialDocument',
+        linkedRecordId: formId,
+        description: `Evidence for Annex ${template.annexNumber}`,
+        storage: { kind: 'inline', dataUrl },
+        checksum: checksumAttachmentDataUrl(dataUrl),
+      });
+      setXlsxError(null);
+    } catch {
+      setXlsxError('Could not read the selected file.');
+    }
+  };
+
   const errorCount = doc?.warnings.filter(w => w.level === 'error').length ?? 0;
   const warnCount = doc?.warnings.filter(w => w.level === 'warning').length ?? 0;
 
@@ -172,6 +293,70 @@ export default function OfficialDocsTab(props: Props) {
         </p>
       </div>
 
+      <section className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-5">
+        <div className="bg-white border border-[#e8dfd5] p-4 rounded-2xl shadow-sm dark:bg-stone-900 dark:border-stone-800">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <span className="text-xs font-bold text-stone-800 dark:text-amber-100 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-[#4e0e15]" />
+              {ka ? 'შესაბამისობის მზადყოფნა' : 'Compliance Readiness'}
+            </span>
+            <span className="text-[9px] font-mono text-stone-400 uppercase">{ka ? 'რა აკლია?' : 'What is missing?'}</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              { title: ka ? 'კომპანია' : 'Company profile', readiness: companyReadiness },
+              { title: ka ? 'ლოტი' : `Lot${selectedLotForReadiness ? `: ${selectedLotForReadiness.id}` : ''}`, readiness: lotReadiness },
+              { title: ka ? 'დოკუმენტი' : `Document: №${template.annexNumber}`, readiness: documentReadiness },
+              { title: ka ? 'წელი' : `Accounting year ${accountingYear}`, readiness: accountingYearReadiness },
+            ].map((item) => item.readiness && (
+              <div key={item.title} className="border border-stone-200 rounded-xl p-3 bg-stone-50/70 dark:bg-stone-950/30 dark:border-stone-800">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] uppercase font-mono font-bold text-stone-500">{item.title}</p>
+                    <p className="text-lg font-serif font-black text-stone-900 dark:text-amber-100">{item.readiness.score}%</p>
+                  </div>
+                  <span className={`text-[9px] font-bold border px-2 py-0.5 rounded-full ${badgeClass(item.readiness.badge)}`}>
+                    {item.readiness.badge}
+                  </span>
+                </div>
+                <p className="text-[10px] text-stone-500 mt-2 leading-snug">{missingPreview(item.readiness, lang)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white border border-[#e8dfd5] p-4 rounded-2xl shadow-sm dark:bg-stone-900 dark:border-stone-800">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <span className="text-xs font-bold text-stone-800 dark:text-amber-100 flex items-center gap-1.5">
+              <CalendarDays className="w-4 h-4 text-[#4e0e15]" />
+              {ka ? 'სააგენტოს ვადები' : 'Agency Calendar'}
+            </span>
+            <span className="text-[9px] font-mono text-stone-400 uppercase">{accountingYear}</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+            {agencyReminders.map(reminder => (
+              <button
+                key={reminder.id}
+                type="button"
+                onClick={() => {
+                  setFormId(reminder.formId);
+                  setMode('filled');
+                }}
+                className="text-left border border-stone-200 rounded-xl p-3 bg-stone-50/70 hover:border-[#4e0e15]/40 hover:bg-white transition-colors cursor-pointer dark:bg-stone-950/30 dark:border-stone-800"
+              >
+                <span className="block text-[9px] font-mono font-bold text-stone-500">{reminder.deadline}</span>
+                <span className="block text-[11px] font-bold text-stone-800 dark:text-amber-100 leading-snug mt-1">
+                  {ka ? reminder.labelKa : reminder.labelEn}
+                </span>
+                <span className={`inline-block mt-2 text-[9px] font-bold border px-2 py-0.5 rounded-full ${badgeClass(reminder.readiness.badge)}`}>
+                  {reminder.readiness.score}%
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
         {/* ── Controls ─────────────────────────────────────────── */}
         <div className="space-y-4">
@@ -190,6 +375,70 @@ export default function OfficialDocsTab(props: Props) {
                 <Info className="w-3 h-3 shrink-0 mt-0.5" /> {template.notes}
               </p>
             )}
+          </div>
+
+          {/* Attachment evidence */}
+          <div className="bg-white border border-[#e8dfd5] p-4 rounded-2xl shadow-sm space-y-3 dark:bg-stone-900 dark:border-stone-800">
+            <div className="flex items-center justify-between gap-3">
+              <label className={labelCls}>{ka ? 'áƒ›áƒ¢áƒ™áƒ˜áƒªáƒ”áƒ‘áƒ£áƒšáƒ”áƒ‘áƒ”áƒ‘áƒ˜' : 'Document evidence'}</label>
+              <span className="text-[9px] font-mono text-stone-400 uppercase">{documentAttachments.length} files</span>
+            </div>
+            <label className="flex items-center gap-2 rounded-xl border border-dashed border-stone-300 bg-stone-50 px-3 py-2 text-[10px] font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950/40 dark:text-stone-300">
+              <UploadCloud className="h-3.5 w-3.5 text-[#4e0e15]" />
+              <span className="shrink-0">{ka ? 'áƒáƒ¢áƒ•áƒ˜áƒ áƒ—áƒ•áƒ' : 'Upload'}</span>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv"
+                disabled={!props.canManageOfficialDocs || !props.onAddAttachment}
+                onChange={handleDocumentAttachmentUpload}
+                className="min-w-0 flex-1 text-[10px] disabled:opacity-50"
+              />
+            </label>
+            <div className="space-y-2">
+              {documentAttachments.length === 0 ? (
+                <div className="rounded-xl border border-stone-200 bg-stone-50/70 px-3 py-2 text-[10px] text-stone-500 dark:border-stone-800 dark:bg-stone-950/30">
+                  {ka ? 'áƒáƒ› áƒ“áƒáƒœáƒáƒ áƒ—áƒ–áƒ” áƒ¤áƒáƒ˜áƒšáƒ˜ áƒ¯áƒ”áƒ  áƒáƒ  áƒáƒ áƒ˜áƒ¡ áƒ›áƒ˜áƒ‘áƒ›áƒ£áƒšáƒ˜.' : 'No files are linked to this annex yet.'}
+                </div>
+              ) : documentAttachments.map(attachment => {
+                const access = getAttachmentAccess(attachment);
+                return (
+                  <div key={attachment.id} className="flex items-start gap-2 rounded-xl border border-stone-200 bg-stone-50/70 p-2 text-[10.5px] dark:border-stone-800 dark:bg-stone-950/30">
+                    <Paperclip className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#4e0e15]" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-bold text-stone-800 dark:text-stone-100">{attachment.fileName}</div>
+                      <div className="font-mono text-[9px] uppercase tracking-wide text-stone-400">
+                        {formatAttachmentSize(attachment.sizeBytes)} - {attachment.description || attachment.module}
+                        {attachment.checksum ? ` - sha256:${attachment.checksum.slice(0, 12)}` : ''}
+                      </div>
+                    </div>
+                    {access && (
+                      <a
+                        href={access.href}
+                        download={access.download}
+                        target={access.external ? '_blank' : undefined}
+                        rel={access.external ? 'noreferrer' : undefined}
+                        className="rounded-lg border border-stone-200 bg-white p-1 text-stone-500 transition-colors hover:border-emerald-200 hover:text-emerald-700 dark:border-stone-800 dark:bg-stone-900"
+                        title={access.label}
+                        aria-label={`${access.label} ${attachment.fileName}`}
+                      >
+                        {access.external ? <ExternalLink className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
+                      </a>
+                    )}
+                    {props.canManageOfficialDocs && props.onDeleteAttachment && (
+                      <button
+                        type="button"
+                        onClick={() => props.onDeleteAttachment?.(attachment.id)}
+                        className="rounded-lg border border-stone-200 bg-white p-1 text-stone-500 transition-colors hover:border-rose-200 hover:text-rose-700 dark:border-stone-800 dark:bg-stone-900"
+                        title={ka ? 'Remove evidence' : 'Remove evidence'}
+                        aria-label={ka ? 'Remove evidence' : 'Remove evidence'}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Mode */}

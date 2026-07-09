@@ -147,6 +147,10 @@ describe('mergeCollections', () => {
       stockMovements: [],
       salesDispatches: [],
       salesOrders: [],
+      certificationRecords: [],
+      attachments: [],
+      crmLeads: [],
+      aiDrafts: [],
       transfers: [],
     };
     const conflicts = mergeCollections(db, {
@@ -156,6 +160,10 @@ describe('mergeCollections', () => {
       stockMovements: [item('mov-1', { lotId: 'LOT-1', locationId: 'loc-1', bottles: 120 })],
       salesDispatches: [item('sale-1', { lotId: 'LOT-1', locationId: 'loc-1', bottles: 12 })],
       salesOrders: [item('so-1', { lotId: 'LOT-1', locationId: 'loc-1', bottles: 24, status: 'reserved' })],
+      certificationRecords: [item('cert-1', { lotId: 'LOT-1', productType: 'wine', applicationStatus: 'draft' })],
+      attachments: [item('att-1', { fileName: 'cert.pdf', module: 'certification', storage: { kind: 'metadata_only' } })],
+      crmLeads: [item('lead-1', { displayName: 'Marani', companyName: 'Marani LLC', status: 'new' })],
+      aiDrafts: [item('ai-draft-1', { type: 'task', priority: 'medium', status: 'draft', reviewOnly: true })],
       transfers: [item('xfer-1', { sourceId: 'T1', destId: 'T2', volume: 500 })],
     });
     expect(conflicts).toEqual([]);
@@ -165,6 +173,10 @@ describe('mergeCollections', () => {
     expect(db.stockMovements).toHaveLength(1);
     expect(db.salesDispatches).toHaveLength(1);
     expect(db.salesOrders).toHaveLength(1);
+    expect(db.certificationRecords).toHaveLength(1);
+    expect(db.attachments).toHaveLength(1);
+    expect(db.crmLeads).toHaveLength(1);
+    expect(db.aiDrafts).toHaveLength(1);
     expect(db.transfers).toHaveLength(1);
   });
 

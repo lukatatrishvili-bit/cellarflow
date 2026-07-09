@@ -202,6 +202,8 @@ describe('data mapping', () => {
     const grapeIntakes: any[] = [
       { id: 'GI1', date: '2026-09-23', source: 'own', blockId: 'BLK-1', blockName: 'ქონდოლი 1', variety: 'საფერავი',
         vintage: 2026, grossWeightKg: 9500, tareWeightKg: 500, netWeightKg: 9000, brix: 23.4, ph: 3.45,
+        transportName: 'Truck', transportNumber: 'AA-001-AA', weighingDocumentNumber: 'W-001', labAnalysisNumber: 'LAB-001',
+        cadastralCode: '53.01.01.001', village: 'Kondoli', municipality: 'Telavi', microzone: 'Tsinandali',
         titratableAcidity: 5.8, temperatureC: 18, condition: 'excellent', pickingMethod: 'hand', wineClass: 'red',
         juiceYieldPct: 70, estimatedVolumeL: 6300, destinationVesselId: 'T-1', createdLotId: 'SAP-2026-01',
         operator: 'A', notes: 'clean' },
@@ -218,6 +220,10 @@ describe('data mapping', () => {
     expect(r1.tara).toBe(500);
     expect(r1.netto).toBe(9000);
     expect(r1.sugar).toBe(23.4);          // reception Brix, not block sampling
+    expect(r1.transport).toBe('Truck / AA-001-AA');
+    expect(r1.analysisNo).toBe('LAB-001');
+    expect(String(r1.note)).toContain('weighing W-001');
+    expect(String(r1.note)).toContain('cadastre 53.01.01.001');
     expect(r2.supplier).toBe('გ. ნადირაძე'); // third-party supplier name
     expect(doc.totalsRow?.netto).toBe(14000); // 9000 + 5000
   });

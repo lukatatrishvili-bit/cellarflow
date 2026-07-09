@@ -7,6 +7,7 @@ import type {
   IrrigationRecord, 
   FertilizationRecord, 
   SoilAnalysisRecord, 
+  VineyardPlantingProject,
   GrapeSamplingRecord, 
   HarvestRecord,
   UserProfile
@@ -15,7 +16,11 @@ import type { Language } from '../lib/i18n';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
 import IpmPhenoscheme from './IpmPhenoscheme';
+import VineyardProjectsTab from './VineyardProjectsTab';
 import { useFocusTrap } from './useFocusTrap';
+import { calculateCadastreCompleteness } from '../lib/cadastre';
+import { calculateVaziRisk, vaziRiskColor } from '../lib/vaziRisk';
+import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
 import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
 
 interface MapPolygonProps {
@@ -82,6 +87,7 @@ interface VaziModuleProps {
   sprays: SprayRecord[];
   scoutings: ScoutingRecord[];
   soilRecords: SoilAnalysisRecord[];
+  vineyardProjects: VineyardPlantingProject[];
   samplings: GrapeSamplingRecord[];
   harvests: HarvestRecord[];
   irrigationLogs: IrrigationRecord[];
@@ -89,6 +95,8 @@ interface VaziModuleProps {
   
   onAddBlock: (block: Omit<VineyardBlock, 'id'>) => void;
   onUpdateBlock: (id: string, updated: Partial<VineyardBlock>) => void;
+  onAddVineyardProject: (project: Omit<VineyardPlantingProject, 'id'>) => void;
+  onUpdateVineyardProject: (id: string, updated: Partial<VineyardPlantingProject>) => void;
   onAddPhenologyLog: (log: Omit<PhenologyRecord, 'id'>) => void;
   onAddSprayRecord: (rec: Omit<SprayRecord, 'id'>) => void;
   onAddScoutingRecord: (rec: Omit<ScoutingRecord, 'id'>) => void;
@@ -106,6 +114,18 @@ interface VaziModuleProps {
   setPrefilledTaskDesc?: (desc: string) => void;
 }
 
+const optionalText = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const cadastreBadgeClass = (score: number, missingCriticalCount: number) => {
+  if (missingCriticalCount > 0) return 'bg-amber-50 text-amber-800 border-amber-200';
+  if (score >= 85) return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+  return 'bg-stone-100 text-stone-700 border-stone-200';
+};
+const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flatMap(region => region.mainMicrozones))).sort();
+
 export default function VaziModule({
   lang,
   currentUser,
@@ -114,12 +134,15 @@ export default function VaziModule({
   sprays,
   scoutings,
   soilRecords,
+  vineyardProjects,
   samplings,
   harvests,
   irrigationLogs,
   fertilizerLogs,
   onAddBlock,
   onUpdateBlock,
+  onAddVineyardProject,
+  onUpdateVineyardProject,
   onAddPhenologyLog,
   onAddSprayRecord,
   onAddScoutingRecord,
@@ -136,7 +159,7 @@ export default function VaziModule({
   setPrefilledTaskPriority,
   setPrefilledTaskDesc
 }: VaziModuleProps) {
-  const [vaziTab, setVaziTab] = useState<'dashboard' | 'blocks' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather' | 'ipm_pheno'>('dashboard');
+  const [vaziTab, setVaziTab] = useState<'dashboard' | 'blocks' | 'projects' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather' | 'ipm_pheno'>('dashboard');
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   
   const [mapOverlay, setMapOverlay] = useState<'mildew' | 'moisture' | 'phenology'>('mildew');
@@ -145,19 +168,23 @@ export default function VaziModule({
   const getBlockColor = (blockId: string) => {
     const b = blocks.find(x => x.id === blockId);
     if (!b) return '#e2e8f0';
-    const name = b.name.toLowerCase();
-    
+    const risk = calculateVaziRisk({
+      block: b,
+      weather: b.id === selectedBlockId ? blockWeather : null,
+      sprays,
+      scoutings,
+      samplings,
+      harvests,
+      irrigationLogs,
+    });
+
     if (mapOverlay === 'mildew') {
-      if (name.includes('ridge') || blockId === 'block-1') return '#eab308'; // Moderate (Yellow)
-      if (name.includes('kondoli') || blockId === 'block-2') return '#10b981'; // Low (Green)
-      if (name.includes('mukuzani') || blockId === 'block-3') return '#ef4444'; // High (Red)
-      return '#10b981';
+      const mildewLevel = [risk.items.downyMildew, risk.items.powderyMildew, risk.items.botrytis]
+        .sort((a, b) => b.score - a.score)[0].level;
+      return vaziRiskColor(mildewLevel);
     }
     if (mapOverlay === 'moisture') {
-      if (name.includes('ridge') || blockId === 'block-1') return '#ef4444'; // Dry (Red)
-      if (name.includes('kondoli') || blockId === 'block-2') return '#10b981'; // Optimum (Green)
-      if (name.includes('mukuzani') || blockId === 'block-3') return '#3b82f6'; // Wet (Blue)
-      return '#10b981';
+      return vaziRiskColor(risk.items.waterStress.level);
     }
     if (mapOverlay === 'phenology') {
       if (b.currentPhenology.toLowerCase().includes('veraison')) return '#8b5cf6'; // Veraison (Purple)
@@ -328,6 +355,9 @@ export default function VaziModule({
   const selectedBlock = useMemo(() => {
     return blocks.find(b => b.id === selectedBlockId) || null;
   }, [blocks, selectedBlockId]);
+  const selectedCadastre = useMemo(() => {
+    return selectedBlock ? calculateCadastreCompleteness(selectedBlock) : null;
+  }, [selectedBlock]);
 
   const navigateTo = (target: NavigationTarget) => {
     if (onNavigate) {
@@ -362,6 +392,19 @@ export default function VaziModule({
   const [editIrrigationEnabled, setEditIrrigationEnabled] = useState(false);
   const [editFarmingStatus, setEditFarmingStatus] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editCadastralCode, setEditCadastralCode] = useState('');
+  const [editOfficialCadastreDocumentName, setEditOfficialCadastreDocumentName] = useState('');
+  const [editLandOwner, setEditLandOwner] = useState('');
+  const [editGrower, setEditGrower] = useState('');
+  const [editMunicipality, setEditMunicipality] = useState('');
+  const [editCommunity, setEditCommunity] = useState('');
+  const [editVillage, setEditVillage] = useState('');
+  const [editMicrozone, setEditMicrozone] = useState('');
+  const [editParcelName, setEditParcelName] = useState('');
+  const [editParcelArea, setEditParcelArea] = useState('');
+  const [editRootstock, setEditRootstock] = useState('');
+  const [editClone, setEditClone] = useState('');
+  const [editVineyardCondition, setEditVineyardCondition] = useState('');
 
   useEffect(() => {
     if (selectedBlock) {
@@ -382,6 +425,19 @@ export default function VaziModule({
       setEditIrrigationEnabled(selectedBlock.irrigationEnabled);
       setEditFarmingStatus(selectedBlock.farmingStatus);
       setEditNotes(selectedBlock.notes || '');
+      setEditCadastralCode(selectedBlock.cadastralCode || '');
+      setEditOfficialCadastreDocumentName(selectedBlock.officialCadastreDocumentName || '');
+      setEditLandOwner(selectedBlock.landOwner || '');
+      setEditGrower(selectedBlock.grower || '');
+      setEditMunicipality(selectedBlock.municipality || '');
+      setEditCommunity(selectedBlock.community || '');
+      setEditVillage(selectedBlock.village || '');
+      setEditMicrozone(selectedBlock.microzone || '');
+      setEditParcelName(selectedBlock.parcelName || '');
+      setEditParcelArea(selectedBlock.parcelArea ? String(selectedBlock.parcelArea) : '');
+      setEditRootstock(selectedBlock.rootstock || '');
+      setEditClone(selectedBlock.clone || '');
+      setEditVineyardCondition(selectedBlock.vineyardCondition || '');
       setIsEditingBlock(false);
     }
   }, [selectedBlockId, selectedBlock]);
@@ -406,7 +462,20 @@ export default function VaziModule({
       trainingSystem: editTrainingSystem,
       irrigationEnabled: editIrrigationEnabled,
       farmingStatus: editFarmingStatus as VineyardBlock['farmingStatus'],
-      notes: editNotes
+      notes: editNotes,
+      cadastralCode: optionalText(editCadastralCode),
+      officialCadastreDocumentName: optionalText(editOfficialCadastreDocumentName),
+      landOwner: optionalText(editLandOwner),
+      grower: optionalText(editGrower),
+      municipality: optionalText(editMunicipality),
+      community: optionalText(editCommunity),
+      village: optionalText(editVillage),
+      microzone: optionalText(editMicrozone),
+      parcelName: optionalText(editParcelName),
+      parcelArea: editParcelArea.trim() ? Number(editParcelArea) || undefined : undefined,
+      rootstock: optionalText(editRootstock),
+      clone: optionalText(editClone),
+      vineyardCondition: optionalText(editVineyardCondition)
     });
     setIsEditingBlock(false);
   };
@@ -456,6 +525,8 @@ export default function VaziModule({
       rainMm,
       wind: Math.round(wind),
       humidity,
+      tempMax: blockWeatherData.daily.tempMax,
+      tempMin: blockWeatherData.daily.tempMin,
       frostRisk: blockWeatherData.daily.tempMin < 2 ? 'High' : blockWeatherData.daily.tempMin < 5 ? 'Medium' : 'None',
       heatStress: blockWeatherData.daily.tempMax > 35 ? 'Severe' : blockWeatherData.daily.tempMax > 30 ? 'Moderate' : 'Optimum',
       sprayConditions: wind > 14 ? 'Unsafe (High Wind)' : rainMm > 0 ? 'Unsafe (Rain)' : 'Suitable',
@@ -472,8 +543,31 @@ export default function VaziModule({
     return latest?.gdd ?? 0;
   }, [selectedBlock, phenologyLogs]);
 
+  const selectedRisk = useMemo(() => {
+    if (!selectedBlock) return null;
+    return calculateVaziRisk({
+      block: selectedBlock,
+      weather: blockWeather,
+      sprays,
+      scoutings,
+      samplings,
+      harvests,
+      irrigationLogs,
+    });
+  }, [selectedBlock, blockWeather, sprays, scoutings, samplings, harvests, irrigationLogs]);
+
   return (
     <div id="vazi-sandbox" className="space-y-6 text-stone-800 animate-fade-in font-sans">
+      <datalist id="vazi-georgian-variety-options">
+        {GEORGIAN_GRAPE_VARIETIES.map(item => (
+          <option key={item.id} value={item.name} />
+        ))}
+      </datalist>
+      <datalist id="vazi-georgian-microzone-options">
+        {GEORGIAN_MICROZONE_OPTIONS.map(name => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
       
       {/* Module Title bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between bg-emerald-950/95 text-white p-5 rounded-2xl border border-emerald-900 shadow-md gap-4">
@@ -523,6 +617,17 @@ export default function VaziModule({
               de: 'Weinbergsparzellen'
             }[lang] || 'Vineyard Blocks',
             icon: Layers
+          },
+          {
+            id: 'projects',
+            label: {
+              en: 'New Vineyard Projects',
+              ka: 'ახალი ვენახის პროექტები',
+              it: 'Nuovi Progetti Vigneto',
+              fr: 'Nouveaux Projets Vigne',
+              de: 'Neue Weinbergprojekte'
+            }[lang] || 'New Vineyard Projects',
+            icon: FileText
           },
           {
             id: 'spraying',
@@ -598,7 +703,7 @@ export default function VaziModule({
               key={tb.id}
               onClick={() => {
                 setVaziTab(tb.id as any);
-                if (tb.id !== 'blocks' && tb.id !== 'dashboard') {
+                if (tb.id !== 'blocks' && tb.id !== 'dashboard' && tb.id !== 'projects') {
                   // auto select first block if none selected
                   if (!selectedBlockId && blocks.length > 0) {
                     setSelectedBlockId(blocks[0].id);
@@ -642,6 +747,19 @@ export default function VaziModule({
             </button>
           </div>
         </div>
+      )}
+
+      {vaziTab === 'projects' && (
+        <VineyardProjectsTab
+          lang={lang}
+          projects={vineyardProjects}
+          onAddProject={onAddVineyardProject}
+          onUpdateProject={onUpdateVineyardProject}
+          setPrefilledTaskTitle={setPrefilledTaskTitle}
+          setPrefilledTaskPriority={setPrefilledTaskPriority}
+          setPrefilledTaskDesc={setPrefilledTaskDesc}
+          setActiveModule={setActiveModule}
+        />
       )}
 
       {/* ==========================================
@@ -812,7 +930,11 @@ export default function VaziModule({
                       );
                     }
 
-                    const { temp, rainMm, wind, humidity, diseasePressure } = blockWeather;
+                    const { temp, rainMm, wind, humidity } = blockWeather;
+                    const topRisk = selectedRisk
+                      ? [selectedRisk.items.downyMildew, selectedRisk.items.powderyMildew, selectedRisk.items.botrytis, selectedRisk.items.waterStress, selectedRisk.items.phiConflict]
+                        .sort((a, b) => b.score - a.score)[0]
+                      : null;
 
                     return (
                       <div className="flex flex-col justify-between h-full space-y-2">
@@ -845,14 +967,28 @@ export default function VaziModule({
                           </div>
                         </div>
 
-                        {/* Disease Pressure Warning */}
+                        {selectedRisk && (
+                          <div className="grid grid-cols-3 gap-2 text-[10px]">
+                            {[
+                              selectedRisk.items.downyMildew,
+                              selectedRisk.items.botrytis,
+                              selectedRisk.items.waterStress,
+                            ].map(item => (
+                              <div key={item.category} className="rounded-lg border border-stone-200 bg-white p-2">
+                                <span className="block font-mono text-[8px] uppercase tracking-wide text-stone-500">{item.label}</span>
+                                <strong className="mt-1 block text-xs font-black capitalize" style={{ color: vaziRiskColor(item.level) }}>{item.level}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         <div className="p-2.5 bg-amber-50/75 border border-amber-200 text-amber-900 rounded-lg flex items-start gap-2 text-[10px] leading-snug">
                           <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                           <div>
-                            <span className="font-bold block text-[10px] leading-none mb-0.5">Agro-Alert: {block.grapeVariety} block</span>
-                            {diseasePressure.includes('High') || humidity > 70
-                              ? `Pathogen pressure is high! Foliar humidity is at ${humidity}%, offering mildew propagation vectors. Spray recommended.`
-                              : `Canopy conditions optimal. Heat indices are moderate. Soil moisture stands at ${block.id === 'block-1' ? '18%' : '28%'}. Drip line calibrated.`
+                            <span className="font-bold block text-[10px] leading-none mb-0.5">Agro-alert: {topRisk ? `${topRisk.label} ${topRisk.level}` : `${block.grapeVariety} block`}</span>
+                            {topRisk
+                              ? `${topRisk.reasons.slice(0, 2).join('; ')}. ${topRisk.nextAction}`
+                              : `Temperature ${temp} C, humidity ${humidity}%, rainfall ${rainMm} mm, wind ${wind} km/h.`
                             }
                           </div>
                         </div>
@@ -943,6 +1079,7 @@ export default function VaziModule({
             <div className="space-y-3.5">
               {blocks.map(b => {
                 const isActive = b.id === selectedBlockId;
+                const cadastre = calculateCadastreCompleteness(b);
                 return (
                   <div
                     key={b.id}
@@ -963,6 +1100,12 @@ export default function VaziModule({
                     <div className="flex justify-between items-center mt-2 font-mono text-[9px] text-stone-500">
                       <span>{b.grapeVariety}</span>
                       <span className="text-emerald-700 font-extrabold">{b.currentPhenology}</span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400">Cadastre mirror</span>
+                      <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${cadastreBadgeClass(cadastre.score, cadastre.missingCritical.length)}`}>
+                        {cadastre.score}%
+                      </span>
                     </div>
                   </div>
                 );
@@ -1003,6 +1146,12 @@ export default function VaziModule({
                       <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Farming</span>
                       <strong className="text-xs uppercase block text-emerald-750 font-bold">{selectedBlock.farmingStatus}</strong>
                     </div>
+                    {selectedCadastre && (
+                      <div className="pl-3 border-l border-stone-150">
+                        <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Cadastre</span>
+                        <strong className="text-xs uppercase block text-amber-700 font-bold">{selectedCadastre.score}%</strong>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1036,6 +1185,114 @@ export default function VaziModule({
                           value={editLocationName} onChange={(e) => setEditLocationName(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/35 p-3 space-y-3">
+                      <h4 className="text-[10px] uppercase font-mono tracking-widest text-amber-900 font-black flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        Government Cadastre Mirror
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Cadastral Code</label>
+                          <input
+                            type="text"
+                            value={editCadastralCode}
+                            onChange={(e) => setEditCadastralCode(e.target.value)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Cadastre Document</label>
+                          <input
+                            type="text"
+                            value={editOfficialCadastreDocumentName}
+                            onChange={(e) => setEditOfficialCadastreDocumentName(e.target.value)}
+                            placeholder="file name or registry ref"
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Parcel Name</label>
+                          <input
+                            type="text"
+                            value={editParcelName}
+                            onChange={(e) => setEditParcelName(e.target.value)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Municipality</label>
+                          <input
+                            type="text"
+                            value={editMunicipality}
+                            onChange={(e) => setEditMunicipality(e.target.value)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Community</label>
+                          <input
+                            type="text"
+                            value={editCommunity}
+                            onChange={(e) => setEditCommunity(e.target.value)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Village</label>
+                          <input
+                            type="text"
+                            value={editVillage}
+                            onChange={(e) => setEditVillage(e.target.value)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Microzone / PDO</label>
+                          <input
+                            type="text"
+                            value={editMicrozone}
+                            onChange={(e) => setEditMicrozone(e.target.value)}
+                            list="vazi-georgian-microzone-options"
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Parcel Area (ha)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={editParcelArea}
+                            onChange={(e) => setEditParcelArea(e.target.value)}
+                            placeholder={String(editArea)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Land Owner</label>
+                          <input
+                            type="text"
+                            value={editLandOwner}
+                            onChange={(e) => setEditLandOwner(e.target.value)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Grower</label>
+                          <input
+                            type="text"
+                            value={editGrower}
+                            onChange={(e) => setEditGrower(e.target.value)}
+                            className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -1080,6 +1337,7 @@ export default function VaziModule({
                         <input 
                           type="text" required
                           value={editGrapeVariety} onChange={(e) => setEditGrapeVariety(e.target.value)}
+                          list="vazi-georgian-variety-options"
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
@@ -1096,6 +1354,37 @@ export default function VaziModule({
                         <input 
                           type="text" required
                           value={editTrainingSystem} onChange={(e) => setEditTrainingSystem(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Rootstock</label>
+                        <input
+                          type="text"
+                          value={editRootstock}
+                          onChange={(e) => setEditRootstock(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Clone</label>
+                        <input
+                          type="text"
+                          value={editClone}
+                          onChange={(e) => setEditClone(e.target.value)}
+                          className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vineyard Condition</label>
+                        <input
+                          type="text"
+                          value={editVineyardCondition}
+                          onChange={(e) => setEditVineyardCondition(e.target.value)}
+                          placeholder="productive, replanted, young vines"
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
@@ -1185,6 +1474,51 @@ export default function VaziModule({
                 {/* Sub-Tabs of Block detail */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-stone-700">
                   
+                  {selectedCadastre && (
+                    <div className="space-y-3 p-4 bg-amber-50/45 rounded-xl border border-amber-100 md:col-span-2">
+                      <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between gap-2 border-b border-dashed border-amber-200 pb-1.5">
+                        <span className="flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5" />
+                          Government Cadastre Mirror
+                        </span>
+                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${cadastreBadgeClass(selectedCadastre.score, selectedCadastre.missingCritical.length)}`}>
+                          {selectedCadastre.score}% {selectedCadastre.badge}
+                        </span>
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[11px]">
+                        {([
+                          ['Cadastral code', selectedBlock.cadastralCode],
+                          ['Municipality', selectedBlock.municipality],
+                          ['Village', selectedBlock.village],
+                          ['Microzone', selectedBlock.microzone],
+                          ['Parcel', selectedBlock.parcelName],
+                          ['Parcel area', `${selectedBlock.parcelArea ?? selectedBlock.area} ha`],
+                          ['Owner / grower', selectedBlock.landOwner || selectedBlock.grower],
+                          ['Document', selectedBlock.officialCadastreDocumentName],
+                        ] as Array<[string, string | number | undefined]>).map(([field, value]) => (
+                          <div key={field} className="border border-amber-100 bg-white/70 rounded-lg p-2">
+                            <span className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold">{field}</span>
+                            <strong className="mt-0.5 block text-stone-800 font-serif">{value || 'Missing'}</strong>
+                          </div>
+                        ))}
+                      </div>
+                      {selectedCadastre.missing.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 text-[9px] font-mono">
+                          {selectedCadastre.missing.slice(0, 7).map(item => (
+                            <span key={item} className="rounded-full border border-amber-200 bg-amber-100/70 px-2 py-0.5 text-amber-900">
+                              Missing: {item}
+                            </span>
+                          ))}
+                          {selectedCadastre.missing.length > 7 && (
+                            <span className="rounded-full border border-stone-200 bg-stone-100 px-2 py-0.5 text-stone-600">
+                              +{selectedCadastre.missing.length - 7} more
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Block Terrain & Soil */}
                   <div className="space-y-3 p-4 bg-stone-50 rounded-xl border border-stone-100">
                     <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center gap-1.5 border-b border-dashed border-stone-200 pb-1.5">
@@ -1211,6 +1545,14 @@ export default function VaziModule({
                       <li className="flex justify-between">
                         <span className="text-slate-500 dark:text-slate-400">Soil Geological Profile:</span>
                         <span className="font-serif text-[11px] text-[#4e0e15] text-right font-bold inline-block max-w-40">{selectedBlock.soilType}</span>
+                      </li>
+                      <li className="flex justify-between">
+                        <span className="text-slate-500 dark:text-slate-400">Rootstock / Clone:</span>
+                        <span className="font-mono text-stone-800 text-right">{selectedBlock.rootstock || 'Missing'} / {selectedBlock.clone || 'Missing'}</span>
+                      </li>
+                      <li className="flex justify-between">
+                        <span className="text-slate-500 dark:text-slate-400">Vineyard Condition:</span>
+                        <span className="font-mono text-stone-800 text-right">{selectedBlock.vineyardCondition || 'Missing'}</span>
                       </li>
                     </ul>
                   </div>
@@ -2128,14 +2470,37 @@ export default function VaziModule({
               const variety = fd.get('variety') as string;
               const plantYear = parseInt(fd.get('plantYear') as string) || 2012;
               const rows = parseInt(fd.get('rows') as string) || 50;
-              const spacing = fd.get('spacing') as string;
-              const note = fd.get('notes') as string;
+              const spacing = String(fd.get('spacing') || '');
+              const note = String(fd.get('notes') || '');
+              const parcelArea = parseFloat(fd.get('parcelArea') as string) || area;
+              const cadastralCode = optionalText(String(fd.get('cadastralCode') || ''));
+              const officialCadastreDocumentName = optionalText(String(fd.get('officialCadastreDocumentName') || ''));
+              const landOwner = optionalText(String(fd.get('landOwner') || ''));
+              const grower = optionalText(String(fd.get('grower') || ''));
+              const municipality = optionalText(String(fd.get('municipality') || ''));
+              const community = optionalText(String(fd.get('community') || ''));
+              const village = optionalText(String(fd.get('village') || ''));
+              const microzone = optionalText(String(fd.get('microzone') || ''));
+              const parcelName = optionalText(String(fd.get('parcelName') || ''));
+              const rootstock = optionalText(String(fd.get('rootstock') || ''));
+              const clone = optionalText(String(fd.get('clone') || ''));
+              const vineyardCondition = optionalText(String(fd.get('vineyardCondition') || ''));
 
               if (name && variety) {
                 onAddBlock({
                   name,
                   vineyardName: vineyard,
                   locationName: addBlockLocName,
+                  cadastralCode,
+                  officialCadastreDocumentName,
+                  landOwner,
+                  grower,
+                  municipality,
+                  community,
+                  village,
+                  microzone,
+                  parcelName,
+                  parcelArea,
                   latitude: addBlockLat,
                   longitude: addBlockLng,
                   area,
@@ -2144,6 +2509,8 @@ export default function VaziModule({
                   aspect: 'South-West',
                   soilType: 'Limestone with heavy gravel alluvial deposits',
                   grapeVariety: variety,
+                  rootstock,
+                  clone,
                   plantingYear: plantYear,
                   spacing,
                   rowsCount: rows,
@@ -2155,6 +2522,7 @@ export default function VaziModule({
                   currentPhenology: 'Budburst',
                   estimatedHarvestDate: new Date(2026, 8, 15).toISOString().split('T')[0],
                   notes: note,
+                  vineyardCondition,
                   boundary: drawnPoints.length > 2 ? drawnPoints : undefined
                 });
                 form.reset();
@@ -2292,16 +2660,60 @@ export default function VaziModule({
                 </div>
               </div>
 
+              <div className="bg-amber-50/60 border border-amber-200/70 p-3 rounded-lg space-y-3">
+                <span className="font-bold block text-amber-900 font-mono text-[9px] uppercase tracking-wider">Government Cadastre Mirror</span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Cadastral Code</label>
+                    <input type="text" name="cadastralCode" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Cadastre Document</label>
+                    <input type="text" name="officialCadastreDocumentName" placeholder="file or registry ref" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Parcel Name</label>
+                    <input type="text" name="parcelName" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Municipality</label>
+                    <input type="text" name="municipality" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Community</label>
+                    <input type="text" name="community" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Village</label>
+                    <input type="text" name="village" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Microzone / PDO</label>
+                    <input type="text" name="microzone" list="vazi-georgian-microzone-options" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Parcel Area (ha)</label>
+                    <input type="number" min="0" step="0.01" name="parcelArea" placeholder="defaults to area" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Land Owner</label>
+                    <input type="text" name="landOwner" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Grower</label>
+                    <input type="text" name="grower" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Grape Variety *</label>
-                  <select name="variety" className="w-full bg-stone-55 border border-slate-200 px-2 py-1 outline-none font-bold text-stone-800">
-                    <option value="Saperavi">🍇 Saperavi (Georgian Red)</option>
-                    <option value="Rkatsiteli">🥂 Rkatsiteli (Amber/White)</option>
-                    <option value="Mtsvane">🥂 Kakhuri Mtsvane</option>
-                    <option value="Kisi">🍯 Kisi Traditional</option>
-                    <option value="Cabernet Sauvignon">🍷 Cabernet Sauvignon</option>
-                  </select>
+                  <input type="text" name="variety" defaultValue="Saperavi" list="vazi-georgian-variety-options" className="w-full bg-stone-55 border border-slate-200 px-2 py-1 outline-none font-bold text-stone-800" required />
                 </div>
                 <div>
                   <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Year</label>
@@ -2316,6 +2728,21 @@ export default function VaziModule({
               <div>
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Spacing & Row density</label>
                 <input type="text" name="spacing" defaultValue="2.5m x 1.0m" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Rootstock</label>
+                  <input type="text" name="rootstock" placeholder="5C, SO4" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Clone</label>
+                  <input type="text" name="clone" placeholder="Saperavi 06" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Vineyard Condition</label>
+                  <input type="text" name="vineyardCondition" placeholder="productive" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
+                </div>
               </div>
 
               <div>

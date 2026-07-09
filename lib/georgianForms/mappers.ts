@@ -33,6 +33,13 @@ function parseSpacing(spacing: string | undefined): [string, string] {
 
 /** locationName is a free string ("Telavi, Kakheti, Georgia"); split best-effort. */
 function splitLocation(block: VineyardBlock): { municipality: string; community: string; village: string } {
+  if (block.municipality || block.community || block.village) {
+    return {
+      municipality: block.municipality || '',
+      community: block.community || '',
+      village: block.village || '',
+    };
+  }
   const parts = (block.locationName || '').split(',').map(s => s.trim()).filter(Boolean);
   // Heuristic: [village, municipality/region, country] — keep it transparent.
   if (parts.length >= 2) return { municipality: parts[1] || '', community: '', village: parts[0] || '' };
@@ -59,19 +66,19 @@ const mapVineyard: Mapper = (ctx) => selectedBlocks(ctx).map(b => {
   const loc = splitLocation(b);
   const [rowD, vineD] = parseSpacing(b.spacing);
   return {
-    parcelCadastral: b.id || '',
+    parcelCadastral: b.cadastralCode || b.id || '',
     municipality: loc.municipality,
     community: loc.community,
     village: loc.village || b.vineyardName || '',
-    parcelName: b.name || '',
+    parcelName: b.parcelName || b.name || '',
     variety: b.grapeVariety || '',
-    areaSqm: round2((b.area || 0) * 10000), // ha → sq.m
+    areaSqm: round2(((b.parcelArea ?? b.area) || 0) * 10000), // ha -> sq.m
     plantingYear: b.plantingYear || '',
     rootstock: b.rootstock || '', // TODO: rootstock optional in app model
     rowDistance: rowD,
     vineDistance: vineD,
     irrigation: b.irrigationEnabled ? 'დიახ' : 'არა',
-    condition: b.currentPhenology || b.farmingStatus || '',
+    condition: b.vineyardCondition || b.currentPhenology || b.farmingStatus || '',
   };
 });
 
@@ -119,14 +126,26 @@ const mapGrapeReception: Mapper = (ctx) => {
         date: (g.date || '').slice(0, 10),
         supplier,
         variety: g.variety || block?.grapeVariety || '',
-        location: block?.locationName || (g.source === 'supplier' ? (g.supplierName || '') : ''),
-        transport: '', // TODO: transport not tracked in app
+        location: [
+          g.village || block?.village,
+          g.community || block?.community,
+          g.municipality || block?.municipality,
+          g.microzone || block?.microzone,
+        ].filter(Boolean).join(', ') || block?.locationName || (g.source === 'supplier' ? (g.supplierName || '') : ''),
+        transport: [g.transportName, g.transportNumber].filter(Boolean).join(' / '),
         brutto: g.grossWeightKg != null ? round2(g.grossWeightKg) : '',
         tara: g.tareWeightKg != null ? round2(g.tareWeightKg) : '',
         netto: g.netWeightKg != null ? round2(g.netWeightKg) : '',
-        analysisNo: '', // TODO: lab analysis № not linked to reception
+        analysisNo: g.labAnalysisNumber || '',
         sugar: g.brix ? round2(g.brix) : '',
-        note: g.notes || '',
+        note: [
+          g.weighingDocumentNumber ? `weighing ${g.weighingDocumentNumber}` : '',
+          g.cadastralCode || block?.cadastralCode ? `cadastre ${g.cadastralCode || block?.cadastralCode}` : '',
+          g.supplierIdCode ? `supplier ID ${g.supplierIdCode}` : '',
+          (g.grapePrice ?? g.costPerKg) != null ? `price ${round2((g.grapePrice ?? g.costPerKg) as number)} ${g.currency || ctx.company.currency || 'GEL'}/kg` : '',
+          g.paymentStatus ? `payment ${g.paymentStatus}` : '',
+          g.notes || '',
+        ].filter(Boolean).join(' | '),
       };
     });
   }
@@ -440,17 +459,24 @@ const mapProcessingSummary: Mapper = (ctx) => {
     e.wineDal += litresToDal(lot.initialVolume || 0);
     byVariety.set(v, e);
   }
-  return [...byVariety.entries()].map(([variety, e]): DocRow => ({
-    variety,
-    grapeTons: round2(e.tons),
-    avgSugar: e.sugars.length ? round2(e.sugars.reduce((a, b) => a + b, 0) / e.sugars.length) : '',
-    wineCategory: '', // TODO: PDO/PGI/table classification not modelled
-    wineTotal: round2(e.wineDal),
-    pdoWine: '', // TODO
-    pgiWine: '', // TODO
-    otherWine: round2(e.wineDal), // safe default: uncategorised → table wine
-    distillWine: '',
-  }));
+  return [...byVariety.entries()].map(([variety, e]): DocRow => {
+    const lots = ctx.lots.filter(l => (l.variety || '') === variety);
+    const pdoWine = lots.filter(l => l.classification === 'PDO').reduce((sum, l) => sum + litresToDal(l.initialVolume || 0), 0);
+    const pgiWine = lots.filter(l => l.classification === 'PGI').reduce((sum, l) => sum + litresToDal(l.initialVolume || 0), 0);
+    const otherWine = lots.filter(l => l.classification !== 'PDO' && l.classification !== 'PGI').reduce((sum, l) => sum + litresToDal(l.initialVolume || 0), 0);
+    const categories = [...new Set(lots.map(l => l.classification).filter(Boolean))];
+    return {
+      variety,
+      grapeTons: round2(e.tons),
+      avgSugar: e.sugars.length ? round2(e.sugars.reduce((a, b) => a + b, 0) / e.sugars.length) : '',
+      wineCategory: categories.join(', '),
+      wineTotal: round2(e.wineDal),
+      pdoWine: pdoWine ? round2(pdoWine) : '',
+      pgiWine: pgiWine ? round2(pgiWine) : '',
+      otherWine: otherWine ? round2(otherWine) : '',
+      distillWine: '',
+    };
+  });
 };
 
 // ── Annex 18 — wine turnover notification (per lot) ──────────────────────────

@@ -7,7 +7,8 @@ export type LineageNodeType =
   | 'bottling'
   | 'storage'
   | 'reservation'
-  | 'dispatch';
+  | 'dispatch'
+  | 'certification';
 
 export type LineageEdgeType =
   | 'created'
@@ -17,7 +18,8 @@ export type LineageEdgeType =
   | 'bottled'
   | 'stored'
   | 'reserved'
-  | 'sold';
+  | 'sold'
+  | 'certified';
 
 export interface LineageNode {
   id: string;

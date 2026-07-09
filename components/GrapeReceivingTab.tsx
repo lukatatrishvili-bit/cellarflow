@@ -6,6 +6,7 @@ import type {
   WineClass, GrapeSource, GrapeIntakeCondition,
 } from '../lib/wineryState';
 import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryOperations';
+import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS, inferWineClassForVariety } from '../lib/georgianWineKnowledge';
 import { EmptyState } from './ui/primitives';
 
 interface Props {
@@ -39,6 +40,7 @@ const CONDITIONS: Array<{ key: GrapeIntakeCondition; en: string; ka: string }> =
 ];
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
+const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flatMap(region => region.mainMicrozones))).sort();
 
 export default function GrapeReceivingTab({
   lang, vessels, blocks, harvests, intakes, currentUserName,
@@ -52,10 +54,20 @@ export default function GrapeReceivingTab({
   const [source, setSource] = useState<GrapeSource>('own');
   const [blockId, setBlockId] = useState('');
   const [supplierName, setSupplierName] = useState('');
+  const [supplierIdCode, setSupplierIdCode] = useState('');
   const [harvestRecordId, setHarvestRecordId] = useState('');
   const [variety, setVariety] = useState('');
   const [vintage, setVintage] = useState(thisYear);
   const [date, setDate] = useState(today);
+  const [transportName, setTransportName] = useState('');
+  const [transportNumber, setTransportNumber] = useState('');
+  const [weighingDocumentNumber, setWeighingDocumentNumber] = useState('');
+  const [labAnalysisNumber, setLabAnalysisNumber] = useState('');
+  const [cadastralCode, setCadastralCode] = useState('');
+  const [municipality, setMunicipality] = useState('');
+  const [community, setCommunity] = useState('');
+  const [village, setVillage] = useState('');
+  const [microzone, setMicrozone] = useState('');
   const [grossWeightKg, setGross] = useState('');
   const [tareWeightKg, setTare] = useState('');
   const [brix, setBrix] = useState('');
@@ -68,6 +80,7 @@ export default function GrapeReceivingTab({
   const [juiceYieldPct, setYield] = useState('70');
   const [costPerKg, setCostPerKg] = useState('');
   const [totalCost, setTotalCost] = useState('');
+  const [paymentStatus, setPaymentStatus] = useState<GrapeIntakeRecord['paymentStatus']>('not_applicable');
   const [destinationVesselId, setDest] = useState('');
   const [operator, setOperator] = useState('');
   const [notes, setNotes] = useState('');
@@ -97,7 +110,17 @@ export default function GrapeReceivingTab({
   const applyBlock = (id: string) => {
     setBlockId(id);
     const b = blocks.find(x => x.id === id);
-    if (b && !variety) setVariety(b.grapeVariety);
+    if (!b) return;
+    if (!variety) {
+      setVariety(b.grapeVariety);
+      const inferredClass = inferWineClassForVariety(b.grapeVariety);
+      if (inferredClass) setWineClass(inferredClass);
+    }
+    setCadastralCode(b.cadastralCode || b.id || '');
+    setMunicipality(b.municipality || '');
+    setCommunity(b.community || '');
+    setVillage(b.village || b.vineyardName || '');
+    setMicrozone(b.microzone || '');
   };
 
   const applyHarvest = (id: string) => {
@@ -107,15 +130,26 @@ export default function GrapeReceivingTab({
     setSource('own');
     setBlockId(h.blockId);
     setVariety(h.variety);
+    const inferredClass = inferWineClassForVariety(h.variety);
+    if (inferredClass) setWineClass(inferredClass);
     const b = blocks.find(x => x.id === h.blockId);
     if (b) setBlockId(b.id);
     if (h.estimatedTons) setGross(String(Math.round((h.actualHarvestedKg || h.estimatedTons * 1000))));
     if (h.temperatureAtHarvest != null) setTemp(String(h.temperatureAtHarvest));
   };
 
+  const handleVarietyChange = (value: string) => {
+    setVariety(value);
+    const inferredClass = inferWineClassForVariety(value);
+    if (inferredClass) setWineClass(inferredClass);
+  };
+
   const resetForm = () => {
     setHarvestRecordId(''); setVariety(''); setGross(''); setTare('');
     setBrix(''); setPh(''); setTa(''); setTemp(''); setCostPerKg(''); setTotalCost(''); setNotes(''); setDest('');
+    setTransportName(''); setTransportNumber(''); setWeighingDocumentNumber(''); setLabAnalysisNumber('');
+    setSupplierIdCode(''); setCadastralCode(''); setMunicipality(''); setCommunity(''); setVillage(''); setMicrozone('');
+    setPaymentStatus('not_applicable');
   };
 
   const handleSubmit = () => {
@@ -125,8 +159,18 @@ export default function GrapeReceivingTab({
       date,
       source,
       supplierName: source === 'supplier' ? supplierName.trim() : undefined,
+      supplierIdCode: source === 'supplier' ? supplierIdCode.trim() || undefined : undefined,
       blockId: source === 'own' ? blockId : undefined,
       blockName: source === 'own' ? (block?.name || '') : undefined,
+      transportName: transportName.trim() || undefined,
+      transportNumber: transportNumber.trim() || undefined,
+      weighingDocumentNumber: weighingDocumentNumber.trim() || undefined,
+      labAnalysisNumber: labAnalysisNumber.trim() || undefined,
+      cadastralCode: cadastralCode.trim() || block?.cadastralCode || undefined,
+      municipality: municipality.trim() || block?.municipality || undefined,
+      community: community.trim() || block?.community || undefined,
+      village: village.trim() || block?.village || block?.vineyardName || undefined,
+      microzone: microzone.trim() || block?.microzone || undefined,
       variety: variety.trim(),
       vintage,
       grossWeightKg: parseFloat(grossWeightKg) || 0,
@@ -142,6 +186,8 @@ export default function GrapeReceivingTab({
       costPerKg: costPerKgNum > 0 ? costPerKgNum : undefined,
       totalCost: computedFruitCost > 0 ? computedFruitCost : undefined,
       currency,
+      grapePrice: costPerKgNum > 0 ? costPerKgNum : undefined,
+      paymentStatus,
       destinationVesselId: destinationVesselId || null,
       harvestRecordId: harvestRecordId || undefined,
       operator: operator.trim() || currentUserName,
@@ -162,6 +208,16 @@ export default function GrapeReceivingTab({
 
   return (
     <div className="space-y-4 animate-fade-in text-stone-800">
+      <datalist id="georgian-grape-variety-options">
+        {GEORGIAN_GRAPE_VARIETIES.map(item => (
+          <option key={item.id} value={item.name} />
+        ))}
+      </datalist>
+      <datalist id="georgian-microzone-options">
+        {GEORGIAN_MICROZONE_OPTIONS.map(name => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
       {/* Header */}
       <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm dark:bg-stone-900 dark:border-stone-800">
         <span className="text-[9px] uppercase tracking-widest bg-[#4e0e15]/10 text-[#4e0e15] px-2.5 py-0.5 rounded font-bold">
@@ -217,17 +273,25 @@ export default function GrapeReceivingTab({
               </div>
             </>
           ) : (
-            <div>
-              <label className={labelCls}>{ka ? 'მომწოდებლის სახელი' : 'Supplier name'}</label>
-              <input type="text" value={supplierName} onChange={e => setSupplierName(e.target.value)}
-                placeholder={ka ? 'მაგ. გიორგი ბ. — სოფ. ვაზისუბანი' : 'e.g. Giorgi B. — Vazisubani'} className={inputCls} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className={labelCls}>{ka ? 'მომწოდებლის სახელი' : 'Supplier name'}</label>
+                <input type="text" value={supplierName} onChange={e => setSupplierName(e.target.value)}
+                  placeholder={ka ? 'მაგ. გიორგი ბ. — სოფ. ვაზისუბანი' : 'e.g. Giorgi B. - Vazisubani'} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'მომწოდებლის საიდ. კოდი' : 'Supplier ID / company code'}</label>
+                <input type="text" value={supplierIdCode} onChange={e => setSupplierIdCode(e.target.value)}
+                  placeholder={ka ? 'პირადი ან კომპანიის კოდი' : 'Personal or company code'} className={inputCls} />
+              </div>
             </div>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div>
               <label className={labelCls}>{ka ? 'ჯიში' : 'Variety'}</label>
-              <input type="text" value={variety} onChange={e => setVariety(e.target.value)}
+              <input type="text" value={variety} onChange={e => handleVarietyChange(e.target.value)}
+                list="georgian-grape-variety-options"
                 placeholder={ka ? 'საფერავი' : 'Saperavi'} className={inputCls} />
             </div>
             <div>
@@ -237,6 +301,50 @@ export default function GrapeReceivingTab({
             <div>
               <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+            </div>
+          </div>
+
+          <div className="border-t border-stone-100 pt-4 space-y-2 dark:border-stone-800">
+            <div className="flex items-center justify-between gap-3">
+              <span className={labelCls}>{ka ? 'ოფიციალური მიღების ველები' : 'Official receiving fields'}</span>
+              <span className="text-[9px] font-mono text-stone-400">{ka ? 'აკლებული გამოჩნდება დოკუმენტებში' : 'Missing values become document warnings'}</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+              <div>
+                <label className={labelCls}>{ka ? 'ტრანსპორტი' : 'Transport name'}</label>
+                <input type="text" value={transportName} onChange={e => setTransportName(e.target.value)} placeholder={ka ? 'მძღოლი / კომპანია' : 'Driver / company'} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'ტრანსპორტის ნომერი' : 'Transport number'}</label>
+                <input type="text" value={transportNumber} onChange={e => setTransportNumber(e.target.value)} placeholder="AA-000-AA" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'აწონის დოკ. №' : 'Weighing document no.'}</label>
+                <input type="text" value={weighingDocumentNumber} onChange={e => setWeighingDocumentNumber(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'ლაბ. ანალიზის №' : 'Lab analysis no.'}</label>
+                <input type="text" value={labAnalysisNumber} onChange={e => setLabAnalysisNumber(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'საკადასტრო კოდი' : 'Cadastral code'}</label>
+                <input type="text" value={cadastralCode} onChange={e => setCadastralCode(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
+                <input type="text" value={municipality} onChange={e => setMunicipality(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'თემი' : 'Community'}</label>
+                <input type="text" value={community} onChange={e => setCommunity(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>{ka ? 'სოფელი / მიკროზონა' : 'Village / microzone'}</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input type="text" value={village} onChange={e => setVillage(e.target.value)} placeholder={ka ? 'სოფელი' : 'Village'} className={inputCls} />
+                  <input type="text" value={microzone} onChange={e => setMicrozone(e.target.value)} list="georgian-microzone-options" placeholder={ka ? 'მიკროზონა' : 'Microzone'} className={inputCls} />
+                </div>
+              </div>
             </div>
           </div>
 
@@ -267,6 +375,15 @@ export default function GrapeReceivingTab({
               <label className={labelCls}>{ka ? 'სულ ყურძნის ხარჯი' : `Total fruit cost (${currency})`}</label>
               <input type="number" min={0} step="0.01" value={totalCost} onChange={e => setTotalCost(e.target.value)}
                 placeholder={costPerKgNum > 0 && net > 0 ? String(Math.round(net * costPerKgNum * 100) / 100) : 'optional override'} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>{ka ? 'გადახდის სტატუსი' : 'Payment status'}</label>
+              <select value={paymentStatus || 'not_applicable'} onChange={e => setPaymentStatus(e.target.value as GrapeIntakeRecord['paymentStatus'])} className={inputCls}>
+                <option value="not_applicable">{ka ? 'არ გამოიყენება' : 'Not applicable'}</option>
+                <option value="unpaid">{ka ? 'გადასახდელი' : 'Unpaid'}</option>
+                <option value="partial">{ka ? 'ნაწილობრივ' : 'Partial'}</option>
+                <option value="paid">{ka ? 'გადახდილია' : 'Paid'}</option>
+              </select>
             </div>
           </div>
           {computedFruitCost > 0 && (

@@ -15,5 +15,13 @@ describe('account data schema', () => {
     expect(data.salesDispatches).toEqual([]);
     expect(data.salesOrders).toEqual([]);
     expect(data.supplierPayments).toEqual([]);
+    expect(data.certificationRecords).toEqual([]);
+    expect(data.attachments).toEqual([]);
+    expect(data.crmLeads).toEqual([]);
+    expect(data.aiDrafts).toEqual([]);
+    expect(data.companyProfile.identificationCode).toBe('');
+    expect(data.companyProfile.wineAgencyRegistrationCode).toBe('');
+    expect(data.companyProfile.legalAddress).toBe('');
+    expect(data.companyProfile.factualAddress).toBe('');
   });
 });

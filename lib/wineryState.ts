@@ -1,6 +1,10 @@
 export type VesselType = 'stainless_steel' | 'qvevri' | 'barrel' | 'plastic' | 'concrete' | 'other';
 export type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'sparkling' | 'fortified' | 'base_wine';
 export type WinemakingStage = 'crushing' | 'fermenting' | 'maceration' | 'pressing' | 'aging' | 'stabilization' | 'filtration' | 'bottled' | 'sold';
+export type LotClassification = 'PDO' | 'PGI' | 'table_wine' | 'other';
+export type CertificationStatus = 'not_started' | 'sample_prepared' | 'submitted' | 'approved' | 'rejected' | 'expired';
+export type OriginProofStatus = 'missing' | 'partial' | 'verified';
+export type MarketStatus = 'local' | 'export' | 'local_and_export' | 'unknown';
 
 export interface WineLot {
   id: string; // Lot Code
@@ -14,6 +18,15 @@ export interface WineLot {
   wineClass: WineClass;
   stage: WinemakingStage;
   createdAt: string;
+  intendedAppellation?: string;
+  classification?: LotClassification;
+  certificationStatus?: CertificationStatus;
+  certificateNumber?: string;
+  certificateIssueDate?: string;
+  certificateExpiryDate?: string;
+  certificateFileName?: string;
+  originProofStatus?: OriginProofStatus;
+  marketStatus?: MarketStatus;
   history: Array<{
     date: string;
     type: string;
@@ -48,6 +61,24 @@ export interface Vessel {
   yGrid?: number; // 0-100 percentage layout position
   lastSealedDate?: string; // For Qvevri clay seals
   soilTemperature?: number; // For Qvevri underground soil temps
+  qvevriNumber?: string;
+  maraniLocation?: string;
+  buried?: boolean;
+  lastWashingDate?: string;
+  limeWashStatus?: 'unknown' | 'needed' | 'done';
+  waxingStatus?: 'unknown' | 'needed' | 'done';
+  inspectionNotes?: string;
+  fillingDate?: string;
+  grapeVariety?: string;
+  chachaPercentage?: number;
+  stemInclusion?: boolean;
+  mixingFrequency?: string;
+  dailyMixingLog?: Array<{ date: string; action: string; operator?: string; notes?: string }>;
+  sealingDate?: string;
+  openingDate?: string;
+  skinContactDurationDays?: number;
+  firstRackingDate?: string;
+  sanitationHistory?: Array<{ date: string; action: string; operator?: string; notes?: string }>;
 }
 
 export interface DailyFermLog {
@@ -80,6 +111,94 @@ export interface LabAnalysis {
   turbidity: number; // NTU
   technician: string;
   titratableAcidity: number; // g/L (as Tartaric Acid)
+  extract?: number;
+  density?: number;
+  pressure?: number;
+  iron?: number;
+  copper?: number;
+  methanol?: number;
+  protocolNumber?: string;
+  protocolFileName?: string;
+}
+
+export type CertificationProductType = 'wine' | 'sparkling_wine' | 'chacha_spirit' | 'grape_must_juice' | 'fortified_wine';
+export type CertificationApplicationStatus = 'draft' | 'ready' | 'submitted' | 'approved' | 'rejected';
+
+export interface CertificationRecord {
+  id: string;
+  lotId: string;
+  bottlingRunId?: string;
+  productType: CertificationProductType;
+  samplePrepared: boolean;
+  sampleDate?: string;
+  sampleQuantity?: number;
+  labProtocolUploaded: boolean;
+  labProtocolFileName?: string;
+  organolepticCheckRequired?: boolean;
+  organolepticResult?: 'pending' | 'passed' | 'failed' | 'not_required';
+  applicationStatus: CertificationApplicationStatus;
+  balanceCheckStatus?: 'pending' | 'passed' | 'failed';
+  certificateNumber?: string;
+  issueDate?: string;
+  expiryDate?: string;
+  certificateFileName?: string;
+  purpose?: 'local_market' | 'export';
+  notes?: string;
+}
+
+export type DocumentAttachmentModule =
+  | 'company'
+  | 'official_docs'
+  | 'certification'
+  | 'cadastre'
+  | 'qvevri'
+  | 'lab'
+  | 'vineyard_project'
+  | 'crm'
+  | 'other';
+
+export type DocumentAttachmentStorageKind = 'inline' | 'external' | 'metadata_only';
+
+export interface DocumentAttachment {
+  id: string;
+  fileName: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  uploadedAt: string;
+  uploadedBy?: string;
+  module: DocumentAttachmentModule;
+  linkedRecordType?: string;
+  linkedRecordId?: string;
+  description?: string;
+  storage: {
+    kind: DocumentAttachmentStorageKind;
+    dataUrl?: string;
+    url?: string;
+  };
+  checksum?: string;
+}
+
+export type CrmLeadStatus = 'new' | 'contacted' | 'qualified' | 'customer' | 'archived';
+
+export interface CrmLeadRecord {
+  id: string;
+  displayName: string;
+  companyName: string;
+  wineryName: string;
+  region?: string;
+  municipality?: string;
+  address?: string;
+  contactEmail?: string;
+  phone?: string;
+  website?: string;
+  source: string;
+  tags: string[];
+  notes: string;
+  status: CrmLeadStatus;
+  createdAt: string;
+  updatedAt: string;
+  owner?: string;
+  lastContactedAt?: string;
 }
 
 export interface InventoryItem {
@@ -227,8 +346,18 @@ export interface GrapeIntakeRecord {
   time?: string;           // optional HH:mm
   source: GrapeSource;
   supplierName?: string;   // when source === 'supplier'
+  supplierIdCode?: string;
   blockId?: string;        // when source === 'own'
   blockName?: string;
+  transportName?: string;
+  transportNumber?: string;
+  weighingDocumentNumber?: string;
+  labAnalysisNumber?: string;
+  cadastralCode?: string;
+  village?: string;
+  community?: string;
+  municipality?: string;
+  microzone?: string;
   variety: string;
   vintage: number;
   grossWeightKg: number;
@@ -249,6 +378,9 @@ export interface GrapeIntakeRecord {
   totalCost?: number;
   /** Currency used for the optional fruit cost. Defaults to the company currency. */
   currency?: string;
+  /** Official/payment-facing grape price. Defaults to costPerKg when available. */
+  grapePrice?: number;
+  paymentStatus?: 'not_applicable' | 'unpaid' | 'partial' | 'paid';
   destinationVesselId: string | null;
   createdLotId: string;
   harvestRecordId?: string; // links back to a Vazi HarvestRecord when received from the field
@@ -331,6 +463,16 @@ export interface VineyardBlock {
   name: string;
   vineyardName: string;
   locationName: string;
+  cadastralCode?: string;
+  officialCadastreDocumentName?: string;
+  landOwner?: string;
+  grower?: string;
+  municipality?: string;
+  community?: string;
+  village?: string;
+  microzone?: string;
+  parcelName?: string;
+  parcelArea?: number;
   latitude: number;
   longitude: number;
   area: number; // in hectares
@@ -353,6 +495,38 @@ export interface VineyardBlock {
   estimatedHarvestDate: string;
   notes: string;
   boundary?: { lat: number; lng: number }[];
+  gpsPolygon?: { lat: number; lng: number }[];
+  vineyardCondition?: string;
+}
+
+export type VineyardProjectStatus = 'draft' | 'ready' | 'submitted' | 'approved' | 'rejected';
+
+export interface VineyardPlantingProject {
+  id: string;
+  projectName: string;
+  landOwnershipDocumentName?: string;
+  cadastralMapDocumentName?: string;
+  soilAnalysisDocumentName?: string;
+  agrotechnicalQuestionnaireName?: string;
+  plannedVarieties: string[];
+  rootstock?: string;
+  spacing?: string;
+  rowDirection?: string;
+  irrigationPlan?: string;
+  nurseryInvoiceDocumentName?: string;
+  applicationStatus: VineyardProjectStatus;
+  approvalDate?: string;
+  approvalValidUntil?: string;
+  soilDepth?: number;
+  pH?: number;
+  organicMatter?: number;
+  caco3?: number;
+  texture?: string;
+  ec?: number;
+  exchangeableCa?: number;
+  exchangeableMg?: number;
+  exchangeableNa?: number;
+  hygroscopicWater?: number;
 }
 
 export interface PhenologyRecord {
@@ -513,6 +687,14 @@ export interface CompanyProfile {
   region: string;
   municipality: string;
   address: string;
+  identificationCode?: string;
+  wineAgencyRegistrationCode?: string;
+  legalAddress?: string;
+  factualAddress?: string;
+  certificateContactPerson?: string;
+  certificatePhone?: string;
+  certificateEmail?: string;
+  producerRegistrationNotes?: string;
   contactEmail: string;
   phone: string;
   website: string;

@@ -11,6 +11,17 @@ import {
 } from '../db';
 import { applyDeletions, mergeCollections, isValidId } from '../sync';
 import { prepareAuditLogsForServerMerge } from '../../lib/auditHash';
+import {
+  attachmentMimeTypeMatchesInlineDataUrl,
+  checksumAttachmentDataUrl,
+  isAllowedInlineAttachmentDataUrl,
+  isSupportedAttachmentMimeType,
+  isSupportedAttachmentFileName,
+  isValidAttachmentChecksum,
+  MAX_INLINE_ATTACHMENT_BYTES,
+  normalizeExternalAttachmentUrl,
+} from '../../lib/attachments';
+import { can, canAccess, canSyncCollection, moduleForAttachmentKind, moduleForSyncCollection, type PermissionAction } from '../permissions';
 
 const router = express.Router();
 
@@ -31,7 +42,7 @@ function pruneTestUserSeedDuplicates(userDb: any): void {
  * on violation). Extracted from the route handler so the merge/save retry loop
  * can re-validate against freshly reloaded state after a version conflict.
  */
-function validateSyncPayload(userDb: any, collections: Record<string, any>, deletedIds: any): void {
+export function validateSyncPayload(userDb: any, collections: Record<string, any>, deletedIds: any): void {
   {
     // 1. Validate deletedIds syntax & block deletions of bottled lots or audit logs
     if (deletedIds !== undefined) {
@@ -188,6 +199,18 @@ function validateSyncPayload(userDb: any, collections: Record<string, any>, dele
                   throw new Error(`Volatile Content Lock: Bottled wine lot ${item.id} parameter '${field}' is frozen.`);
                 }
               }
+            }
+            if (item.classification !== undefined && !['PDO', 'PGI', 'table_wine', 'other'].includes(item.classification)) {
+              throw new Error(`Lot ${item.id} has invalid classification.`);
+            }
+            if (item.certificationStatus !== undefined && !['not_started', 'sample_prepared', 'submitted', 'approved', 'rejected', 'expired'].includes(item.certificationStatus)) {
+              throw new Error(`Lot ${item.id} has invalid certificationStatus.`);
+            }
+            if (item.originProofStatus !== undefined && !['missing', 'partial', 'verified'].includes(item.originProofStatus)) {
+              throw new Error(`Lot ${item.id} has invalid originProofStatus.`);
+            }
+            if (item.marketStatus !== undefined && !['local', 'export', 'local_and_export', 'unknown'].includes(item.marketStatus)) {
+              throw new Error(`Lot ${item.id} has invalid marketStatus.`);
             }
           }
 
@@ -354,7 +377,7 @@ function validateSyncPayload(userDb: any, collections: Record<string, any>, dele
             if (item.pickingMethod !== undefined && !['hand', 'machine'].includes(item.pickingMethod)) {
               throw new Error(`Grape intake ${item.id} has invalid pickingMethod.`);
             }
-            const nonNegativeFields = ['grossWeightKg', 'tareWeightKg', 'netWeightKg', 'brix', 'ph', 'titratableAcidity', 'estimatedVolumeL', 'costPerKg', 'totalCost'];
+            const nonNegativeFields = ['grossWeightKg', 'tareWeightKg', 'netWeightKg', 'brix', 'ph', 'titratableAcidity', 'estimatedVolumeL', 'costPerKg', 'totalCost', 'grapePrice'];
             for (const field of nonNegativeFields) {
               if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
                 throw new Error(`Grape intake ${item.id} property ${field} must be non-negative.`);
@@ -362,6 +385,9 @@ function validateSyncPayload(userDb: any, collections: Record<string, any>, dele
             }
             if (item.juiceYieldPct !== undefined && (typeof item.juiceYieldPct !== 'number' || item.juiceYieldPct < 0 || item.juiceYieldPct > 100)) {
               throw new Error(`Grape intake ${item.id} juiceYieldPct must be between 0 and 100.`);
+            }
+            if (item.paymentStatus !== undefined && !['not_applicable', 'unpaid', 'partial', 'paid'].includes(item.paymentStatus)) {
+              throw new Error(`Grape intake ${item.id} has invalid paymentStatus.`);
             }
             if (item.destinationVesselId) {
               if (!isValidId(item.destinationVesselId)) {
@@ -573,6 +599,119 @@ function validateSyncPayload(userDb: any, collections: Record<string, any>, dele
             }
           }
 
+          else if (key === 'certificationRecords') {
+            if (!isValidId(item.lotId)) {
+              throw new Error(`Certification record ${item.id} has invalid referenced lotId.`);
+            }
+            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
+            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            if (!lotExists || lotDeleted) {
+              throw new Error(`Orphaned Certification Record: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
+            }
+            if (item.bottlingRunId) {
+              if (!isValidId(item.bottlingRunId)) {
+                throw new Error(`Certification record ${item.id} has invalid bottlingRunId.`);
+              }
+              const runExists = userDb.bottlingRuns.some((r: any) => r.id === item.bottlingRunId) || (collections.bottlingRuns && collections.bottlingRuns.some((r: any) => r.id === item.bottlingRunId));
+              const runDeleted = deletedIds && deletedIds.includes(item.bottlingRunId);
+              if (!runExists || runDeleted) {
+                throw new Error(`Orphaned Certification Record: ${item.id} references non-existent or deleted Bottling Run (${item.bottlingRunId}).`);
+              }
+            }
+            if (!['wine', 'sparkling_wine', 'chacha_spirit', 'grape_must_juice', 'fortified_wine'].includes(item.productType)) {
+              throw new Error(`Certification record ${item.id} has invalid productType.`);
+            }
+            if (!['draft', 'ready', 'submitted', 'approved', 'rejected'].includes(item.applicationStatus)) {
+              throw new Error(`Certification record ${item.id} has invalid applicationStatus.`);
+            }
+            if (item.organolepticResult !== undefined && !['pending', 'passed', 'failed', 'not_required'].includes(item.organolepticResult)) {
+              throw new Error(`Certification record ${item.id} has invalid organolepticResult.`);
+            }
+            if (item.balanceCheckStatus !== undefined && !['pending', 'passed', 'failed'].includes(item.balanceCheckStatus)) {
+              throw new Error(`Certification record ${item.id} has invalid balanceCheckStatus.`);
+            }
+            if (item.purpose !== undefined && !['local_market', 'export'].includes(item.purpose)) {
+              throw new Error(`Certification record ${item.id} has invalid purpose.`);
+            }
+            if (item.sampleQuantity !== undefined && (typeof item.sampleQuantity !== 'number' || item.sampleQuantity < 0)) {
+              throw new Error(`Certification record ${item.id} sampleQuantity must be non-negative.`);
+            }
+          }
+
+          else if (key === 'attachments') {
+            if (typeof item.fileName !== 'string' || !item.fileName.trim()) {
+              throw new Error(`Attachment ${item.id} requires a fileName.`);
+            }
+            if (!isSupportedAttachmentFileName(item.fileName)) {
+              throw new Error(`Attachment ${item.id} has unsupported file type.`);
+            }
+            if (!['company', 'official_docs', 'certification', 'cadastre', 'qvevri', 'lab', 'vineyard_project', 'crm', 'other'].includes(item.module)) {
+              throw new Error(`Attachment ${item.id} has invalid module.`);
+            }
+            if (!item.storage || typeof item.storage !== 'object' || !['inline', 'external', 'metadata_only'].includes(item.storage.kind)) {
+              throw new Error(`Attachment ${item.id} has invalid storage kind.`);
+            }
+            if (item.sizeBytes !== undefined && (typeof item.sizeBytes !== 'number' || !Number.isFinite(item.sizeBytes) || item.sizeBytes < 0)) {
+              throw new Error(`Attachment ${item.id} sizeBytes must be non-negative.`);
+            }
+            if (!isSupportedAttachmentMimeType(item.mimeType, item.fileName)) {
+              throw new Error(`Attachment ${item.id} has unsupported MIME type.`);
+            }
+            if (item.storage.kind === 'inline') {
+              if (!isAllowedInlineAttachmentDataUrl(item.storage.dataUrl, item.fileName)) {
+                throw new Error(`Attachment ${item.id} inline storage requires a supported PDF, image, Office, or CSV data URL.`);
+              }
+              if (!attachmentMimeTypeMatchesInlineDataUrl(item.storage.dataUrl, item.mimeType, item.fileName)) {
+                throw new Error(`Attachment ${item.id} MIME type does not match inline content.`);
+              }
+              if ((item.sizeBytes || 0) > MAX_INLINE_ATTACHMENT_BYTES || item.storage.dataUrl.length > MAX_INLINE_ATTACHMENT_BYTES * 2) {
+                throw new Error(`Attachment ${item.id} is too large for inline sync.`);
+              }
+              if (item.checksum !== undefined && checksumAttachmentDataUrl(item.storage.dataUrl) !== String(item.checksum).toLowerCase()) {
+                throw new Error(`Attachment ${item.id} checksum does not match inline content.`);
+              }
+            }
+            if (item.storage.kind === 'external' && !normalizeExternalAttachmentUrl(item.storage.url)) {
+              throw new Error(`Attachment ${item.id} external storage requires a valid HTTP(S) URL.`);
+            }
+            if (item.checksum !== undefined && !isValidAttachmentChecksum(item.checksum)) {
+              throw new Error(`Attachment ${item.id} has invalid checksum.`);
+            }
+            if (item.linkedRecordId !== undefined && item.linkedRecordId !== null && item.linkedRecordId !== '' && !isValidId(item.linkedRecordId)) {
+              throw new Error(`Attachment ${item.id} has invalid linkedRecordId.`);
+            }
+          }
+
+          else if (key === 'crmLeads') {
+            if (typeof item.displayName !== 'string' || !item.displayName.trim()) {
+              throw new Error(`CRM lead ${item.id} requires a displayName.`);
+            }
+            if (typeof item.companyName !== 'string' || !item.companyName.trim()) {
+              throw new Error(`CRM lead ${item.id} requires a companyName.`);
+            }
+            if (!['new', 'contacted', 'qualified', 'customer', 'archived'].includes(item.status)) {
+              throw new Error(`CRM lead ${item.id} has invalid status.`);
+            }
+            if (!Array.isArray(item.tags)) {
+              throw new Error(`CRM lead ${item.id} tags must be an array.`);
+            }
+          }
+
+          else if (key === 'aiDrafts') {
+            if (!['task', 'lab_check', 'cellar_operation', 'so2_calculation', 'spray_recommendation', 'compliance_warning', 'official_document_explanation', 'lot_passport_summary'].includes(item.type)) {
+              throw new Error(`AI draft ${item.id} has invalid type.`);
+            }
+            if (!['high', 'medium', 'low'].includes(item.priority)) {
+              throw new Error(`AI draft ${item.id} has invalid priority.`);
+            }
+            if (!['draft', 'converted_to_task', 'dismissed'].includes(item.status)) {
+              throw new Error(`AI draft ${item.id} has invalid status.`);
+            }
+            if (item.reviewOnly !== true) {
+              throw new Error(`AI draft ${item.id} must remain review-only.`);
+            }
+          }
+
           else if (key === 'tasks') {
             if (item.priority && !['high', 'medium', 'low'].includes(item.priority)) {
               throw new Error(`Task ${item.id} has invalid priority: ${item.priority}`);
@@ -586,14 +725,37 @@ function validateSyncPayload(userDb: any, collections: Record<string, any>, dele
             if (item.area !== undefined && (typeof item.area !== 'number' || item.area < 0)) {
               throw new Error(`Block ${item.id} area cannot be negative.`);
             }
+            if (item.parcelArea !== undefined && item.parcelArea !== null && (typeof item.parcelArea !== 'number' || item.parcelArea < 0)) {
+              throw new Error(`Block ${item.id} parcelArea cannot be negative.`);
+            }
             if (item.elevation !== undefined && (typeof item.elevation !== 'number' || item.elevation < 0)) {
               throw new Error(`Block ${item.id} elevation cannot be negative.`);
+            }
+            if (item.latitude !== undefined && (typeof item.latitude !== 'number' || !Number.isFinite(item.latitude) || item.latitude < -90 || item.latitude > 90)) {
+              throw new Error(`Block ${item.id} latitude must be a valid coordinate.`);
+            }
+            if (item.longitude !== undefined && (typeof item.longitude !== 'number' || !Number.isFinite(item.longitude) || item.longitude < -180 || item.longitude > 180)) {
+              throw new Error(`Block ${item.id} longitude must be a valid coordinate.`);
             }
             if (item.rowsCount !== undefined && (typeof item.rowsCount !== 'number' || item.rowsCount < 0)) {
               throw new Error(`Block ${item.id} rowsCount cannot be negative.`);
             }
             if (item.vinesCount !== undefined && (typeof item.vinesCount !== 'number' || item.vinesCount < 0)) {
               throw new Error(`Block ${item.id} vinesCount cannot be negative.`);
+            }
+            for (const field of ['boundary', 'gpsPolygon']) {
+              const polygon = item[field];
+              if (polygon === undefined || polygon === null) continue;
+              if (!Array.isArray(polygon)) {
+                throw new Error(`Block ${item.id} ${field} must be an array of coordinates.`);
+              }
+              for (const point of polygon) {
+                if (!point || typeof point !== 'object'
+                  || typeof point.lat !== 'number' || !Number.isFinite(point.lat) || point.lat < -90 || point.lat > 90
+                  || typeof point.lng !== 'number' || !Number.isFinite(point.lng) || point.lng < -180 || point.lng > 180) {
+                  throw new Error(`Block ${item.id} ${field} contains an invalid coordinate.`);
+                }
+              }
             }
           }
 
@@ -685,6 +847,89 @@ function validateSyncPayload(userDb: any, collections: Record<string, any>, dele
   }
 }
 
+function syncActionsForCollection(userDb: any, collection: string, incoming: any): PermissionAction[] {
+  if (collection === 'companyProfile' || collection === 'winePricing') return ['update'];
+  if (!Array.isArray(incoming)) return [];
+  const existing = Array.isArray(userDb[collection]) ? userDb[collection] : [];
+  const existingIds = new Set(existing.map((item: any) => item?.id).filter(Boolean));
+  const actions = new Set<PermissionAction>();
+  for (const item of incoming) {
+    if (!item || typeof item !== 'object' || !item.id) continue;
+    actions.add(existingIds.has(item.id) ? 'update' : 'create');
+  }
+  return [...actions];
+}
+
+function deletionTargetsForId(userDb: any, id: string): Array<{ collection: string; module: ReturnType<typeof moduleForSyncCollection>; action: PermissionAction }> {
+  const targets: Array<{ collection: string; module: ReturnType<typeof moduleForSyncCollection>; action: PermissionAction }> = [];
+  for (const [collection, value] of Object.entries(userDb || {})) {
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      if (!item || item.id !== id) continue;
+      const module = collection === 'attachments'
+        ? moduleForAttachmentKind(item.module)
+        : moduleForSyncCollection(collection);
+      targets.push({
+        collection,
+        module,
+        action: collection === 'attachments' ? 'update' : 'delete',
+      });
+    }
+  }
+  return targets;
+}
+
+function authorizeDeletedIds(role: string, userDb: any, deletedIds: any): string | null {
+  if (!Array.isArray(deletedIds) || deletedIds.length === 0) return null;
+  if (can(role, 'admin')) return null;
+
+  for (const id of deletedIds) {
+    if (!isValidId(id)) continue;
+    const targets = deletionTargetsForId(userDb, id);
+    for (const target of targets) {
+      if (!target.module) {
+        return `Forbidden: deleting ${id} from ${target.collection} is not authorized.`;
+      }
+      if (!canAccess(role, target.module, target.action)) {
+        return `Forbidden: ${role} cannot ${target.action} ${target.collection}.`;
+      }
+    }
+  }
+  return null;
+}
+
+export function authorizeSyncPayload(role: string, userDb: any, collections: Record<string, any>, deletedIds: any): string | null {
+  const deletionError = authorizeDeletedIds(role, userDb, deletedIds);
+  if (deletionError) return deletionError;
+
+  for (const [collection, incoming] of Object.entries(collections)) {
+    if (!moduleForSyncCollection(collection)) {
+      return `Forbidden: ${collection} is not an authorized sync collection.`;
+    }
+    if (collection === 'attachments' && Array.isArray(incoming)) {
+      const existing = Array.isArray(userDb[collection]) ? userDb[collection] : [];
+      const existingIds = new Set(existing.map((item: any) => item?.id).filter(Boolean));
+      for (const item of incoming) {
+        if (!item || typeof item !== 'object' || !item.id) continue;
+        const module = moduleForAttachmentKind(item.module);
+        if (!module) return `Forbidden: attachment ${item.id} has unknown module.`;
+        const action: PermissionAction = existingIds.has(item.id) ? 'update' : 'create';
+        if (!canAccess(role, module, action)) {
+          return `Forbidden: ${role} cannot ${action} ${collection} for ${module}.`;
+        }
+      }
+      continue;
+    }
+    const actions = syncActionsForCollection(userDb, collection, incoming);
+    for (const action of actions) {
+      if (!canSyncCollection(role, collection, action)) {
+        return `Forbidden: ${role} cannot ${action} ${collection}.`;
+      }
+    }
+  }
+  return null;
+}
+
 // POST /api/sync
 router.post('/sync', checkWineryScope('write'), async (req, res) => {
   const session = (req as any).wineryContext;
@@ -700,6 +945,11 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     const refreshed = await reloadUserOrganizationDataFromPostgres(session.username);
     const expectedOrgStateVersion = refreshed?.meta.version ?? null;
     const userDb = refreshed?.data || await getUserData(session.username) || createEmptyUserData();
+
+    const permissionError = authorizeSyncPayload(session.role, userDb, collections, deletedIds);
+    if (permissionError) {
+      return res.status(403).json({ error: permissionError });
+    }
 
     try {
       validateSyncPayload(userDb, collections, deletedIds);

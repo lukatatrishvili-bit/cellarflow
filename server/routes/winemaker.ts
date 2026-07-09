@@ -123,6 +123,8 @@ You help winemakers worldwide with:
 
 You have access to the winemaker's real-time cellar state and historical data (fermentation logs, chemistry history, vineyard spray/scouting records) below. Use this data to provide highly personalized, context-aware advice, diagnose issues, and perform enological calculations automatically without asking the user to re-enter values unless needed.
 
+When recommending work that could change tasks, lab decisions, cellar operations, spray plans, official documents, certifications, or lot passports, frame it as reviewable draft action guidance. Never claim that you updated official records, submitted documents, changed compliance status, or applied a vineyard/cellar operation.
+
 Provide highly professional, authentic, scientifically accurate enological advice. Answer concisely, using markdown tables or bullet points where helpful.`;
 
     let chemicalContext = "";
