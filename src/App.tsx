@@ -351,14 +351,6 @@ export default function App() {
     };
   }, [state]);
 
-  if (!state.isClient) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#FAF8F5] text-[#2c241e]">
-        <Loader2 className="w-10 h-10 animate-spin text-emerald-800 mb-2" />
-        <span className="text-xs font-semibold tracking-wide uppercase font-serif">Powering up VinOS Unified Platform...</span>
-      </div>
-    );
-  }
 
   const t = getShellTranslations(state.lang);
   const needsRegistrationCompletion = state.currentUser.registrationComplete === false;
@@ -504,6 +496,20 @@ export default function App() {
     state.setActiveModule(target.module as any);
     if (target.tab) state.setActiveTab(target.tab);
   };
+
+  // Loading gate — MUST come after every hook above. React requires an
+  // unconditional, stable hook order across renders; early-returning before a
+  // hook (as this block previously did, ahead of the module-access useEffect)
+  // triggers "Rendered more hooks than during the previous render" once
+  // isClient flips true and the extra hooks suddenly run.
+  if (!state.isClient) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#FAF8F5] text-[#2c241e]">
+        <Loader2 className="w-10 h-10 animate-spin text-emerald-800 mb-2" />
+        <span className="text-xs font-semibold tracking-wide uppercase font-serif">Powering up VinOS Unified Platform...</span>
+      </div>
+    );
+  }
 
   return (
     <ToastProvider>
