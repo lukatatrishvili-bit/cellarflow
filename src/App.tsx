@@ -407,7 +407,20 @@ export default function App() {
       ],
     },
   ];
-  const canViewModule = (moduleId: string, tabId?: string) => canAccess(state.currentUser.role, permissionModuleFor(moduleId, tabId), 'view');
+  const GVINO_TAB_IDS = ['intake', 'lots', 'lineage', 'vessels', 'qvevri', 'operations', 'transfers', 'fermentation', 'labs', 'calculators', 'bottling', 'inventory', 'tasks', 'ai', 'notes'];
+  const canViewModule = (moduleId: string, tabId?: string) => {
+    // Personal surfaces every authenticated role may open; admin-only content
+    // inside them stays gated server-side (e.g. /api/integrations is admin-only).
+    if (moduleId === 'portal' || moduleId === 'settings') return true;
+    // The gvino container (and its aggregate dashboard tab) is visible when the
+    // role can view ANY cellar tab. Checking the bare container id mapped it to
+    // 'reports', which hid the entire Cellar module from Winemaker, Cellar
+    // Worker, and Lab Technician — the roles that live in the cellar.
+    if (moduleId === 'gvino' && (tabId === undefined || tabId === 'dashboard')) {
+      return GVINO_TAB_IDS.some(tab => canAccess(state.currentUser.role, permissionModuleFor('gvino', tab), 'view'));
+    }
+    return canAccess(state.currentUser.role, permissionModuleFor(moduleId, tabId), 'view');
+  };
   const activePermissionModule = permissionModuleFor(state.activeModule, state.activeTab);
   const canManageCurrentArea = canAccess(state.currentUser.role, activePermissionModule, 'create')
     || canAccess(state.currentUser.role, activePermissionModule, 'update');

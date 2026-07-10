@@ -31,11 +31,11 @@ import type {
 import { evaluateCertificationChecklist, requiredLabParameters } from '../lib/certification';
 import { checkPdoEligibility, findPdoCandidates, getPdoRule, PDO_RULES } from '../lib/pdo';
 import {
+  attachmentUploadPreflightError,
   attachmentsForRecord,
   checksumAttachmentDataUrl,
   formatAttachmentSize,
   getAttachmentAccess,
-  MAX_INLINE_ATTACHMENT_BYTES,
   type DocumentAttachmentInput,
 } from '../lib/attachments';
 import {
@@ -296,8 +296,9 @@ export default function CertificationManagerTab({
       setToastMessage?.('Attachment storage is not available in this workspace.');
       return;
     }
-    if (file.size > MAX_INLINE_ATTACHMENT_BYTES) {
-      setToastMessage?.(`File is too large for local sync (${formatAttachmentSize(file.size)}).`);
+    const preflightError = attachmentUploadPreflightError(file);
+    if (preflightError) {
+      setToastMessage?.(preflightError);
       return;
     }
 
@@ -322,8 +323,8 @@ export default function CertificationManagerTab({
         labProtocolFileName: kind === 'lab_protocol' ? file.name : prev.labProtocolFileName,
         certificateFileName: kind === 'certificate_file' ? file.name : prev.certificateFileName,
       }));
-    } catch {
-      setToastMessage?.('Could not read the selected file.');
+    } catch (error) {
+      setToastMessage?.(error instanceof Error && error.message ? error.message : 'Could not read the selected file.');
     }
   };
 
@@ -431,7 +432,7 @@ export default function CertificationManagerTab({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <label className="block">
                 <FieldLabel required>{isKa ? 'Wine lot' : 'Wine lot'}</FieldLabel>
-                <select
+                <select aria-label="Wine lot"
                   value={selectedLot?.id || ''}
                   onChange={event => setSelectedLotId(event.target.value)}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -446,7 +447,7 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel required>{isKa ? 'Product type' : 'Product type'}</FieldLabel>
-                <select
+                <select aria-label="Product type"
                   value={form.productType}
                   onChange={event => updateForm('productType', event.target.value as CertificationProductType)}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -459,7 +460,7 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Application status' : 'Application status'}</FieldLabel>
-                <select
+                <select aria-label="Application status"
                   value={form.applicationStatus}
                   onChange={event => updateForm('applicationStatus', event.target.value as CertificationApplicationStatus)}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -472,7 +473,7 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Market purpose' : 'Market purpose'}</FieldLabel>
-                <select
+                <select aria-label="Market purpose"
                   value={form.purpose || 'local_market'}
                   onChange={event => updateForm('purpose', event.target.value as CertificationRecord['purpose'])}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -500,7 +501,7 @@ export default function CertificationManagerTab({
               <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-3 lg:items-end">
                 <label className="block">
                   <FieldLabel>{isKa ? 'PDO rule' : 'PDO rule'}</FieldLabel>
-                  <select
+                  <select aria-label="PDO rule"
                     value={selectedPdoId}
                     onChange={event => setSelectedPdoId(event.target.value)}
                     className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -589,7 +590,7 @@ export default function CertificationManagerTab({
                     <div className="font-bold text-stone-800 dark:text-amber-100">{pdoResult.pdo.productionMethodNotes}</div>
                     <div className="mt-1">{pdoResult.pdo.labelingNotes}</div>
                     {pdoCandidates.find(candidate => candidate.pdo.id === pdoResult.pdo.id)?.matchedSignals.length ? (
-                      <div className="mt-2 text-[10px] font-mono uppercase tracking-wide text-stone-400">
+                      <div className="mt-2 text-[10px] font-mono uppercase tracking-wide text-stone-500 dark:text-stone-400">
                         Matched: {pdoCandidates.find(candidate => candidate.pdo.id === pdoResult.pdo.id)?.matchedSignals.join(', ')}
                       </div>
                     ) : null}
@@ -682,7 +683,7 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Organoleptic result' : 'Organoleptic result'}</FieldLabel>
-                <select
+                <select aria-label="Organoleptic result"
                   value={form.organolepticResult || 'pending'}
                   onChange={event => updateForm('organolepticResult', event.target.value as CertificationRecord['organolepticResult'])}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -695,7 +696,7 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Balance check' : 'Balance check'}</FieldLabel>
-                <select
+                <select aria-label="Balance check"
                   value={form.balanceCheckStatus || 'pending'}
                   onChange={event => updateForm('balanceCheckStatus', event.target.value as CertificationRecord['balanceCheckStatus'])}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -836,7 +837,7 @@ export default function CertificationManagerTab({
                 <h4 className="text-[10px] font-black uppercase tracking-wide text-stone-500 dark:text-stone-400">
                   {isKa ? 'Bottling run' : 'Bottling run'}
                 </h4>
-                <select
+                <select aria-label="Bottling run"
                   value={form.bottlingRunId || ''}
                   onChange={event => updateForm('bottlingRunId', event.target.value || undefined)}
                   className="mt-2 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
@@ -877,7 +878,7 @@ export default function CertificationManagerTab({
                         <div key={attachment.id} className="flex items-start gap-2 rounded-xl border border-stone-200 bg-white p-2 text-[11px] dark:border-stone-800 dark:bg-stone-950">
                           <div className="min-w-0 flex-1">
                             <div className="truncate font-bold text-stone-800 dark:text-stone-100">{attachment.fileName}</div>
-                            <div className="mt-0.5 font-mono text-[9px] uppercase tracking-wide text-stone-400">
+                            <div className="mt-0.5 font-mono text-[9px] uppercase tracking-wide text-stone-500 dark:text-stone-400">
                               {formatAttachmentSize(attachment.sizeBytes)} - {attachment.description || attachment.module}
                               {attachment.checksum ? ` - sha256:${attachment.checksum.slice(0, 12)}` : ''}
                             </div>

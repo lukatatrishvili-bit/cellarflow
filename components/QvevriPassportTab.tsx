@@ -466,7 +466,7 @@ export default function QvevriPassportTab({
               </div>
               <div>
                 <FieldLabel>{ka ? 'კირით დამუშავება' : 'Lime wash status'}</FieldLabel>
-                <select value={form.limeWashStatus} onChange={event => updateForm('limeWashStatus', event.target.value as QvevriStatus)} className={inputCls}>
+                <select aria-label="Lime wash status" value={form.limeWashStatus} onChange={event => updateForm('limeWashStatus', event.target.value as QvevriStatus)} className={inputCls}>
                   <option value="unknown">Unknown</option>
                   <option value="needed">Needed</option>
                   <option value="done">Done</option>
@@ -474,7 +474,7 @@ export default function QvevriPassportTab({
               </div>
               <div>
                 <FieldLabel>{ka ? 'ცვილის სტატუსი' : 'Waxing status'}</FieldLabel>
-                <select value={form.waxingStatus} onChange={event => updateForm('waxingStatus', event.target.value as QvevriStatus)} className={inputCls}>
+                <select aria-label="Waxing status" value={form.waxingStatus} onChange={event => updateForm('waxingStatus', event.target.value as QvevriStatus)} className={inputCls}>
                   <option value="unknown">Unknown</option>
                   <option value="needed">Needed</option>
                   <option value="done">Done</option>

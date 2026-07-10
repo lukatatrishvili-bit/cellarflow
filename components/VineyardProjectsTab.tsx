@@ -349,7 +349,7 @@ export default function VineyardProjectsTab({
               </div>
               <div>
                 <FieldLabel>{ka ? 'განაცხადის სტატუსი' : 'Application status'}</FieldLabel>
-                <select value={form.applicationStatus} onChange={event => updateForm('applicationStatus', event.target.value as VineyardProjectStatus)} className={inputCls}>
+                <select aria-label="Application status" value={form.applicationStatus} onChange={event => updateForm('applicationStatus', event.target.value as VineyardProjectStatus)} className={inputCls}>
                   <option value="draft">Draft</option>
                   <option value="ready">Ready</option>
                   <option value="submitted">Submitted</option>
