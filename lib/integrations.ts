@@ -3,7 +3,7 @@ export const ONE_C_CONNECTOR_ID = 'one_c_accounting';
 export type IntegrationConnectorKind = '1c_accounting';
 export type IntegrationConnectorStatus = 'available' | 'configured' | 'disabled' | 'error';
 export type IntegrationAuthMode = 'none' | 'basic' | 'api_key' | 'bearer' | 'oauth_placeholder';
-export type IntegrationExchangeMode = 'manual_json_csv' | 'api_placeholder';
+export type IntegrationExchangeMode = 'manual_json_csv' | 'api_placeholder' | 'live_odata';
 export type IntegrationSyncDirection = 'export' | 'import';
 export type IntegrationSyncFormat = 'json' | 'csv';
 export type IntegrationSyncJobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'needs_review';
@@ -59,6 +59,9 @@ export interface IntegrationConnectorConfig {
   exchangeMode: IntegrationExchangeMode;
   defaultExportFormat: IntegrationSyncFormat;
   secretConfigured: boolean;
+  /** Server-only AES-256-GCM sealed credential. Stripped by redactConnector —
+   * must never reach the client or logs. */
+  sealedSecret?: string;
   authSecretUpdatedAt?: string;
   lastSyncAt?: string;
   lastSuccessfulSyncAt?: string;
@@ -406,8 +409,9 @@ export function redactConnector(connector: IntegrationConnectorConfig): Integrat
   const redacted = connector.lastError
     ? redactSensitiveValue({ lastError: connector.lastError }) as { lastError?: string }
     : {};
+  const { sealedSecret: _sealedSecret, ...publicFields } = connector;
   return {
-    ...connector,
+    ...publicFields,
     lastError: redacted.lastError || connector.lastError,
   };
 }
@@ -431,7 +435,7 @@ export function validateConnectorConfigInput(input: unknown): ConnectorConfigInp
   if (body.username !== undefined) next.username = String(body.username || '').trim().slice(0, 200);
   if (body.databaseName !== undefined) next.databaseName = String(body.databaseName || '').trim().slice(0, 200);
   if (body.exchangeMode !== undefined) {
-    if (body.exchangeMode !== 'manual_json_csv' && body.exchangeMode !== 'api_placeholder') {
+    if (body.exchangeMode !== 'manual_json_csv' && body.exchangeMode !== 'api_placeholder' && body.exchangeMode !== 'live_odata') {
       throw new Error('Unsupported exchange mode.');
     }
     next.exchangeMode = body.exchangeMode;

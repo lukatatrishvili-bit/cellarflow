@@ -5,6 +5,7 @@ import { signAuditEntries } from '../../lib/auditHash';
 import {
   CONNECTOR_CATALOG,
   INTEGRATION_DOMAINS,
+  ONE_C_CONNECTOR_ID,
   SOURCE_OF_TRUTH_RULES,
   applyConnectorConfig,
   enqueueIntegrationJob,
@@ -21,6 +22,8 @@ import {
   type IntegrationHubState,
   type IntegrationSyncJob,
 } from '../../lib/integrations';
+import { sealIntegrationSecret } from '../integrationSecrets';
+import { pullOneCEntitySet, testOneCConnection } from '../integrationTransport';
 
 const router = express.Router();
 
@@ -99,6 +102,11 @@ router.get('/connectors', checkWineryScope('admin'), async (req, res) => {
 
 router.post('/connectors/:connectorId/config', checkWineryScope('admin'), async (req, res) => {
   const session = (req as any).wineryContext;
+  // Capture the raw credential BEFORE validation replaces it with the
+  // '[provided]' marker; it is sealed server-side and never echoed back.
+  const rawSecret = (['password', 'apiKey', 'bearerToken'] as const)
+    .map((key) => (typeof (req.body as any)?.[key] === 'string' ? String((req.body as any)[key]).trim() : ''))
+    .find(Boolean) || '';
   let input;
   try {
     input = validateConnectorConfigInput(req.body);
@@ -112,6 +120,9 @@ router.post('/connectors/:connectorId/config', checkWineryScope('admin'), async 
   try {
     const connectorId = String(req.params.connectorId || '');
     const connector = applyConnectorConfig(hub, connectorId, input, session.username);
+    if (rawSecret) {
+      connector.sealedSecret = sealIntegrationSecret(rawSecret);
+    }
     appendIntegrationAudit(
       data,
       session.username,
@@ -233,6 +244,93 @@ router.post('/jobs/:jobId/retry', checkWineryScope('admin'), async (req, res) =>
     return res.json({ ok: true, job: publicJob(result.job), hub: publicHub(hub) });
   } catch (err) {
     return res.status(400).json({ error: err instanceof Error ? err.message : 'Unable to retry sync job.' });
+  }
+});
+
+// POST /api/integrations/connectors/:connectorId/test — live reachability probe
+// against the configured 1C OData endpoint (SSRF-guarded server-side fetch).
+router.post('/connectors/:connectorId/test', checkWineryScope('admin'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  const data = await getScopedData(session.username);
+  const hub = integrationHubFor(data);
+  const connector = hub.connectors.find((c) => c.id === String(req.params.connectorId || ''));
+  if (!connector) return res.status(404).json({ error: 'Unknown connector.' });
+
+  try {
+    const probe = await testOneCConnection(connector);
+    appendIntegrationAudit(
+      data,
+      session.username,
+      'Integration Connection Tested',
+      connector.displayName,
+      { ok: probe.ok, entitySets: probe.entitySets.length },
+      'Live OData reachability probe executed server-side. Credentials never leave the server.',
+    );
+    await saveUserData(session.username, data, { updatedBy: `api-integrations:${session.username}` });
+    return res.json({ ok: true, probe: { ...probe, entitySets: probe.entitySets.slice(0, 40) } });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Connection test failed.';
+    return res.status(502).json({ error: message });
+  }
+});
+
+// POST /api/integrations/jobs/live-pull — fetch an entity set from 1C over
+// OData and run it through the standard import pipeline (idempotent external
+// refs, source-of-truth protection, conflicts for unmatched rows).
+router.post('/jobs/live-pull', checkWineryScope('admin'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  const entitySet = String((req.body as any)?.entitySet || '').trim();
+  const domain = (req.body as any)?.domain;
+  const top = Number((req.body as any)?.top) || 50;
+  if (!entitySet) return res.status(400).json({ error: 'entitySet is required.' });
+
+  const data = await getScopedData(session.username);
+  const hub = integrationHubFor(data);
+  const connector = hub.connectors.find((c) => c.id === ONE_C_CONNECTOR_ID);
+  if (!connector) return res.status(404).json({ error: 'Unknown connector.' });
+
+  let records;
+  try {
+    records = await pullOneCEntitySet(connector, entitySet, top);
+  } catch (err) {
+    return res.status(502).json({ error: err instanceof Error ? err.message : 'Live pull failed.' });
+  }
+
+  let input;
+  try {
+    input = validateCreateSyncJobInput({
+      connectorId: ONE_C_CONNECTOR_ID,
+      domain,
+      direction: 'import',
+      format: 'json',
+      payloadName: `live:${entitySet}`,
+      inputPayload: JSON.stringify(records),
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : 'Invalid live pull request.' });
+  }
+
+  try {
+    const job = enqueueIntegrationJob(hub, input, session.username);
+    const result = processIntegrationJob(hub, data as any, job.id, session.username);
+    appendIntegrationAudit(
+      data,
+      session.username,
+      'Integration Live Pull',
+      `${ONE_C_CONNECTOR_ID}:${input.domain}`,
+      {
+        jobId: job.id,
+        entitySet,
+        rows: records.length,
+        status: result.job.status,
+        conflicts: result.conflictCount,
+      },
+      'Rows pulled from 1C over OData and processed through source-of-truth rules and external ID mapping.',
+    );
+    await saveUserData(session.username, data, { updatedBy: `api-integrations:${session.username}` });
+    return res.status(201).json({ ok: true, job: publicJob(result.job), hub: publicHub(hub) });
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : 'Unable to process live pull.' });
   }
 });
 
