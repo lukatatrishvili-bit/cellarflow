@@ -100,6 +100,10 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [running, setRunning] = React.useState(false);
+  const [testing, setTesting] = React.useState(false);
+  const [pulling, setPulling] = React.useState(false);
+  const [liveEntitySet, setLiveEntitySet] = React.useState('');
+  const [testResult, setTestResult] = React.useState<{ ok: boolean; message: string; entitySets: string[] } | null>(null);
   const [catalog, setCatalog] = React.useState<IntegrationConnectorDefinition[]>([]);
   const [domains, setDomains] = React.useState<IntegrationDomainDefinition[]>([]);
   const [sourceOfTruth, setSourceOfTruth] = React.useState<Record<string, SourceOfTruthRule>>({});
@@ -182,7 +186,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       authMode,
       username: String(fd.get('username') || ''),
       databaseName: String(fd.get('databaseName') || ''),
-      exchangeMode: 'manual_json_csv',
+      exchangeMode: (String(fd.get('exchangeMode') || 'manual_json_csv') as ConnectorConfigInput['exchangeMode']),
       defaultExportFormat: String(fd.get('defaultExportFormat') || 'json') as IntegrationSyncFormat,
     };
     if (secretValue.trim()) {
@@ -234,6 +238,44 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Job failed'}`);
     } finally {
       setRunning(false);
+    }
+  };
+
+  const testConnection = async () => {
+    if (!connector) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`/api/integrations/connectors/${connector.id}/test`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Connection test failed');
+      setTestResult({ ok: true, message: data.probe?.message || 'Connected.', entitySets: data.probe?.entitySets || [] });
+      setToastMessage('1C connection test succeeded.');
+    } catch (err) {
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : 'Connection test failed', entitySets: [] });
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Test failed'}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const livePull = async () => {
+    if (!connector || !liveEntitySet.trim()) return;
+    setPulling(true);
+    try {
+      const res = await fetch('/api/integrations/jobs/live-pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entitySet: liveEntitySet.trim(), domain: selectedDomain, top: 50 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Live pull failed');
+      setHub(data.hub);
+      setToastMessage(data.job?.status === 'needs_review' ? 'Live pull needs review.' : 'Live pull completed.');
+    } catch (err) {
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Live pull failed'}`);
+    } finally {
+      setPulling(false);
     }
   };
 
@@ -418,6 +460,13 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                     <option value="csv">CSV</option>
                   </select>
                 </div>
+                <div>
+                  <FieldLabel required>Exchange mode</FieldLabel>
+                  <select name="exchangeMode" aria-label="Exchange mode" defaultValue={connector.exchangeMode} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                    <option value="manual_json_csv">Manual file exchange</option>
+                    <option value="live_odata">Live OData (HTTPS)</option>
+                  </select>
+                </div>
                 <div className="md:col-span-2">
                   <FieldLabel required>Endpoint URL or exchange reference</FieldLabel>
                   <input
@@ -466,6 +515,57 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                 </ActionButton>
               </div>
             </form>
+          </SectionCard>
+
+          <SectionCard title="Live 1C Connection" subtitle="Test the OData endpoint and pull entities directly." icon={PlugZap}>
+            <div className="space-y-4">
+              <InlineNotice>
+                Requires exchange mode <strong>Live OData</strong>, an HTTPS endpoint, and saved credentials.
+                Credentials are sealed server-side and never leave the server; the endpoint is checked for
+                private/internal addresses before every call.
+              </InlineNotice>
+              <div className="flex flex-wrap items-center gap-2">
+                <ActionButton onClick={testConnection} disabled={testing || !connector?.enabled}>
+                  {testing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />}
+                  Test Connection
+                </ActionButton>
+                {testResult && (
+                  <span className={cx('text-[11px] font-bold', testResult.ok ? 'text-emerald-700 dark:text-emerald-500' : 'text-red-700 dark:text-red-400')}>
+                    {testResult.ok ? '✓ ' : '✕ '}{testResult.message}
+                  </span>
+                )}
+              </div>
+              {testResult?.entitySets && testResult.entitySets.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {testResult.entitySets.slice(0, 24).map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setLiveEntitySet(name)}
+                      className="rounded-lg border border-[#e8dfd5] bg-white px-2 py-1 text-[10px] font-mono font-bold text-stone-600 hover:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300"
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+                <div>
+                  <FieldLabel>OData entity set</FieldLabel>
+                  <input
+                    value={liveEntitySet}
+                    onChange={(e) => setLiveEntitySet(e.target.value)}
+                    placeholder="Catalog_Номенклатура"
+                    aria-label="OData entity set"
+                    className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-mono outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-950"
+                  />
+                </div>
+                <ActionButton onClick={livePull} disabled={pulling || !liveEntitySet.trim()}>
+                  {pulling ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ArrowDownToLine className="w-3.5 h-3.5 mr-1.5" />}
+                  Pull into {selectedDomain}
+                </ActionButton>
+              </div>
+            </div>
           </SectionCard>
 
           <SectionCard title="Manual Exchange" subtitle="Create controlled export/import jobs." icon={FileJson}>
