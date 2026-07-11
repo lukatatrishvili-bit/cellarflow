@@ -19,6 +19,7 @@ import {
   isSupportedAttachmentMimeType,
   isSupportedAttachmentFileName,
   isValidAttachmentChecksum,
+  isValidAttachmentObjectKey,
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_TOTAL_INLINE_ATTACHMENT_BYTES,
   normalizeAttachmentFileName,
@@ -657,7 +658,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (!['company', 'official_docs', 'certification', 'cadastre', 'qvevri', 'lab', 'vineyard_project', 'crm', 'other'].includes(item.module)) {
               throw new Error(`Attachment ${item.id} has invalid module.`);
             }
-            if (!item.storage || typeof item.storage !== 'object' || !['inline', 'external', 'metadata_only'].includes(item.storage.kind)) {
+            if (!item.storage || typeof item.storage !== 'object' || !['inline', 'external', 'metadata_only', 'gcs'].includes(item.storage.kind)) {
               throw new Error(`Attachment ${item.id} has invalid storage kind.`);
             }
             if (item.sizeBytes !== undefined && (typeof item.sizeBytes !== 'number' || !Number.isFinite(item.sizeBytes) || item.sizeBytes < 0)) {
@@ -683,6 +684,12 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             }
             if (item.storage.kind === 'external' && !normalizeExternalAttachmentUrl(item.storage.url)) {
               throw new Error(`Attachment ${item.id} external storage requires a valid HTTPS URL.`);
+            }
+            // GCS-backed: bytes live in object storage, so state carries only a
+            // validated object key and no inline data — cost to the JSONB blob
+            // is ~0 regardless of file size (the whole point of this backend).
+            if (item.storage.kind === 'gcs' && !isValidAttachmentObjectKey(item.storage.objectKey)) {
+              throw new Error(`Attachment ${item.id} gcs storage requires a valid object key.`);
             }
             if (item.checksum !== undefined && !isValidAttachmentChecksum(item.checksum)) {
               throw new Error(`Attachment ${item.id} has invalid checksum.`);
@@ -871,7 +878,9 @@ export function prepareAttachmentsForServerMerge(attachments: any): any {
       ? { kind: 'inline', dataUrl: rawStorage.dataUrl }
       : rawStorage.kind === 'external'
         ? { kind: 'external', url: normalizeExternalAttachmentUrl(rawStorage.url) || rawStorage.url }
-        : { kind: 'metadata_only' };
+        : rawStorage.kind === 'gcs' && isValidAttachmentObjectKey(rawStorage.objectKey)
+          ? { kind: 'gcs', objectKey: rawStorage.objectKey }
+          : { kind: 'metadata_only' };
     const prepared: any = {
       ...item,
       fileName,

@@ -80,6 +80,7 @@ export interface DocumentAttachmentInput {
     kind?: DocumentAttachmentStorageKind;
     dataUrl?: string;
     url?: string;
+    objectKey?: string;
   };
   checksum?: string;
   uploadedAt?: string;
@@ -110,7 +111,18 @@ const MODULES: DocumentAttachmentModule[] = [
   'crm',
   'other',
 ];
-const STORAGE_KINDS: DocumentAttachmentStorageKind[] = ['inline', 'external', 'metadata_only'];
+const STORAGE_KINDS: DocumentAttachmentStorageKind[] = ['inline', 'external', 'metadata_only', 'gcs'];
+// Object keys are server-generated: "<orgId>/<attachmentId>.<ext>". Validate
+// defensively so a crafted key cannot escape the org prefix or traverse paths.
+const ATTACHMENT_OBJECT_KEY_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
+export function isValidAttachmentObjectKey(key: unknown): key is string {
+  return typeof key === 'string'
+    && key.length > 0
+    && key.length <= 300
+    && ATTACHMENT_OBJECT_KEY_RE.test(key)
+    && !key.includes('..');
+}
 
 function slug(value: string): string {
   return value
@@ -153,7 +165,7 @@ export function supportedAttachmentTypesLabel(): string {
   return 'PDF, JPG/JPEG, PNG, DOC, DOCX, XLS, XLSX, or CSV';
 }
 
-function attachmentExtension(fileName?: string): string {
+export function attachmentExtension(fileName?: string): string {
   const match = String(fileName || '').toLowerCase().match(/\.([a-z0-9]+)$/);
   return match?.[1] || '';
 }
@@ -345,6 +357,18 @@ export function getAttachmentAccess(
     };
   }
 
+  // GCS-backed: bytes are served by the org-scoped attachment endpoint. The
+  // object key is path-segment-encoded so slashes in the route are preserved.
+  if (attachment.storage.kind === 'gcs' && isValidAttachmentObjectKey(attachment.storage.objectKey)) {
+    const encoded = attachment.storage.objectKey!.split('/').map(encodeURIComponent).join('/');
+    return {
+      href: `/api/attachments/object/${encoded}`,
+      label: 'Download',
+      download: attachment.fileName,
+      external: false,
+    };
+  }
+
   return null;
 }
 
@@ -389,6 +413,9 @@ export function createDocumentAttachmentRecord(input: DocumentAttachmentInput): 
   if (kind === 'external' && !externalUrl) {
     throw new Error('External attachment requires a valid HTTPS URL.');
   }
+  if (kind === 'gcs' && !isValidAttachmentObjectKey(storage.objectKey)) {
+    throw new Error('GCS attachment requires a valid object key.');
+  }
   if (input.checksum !== undefined && !isValidAttachmentChecksum(input.checksum)) {
     throw new Error('Attachment checksum must be a SHA-256 hex digest.');
   }
@@ -417,6 +444,7 @@ export function createDocumentAttachmentRecord(input: DocumentAttachmentInput): 
       kind,
       dataUrl: kind === 'inline' ? storage.dataUrl : undefined,
       url: kind === 'external' ? externalUrl ?? undefined : undefined,
+      objectKey: kind === 'gcs' ? storage.objectKey : undefined,
     },
     checksum,
   };

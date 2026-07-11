@@ -12,3 +12,6 @@ db.json
 db.json.tmp
 .db.json.*.tmp
 *.tmp
+
+# Local attachment object store (dev fallback)
+attachments/

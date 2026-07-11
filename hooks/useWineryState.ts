@@ -1734,6 +1734,47 @@ export function useWineryState() {
     } catch { /* ignore */ }
   };
 
+  // Offload an inline attachment's bytes to object storage and swap the record
+  // to a lightweight GCS reference, so the bytes never persist in the org JSONB
+  // blob. Runs in the background after the optimistic local add — on any failure
+  // the inline record is kept, so offline uploads still work.
+  const offloadAttachmentToObjectStore = async (local: DocumentAttachment, input: DocumentAttachmentInput) => {
+    if (!SyncQueueManager.isOnline()) return;
+    if (local.storage.kind !== 'inline' || !local.storage.dataUrl) return;
+    try {
+      const res = await fetch('/api/attachments/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          dataUrl: local.storage.dataUrl,
+          sizeBytes: input.sizeBytes ?? local.sizeBytes,
+          module: input.module,
+          linkedRecordType: input.linkedRecordType,
+          linkedRecordId: input.linkedRecordId,
+          description: input.description,
+        }),
+      });
+      if (!res.ok) return;
+      const body = await res.json().catch(() => null);
+      const objectKey = body?.attachment?.storage?.objectKey;
+      if (!objectKey) return;
+      setAttachments(prev => prev.map(a => (
+        a.id === local.id
+          ? {
+              ...a,
+              sizeBytes: body.attachment.sizeBytes ?? a.sizeBytes,
+              checksum: body.attachment.checksum ?? a.checksum,
+              storage: { kind: 'gcs' as const, objectKey },
+            }
+          : a
+      )));
+    } catch {
+      /* keep the inline record — it still syncs (small) and works offline */
+    }
+  };
+
   const handleAddAttachment = (input: DocumentAttachmentInput): DocumentAttachment => {
     const attachment = createDocumentAttachmentRecord({
       ...input,
@@ -1741,6 +1782,7 @@ export function useWineryState() {
     });
     setAttachments(prev => [attachment, ...prev.filter(item => item.id !== attachment.id)]);
     setToastMessage(lang === 'ka' ? 'Attachment saved for review.' : 'Attachment saved for review.');
+    void offloadAttachmentToObjectStore(attachment, input);
     return attachment;
   };
 

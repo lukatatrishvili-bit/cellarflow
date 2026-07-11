@@ -157,7 +157,7 @@ export type DocumentAttachmentModule =
   | 'crm'
   | 'other';
 
-export type DocumentAttachmentStorageKind = 'inline' | 'external' | 'metadata_only';
+export type DocumentAttachmentStorageKind = 'inline' | 'external' | 'metadata_only' | 'gcs';
 
 export interface DocumentAttachment {
   id: string;
@@ -174,6 +174,8 @@ export interface DocumentAttachment {
     kind: DocumentAttachmentStorageKind;
     dataUrl?: string;
     url?: string;
+    // For kind 'gcs': the object key (bytes live in object storage, not state).
+    objectKey?: string;
   };
   checksum?: string;
 }
