@@ -25,11 +25,16 @@ interface Props {
   setPrefilledSourceId?: (id: string) => void;
   setPrefilledDestId?: (id: string) => void;
   wineryName?: string;
+  canCreateVessel?: boolean;
+  canUpdateVessel?: boolean;
+  canDeleteVessel?: boolean;
+  canExecuteTransfer?: boolean;
 }
 
 export default function TanksVessels({ 
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
-  setActiveTab, setPrefilledSourceId, setPrefilledDestId, wineryName
+  setActiveTab, setPrefilledSourceId, setPrefilledDestId, wineryName,
+  canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true
 }: Props) {
   const t = translations[lang];
   const ka = lang === 'ka';
@@ -57,6 +62,7 @@ export default function TanksVessels({
   const [tempInputValue, setTempInputValue] = useState<number>(15);
 
   const handleClean = (vId: string) => {
+    if (!canUpdateVessel) return;
     const updated = vessels.map(v => {
       if (v.id === vId) {
         return {
@@ -73,6 +79,7 @@ export default function TanksVessels({
   };
 
   const handleToggleCooling = (vId: string) => {
+    if (!canUpdateVessel) return;
     let stateActive = false;
     const updated = vessels.map(v => {
       if (v.id === vId) {
@@ -94,6 +101,7 @@ export default function TanksVessels({
   };
 
   const handleSaveTemp = (vId: string) => {
+    if (!canUpdateVessel) return;
     const updated = vessels.map(v => {
       if (v.id === vId) {
         return {
@@ -110,6 +118,7 @@ export default function TanksVessels({
   };
 
   const handleDeleteVessel = (vId: string) => {
+    if (!canDeleteVessel) return;
     const filtered = vessels.filter(v => v.id !== vId);
     onUpdateVessels(filtered);
     info(ka ? `ჭურჭელი ${vId} ამოღებულია ექსპლუატაციიდან` : `Vessel ${vId} decommissioned`);
@@ -117,6 +126,7 @@ export default function TanksVessels({
 
   const handleAddVessel = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateVessel) return;
     if (!newId) return;
 
     const newVessel: Vessel = {
@@ -184,6 +194,14 @@ export default function TanksVessels({
       ? (lots.find(l => l.id === v.assignedLotId)?.stage === 'fermenting' ? 'fermenting' : 'occupied')
       : (v.cleaningStatus === 'dirty' ? 'cleaning' : 'empty')
   }));
+  const missingVesselActions = [
+    !canCreateVessel ? (ka ? 'ჭურჭლის დამატება' : 'commission vessels') : '',
+    !canUpdateVessel ? (ka ? 'ოპერაციებისა და განლაგების შეცვლა' : 'change vessel operations or layout') : '',
+    !canDeleteVessel ? (ka ? 'ჭურჭლის ექსპლუატაციიდან ამოღება' : 'decommission vessels') : '',
+  ].filter(Boolean);
+  const missingVesselActionsText = ka || missingVesselActions.length < 2
+    ? missingVesselActions.join(', ')
+    : `${missingVesselActions.slice(0, -1).join(', ')} or ${missingVesselActions.at(-1)}`;
 
   return (
     <div className="space-y-6">
@@ -341,6 +359,23 @@ export default function TanksVessels({
         </div>
       </div>
 
+      {(!canCreateVessel || !canUpdateVessel || !canDeleteVessel) && (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <strong className="font-semibold">
+            {!canCreateVessel && !canUpdateVessel && !canDeleteVessel
+              ? (ka ? 'მხოლოდ ნახვის წვდომა.' : 'Read-only vessel access.')
+              : (ka ? 'ჭურჭელზე შეზღუდული წვდომა.' : 'Limited vessel access.')}
+          </strong>{' '}
+          {!canCreateVessel && !canUpdateVessel && !canDeleteVessel
+            ? (ka
+                ? 'შეგიძლიათ ნახოთ ტევადობა, მდგომარეობა და მარნის რუკა, მაგრამ ჭურჭლის ჩანაწერებს ვერ შეცვლით.'
+                : 'You can review capacity, status, and the cellar map, but cannot change vessel records.')
+            : (ka
+                ? `თქვენი როლი არ გაძლევთ უფლებას: ${missingVesselActionsText}.`
+                : `Your role cannot ${missingVesselActionsText}.`)}
+        </div>
+      )}
+
       {/* 2. Top advanced command and control panel */}
       <div className="space-y-4">
         {/* Core Filters Row */}
@@ -380,19 +415,21 @@ export default function TanksVessels({
           </div>
 
           {/* Action trigger button */}
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="inline-flex items-center justify-center gap-1 px-3.5 py-1.5 bg-[#4e0e15] hover:bg-[#6b151e] cursor-pointer text-white font-semibold text-xs rounded-lg transition-colors shadow-sm h-9"
-          >
-            <Plus className="w-3.5 h-3.5" /> 
-            {({
-              en: 'Commission Vessel',
-              ka: 'ჭურჭლის დამატება',
-              it: 'Commissiona Recipiente',
-              fr: 'Commissionner une Cuve',
-              de: 'Behälter in Betrieb nehmen'
-            })[lang] || 'Commission Vessel'}
-          </button>
+          {canCreateVessel && (
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="inline-flex items-center justify-center gap-1 px-3.5 py-1.5 bg-[#4e0e15] hover:bg-[#6b151e] cursor-pointer text-white font-semibold text-xs rounded-lg transition-colors shadow-sm h-9"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {({
+                en: 'Commission Vessel',
+                ka: 'ჭურჭლის დამატება',
+                it: 'Commissiona Recipiente',
+                fr: 'Commissionner une Cuve',
+                de: 'Behälter in Betrieb nehmen'
+              })[lang] || 'Commission Vessel'}
+            </button>
+          )}
         </div>
 
         {/* Sub search parameters line */}
@@ -488,7 +525,7 @@ export default function TanksVessels({
       </div>
 
       {/* 3. Add Vessel Form Popup */}
-      {showAddForm && (
+      {canCreateVessel && showAddForm && (
         <form onSubmit={handleAddVessel} className="p-4 bg-white border border-[#4e0e15] rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-4 items-end shadow">
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">
@@ -620,23 +657,26 @@ export default function TanksVessels({
                   de: 'Passen Sie Ihre Filter oder Ihren Suchbegriff an.'
                 })[lang] || 'Adjust your active material filters, search queries, or cleaning statuses to expose commissioned cellar units.')}
           </p>
-          <button
-            onClick={() => {
-              if (vessels.length === 0) {
-                setShowAddForm(true);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-                return;
-              }
-              setSearchTerm('');
-              setFilterType('all');
-              setStatusFilter('all');
-            }}
-            className="px-3.5 py-1.5 bg-[#4e0e15] text-white hover:bg-[#6b151e] rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
-          >
-            {vessels.length === 0
-              ? (({ en: '+ Register your first vessel', ka: '+ დაარეგისტრირეთ პირველი ჭურჭელი', it: '+ Registra il primo recipiente', fr: '+ Enregistrer la première cuve', de: '+ Ersten Behälter registrieren' })[lang] || '+ Register your first vessel')
-              : (({ en: 'Clear Active Filters', ka: 'ფილტრების გასუფთავება', it: 'Azzera Filtri', fr: 'Effacer Filtres', de: 'Filter zurücksetzen' })[lang] || 'Clear Active Filters')}
-          </button>
+          {(vessels.length > 0 || canCreateVessel) && (
+            <button
+              onClick={() => {
+                if (vessels.length === 0) {
+                  if (!canCreateVessel) return;
+                  setShowAddForm(true);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  return;
+                }
+                setSearchTerm('');
+                setFilterType('all');
+                setStatusFilter('all');
+              }}
+              className="px-3.5 py-1.5 bg-[#4e0e15] text-white hover:bg-[#6b151e] rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
+            >
+              {vessels.length === 0
+                ? (({ en: '+ Register your first vessel', ka: '+ დაარეგისტრირეთ პირველი ჭურჭელი', it: '+ Registra il primo recipiente', fr: '+ Enregistrer la première cuve', de: '+ Ersten Behälter registrieren' })[lang] || '+ Register your first vessel')
+                : (({ en: 'Clear Active Filters', ka: 'ფილტრების გასუფთავება', it: 'Azzera Filtri', fr: 'Effacer Filtres', de: 'Filter zurücksetzen' })[lang] || 'Clear Active Filters')}
+            </button>
+          )}
         </div>
       ) : viewMode === 'map' ? (
         /* Interactive 2D Cellar Map Floor Layout */
@@ -650,6 +690,8 @@ export default function TanksVessels({
           setActiveTab={setActiveTab}
           setPrefilledSourceId={setPrefilledSourceId}
           setPrefilledDestId={setPrefilledDestId}
+          canUpdateVessel={canUpdateVessel}
+          canExecuteTransfer={canExecuteTransfer}
         />
       ) : viewMode === 'grid' ? (
         /* Original Premium Glass Cards Grid View */
@@ -687,16 +729,18 @@ export default function TanksVessels({
                       </p>
                     </div>
                   </div>
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteVessel(v.id);
-                    }}
-                    className="p-1 text-slate-300 hover:text-red-500 cursor-pointer transition-colors"
-                    title="Commission out / destroy vessel"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {canDeleteVessel && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteVessel(v.id);
+                      }}
+                      className="p-1 text-slate-300 hover:text-red-500 cursor-pointer transition-colors"
+                      title="Commission out / destroy vessel"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Liquid Graphics Fill Card */}
@@ -821,7 +865,7 @@ export default function TanksVessels({
                               de: 'Aktuelle Temp.'
                             })[lang] || 'Current Temp'}
                           </span>
-                          {editingTempId === v.id ? (
+                          {canUpdateVessel && editingTempId === v.id ? (
                             <div className="flex items-center gap-1 mt-0.5">
                               <input 
                                 type="number" 
@@ -840,15 +884,18 @@ export default function TanksVessels({
                           ) : (
                             <span className="font-bold flex items-center gap-1 mt-0.5">
                               {v.temperature}°C 
-                              <button 
-                                onClick={() => {
-                                  setEditingTempId(v.id);
-                                  setTempInputValue(v.temperature);
-                                }}
-                                className="p-0.5 text-slate-400 hover:text-[#4e0e15] cursor-pointer"
-                              >
-                                <Edit className="w-3 h-3" />
-                              </button>
+                              {canUpdateVessel && (
+                                <button
+                                  onClick={() => {
+                                    setEditingTempId(v.id);
+                                    setTempInputValue(v.temperature);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-[#4e0e15] cursor-pointer"
+                                  title={ka ? 'ტემპერატურის შეცვლა' : 'Set temperature value'}
+                                >
+                                  <Edit className="w-3 h-3" />
+                                </button>
+                              )}
                             </span>
                           )}
                         </div>
@@ -864,23 +911,40 @@ export default function TanksVessels({
                               de: 'Kühlmantel'
                             })[lang] || 'Cooling Jacket'}
                           </span>
-                          <button 
-                            onClick={() => handleToggleCooling(v.id)}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold transition-all border mt-0.5 cursor-pointer active:scale-95 hover:scale-[1.03] duration-150 ${
-                              v.coolingJacketActive 
-                                ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] animate-pulse' 
-                                : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
-                            }`}
-                          >
+                          {canUpdateVessel ? (
+                            <button
+                              onClick={() => handleToggleCooling(v.id)}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold transition-all border mt-0.5 cursor-pointer active:scale-95 hover:scale-[1.03] duration-150 ${
+                                v.coolingJacketActive
+                                  ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] animate-pulse'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+                              }`}
+                            >
+                              {v.coolingJacketActive ? (
+                                <>
+                                  <Snowflake className="w-2.5 h-2.5 text-[#0369a1] animate-spin" />
+                                  {({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' })[lang] || 'Active'}
+                                </>
+                              ) : (
+                                ({ en: 'Inactive', ka: 'არააქტიური', it: 'Inattiva', fr: 'Inactive', de: 'Inaktiv' })[lang] || 'Inactive'
+                              )}
+                            </button>
+                          ) : (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold border mt-0.5 ${
+                              v.coolingJacketActive
+                                ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd]'
+                                : 'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}>
                             {v.coolingJacketActive ? (
                               <>
                                 <Snowflake className="w-2.5 h-2.5 text-[#0369a1] animate-spin" /> 
                                 {({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' })[lang] || 'Active'}
                               </>
                             ) : (
-                              ({ en: 'Inactive', ka: 'არააქტიური', it: 'Inattiva', fr: 'Inactive', de: 'Inaktiv' })[lang] || 'Inactive'
-                            )}
-                          </button>
+                                ({ en: 'Inactive', ka: 'არააქტიური', it: 'Inattiva', fr: 'Inactive', de: 'Inaktiv' })[lang] || 'Inactive'
+                              )}
+                            </span>
+                          )}
                         </div>
                       </>
                     )}
@@ -904,7 +968,7 @@ export default function TanksVessels({
                       )}
                     </div>
 
-                    {needsCleaning && (
+                    {canUpdateVessel && needsCleaning && (
                       <button
                         onClick={() => handleClean(v.id)}
                         className="inline-flex items-center gap-0.5 px-2 py-1 bg-[#4e0e15] text-white font-bold rounded hover:bg-[#6b151e] cursor-pointer text-[9px] active:scale-95 hover:-translate-y-0.5 duration-150"
@@ -934,7 +998,9 @@ export default function TanksVessels({
                   <th className="py-3 px-3">{lText({ en: 'Temperature', ka: 'ტემპერატურა', it: 'Temperatura', fr: 'Température', de: 'Temperatur' }, 'Temperature')}</th>
                   <th className="py-3 px-3 text-center">{lText({ en: 'Cooling Jacket', ka: 'გაგრილება', it: 'Giacca Raffreddamento', fr: 'Jaquette de Rafroidissement', de: 'Kühlmantel' }, 'Cooling Jacket')}</th>
                   <th className="py-3 px-3">{lText({ en: 'Hygiene', ka: 'ჰიგიენა', it: 'Igiene', fr: 'Hygiène', de: 'Hygiene' }, 'Hygiene')}</th>
-                  <th className="py-3 px-4 text-center">{lText({ en: 'Actions', ka: 'ქმედებები', it: 'Azioni', fr: 'Actions', de: 'Aktionen' }, 'Actions')}</th>
+                  {(canUpdateVessel || canDeleteVessel) && (
+                    <th className="py-3 px-4 text-center">{lText({ en: 'Actions', ka: 'ქმედებები', it: 'Azioni', fr: 'Actions', de: 'Aktionen' }, 'Actions')}</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1006,7 +1072,7 @@ export default function TanksVessels({
 
                       {/* 5. Temperature Controls */}
                       <td className="py-3.5 px-3" onClick={e => e.stopPropagation()}>
-                        {editingTempId === v.id ? (
+                        {canUpdateVessel && editingTempId === v.id ? (
                           <div className="flex items-center gap-1">
                             <input 
                               type="number" 
@@ -1034,36 +1100,52 @@ export default function TanksVessels({
                               <Thermometer className="w-3 h-3 text-slate-400" />
                               {v.temperature.toFixed(1)}°C
                             </span>
-                            <button 
-                              onClick={() => {
-                                setEditingTempId(v.id);
-                                setTempInputValue(v.temperature);
-                              }}
-                              className="p-1 text-slate-400 hover:text-[#4e0e15] cursor-pointer"
-                              title="Set temperature value"
-                            >
-                              <Edit className="w-2.5 h-2.5" />
-                            </button>
+                            {canUpdateVessel && (
+                              <button
+                                onClick={() => {
+                                  setEditingTempId(v.id);
+                                  setTempInputValue(v.temperature);
+                                }}
+                                className="p-1 text-slate-400 hover:text-[#4e0e15] cursor-pointer"
+                                title={ka ? 'ტემპერატურის შეცვლა' : 'Set temperature value'}
+                              >
+                                <Edit className="w-2.5 h-2.5" />
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
 
                       {/* 6. Stabilization active control toggle */}
                       <td className="py-3.5 px-3 text-center" onClick={e => e.stopPropagation()}>
-                        <button 
-                          onClick={() => handleToggleCooling(v.id)}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 text-[10px] rounded-lg font-bold transition-all border cursor-pointer ${
-                            v.coolingJacketActive 
-                              ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] animate-pulse' 
-                              : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
+                        {canUpdateVessel ? (
+                          <button
+                            onClick={() => handleToggleCooling(v.id)}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 text-[10px] rounded-lg font-bold transition-all border cursor-pointer ${
+                              v.coolingJacketActive
+                                ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] animate-pulse'
+                                : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <Snowflake className={`w-2.5 h-2.5 ${v.coolingJacketActive ? 'text-[#0369a1] animate-spin' : 'text-slate-400'}`} />
+                            {v.coolingJacketActive
+                              ? lText({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' }, 'Active')
+                              : lText({ en: 'Hold', ka: 'გამორთული', it: 'Fermo', fr: 'Arrêt', de: 'Aus' }, 'Hold')
+                            }
+                          </button>
+                        ) : (
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-[10px] rounded-lg font-bold border ${
+                            v.coolingJacketActive
+                              ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd]'
+                              : 'bg-slate-50 text-slate-500 border-slate-200'
+                          }`}>
                           <Snowflake className={`w-2.5 h-2.5 ${v.coolingJacketActive ? 'text-[#0369a1] animate-spin' : 'text-slate-400'}`} /> 
                           {v.coolingJacketActive 
                             ? lText({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' }, 'Active')
-                            : lText({ en: 'Hold', ka: 'გამორთული', it: 'Fermo', fr: 'Arrêt', de: 'Aus' }, 'Hold')
-                          }
-                        </button>
+                              : lText({ en: 'Hold', ka: 'გამორთული', it: 'Fermo', fr: 'Arrêt', de: 'Aus' }, 'Hold')
+                            }
+                          </span>
+                        )}
                       </td>
 
                       {/* 7. Hygiene cleaning logs */}
@@ -1081,27 +1163,31 @@ export default function TanksVessels({
                       </td>
 
                       {/* 8. Extra action column */}
-                      <td className="py-3.5 px-4 text-center" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1.5">
-                          {needsCleaning && (
-                            <button
-                              onClick={() => handleClean(v.id)}
-                              className="px-2 py-1 bg-[#4e0e15] text-white hover:bg-[#6b151e] rounded text-[10px] font-bold inline-flex items-center gap-0.5 cursor-pointer"
-                              title="Wash and sanitize unit"
-                            >
-                              <RotateCw className="w-2.5 h-2.5" />
-                              Washing
-                            </button>
-                          )}
-                          <button 
-                            onClick={() => handleDeleteVessel(v.id)}
-                            className="p-1 text-slate-300 hover:text-red-500 rounded cursor-pointer hover:bg-red-50"
-                            title="Decommission vessel unit"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </td>
+                      {(canUpdateVessel || canDeleteVessel) && (
+                        <td className="py-3.5 px-4 text-center" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1.5">
+                            {canUpdateVessel && needsCleaning && (
+                              <button
+                                onClick={() => handleClean(v.id)}
+                                className="px-2 py-1 bg-[#4e0e15] text-white hover:bg-[#6b151e] rounded text-[10px] font-bold inline-flex items-center gap-0.5 cursor-pointer"
+                                title="Wash and sanitize unit"
+                              >
+                                <RotateCw className="w-2.5 h-2.5" />
+                                Washing
+                              </button>
+                            )}
+                            {canDeleteVessel && (
+                              <button
+                                onClick={() => handleDeleteVessel(v.id)}
+                                className="p-1 text-slate-300 hover:text-red-500 rounded cursor-pointer hover:bg-red-50"
+                                title="Decommission vessel unit"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

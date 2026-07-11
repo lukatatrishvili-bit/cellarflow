@@ -36,7 +36,7 @@ interface Props {
   salesOrders: SalesOrderRecord[];
   salesDispatches: SalesDispatchRecord[];
   currency: string;
-  onEdit: () => void;
+  onEdit?: () => void;
   onOpenPassport?: (lotId: string) => void;
   setActiveTab?: (tab: string) => void;
   setSelectedTankId?: (tankId: string | null) => void;
@@ -173,7 +173,7 @@ export default function WineLotCommandCenter({
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <ActionChip icon={Pencil} onClick={onEdit}>Edit</ActionChip>
+            {onEdit && <ActionChip icon={Pencil} onClick={onEdit}>Edit</ActionChip>}
             <ActionChip icon={GitMerge} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>Lineage</ActionChip>
             <ActionChip icon={FileText} onClick={onOpenPassport ? () => onOpenPassport(lot.id) : undefined}>Passport</ActionChip>
           </div>

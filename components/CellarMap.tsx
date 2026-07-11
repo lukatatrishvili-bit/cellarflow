@@ -18,6 +18,8 @@ interface Props {
   setActiveTab?: (tab: string) => void;
   setPrefilledSourceId?: (id: string) => void;
   setPrefilledDestId?: (id: string) => void;
+  canUpdateVessel?: boolean;
+  canExecuteTransfer?: boolean;
 }
 
 export default function CellarMap({
@@ -29,7 +31,9 @@ export default function CellarMap({
   selectedTankId,
   setActiveTab,
   setPrefilledSourceId,
-  setPrefilledDestId
+  setPrefilledDestId,
+  canUpdateVessel = true,
+  canExecuteTransfer = true,
 }: Props) {
   const t = translations[lang];
 
@@ -62,12 +66,13 @@ export default function CellarMap({
     const { x, y } = getSVGCoords(e as any);
     
     if (isEditingLayout) {
+      if (!canUpdateVessel) return;
       // Repositioning drag
       setDraggedVesselId(vessel.id);
       const currentX = (vessel.xGrid ?? 50) * 8;
       const currentY = (vessel.yGrid ?? 50) * 5;
       setDragOffset({ x: x - currentX, y: y - currentY });
-    } else if (vessel.currentVolume > 0) {
+    } else if (canExecuteTransfer && vessel.currentVolume > 0) {
       // Transfer/Racking drag
       setActiveTransferSource(vessel);
       setCustomDragPos({ x, y });
@@ -79,6 +84,7 @@ export default function CellarMap({
     const { x, y } = getSVGCoords(e);
 
     if (isEditingLayout && draggedVesselId) {
+      if (!canUpdateVessel) return;
       const newX = Math.max(5, Math.min(95, (x - dragOffset.x) / 8));
       const newY = Math.max(5, Math.min(95, (y - dragOffset.y) / 5));
 
@@ -89,7 +95,7 @@ export default function CellarMap({
         return v;
       });
       onUpdateVessels(updated);
-    } else if (activeTransferSource) {
+    } else if (canExecuteTransfer && activeTransferSource) {
       setCustomDragPos({ x, y });
 
       // Check proximity to other vessels for drag-over highlights
@@ -115,7 +121,7 @@ export default function CellarMap({
     if (isEditingLayout) {
       setDraggedVesselId(null);
     } else if (activeTransferSource) {
-      if (transferTargetId && setActiveTab && setPrefilledSourceId && setPrefilledDestId) {
+      if (canExecuteTransfer && transferTargetId && setActiveTab && setPrefilledSourceId && setPrefilledDestId) {
         // Trigger visual racking transfer action!
         setPrefilledSourceId(activeTransferSource.id);
         setPrefilledDestId(transferTargetId);
@@ -183,11 +189,12 @@ export default function CellarMap({
       effectPulse = true;
     }
 
+    const canDragVessel = isEditingLayout ? canUpdateVessel : canExecuteTransfer && v.currentVolume > 0;
     const commonProps = {
       onMouseDown: (e: React.MouseEvent) => handleVesselMouseDown(e, v),
       onMouseEnter: () => setHoveredVessel(v),
       onMouseLeave: () => setHoveredVessel(null),
-      className: `cursor-grab active:cursor-grabbing transition-transform hover:scale-105 duration-155 ${effectPulse ? 'animate-pulse' : ''}`,
+      className: `${canDragVessel ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'} transition-transform hover:scale-105 duration-155 ${effectPulse ? 'animate-pulse' : ''}`,
       style: { opacity: isDragSource ? 0.4 : 1 }
     };
 
@@ -328,24 +335,28 @@ export default function CellarMap({
             </button>
           </div>
 
-          <span className="text-slate-200">|</span>
+          {canUpdateVessel && (
+            <>
+              <span className="text-slate-200">|</span>
 
-          {/* Layout editor toggle */}
-          <button
-            type="button"
-            onClick={() => setIsEditingLayout(!isEditingLayout)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
-              isEditingLayout 
-                ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm' 
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-            }`}
-          >
-            <Move className="w-3.5 h-3.5" />
-            {isEditingLayout 
-              ? (lang === 'ka' ? 'შენახვა' : 'Save Layout') 
-              : (lang === 'ka' ? 'განლაგების შეცვლა' : 'Customize Layout')
-            }
-          </button>
+              {/* Layout editor toggle */}
+              <button
+                type="button"
+                onClick={() => setIsEditingLayout(!isEditingLayout)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  isEditingLayout
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <Move className="w-3.5 h-3.5" />
+                {isEditingLayout
+                  ? (lang === 'ka' ? 'შენახვა' : 'Save Layout')
+                  : (lang === 'ka' ? 'განლაგების შეცვლა' : 'Customize Layout')
+                }
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -367,7 +378,7 @@ export default function CellarMap({
         <div className="absolute left-0 right-[45%] top-[55%] border-t border-dashed border-stone-800/40 select-none pointer-events-none" />
 
         {/* Drag-to-Transfer helper prompt */}
-        {!isEditingLayout && (
+        {!isEditingLayout && canExecuteTransfer && (
           <div className="absolute bottom-4 right-6 bg-stone-950/80 border border-stone-850 text-[10px] text-amber-200/80 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 font-mono pointer-events-none select-none max-w-xs leading-tight">
             <Sparkles className="w-3 h-3 text-[#c5a059] shrink-0 animate-bounce" />
             <span>

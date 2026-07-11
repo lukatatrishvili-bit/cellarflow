@@ -97,7 +97,7 @@ export function getHistoricalContext(username: string): string {
 // POST /api/gemini
 router.post('/', async (req, res) => {
   try {
-    const { prompt, cellarState, stream } = req.body;
+    const { prompt, cellarState, stream, lang } = req.body;
 
     if (!process.env.GEMINI_API_KEY) {
       return res.status(400).json({
@@ -127,6 +127,11 @@ When recommending work that could change tasks, lab decisions, cellar operations
 
 Provide highly professional, authentic, scientifically accurate enological advice. Answer concisely, using markdown tables or bullet points where helpful.`;
 
+    let languageInstruction = "";
+    if (lang === 'ka') {
+      languageInstruction = "\n\nCRITICAL: The winemaker's system language is set to Georgian (KA). You MUST write your entire response in Georgian (ქართულად). Use authentic Georgian winemaking terminology (e.g., ქვევრი, რთველი, საფერავი, მაცერაცია, კუპაჟი).";
+    }
+
     let chemicalContext = "";
     if (cellarState) {
       chemicalContext = `
@@ -142,7 +147,7 @@ ${JSON.stringify(cellarState.sampleData || [], null, 2)}
 `;
     }
 
-    const fullPrompt = `${SYSTEM_PROMPT}\n\n${chemicalContext}\n\n${historicalContext}\n\nWinemaker Query: ${prompt}\n\nAI Winemaker Response:\n`;
+    const fullPrompt = `${SYSTEM_PROMPT}${languageInstruction}\n\n${chemicalContext}\n\n${historicalContext}\n\nWinemaker Query: ${prompt}\n\nAI Winemaker Response:\n`;
 
     const client = getAiClient();
 

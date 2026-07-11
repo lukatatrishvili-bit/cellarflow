@@ -4,6 +4,8 @@ import type { Language } from '../lib/i18n';
 import type { UserProfile, CompanyProfile, CrmLeadRecord } from '../lib/wineryState';
 import { GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
 import { crmLeadContactLine } from '../lib/crm';
+import { localizedRoleLabel } from '../lib/roleLabels';
+import { canViewAppDestination } from '../lib/navigationPermissions';
 import {
   directoryRecordToCrmLead,
   directoryRecordLabel,
@@ -34,6 +36,15 @@ interface ProfileSettingsTabProps {
   onToggleLowPower: () => void;
 }
 
+export function profileWorkspaceFormKey(
+  activeOrganizationId: string | undefined,
+  version: number,
+  companyName = '',
+  wineryName = '',
+): string {
+  return `${activeOrganizationId || 'workspace'}-${version}-${companyName}-${wineryName}`;
+}
+
 export default function ProfileSettingsTab({
   lang,
   currentUser,
@@ -55,6 +66,7 @@ export default function ProfileSettingsTab({
   onToggleLowPower
 }: ProfileSettingsTabProps) {
   const t = translations[lang];
+  const effectiveRoleLabelId = React.useId();
 
   const [members, setMembers] = React.useState<{ username: string; fullName: string; email: string; role: string }[]>([]);
   const [pendingInvites, setPendingInvites] = React.useState<{ id: string; email: string; role: string; expiresAt: string }[]>([]);
@@ -69,6 +81,10 @@ export default function ProfileSettingsTab({
   const [directoryMessage, setDirectoryMessage] = React.useState<string | null>(null);
 
   const activeOrg = organizations?.find(o => o.isActive);
+  const effectiveRole = activeOrg?.role || currentUser.role;
+  const isOwnerAdmin = effectiveRole === 'Owner/Admin';
+  const canUseVineyard = canViewAppDestination(effectiveRole, 'vazi');
+  const canUseCellar = canViewAppDestination(effectiveRole, 'gvino');
   const selectedDirectoryRecord = directoryRecords.find(record => record.directoryId === selectedDirectoryId) || directoryRecords[0] || null;
   const selectedLead = selectedDirectoryRecord ? directoryRecordToCrmLead(selectedDirectoryRecord, 'manual_directory_import') : null;
   const savedLeadIds = new Set(crmLeads.map(lead => lead.id));
@@ -167,37 +183,42 @@ export default function ProfileSettingsTab({
           </p>
         </div>
 
-        <form key={profileFormVersion} onSubmit={(e) => {
+        <form
+          key={profileWorkspaceFormKey(
+            activeOrg?.id,
+            profileFormVersion,
+            companyProfile.companyName,
+            companyProfile.wineryName,
+          )}
+          onSubmit={async (e) => {
           e.preventDefault();
-          if (!canManageProfile) {
-            setToastMessage('Your role can view profile settings but cannot save changes.');
-            return;
-          }
           const fd = new FormData(e.currentTarget);
-          setCompanyProfile({
-            ...companyProfile,
-            companyName: fd.get('companyName') as string,
-            wineryName: fd.get('wineryName') as string,
-            country: fd.get('country') as string,
-            region: fd.get('region') as string,
-            municipality: fd.get('municipality') as string,
-            address: fd.get('address') as string,
-            identificationCode: fd.get('identificationCode') as string,
-            wineAgencyRegistrationCode: fd.get('wineAgencyRegistrationCode') as string,
-            legalAddress: (fd.get('legalAddress') as string) || (fd.get('address') as string),
-            factualAddress: (fd.get('factualAddress') as string) || (fd.get('address') as string),
-            certificateContactPerson: fd.get('certificateContactPerson') as string,
-            certificatePhone: fd.get('certificatePhone') as string,
-            certificateEmail: fd.get('certificateEmail') as string,
-            producerRegistrationNotes: fd.get('producerRegistrationNotes') as string,
-            contactEmail: fd.get('contactEmail') as string,
-            phone: fd.get('phone') as string,
-            website: fd.get('website') as string,
-            measurementUnits: fd.get('units') as any,
-            currency: (fd.get('currency') as string) || 'GEL',
-            latitude: parseFloat(fd.get('latitude') as string) || 41.9056,
-            longitude: parseFloat(fd.get('longitude') as string) || 45.4740
-          });
+          if (canManageProfile) {
+            setCompanyProfile({
+              ...companyProfile,
+              companyName: fd.get('companyName') as string,
+              wineryName: fd.get('wineryName') as string,
+              country: fd.get('country') as string,
+              region: fd.get('region') as string,
+              municipality: fd.get('municipality') as string,
+              address: fd.get('address') as string,
+              identificationCode: fd.get('identificationCode') as string,
+              wineAgencyRegistrationCode: fd.get('wineAgencyRegistrationCode') as string,
+              legalAddress: (fd.get('legalAddress') as string) || (fd.get('address') as string),
+              factualAddress: (fd.get('factualAddress') as string) || (fd.get('address') as string),
+              certificateContactPerson: fd.get('certificateContactPerson') as string,
+              certificatePhone: fd.get('certificatePhone') as string,
+              certificateEmail: fd.get('certificateEmail') as string,
+              producerRegistrationNotes: fd.get('producerRegistrationNotes') as string,
+              contactEmail: fd.get('contactEmail') as string,
+              phone: fd.get('phone') as string,
+              website: fd.get('website') as string,
+              measurementUnits: fd.get('units') as any,
+              currency: (fd.get('currency') as string) || 'GEL',
+              latitude: parseFloat(fd.get('latitude') as string) || 41.9056,
+              longitude: parseFloat(fd.get('longitude') as string) || 45.4740
+            });
+          }
           
           const modules = fd.getAll('enabledModules') as string[];
           const widgets = fd.getAll('enabledWidgets') as string[];
@@ -208,14 +229,17 @@ export default function ProfileSettingsTab({
           }
           
           if (onUpdateProfile) {
-            onUpdateProfile({
+            await onUpdateProfile({
+              fullName: currentUser.fullName,
               enabledModules: modules,
               enabledWidgets: widgets
             });
           }
           
-          setToastMessage(lang === 'ka' ? 'კონფიგურაცია წარმატებით შეინახა!' : 'Configurations saved successfully!');
-        }} className="space-y-4">
+          setToastMessage(lang === 'ka' ? 'პარამეტრები წარმატებით შეინახა!' : 'Preferences saved successfully!');
+          }}
+          className="space-y-4"
+        >
           <datalist id="georgian-region-options">
             {GEORGIAN_WINE_REGIONS.map(region => (
               <option key={region.id} value={region.name} />
@@ -329,9 +353,18 @@ export default function ProfileSettingsTab({
             )}
           </div>
           
-          <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#4e0e15] pl-2 font-black tracking-wider text-slate-400">
+          {!canManageProfile && (
+            <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[10.5px] font-semibold leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+              {lang === 'ka'
+                ? 'კომპანიის ოფიციალური მონაცემები მხოლოდ სანახავია. თქვენი პირადი პროფილი, მოდულები და ვიჯეტები ქვემოთ კვლავ შეგიძლიათ შეცვალოთ.'
+                : 'Company information is read-only for your role. You can still update your personal profile, modules, and dashboard widgets below.'}
+            </div>
+          )}
+
+          <fieldset disabled={!canManageProfile} className="space-y-4 disabled:opacity-70">
+          <legend className="text-[9px] uppercase font-mono border-l-2 border-[#4e0e15] pl-2 font-black tracking-wider text-slate-400">
             {lang === 'ka' ? 'საწარმოს ოფიციალური რეკვიზიტები' : 'Agricultural Corporate Enterprise Specifications'}
-          </h4>
+          </legend>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{t.settings_co_name || 'Company Operating Name'}</label>
@@ -458,38 +491,43 @@ export default function ProfileSettingsTab({
               </div>
             </div>
           </div>
+          </fieldset>
 
           <hr className="border-stone-100" />
 
           <h4 className="text-[9px] uppercase font-mono border-l-2 border-emerald-800 pl-2 font-black tracking-wider text-slate-400">
-            {lang === 'ka' ? 'ოპერატორის პერსონალური პროფილი და როლი' : 'Operator Profile and Clearance Privileges'}
+            {lang === 'ka' ? 'ოპერატორის პროფილი და მოქმედი წვდომა' : 'Operator Profile and Effective Access'}
           </h4>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'ოპერატორის სრული სახელი' : 'Operator Full Name'}</label>
+              <label htmlFor="operator-full-name" className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'ოპერატორის სრული სახელი' : 'Operator Full Name'}</label>
               <input 
+                id="operator-full-name"
                 type="text" 
-                defaultValue={currentUser.fullName} 
+                value={currentUser.fullName}
                 onChange={(e) => setCurrentUser({ ...currentUser, fullName: e.target.value })}
                 className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded text-stone-900 font-bold outline-none" 
               />
             </div>
             <div>
-              <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-[#4e0e15] font-bold">{lang === 'ka' ? 'აქტიური უფლებამოსილების როლი' : 'Simulated Clearance Role Privilege'}</label>
-              <select 
-                value={currentUser.role}
-                onChange={(e) => {
-                  const nextRole = e.target.value as any;
-                  setCurrentUser({ ...currentUser, role: nextRole });
-                  setToastMessage(lang === 'ka' ? `აქტიური როლი განახლდა: ${nextRole}` : `Simulated active clearance configured to ${nextRole}`);
-                }}
-                className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded outline-none font-extrabold text-[#4e0e15]"
+              <p id={effectiveRoleLabelId} className="text-[9px] uppercase font-mono block mb-1 font-bold text-[#4e0e15]">
+                {lang === 'ka' ? 'მოქმედი როლი' : 'Effective workspace role'}
+              </p>
+              <div
+                className="min-h-[42px] rounded border border-[#e8dfd5] bg-stone-50 p-2.5"
+                aria-labelledby={effectiveRoleLabelId}
+                aria-live="polite"
               >
-                <option value="Owner/Admin">👑 {t.signin_role_owner || 'Owner & ERP Admin'}</option>
-                <option value="Viticulturist">🚜 {t.signin_role_viticulturist || 'Lead Viticulturist'}</option>
-                <option value="Winemaker">🍷 {t.signin_role_winemaker || 'Head Winemaker'}</option>
-              </select>
+                <span className="block font-extrabold text-[#4e0e15] dark:text-amber-200">
+                  {localizedRoleLabel(effectiveRole, lang)}
+                </span>
+                <span className="mt-1 block text-[9.5px] font-medium leading-relaxed text-stone-500 dark:text-stone-400">
+                  {lang === 'ka'
+                    ? 'ეს როლი განისაზღვრება აქტიურ სამუშაო სივრცეში თქვენი წევრობით და აქ ვერ შეიცვლება. როლებს სამუშაო სივრცის მფლობელები მართავენ.'
+                    : 'This role comes from your active workspace membership and cannot be changed here. Workspace owners manage role assignments.'}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -500,6 +538,7 @@ export default function ProfileSettingsTab({
           </h4>
 
           <div className="grid grid-cols-2 gap-4">
+            {canUseVineyard && (
             <label className="flex items-start gap-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-xl cursor-pointer hover:border-emerald-500/50 transition-all select-none">
               <input 
                 type="checkbox" 
@@ -515,7 +554,9 @@ export default function ProfileSettingsTab({
                 </span>
               </div>
             </label>
+            )}
 
+            {canUseCellar && (
             <label className="flex items-start gap-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-xl cursor-pointer hover:border-[#801323]/50 transition-all select-none">
               <input 
                 type="checkbox" 
@@ -531,6 +572,7 @@ export default function ProfileSettingsTab({
                 </span>
               </div>
             </label>
+            )}
           </div>
 
           <hr className="border-stone-100" />
@@ -541,13 +583,13 @@ export default function ProfileSettingsTab({
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {[
-              { id: 'chemistry', label: lang === 'ka' ? '⚠️ უსაფრთხოება და ქიმია' : '⚠️ Safety & Chemistry Alerts' },
-              { id: 'weather', label: lang === 'ka' ? '🌦️ მეტეო და ჭრაქის რისკი' : '🌦️ Weather Station & Mildew Forecasts' },
-              { id: 'fermentation', label: lang === 'ka' ? '🔥 დუღილის ტელემეტრია' : '🔥 Active Fermentations & Telemetry' },
-              { id: 'canopy', label: lang === 'ka' ? '🌿 ვენახის ფოთლის რადარი' : '🌿 Vineyard Canopy Status Radar' },
-              { id: 'tasks', label: lang === 'ka' ? '📋 დავალებების ჩეკლისტი' : '📋 Unified Operations Tasklist' },
-              { id: 'audit', label: lang === 'ka' ? '🛡️ აუდიტის ჟურნალი' : '🛡️ Immutable Audit Trail Ledger' }
-            ].map(widget => (
+              { id: 'chemistry', module: 'gvino', tab: 'labs', label: lang === 'ka' ? '⚠️ უსაფრთხოება და ქიმია' : '⚠️ Safety & Chemistry Alerts' },
+              { id: 'weather', module: 'vazi', label: lang === 'ka' ? '🌦️ მეტეო და ჭრაქის რისკი' : '🌦️ Weather Station & Mildew Forecasts' },
+              { id: 'fermentation', module: 'gvino', tab: 'fermentation', label: lang === 'ka' ? '🔥 დუღილის ტელემეტრია' : '🔥 Active Fermentations & Telemetry' },
+              { id: 'canopy', module: 'vazi', label: lang === 'ka' ? '🌿 ვენახის ფოთლის რადარი' : '🌿 Vineyard Canopy Status Radar' },
+              { id: 'tasks', module: 'gvino', tab: 'tasks', label: lang === 'ka' ? '📋 დავალებების ჩეკლისტი' : '📋 Unified Operations Tasklist' },
+              { id: 'audit', module: 'audit', label: lang === 'ka' ? '🛡️ აუდიტის ჟურნალი' : '🛡️ Immutable Audit Trail Ledger' }
+            ].filter(widget => canViewAppDestination(effectiveRole, widget.module, widget.tab)).map(widget => (
               <label key={widget.id} className="flex items-center gap-2 p-3 bg-stone-50 border border-stone-150 rounded-xl hover:bg-stone-100/50 cursor-pointer select-none">
                 <input 
                   type="checkbox" 
@@ -593,10 +635,12 @@ export default function ProfileSettingsTab({
 
           <button 
             type="submit"
-            disabled={!canManageProfile}
+            disabled={!canManageProfile && !onUpdateProfile}
             className="w-full bg-emerald-850 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {t.settings_save || 'Save Configurations'}
+            {canManageProfile
+              ? (t.settings_save || 'Save Configurations')
+              : (lang === 'ka' ? 'პირადი პარამეტრების შენახვა' : 'Save Personal Preferences')}
           </button>
         </form>
       </div>
@@ -615,12 +659,14 @@ export default function ProfileSettingsTab({
         {/* Workspace Switcher */}
         {organizations && organizations.length > 0 && (
           <div className="space-y-3">
-            <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#c5a059] pl-2 font-black tracking-wider text-slate-400">
+            <h4 id="active-workspace-heading" className="text-[9px] uppercase font-mono border-l-2 border-[#c5a059] pl-2 font-black tracking-wider text-slate-400">
               {lang === 'ka' ? 'აქტიური სამუშაო სივრცე' : 'Active Winery Workspace'}
             </h4>
             <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
               <div className="w-full sm:max-w-xs">
                 <select
+                  id="active-organization"
+                  aria-labelledby="active-workspace-heading"
                   value={activeOrg?.id || ''}
                   onChange={async (e) => {
                     if (onSwitchOrganization) {
@@ -766,7 +812,7 @@ export default function ProfileSettingsTab({
         )}
       </div>
 
-      {currentUser.role === 'Owner/Admin' && (
+      {isOwnerAdmin && (
         <div className="bg-emerald-50/40 border border-emerald-200 p-6 rounded-2xl shadow-sm space-y-4 dark:bg-emerald-950/10 dark:border-emerald-900/40">
           <div>
             <h4 className="text-md font-serif font-black text-emerald-800 uppercase tracking-wide dark:text-emerald-400">
@@ -788,7 +834,7 @@ export default function ProfileSettingsTab({
         </div>
       )}
 
-      {onClearAllData && (
+      {isOwnerAdmin && onClearAllData && (
         <div className="bg-rose-50/50 border border-rose-200 p-6 rounded-2xl shadow-sm space-y-4">
           <div>
             <h4 className="text-md font-serif font-black text-rose-800 uppercase tracking-wide">

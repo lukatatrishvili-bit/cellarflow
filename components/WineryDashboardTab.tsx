@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog, LabAnalysis, Task } from '../lib/wineryState';
+import { canAccess, type Role } from '../server/permissions';
 import TankCapacityChart from './TankCapacityChart';
 import FermentationCurveChart from './FermentationCurveChart';
 import {
@@ -40,6 +41,8 @@ interface WineryDashboardTabProps {
   selectedTankId: string | null;
   setSelectedTankId: (val: string | null) => void;
   onToggleTaskStatus: (taskId: string) => void;
+  role?: Role;
+  canUpdateTasks?: boolean;
   setActiveTab?: (tab: string) => void;
   setCalculatorLotId?: (lotId: string) => void;
   setPrefilledTaskTitle?: (title: string) => void;
@@ -60,6 +63,15 @@ function latestByLot<T extends { lotId: string; date: string }>(records: T[]) {
   }, {});
 }
 
+export function toggleTaskStatusIfAllowed(
+  canUpdateTasks: boolean,
+  onToggleTaskStatus: (taskId: string) => void,
+  taskId: string,
+) {
+  if (!canUpdateTasks) return;
+  onToggleTaskStatus(taskId);
+}
+
 export default function WineryDashboardTab({
   lang,
   lots,
@@ -72,6 +84,8 @@ export default function WineryDashboardTab({
   selectedTankId,
   setSelectedTankId,
   onToggleTaskStatus,
+  role = 'Owner/Admin',
+  canUpdateTasks = true,
   setActiveTab,
   setCalculatorLotId,
   setPrefilledTaskTitle,
@@ -82,6 +96,16 @@ export default function WineryDashboardTab({
   const isKa = lang === 'ka';
   const today = todayISO();
   const go = (tab: string) => setActiveTab ? () => setActiveTab(tab) : undefined;
+  const canViewLots = canAccess(role, 'lots', 'view');
+  const canViewVessels = canAccess(role, 'vessels', 'view');
+  const canViewFermentation = canAccess(role, 'fermentation', 'view');
+  const canCreateFermentation = canAccess(role, 'fermentation', 'create');
+  const canViewLab = canAccess(role, 'lab', 'view');
+  const canCreateLab = canAccess(role, 'lab', 'create');
+  const canViewBottling = canAccess(role, 'bottling', 'view');
+  const canViewTasks = canAccess(role, 'tasks', 'view');
+  const canCreateTasks = canAccess(role, 'tasks', 'create');
+  const showCellarHealth = canViewVessels || canViewBottling || canViewLab;
 
   const totalLotsVolume = lots.reduce((acc, curr) => acc + curr.currentVolume, 0);
   const totalCapacity = vessels.reduce((acc, curr) => acc + curr.capacity, 0);
@@ -106,7 +130,7 @@ export default function WineryDashboardTab({
   const readyForBottling = lots.filter(lot => ['stabilization', 'filtration', 'aging'].includes(lot.stage) && lot.currentVolume > 0);
 
   const workQueue = [
-    ...lowSO2Alerts.map(log => ({
+    ...(canViewLab ? lowSO2Alerts.map(log => ({
       id: `so2-${log.id}`,
       tone: 'danger' as const,
       title: `Low SO₂: ${lots.find(l => l.id === log.lotId)?.name || log.lotId}`,
@@ -116,36 +140,36 @@ export default function WineryDashboardTab({
         setActiveTab?.('calculators');
       },
       actionLabel: 'Run SO₂ calculator',
-    })),
-    ...highVAAlerts.map(log => ({
+    })) : []),
+    ...(canViewLab ? highVAAlerts.map(log => ({
       id: `va-${log.id}`,
       tone: 'danger' as const,
       title: `Volatile acidity warning: ${lots.find(l => l.id === log.lotId)?.name || log.lotId}`,
       detail: `${log.volatileAcid} g/L VA · ${log.date}`,
-      action: () => {
+      action: canCreateTasks ? () => {
         setPrefilledTaskTitle?.(`Inspect & seal vessel for Lot ${log.lotId}`);
         setPrefilledTaskPriority?.('high');
         setPrefilledTaskDesc?.(`Acetation alert: volatile acidity is elevated at ${log.volatileAcid} g/L. Check cooling jacket, clean headspace, verify lid gasket tightness, and purge with CO2/Argon if necessary.`);
         setActiveTab?.('tasks');
-      },
+      } : undefined,
       actionLabel: 'Create inspection task',
-    })),
-    ...fermentsMissingReading.map(lot => ({
+    })) : []),
+    ...(canViewFermentation ? fermentsMissingReading.map(lot => ({
       id: `ferm-${lot.id}`,
       tone: 'warning' as const,
       title: `Fermentation reading missing: ${lot.name}`,
       detail: `${lot.currentVolume.toLocaleString()} L · ${lot.variety}`,
       action: go('fermentation'),
-      actionLabel: 'Log reading',
-    })),
-    ...overdueTasks.slice(0, 4).map(task => ({
+      actionLabel: canCreateFermentation ? 'Log reading' : 'Review fermentation',
+    })) : []),
+    ...(canViewTasks ? overdueTasks.slice(0, 4).map(task => ({
       id: `task-${task.id}`,
       tone: 'warning' as const,
       title: task.title,
       detail: `Overdue since ${task.dueDate} · ${task.priority} priority`,
       action: go('tasks'),
       actionLabel: 'Review tasks',
-    })),
+    })) : []),
   ].slice(0, 8);
 
   const chartableLotIds = Array.from(new Set(fermLogs.map(l => l.lotId)));
@@ -174,60 +198,74 @@ export default function WineryDashboardTab({
         eyebrow={isKa ? 'Cellar command' : 'Cellar command'}
         title={t.dashboard || 'Winery Dashboard'}
         description={isKa
-          ? 'A calmer operating desk for cellar priorities, vessels, fermentation, and urgent work.'
-          : 'A calmer operating desk for cellar priorities, vessels, fermentation, and urgent work.'}
+          ? 'თქვენი როლის შესაბამისი პრიორიტეტები და გადაუდებელი სამუშაო.'
+          : 'A focused operating desk for the priorities and urgent work available to your role.'}
         icon={LayoutDashboard}
         actions={(
           <div className="flex flex-wrap gap-2">
-            <ActionButton onClick={go('fermentation')} className="gap-1.5">
-              <Activity className="h-3.5 w-3.5" /> Log fermentation
-            </ActionButton>
-            <ActionButton tone="secondary" onClick={go('labs')} className="gap-1.5">
-              <TestTube className="h-3.5 w-3.5" /> Add lab
-            </ActionButton>
-            <ActionButton tone="secondary" onClick={go('tasks')} className="gap-1.5">
-              <ClipboardList className="h-3.5 w-3.5" /> Tasks
-            </ActionButton>
+            {canCreateFermentation && (
+              <ActionButton onClick={go('fermentation')} className="gap-1.5">
+                <Activity className="h-3.5 w-3.5" /> Log fermentation
+              </ActionButton>
+            )}
+            {canCreateLab && (
+              <ActionButton tone="secondary" onClick={go('labs')} className="gap-1.5">
+                <TestTube className="h-3.5 w-3.5" /> Add lab
+              </ActionButton>
+            )}
+            {canViewTasks && (
+              <ActionButton tone="secondary" onClick={go('tasks')} className="gap-1.5">
+                <ClipboardList className="h-3.5 w-3.5" /> Tasks
+              </ActionButton>
+            )}
           </div>
         )}
       />
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <MetricCard
-          label={t.total_volume || 'Wine volume'}
-          value={formatVolume(totalLotsVolume)}
-          detail={`${lots.length} active wine lots`}
-          icon={Wine}
-          tone="brand"
-          onClick={go('lots')}
-        />
-        <MetricCard
-          label={t.total_tanks || 'Vessels'}
-          value={`${occupiedTanksCount}/${vessels.length}`}
-          detail={`${Math.round(vesselUsePct)}% of cellar capacity used`}
-          icon={Container}
-          tone={vesselUsePct > 85 ? 'warning' : 'info'}
-          onClick={go('vessels')}
-        />
-        <MetricCard
-          label={t.active_ferms || 'Fermenting'}
-          value={activeFermsCount}
-          detail={fermentsMissingReading.length ? `${fermentsMissingReading.length} need readings today` : 'Readings up to date'}
-          icon={Activity}
-          tone={fermentsMissingReading.length ? 'warning' : 'success'}
-          onClick={go('fermentation')}
-        />
-        <MetricCard
-          label={t.temperature || 'Avg vessel temp'}
-          value={`${avgTemp} °C`}
-          detail={occupiedTanksCount ? `${occupiedTanksCount} occupied vessels` : 'No occupied vessels'}
-          icon={Thermometer}
-          tone="neutral"
-          onClick={go('vessels')}
-        />
+        {canViewLots && (
+          <MetricCard
+            label={t.total_volume || 'Wine volume'}
+            value={formatVolume(totalLotsVolume)}
+            detail={`${lots.length} active wine lots`}
+            icon={Wine}
+            tone="brand"
+            onClick={go('lots')}
+          />
+        )}
+        {canViewVessels && (
+          <MetricCard
+            label={t.total_tanks || 'Vessels'}
+            value={`${occupiedTanksCount}/${vessels.length}`}
+            detail={`${Math.round(vesselUsePct)}% of cellar capacity used`}
+            icon={Container}
+            tone={vesselUsePct > 85 ? 'warning' : 'info'}
+            onClick={go('vessels')}
+          />
+        )}
+        {canViewFermentation && (
+          <MetricCard
+            label={t.active_ferms || 'Fermenting'}
+            value={activeFermsCount}
+            detail={fermentsMissingReading.length ? `${fermentsMissingReading.length} need readings today` : 'Readings up to date'}
+            icon={Activity}
+            tone={fermentsMissingReading.length ? 'warning' : 'success'}
+            onClick={go('fermentation')}
+          />
+        )}
+        {canViewVessels && (
+          <MetricCard
+            label={t.temperature || 'Avg vessel temp'}
+            value={`${avgTemp} °C`}
+            detail={occupiedTanksCount ? `${occupiedTanksCount} occupied vessels` : 'No occupied vessels'}
+            icon={Thermometer}
+            tone="neutral"
+            onClick={go('vessels')}
+          />
+        )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.75fr] gap-5">
+      <div className={`grid grid-cols-1 gap-5 ${showCellarHealth ? 'xl:grid-cols-[1.25fr_0.75fr]' : ''}`}>
         <SectionCard
           title="Today’s cellar queue"
           subtitle="Chemistry risks, missing fermentation readings, and overdue work first."
@@ -268,24 +306,30 @@ export default function WineryDashboardTab({
           )}
         </SectionCard>
 
-        <SectionCard
-          title="Cellar health"
-          subtitle="Fast read on capacity and next production moves."
-          icon={BarChart3}
-        >
-          <div className="space-y-4">
-            <ProgressBar
-              value={vesselUsePct}
-              tone={vesselUsePct > 85 ? 'warning' : 'brand'}
-              label="Capacity utilization"
-            />
+        {showCellarHealth && (
+          <SectionCard
+            title="Cellar health"
+            subtitle="Fast read on the cellar signals available to your role."
+            icon={BarChart3}
+          >
+            <div className="space-y-4">
+              {canViewVessels && (
+                <ProgressBar
+                  value={vesselUsePct}
+                  tone={vesselUsePct > 85 ? 'warning' : 'brand'}
+                  label="Capacity utilization"
+                />
+              )}
 
-            <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {canViewBottling && (
               <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950/40">
                 <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">Ready soon</span>
                 <strong className="mt-1 block text-xl font-black text-stone-900 dark:text-amber-50">{readyForBottling.length}</strong>
                 <span className="text-[10px] font-semibold text-stone-500">lots near bottling</span>
               </div>
+              )}
+              {canViewLab && (
               <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950/40">
                 <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">Chemistry</span>
                 <strong className={`mt-1 block text-xl font-black ${lowSO2Alerts.length || highVAAlerts.length ? 'text-rose-700' : 'text-emerald-700'}`}>
@@ -293,18 +337,22 @@ export default function WineryDashboardTab({
                 </strong>
                 <span className="text-[10px] font-semibold text-stone-500">latest lab alerts</span>
               </div>
-            </div>
+              )}
+              </div>
 
-            {vesselUsePct > 85 && (
-              <InlineNotice tone="warning">
-                Cellar capacity is getting tight. Consider bottling, transfers, or adding temporary storage before receiving more fruit.
-              </InlineNotice>
-            )}
-          </div>
-        </SectionCard>
+              {canViewVessels && vesselUsePct > 85 && (
+                <InlineNotice tone="warning">
+                  Cellar capacity is getting tight. Consider bottling, transfers, or adding temporary storage before receiving more fruit.
+                </InlineNotice>
+              )}
+            </div>
+          </SectionCard>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      {(canViewVessels || canViewFermentation) && (
+      <div className={`grid grid-cols-1 gap-5 ${canViewVessels && canViewFermentation ? 'lg:grid-cols-2' : ''}`}>
+        {canViewVessels && (
         <SectionCard
           title={isKa ? 'Cellar vessel utilization' : 'Cellar vessel utilization'}
           subtitle="Capacity vs active liquid volume."
@@ -317,7 +365,9 @@ export default function WineryDashboardTab({
             <TankCapacityChart tanks={mappedTanks} onSelectTank={setSelectedTankId} selectedTankId={selectedTankId} />
           )}
         </SectionCard>
+        )}
 
+        {canViewFermentation && (
         <SectionCard
           title={isKa ? 'Kinetics & sugar degradation' : 'Kinetics & sugar degradation'}
           subtitle="Fermentation trend for the selected lot."
@@ -345,12 +395,16 @@ export default function WineryDashboardTab({
             <FermentationCurveChart logs={fermLogs} selectedLotId={selectedChartLotId} />
           )}
         </SectionCard>
+        )}
       </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      {(canViewTasks || canViewFermentation) && (
+      <div className={`grid grid-cols-1 gap-5 ${canViewTasks && canViewFermentation ? 'lg:grid-cols-2' : ''}`}>
+        {canViewTasks && (
         <SectionCard
           title={t.upcoming_tasks || 'Upcoming tasks'}
-          subtitle="A short work queue, not an endless ledger."
+          subtitle={canUpdateTasks ? 'A short work queue, not an endless ledger.' : 'Task status is view-only for your role.'}
           icon={ClipboardList}
           actions={<StatusBadge tone={overdueTasks.length ? 'danger' : 'neutral'}>{pendingTasks.length} pending</StatusBadge>}
         >
@@ -359,12 +413,16 @@ export default function WineryDashboardTab({
           ) : (
             <div className="space-y-2">
               {recentTasks.map(task => (
-                <label key={task.id} className="flex cursor-pointer items-start gap-3 rounded-xl border border-stone-100 bg-stone-50/60 p-3 dark:border-stone-800 dark:bg-stone-950/30">
+                <label
+                  key={task.id}
+                  className={`flex items-start gap-3 rounded-xl border border-stone-100 bg-stone-50/60 p-3 dark:border-stone-800 dark:bg-stone-950/30 ${canUpdateTasks ? 'cursor-pointer' : 'cursor-default'}`}
+                >
                   <input
                     type="checkbox"
                     checked={task.status === 'completed'}
-                    onChange={() => onToggleTaskStatus(task.id)}
-                    className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-stone-300 accent-[#4e0e15]"
+                    disabled={!canUpdateTasks}
+                    onChange={() => toggleTaskStatusIfAllowed(canUpdateTasks, onToggleTaskStatus, task.id)}
+                    className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-stone-300 accent-[#4e0e15] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                   <span className="min-w-0 flex-1">
                     <strong className={`block text-xs font-black ${task.status === 'completed' ? 'text-stone-500 dark:text-stone-400 line-through' : 'text-stone-900 dark:text-amber-50'}`}>{task.title}</strong>
@@ -377,7 +435,9 @@ export default function WineryDashboardTab({
             </div>
           )}
         </SectionCard>
+        )}
 
+        {canViewFermentation && (
         <SectionCard
           title="Recent fermentation logs"
           subtitle="Latest cellar readings across lots."
@@ -407,7 +467,9 @@ export default function WineryDashboardTab({
             </div>
           )}
         </SectionCard>
+        )}
       </div>
+      )}
     </div>
   );
 }

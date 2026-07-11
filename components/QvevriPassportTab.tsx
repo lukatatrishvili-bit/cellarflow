@@ -44,6 +44,7 @@ interface QvevriPassportTabProps {
   setSelectedTankId?: (tankId: string | null) => void;
   setToastMessage?: (message: string) => void;
   currentUserName?: string;
+  canUpdateVessel?: boolean;
 }
 
 interface PassportForm {
@@ -172,6 +173,7 @@ export default function QvevriPassportTab({
   setSelectedTankId,
   setToastMessage,
   currentUserName = '',
+  canUpdateVessel = true,
 }: QvevriPassportTabProps) {
   const ka = lang === 'ka';
   const qvevris = useMemo(() => vessels.filter(vessel => vessel.type === 'qvevri'), [vessels]);
@@ -244,16 +246,17 @@ export default function QvevriPassportTab({
   const passportScore = readiness?.score || 0;
 
   const updateForm = <K extends keyof PassportForm>(key: K, value: PassportForm[K]) => {
+    if (!canUpdateVessel) return;
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
   const updateSelectedVessel = (updater: (vessel: Vessel) => Vessel) => {
-    if (!selectedVessel) return;
+    if (!canUpdateVessel || !selectedVessel) return;
     onUpdateVessels(vessels.map(vessel => vessel.id === selectedVessel.id ? updater(vessel) : vessel));
   };
 
   const handleSave = () => {
-    if (!selectedVessel) return;
+    if (!canUpdateVessel || !selectedVessel) return;
     updateSelectedVessel(vessel => ({
       ...vessel,
       qvevriNumber: optionalText(form.qvevriNumber),
@@ -281,7 +284,7 @@ export default function QvevriPassportTab({
   };
 
   const handleAddMixing = () => {
-    if (!selectedVessel || !mixingDraft.date || !clean(mixingDraft.action)) return;
+    if (!canUpdateVessel || !selectedVessel || !mixingDraft.date || !clean(mixingDraft.action)) return;
     const entry: QvevriLogEntry = {
       date: mixingDraft.date,
       action: clean(mixingDraft.action),
@@ -297,7 +300,7 @@ export default function QvevriPassportTab({
   };
 
   const handleAddSanitation = () => {
-    if (!selectedVessel || !sanitationDraft.date || !clean(sanitationDraft.action)) return;
+    if (!canUpdateVessel || !selectedVessel || !sanitationDraft.date || !clean(sanitationDraft.action)) return;
     const entry: QvevriLogEntry = {
       date: sanitationDraft.date,
       action: clean(sanitationDraft.action),
@@ -355,12 +358,23 @@ export default function QvevriPassportTab({
             <ActionButton tone="secondary" onClick={openVessel}>
               <Container className="mr-2 h-4 w-4" />{ka ? 'ჭურჭელი' : 'Vessel'}
             </ActionButton>
-            <ActionButton onClick={handleSave}>
-              <Save className="mr-2 h-4 w-4" />{ka ? 'შენახვა' : 'Save'}
-            </ActionButton>
+            {canUpdateVessel && (
+              <ActionButton onClick={handleSave}>
+                <Save className="mr-2 h-4 w-4" />{ka ? 'შენახვა' : 'Save'}
+              </ActionButton>
+            )}
           </div>
         )}
       />
+
+      {!canUpdateVessel && (
+        <InlineNotice tone="info">
+          <strong>{ka ? 'ქვევრის პასპორტი მხოლოდ სანახავია.' : 'Read-only qvevri passport.'}</strong>{' '}
+          {ka
+            ? 'შეგიძლიათ ნახოთ იდენტიფიკაცია, მზადყოფნა, დაკავშირებული დოკუმენტები და სრული ჟურნალი, მაგრამ ცვლილებებს ვერ შეინახავთ.'
+            : 'You can review identity, readiness, linked evidence, and complete histories, but cannot save changes.'}
+        </InlineNotice>
+      )}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard
@@ -447,7 +461,7 @@ export default function QvevriPassportTab({
             icon={MapPin}
             actions={<StatusBadge tone={summary.limeWashStatus === 'done' && summary.waxingStatus === 'done' ? 'success' : 'warning'}>{summary.limeWashStatus}/{summary.waxingStatus}</StatusBadge>}
           >
-            <div className="grid gap-3 md:grid-cols-2">
+            <fieldset disabled={!canUpdateVessel} className="grid gap-3 md:grid-cols-2 disabled:cursor-not-allowed disabled:opacity-75">
               <div>
                 <FieldLabel required>{ka ? 'ქვევრის ნომერი' : 'Qvevri number'}</FieldLabel>
                 <input value={form.qvevriNumber} onChange={event => updateForm('qvevriNumber', event.target.value)} className={inputCls} />
@@ -488,11 +502,11 @@ export default function QvevriPassportTab({
                 <FieldLabel required>{ka ? 'ინსპექციის შენიშვნები' : 'Inspection notes'}</FieldLabel>
                 <textarea value={form.inspectionNotes} onChange={event => updateForm('inspectionNotes', event.target.value)} className={textareaCls} />
               </div>
-            </div>
+            </fieldset>
           </SectionCard>
 
           <SectionCard title={ka ? 'წარმოების გზა' : 'Production workflow'} icon={Activity}>
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            <fieldset disabled={!canUpdateVessel} className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 disabled:cursor-not-allowed disabled:opacity-75">
               <div>
                 <FieldLabel required>{ka ? 'შევსების თარიღი' : 'Filling date'}</FieldLabel>
                 <input type="date" value={form.fillingDate} onChange={event => updateForm('fillingDate', event.target.value)} className={inputCls} />
@@ -529,7 +543,7 @@ export default function QvevriPassportTab({
                 <input type="checkbox" checked={form.stemInclusion} onChange={event => updateForm('stemInclusion', event.target.checked)} className={checkboxCls} />
                 {ka ? 'კლერტი ჩართულია' : 'Stem inclusion'}
               </label>
-            </div>
+            </fieldset>
           </SectionCard>
         </div>
 
@@ -566,13 +580,19 @@ export default function QvevriPassportTab({
 
           <SectionCard title={ka ? 'ყოველდღიური მორევა' : 'Daily mixing log'} icon={ClipboardList}>
             <div className="space-y-3">
-              <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
-                <input type="date" value={mixingDraft.date} onChange={event => setMixingDraft(prev => ({ ...prev, date: event.target.value }))} className={inputCls} />
-                <input value={mixingDraft.action} onChange={event => setMixingDraft(prev => ({ ...prev, action: event.target.value }))} className={inputCls} />
-              </div>
-              <input value={mixingDraft.operator} onChange={event => setMixingDraft(prev => ({ ...prev, operator: event.target.value }))} className={inputCls} placeholder="Operator" />
-              <textarea value={mixingDraft.notes} onChange={event => setMixingDraft(prev => ({ ...prev, notes: event.target.value }))} className={textareaCls} placeholder="Notes" />
-              <ActionButton onClick={handleAddMixing} className="w-full"><Plus className="mr-2 h-4 w-4" />Add mixing</ActionButton>
+              {canUpdateVessel && (
+                <div className="space-y-3">
+                  <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
+                    <input type="date" value={mixingDraft.date} onChange={event => setMixingDraft(prev => ({ ...prev, date: event.target.value }))} className={inputCls} />
+                    <input value={mixingDraft.action} onChange={event => setMixingDraft(prev => ({ ...prev, action: event.target.value }))} className={inputCls} />
+                  </div>
+                  <input value={mixingDraft.operator} onChange={event => setMixingDraft(prev => ({ ...prev, operator: event.target.value }))} className={inputCls} placeholder="Operator" />
+                  <textarea value={mixingDraft.notes} onChange={event => setMixingDraft(prev => ({ ...prev, notes: event.target.value }))} className={textareaCls} placeholder="Notes" />
+                  <ActionButton onClick={handleAddMixing} className="w-full">
+                    <Plus className="mr-2 h-4 w-4" />{ka ? 'მორევის დამატება' : 'Add mixing'}
+                  </ActionButton>
+                </div>
+              )}
               <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
                 {sortLogs(selectedVessel.dailyMixingLog || []).map((entry, index) => (
                   <LogRow key={`${entry.date}-${entry.action}-${index}`} entry={entry} />
@@ -586,13 +606,19 @@ export default function QvevriPassportTab({
 
           <SectionCard title={ka ? 'სანიტარია' : 'Sanitation history'} icon={ShieldCheck}>
             <div className="space-y-3">
-              <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
-                <input type="date" value={sanitationDraft.date} onChange={event => setSanitationDraft(prev => ({ ...prev, date: event.target.value }))} className={inputCls} />
-                <input value={sanitationDraft.action} onChange={event => setSanitationDraft(prev => ({ ...prev, action: event.target.value }))} className={inputCls} />
-              </div>
-              <input value={sanitationDraft.operator} onChange={event => setSanitationDraft(prev => ({ ...prev, operator: event.target.value }))} className={inputCls} placeholder="Operator" />
-              <textarea value={sanitationDraft.notes} onChange={event => setSanitationDraft(prev => ({ ...prev, notes: event.target.value }))} className={textareaCls} placeholder="Notes" />
-              <ActionButton onClick={handleAddSanitation} className="w-full"><Plus className="mr-2 h-4 w-4" />Add sanitation</ActionButton>
+              {canUpdateVessel && (
+                <div className="space-y-3">
+                  <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
+                    <input type="date" value={sanitationDraft.date} onChange={event => setSanitationDraft(prev => ({ ...prev, date: event.target.value }))} className={inputCls} />
+                    <input value={sanitationDraft.action} onChange={event => setSanitationDraft(prev => ({ ...prev, action: event.target.value }))} className={inputCls} />
+                  </div>
+                  <input value={sanitationDraft.operator} onChange={event => setSanitationDraft(prev => ({ ...prev, operator: event.target.value }))} className={inputCls} placeholder="Operator" />
+                  <textarea value={sanitationDraft.notes} onChange={event => setSanitationDraft(prev => ({ ...prev, notes: event.target.value }))} className={textareaCls} placeholder="Notes" />
+                  <ActionButton onClick={handleAddSanitation} className="w-full">
+                    <Plus className="mr-2 h-4 w-4" />{ka ? 'სანიტარიის დამატება' : 'Add sanitation'}
+                  </ActionButton>
+                </div>
+              )}
               <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
                 {sortLogs(selectedVessel.sanitationHistory || []).map((entry, index) => (
                   <LogRow key={`${entry.date}-${entry.action}-${index}`} entry={entry} />

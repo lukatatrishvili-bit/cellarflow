@@ -28,6 +28,9 @@ import {
 } from 'lucide-react';
 import { computeAlerts } from '../lib/alerts';
 import { CountUp } from './motion';
+import { localizedRoleLabel } from '../lib/roleLabels';
+import { canAccess, type PermissionAction, type PermissionModule } from '../server/permissions';
+import { canViewAppDestination } from '../lib/navigationPermissions';
 import { DayWeather, describeWeatherCode, fetchDayWeather, localISODate } from '../lib/weatherApi';
 
 interface DashboardTabProps {
@@ -51,6 +54,15 @@ interface DashboardTabProps {
   onOpenOnboarding: () => void;
 }
 
+const SETUP_STEP_PERMISSIONS: Record<SetupStep['id'], [PermissionModule, PermissionAction]> = {
+  profile: ['company_profile', 'update'],
+  block: ['vineyard', 'create'],
+  vessel: ['vessels', 'create'],
+  intake: ['grape_intake', 'create'],
+  operation: ['operations', 'create'],
+  lab: ['lab', 'create'],
+};
+
 export default function DashboardTab({
   lang,
   companyProfile,
@@ -73,12 +85,22 @@ export default function DashboardTab({
 }: DashboardTabProps) {
   const t = translations[lang];
 
+  const canViewCellarTab = (tabId: string) => canViewAppDestination(currentUser.role, 'gvino', tabId);
+  const canViewVineyard = canViewAppDestination(currentUser.role, 'vazi');
+  const canViewCellar = canViewAppDestination(currentUser.role, 'gvino');
+  const canCreateFermentation = canAccess(currentUser.role, 'fermentation', 'create');
+  const canCreateLab = canAccess(currentUser.role, 'lab', 'create');
+  const canViewTasks = canViewCellarTab('tasks');
+  const canUpdateTasks = canAccess(currentUser.role, 'tasks', 'update');
+
   // Setup Journey — live onboarding progress computed from real records.
   const journey = computeSetupJourney({
     companyProfile, blocks, vessels, lots, grapeIntakes, cellarOps, fermLogs, labLogs,
   });
   const [journeyDismissed, setJourneyDismissed] = useState(isSetupJourneyDismissed);
   const goToStep = (step: SetupStep) => {
+    const [permissionModule, action] = SETUP_STEP_PERMISSIONS[step.id];
+    if (!canAccess(currentUser.role, permissionModule, action)) return;
     setActiveModule(step.module);
     if (step.tab) setActiveTab(step.tab);
   };
@@ -86,6 +108,22 @@ export default function DashboardTab({
   // Resolve preferences defaults
   const enabledModules = currentUser.enabledModules || ['vazi', 'gvino'];
   const enabledWidgets = currentUser.enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'];
+  const roleJourneySteps = journey.steps.filter((step) => {
+    if (step.module === 'vazi' && !enabledModules.includes('vazi')) return false;
+    if (step.module === 'gvino' && !enabledModules.includes('gvino')) return false;
+    const [module, action] = SETUP_STEP_PERMISSIONS[step.id];
+    return canAccess(currentUser.role, module, action);
+  });
+  const roleJourneyDone = roleJourneySteps.filter((step) => step.done).length;
+  const roleJourney = {
+    ...journey,
+    steps: roleJourneySteps,
+    done: roleJourneyDone,
+    total: roleJourneySteps.length,
+    pct: roleJourneySteps.length ? Math.round((roleJourneyDone / roleJourneySteps.length) * 100) : 100,
+    complete: roleJourneyDone === roleJourneySteps.length,
+    nextStep: roleJourneySteps.find((step) => !step.done) || null,
+  };
 
   // Derive metrics
   const totalArea = blocks.reduce((acc, b) => acc + b.area, 0);
@@ -196,9 +234,7 @@ export default function DashboardTab({
           <div className="bg-[#fcfbf9] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left">
             <span className="text-stone-500 dark:text-stone-400 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_role || 'Active Role'}</span>
             <strong className="text-stone-950 dark:text-amber-100 block mt-1 font-display font-black text-xs">
-              {currentUser.role === 'Viticulturist' ? (t.signin_role_viticulturist || 'Lead Viticulturist') :
-               currentUser.role === 'Winemaker' ? (t.signin_role_winemaker || 'Head Winemaker') :
-               (t.signin_role_owner || 'Owner & ERP Admin')}
+              {localizedRoleLabel(currentUser.role, lang)}
             </strong>
           </div>
           <button
@@ -211,22 +247,22 @@ export default function DashboardTab({
       </div>
 
       {/* Setup Journey — guided zero-to-productive path for a young winery. */}
-      {!journey.complete && !journeyDismissed && (
+      {roleJourney.total > 0 && !roleJourney.complete && !journeyDismissed && (
         <SetupJourney
           lang={lang}
-          journey={journey}
+          journey={roleJourney}
           onNavigate={goToStep}
           onDismiss={() => { setSetupJourneyDismissed(true); setJourneyDismissed(true); }}
         />
       )}
-      {!journey.complete && journeyDismissed && (
+      {roleJourney.total > 0 && !roleJourney.complete && journeyDismissed && (
         <button
           type="button"
           onClick={() => { setSetupJourneyDismissed(false); setJourneyDismissed(false); }}
           className="self-start inline-flex items-center gap-2 px-3.5 py-2 rounded-full border border-[#c5a059]/40 bg-[#c5a059]/10 text-[11px] font-bold text-[#7a5c1e] hover:border-[#c5a059] transition-colors cursor-pointer dark:text-amber-300"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-[#c5a059] animate-pulse" />
-          {lang === 'ka' ? `გამართვა ${journey.done}/${journey.total} — გაგრძელება` : `Setup ${journey.done}/${journey.total} — resume`}
+          {lang === 'ka' ? `გამართვა ${roleJourney.done}/${roleJourney.total} — გაგრძელება` : `Setup ${roleJourney.done}/${roleJourney.total} — resume`}
         </button>
       )}
 
@@ -242,24 +278,30 @@ export default function DashboardTab({
             </h3>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => { setActiveModule('gvino'); setActiveTab('fermentation'); }}
-              className="rounded-xl bg-[#4e0e15] px-4 py-2 text-[11px] font-bold text-white cursor-pointer"
-            >
-              + {lang === 'ka' ? 'დუღილის ჩანაწერი' : 'Log fermentation'}
-            </button>
-            <button
-              onClick={() => { setActiveModule('gvino'); setActiveTab('labs'); }}
-              className="rounded-xl border border-stone-250 bg-white px-4 py-2 text-[11px] font-bold text-stone-700 cursor-pointer dark:bg-stone-900 dark:border-stone-700 dark:text-stone-200"
-            >
-              + {lang === 'ka' ? 'ლაბორატორიული შედეგი' : 'Add lab result'}
-            </button>
-            <button
-              onClick={() => { setActiveModule('gvino'); setActiveTab('tasks'); }}
-              className="rounded-xl border border-stone-250 bg-white px-4 py-2 text-[11px] font-bold text-stone-700 cursor-pointer dark:bg-stone-900 dark:border-stone-700 dark:text-stone-200"
-            >
-              {lang === 'ka' ? 'დავალებები' : 'Review tasks'}
-            </button>
+            {canCreateFermentation && (
+              <button
+                onClick={() => { setActiveModule('gvino'); setActiveTab('fermentation'); }}
+                className="rounded-xl bg-[#4e0e15] px-4 py-2 text-[11px] font-bold text-white cursor-pointer"
+              >
+                + {lang === 'ka' ? 'დუღილის ჩანაწერი' : 'Log fermentation'}
+              </button>
+            )}
+            {canCreateLab && (
+              <button
+                onClick={() => { setActiveModule('gvino'); setActiveTab('labs'); }}
+                className="rounded-xl border border-stone-250 bg-white px-4 py-2 text-[11px] font-bold text-stone-700 cursor-pointer dark:bg-stone-900 dark:border-stone-700 dark:text-stone-200"
+              >
+                + {lang === 'ka' ? 'ლაბორატორიული შედეგი' : 'Add lab result'}
+              </button>
+            )}
+            {canViewTasks && (
+              <button
+                onClick={() => { setActiveModule('gvino'); setActiveTab('tasks'); }}
+                className="rounded-xl border border-stone-250 bg-white px-4 py-2 text-[11px] font-bold text-stone-700 cursor-pointer dark:bg-stone-900 dark:border-stone-700 dark:text-stone-200"
+              >
+                {lang === 'ka' ? 'დავალებები' : 'Review tasks'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -269,42 +311,56 @@ export default function DashboardTab({
               label: lang === 'ka' ? 'კრიტიკული გაფრთხილებები' : 'Critical alerts',
               value: criticalAlerts.length,
               detail: derivedAlerts.length ? `${derivedAlerts.length} open total` : 'No active alerts',
-              action: () => { setActiveModule('gvino'); setActiveTab('dashboard'); },
+              action: canViewCellar ? () => { setActiveModule('gvino'); setActiveTab('dashboard'); } : undefined,
               tone: criticalAlerts.length ? 'text-rose-700' : 'text-emerald-700',
             },
             {
               label: lang === 'ka' ? 'ვადაგადაცილებული დავალებები' : 'Overdue tasks',
               value: overdueTasks.length,
               detail: `${pendingTasks.length} pending`,
-              action: () => { setActiveModule('gvino'); setActiveTab('tasks'); },
+              action: canViewTasks ? () => { setActiveModule('gvino'); setActiveTab('tasks'); } : undefined,
               tone: overdueTasks.length ? 'text-rose-700' : 'text-stone-800',
             },
             {
               label: lang === 'ka' ? 'დღიური ჩანაწერის გარეშე' : 'Ferments missing today',
               value: fermentsMissingReading.length,
               detail: `${activeFerments.length} active fermentations`,
-              action: () => { setActiveModule('gvino'); setActiveTab('fermentation'); },
+              action: canViewCellarTab('fermentation') ? () => { setActiveModule('gvino'); setActiveTab('fermentation'); } : undefined,
               tone: fermentsMissingReading.length ? 'text-amber-700' : 'text-emerald-700',
             },
             {
               label: lang === 'ka' ? 'ჭურჭლის გარეშე დარჩენილი პარტია' : 'Lots without a vessel',
               value: unassignedLots.length,
               detail: `${lots.length} lots recorded`,
-              action: () => { setActiveModule('gvino'); setActiveTab('vessels'); },
+              action: canViewCellarTab('vessels') ? () => { setActiveModule('gvino'); setActiveTab('vessels'); } : undefined,
               tone: unassignedLots.length ? 'text-amber-700' : 'text-stone-800',
             },
-          ].map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={item.action}
-              className="rounded-2xl border border-[#e8dfd5] bg-white p-4 text-left shadow-xs transition-transform hover:-translate-y-0.5 cursor-pointer dark:bg-stone-900 dark:border-stone-800"
-            >
+          ].map((item) => {
+            const content = (
+              <>
               <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-600 dark:text-stone-400">{item.label}</span>
               <strong className={`mt-2 block text-3xl font-sans font-black ${item.tone}`}>{item.value}</strong>
               <span className="mt-1 block text-[11px] font-medium text-stone-500 dark:text-stone-400">{item.detail}</span>
-            </button>
-          ))}
+              </>
+            );
+            return item.action ? (
+              <button
+                key={item.label}
+                type="button"
+                onClick={item.action}
+                className="rounded-2xl border border-[#e8dfd5] bg-white p-4 text-left shadow-xs transition-transform hover:-translate-y-0.5 cursor-pointer dark:bg-stone-900 dark:border-stone-800"
+              >
+                {content}
+              </button>
+            ) : (
+              <div
+                key={item.label}
+                className="rounded-2xl border border-[#e8dfd5] bg-stone-50/70 p-4 text-left shadow-xs dark:bg-stone-900 dark:border-stone-800"
+              >
+                {content}
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -312,11 +368,11 @@ export default function DashboardTab({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 text-stone-900">
         
         {/* Vazi Module Card */}
-        {enabledModules.includes('vazi') && (
+        {enabledModules.includes('vazi') && canViewVineyard && (
           <motion.div 
             whileHover={{ y: -4, shadow: '0 20px 40px rgba(16,185,129,0.08)' }}
             className={`p-8 lg:p-10 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-sm duration-300 space-y-6 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-300 transition-all cursor-pointer ${
-              !enabledModules.includes('gvino') ? 'lg:col-span-2' : ''
+              !(enabledModules.includes('gvino') && canViewCellar) ? 'lg:col-span-2' : ''
             }`}
           >
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-600/10 via-emerald-600/30 to-emerald-600/10" />
@@ -367,11 +423,11 @@ export default function DashboardTab({
         )}
 
         {/* Gvino Module Card */}
-        {enabledModules.includes('gvino') && (
+        {enabledModules.includes('gvino') && canViewCellar && (
           <motion.div 
             whileHover={{ y: -4, shadow: '0 20px 40px rgba(78,14,21,0.08)' }}
             className={`p-8 lg:p-10 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-sm duration-300 space-y-6 flex flex-col justify-between relative overflow-hidden group hover:border-rose-300 transition-all cursor-pointer ${
-              !enabledModules.includes('vazi') ? 'lg:col-span-2' : ''
+              !(enabledModules.includes('vazi') && canViewVineyard) ? 'lg:col-span-2' : ''
             }`}
           >
             <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#4e0e15]/10 via-[#4e0e15]/30 to-[#4e0e15]/10" />
@@ -428,7 +484,7 @@ export default function DashboardTab({
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 text-stone-900">
         
         {/* Widget 1: Safety & Chemistry alerts */}
-        {enabledWidgets.includes('chemistry') && enabledModules.includes('gvino') && (
+        {enabledWidgets.includes('chemistry') && enabledModules.includes('gvino') && canViewCellarTab('labs') && (
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
@@ -457,7 +513,7 @@ export default function DashboardTab({
         )}
 
         {/* Widget 2: Weather & Mildew Station */}
-        {enabledWidgets.includes('weather') && enabledModules.includes('vazi') && (
+        {enabledWidgets.includes('weather') && enabledModules.includes('vazi') && canViewVineyard && (
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
               <h4 className="font-display font-black text-sm text-emerald-900 dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
@@ -529,7 +585,7 @@ export default function DashboardTab({
         )}
 
         {/* Widget 3: Active Fermentations */}
-        {enabledWidgets.includes('fermentation') && enabledModules.includes('gvino') && (
+        {enabledWidgets.includes('fermentation') && enabledModules.includes('gvino') && canViewCellarTab('fermentation') && (
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
@@ -566,7 +622,7 @@ export default function DashboardTab({
         )}
 
         {/* Widget 4: Canopy status radar */}
-        {enabledWidgets.includes('canopy') && enabledModules.includes('vazi') && (
+        {enabledWidgets.includes('canopy') && enabledModules.includes('vazi') && canViewVineyard && (
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
               <h4 className="font-display font-black text-sm text-emerald-900 dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
@@ -590,7 +646,7 @@ export default function DashboardTab({
         )}
 
         {/* Widget 5: Combined Tasks list */}
-        {enabledWidgets.includes('tasks') && (
+        {enabledWidgets.includes('tasks') && canViewTasks && (
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
@@ -603,8 +659,10 @@ export default function DashboardTab({
                       <input 
                         type="checkbox" 
                         checked={task.status === 'completed'}
-                        onChange={() => onToggleTaskStatus(task.id)}
-                        className="mt-1 accent-emerald-800 cursor-pointer h-4 w-4 rounded border-stone-300 shrink-0"
+                        onChange={() => { if (canUpdateTasks) onToggleTaskStatus(task.id); }}
+                        disabled={!canUpdateTasks}
+                        title={!canUpdateTasks ? (lang === 'ka' ? 'თქვენს როლს დავალების შეცვლა არ შეუძლია' : 'Your role cannot update tasks') : undefined}
+                        className="mt-1 accent-emerald-800 cursor-pointer h-4 w-4 rounded border-stone-300 shrink-0 disabled:cursor-not-allowed disabled:opacity-60"
                       />
                       <div className="flex-grow">
                         <span className={`block font-extrabold text-stone-900 dark:text-amber-100 text-xs ${task.status === 'completed' ? 'line-through text-stone-400 font-normal' : ''}`}>{task.title}</span>
@@ -623,7 +681,7 @@ export default function DashboardTab({
         )}
 
         {/* Widget 6: Corporate audit logs ledger ticker */}
-        {enabledWidgets.includes('audit') && (
+        {enabledWidgets.includes('audit') && canViewAppDestination(currentUser.role, 'audit') && (
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
             <div className="space-y-4">
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">

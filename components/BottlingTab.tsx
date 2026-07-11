@@ -14,6 +14,10 @@ import { stockMovementFromBottlingRun, type StockMovement, type StorageLocation 
 
 interface Props {
   lang: Language;
+  canCreateBottling?: boolean;
+  canDeleteBottling?: boolean;
+  canUseBottlingCosting?: boolean;
+  canPlaceFinishedGoods?: boolean;
   lots: WineLot[];
   onUpdateLots: (lots: WineLot[]) => void;
   history: BottlingRunRecord[];
@@ -70,6 +74,10 @@ const PACKAGING_COMPONENTS: Array<{ key: BottlingPackagingComponent; en: string;
 
 export default function BottlingTab({
   lang,
+  canCreateBottling = true,
+  canDeleteBottling = true,
+  canUseBottlingCosting = true,
+  canPlaceFinishedGoods = true,
   lots,
   onUpdateLots,
   history,
@@ -116,6 +124,12 @@ export default function BottlingTab({
   const noBottles = totalBottles + totalCeramic === 0;
   const canSubmit = !!lot && !overfill && !noBottles;
   const totalUnits = totalBottles + totalCeramic;
+  const effectivePackagingSelections = useMemo<BottlingPackagingSelections>(
+    () => canUseBottlingCosting ? packagingSelections : {},
+    [canUseBottlingCosting, packagingSelections],
+  );
+  const effectiveBottlingServiceCost = canUseBottlingCosting ? parseFloat(bottlingServiceCost) || 0 : 0;
+  const effectiveStorageLocationId = canPlaceFinishedGoods ? storageLocationId : '';
 
   const packagingItems = useMemo(() => {
     const filtered = inventory.filter(i => classifyInventoryCostCategory(i) === 'packaging');
@@ -127,18 +141,18 @@ export default function BottlingTab({
     date,
     lotId: lot?.id || '',
     totalUnits,
-    packagingSelections,
+    packagingSelections: effectivePackagingSelections,
     inventory,
     bottlesPerBox: parseInt(bottlesPerBox) || 6,
-    bottlingServiceCost: parseFloat(bottlingServiceCost) || 0,
+    bottlingServiceCost: effectiveBottlingServiceCost,
     currency,
     createdBy: operator || currentUserName,
-  }), [bottlesPerBox, bottlingServiceCost, currency, currentUserName, date, inventory, lot?.id, operator, packagingSelections, totalUnits]);
+  }), [bottlesPerBox, currency, currentUserName, date, effectiveBottlingServiceCost, effectivePackagingSelections, inventory, lot?.id, operator, totalUnits]);
 
   const overdrawnPackaging = useMemo(() => Object.entries(costPreview.deductions)
     .map(([itemId, qty]) => ({ item: inventory.find(i => i.id === itemId), qty }))
     .filter(x => x.item && x.qty > (x.item.stock || 0)), [costPreview.deductions, inventory]);
-  const selectedStorageLocation = storageLocations.find(l => l.id === storageLocationId) || null;
+  const selectedStorageLocation = storageLocations.find(l => l.id === effectiveStorageLocationId) || null;
 
   const setCount = (key: string, val: string) => {
     const n = Math.max(0, parseInt(val) || 0);
@@ -157,7 +171,7 @@ export default function BottlingTab({
   const resetForm = () => { setCounts({}); setLotNumber(''); setBottlingServiceCost(''); };
 
   const handleBottle = () => {
-    if (!lot || !canSubmit) return;
+    if (!canCreateBottling || !lot || !canSubmit) return;
     const remaining = round1(availableL - volumeBottledL);
     const fullyBottled = remaining <= 0.5; // essentially emptied
 
@@ -182,7 +196,7 @@ export default function BottlingTab({
       runId,
       date,
       lotId: lot.id,
-      locationId: storageLocationId,
+      locationId: effectiveStorageLocationId,
       bottles: totalUnits,
       lotName: lot.name,
     });
@@ -191,10 +205,10 @@ export default function BottlingTab({
       date,
       lotId: lot.id,
       totalUnits,
-      packagingSelections,
+      packagingSelections: effectivePackagingSelections,
       inventory,
       bottlesPerBox: parseInt(bottlesPerBox) || 6,
-      bottlingServiceCost: parseFloat(bottlingServiceCost) || 0,
+      bottlingServiceCost: effectiveBottlingServiceCost,
       currency,
       createdBy: operator || currentUserName,
     });
@@ -212,7 +226,7 @@ export default function BottlingTab({
       volumeBottledL,
       previousLotVolumeL: availableL,
       previousLotStage: lot.stage,
-      ...(Object.keys(packagingSelections).length > 0 ? { packagingMaterialIds: { ...packagingSelections } } : {}),
+      ...(Object.keys(effectivePackagingSelections).length > 0 ? { packagingMaterialIds: { ...effectivePackagingSelections } } : {}),
       ...(Object.keys(costPosting.deductions).length > 0 ? { packagingDeductions: costPosting.deductions } : {}),
       ...(parseInt(bottlesPerBox) > 0 ? { bottlesPerBox: parseInt(bottlesPerBox) } : {}),
       ...(costPosting.packagingCostTotal > 0 ? { packagingCostTotal: costPosting.packagingCostTotal } : {}),
@@ -226,16 +240,16 @@ export default function BottlingTab({
     const next = [run, ...history];
     onUpdateHistory(next);
     saveBottlingHistory(next);
-    if (storageMovement) {
+    if (canPlaceFinishedGoods && storageMovement) {
       onUpdateStockMovements([storageMovement, ...stockMovements]);
     }
-    if (Object.keys(costPosting.deductions).length > 0) {
+    if (canUseBottlingCosting && Object.keys(costPosting.deductions).length > 0) {
       onUpdateInventory(inventory.map(item => {
         const used = costPosting.deductions[item.id] || 0;
         return used > 0 ? { ...item, stock: deductStock(item.stock, used) } : item;
       }));
     }
-    if (costPosting.entries.length > 0) {
+    if (canUseBottlingCosting && costPosting.entries.length > 0) {
       onUpdateCostEntries([...costPosting.entries, ...costEntries]);
     }
     setToastMessage?.(ka
@@ -249,6 +263,7 @@ export default function BottlingTab({
   };
 
   const deleteRun = (id: string) => {
+    if (!canDeleteBottling) return;
     const run = history.find(r => r.id === id);
     const next = history.filter(r => r.id !== id);
     onUpdateHistory(next);
@@ -275,6 +290,20 @@ export default function BottlingTab({
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
   const inputCls = 'w-full bg-stone-50 border border-stone-200 px-2.5 py-2 rounded-lg text-xs font-semibold text-stone-700 outline-none focus:border-[#4e0e15] dark:bg-stone-900 dark:border-stone-800';
   const fmtMoney = (n: number) => `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+  const bottlingAccessNotice = !canCreateBottling && !canDeleteBottling
+    ? (ka
+      ? 'მხოლოდ ნახვის წვდომა: შეგიძლიათ ჩამოსხმის ისტორიისა და დანართ №7-ის მონაცემების ნახვა, თუმცა ჩანაწერის შექმნა ან გაუქმება არ შეგიძლიათ.'
+      : 'Read-only access: you can review bottling history and Annex №7 data, but you cannot record or roll back bottling runs.')
+    : canCreateBottling && !canDeleteBottling
+      ? (ka
+        ? 'შეგიძლიათ ჩამოსხმის აღრიცხვა, თუმცა ისტორიული ჩანაწერის წაშლა და დაკავშირებული მოძრაობების გაუქმება მხოლოდ უფლებამოსილ მფლობელს შეუძლია.'
+        : 'You can record bottling runs, but only an authorized owner can delete a historical run and reverse its linked movements.')
+      : !canCreateBottling
+        ? (ka
+          ? 'ახალი ჩამოსხმის აღრიცხვა თქვენი როლისთვის მიუწვდომელია; უფლებამოსილი ისტორიული მოქმედებები კვლავ ხელმისაწვდომია.'
+          : 'Your role cannot record a new bottling run; any authorized history actions remain available.')
+        : null;
+  const hasRestrictedLedgerTools = canCreateBottling && (!canUseBottlingCosting || !canPlaceFinishedGoods);
 
   return (
     <div className="space-y-4 animate-fade-in text-stone-800">
@@ -292,9 +321,24 @@ export default function BottlingTab({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4">
+      {bottlingAccessNotice && (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+          {bottlingAccessNotice}
+        </div>
+      )}
+
+      {hasRestrictedLedgerTools && (
+        <div role="note" className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-medium leading-relaxed text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">
+          {ka
+            ? 'ჩამოსხმის ძირითადი აღრიცხვა ხელმისაწვდომია. ხარჯების/შეფუთვის გატარება და მზა პროდუქციის საწყობში განთავსება ნაჩვენებია მხოლოდ შესაბამისი ინვენტარის, ხარჯებისა და საწყობის უფლებებით.'
+            : 'Core bottling remains available. Packaging/cost posting and finished-goods placement only appear with the required inventory, cost, and storage permissions.'}
+        </div>
+      )}
+
+      <div className={`grid grid-cols-1 ${canCreateBottling ? 'lg:grid-cols-[1fr_1.2fr]' : ''} gap-4`}>
         {/* ── Bottling form ─────────────────────────────── */}
-        <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
+        {canCreateBottling && (
+          <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
           {bottleable.length === 0 ? (
             <div className="text-center py-10 text-stone-500 dark:text-stone-400">
               <Wine className="w-10 h-10 mx-auto mb-2 opacity-40" />
@@ -347,7 +391,8 @@ export default function BottlingTab({
               </div>
 
               {/* Packaging and bottling costing */}
-              <div className="border border-stone-200 rounded-xl p-3 space-y-3 bg-stone-50/50 dark:bg-stone-950/40 dark:border-stone-800">
+              {canUseBottlingCosting && (
+                <div className="border border-stone-200 rounded-xl p-3 space-y-3 bg-stone-50/50 dark:bg-stone-950/40 dark:border-stone-800">
                 <div className="flex items-center justify-between gap-2">
                   <label className={labelCls}>{ka ? 'შეფუთვის ხარჯები' : 'Packaging & bottling cost'}</label>
                   <span className="text-[10px] font-mono text-stone-400">{ka ? 'არასავალდებულო' : 'optional'}</span>
@@ -393,16 +438,17 @@ export default function BottlingTab({
                     </span>
                   </div>
                 )}
-              </div>
+                </div>
+              )}
 
               {/* Finished-goods placement */}
-              {storageLocations.length > 0 && (
+              {canPlaceFinishedGoods && storageLocations.length > 0 && (
                 <div className="border border-sky-200 rounded-xl p-3 space-y-2 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900/50">
                   <div className="flex items-center justify-between gap-2">
                     <label className={labelCls}>{ka ? 'საწყობში განთავსება' : 'Place finished goods'}</label>
                     <span className="text-[10px] font-mono text-stone-400">{ka ? 'არასავალდებულო' : 'optional'}</span>
                   </div>
-                  <select value={storageLocationId} onChange={e => setStorageLocationId(e.target.value)} className={inputCls}>
+                  <select value={effectiveStorageLocationId} onChange={e => setStorageLocationId(e.target.value)} className={inputCls}>
                     <option value="">{ka ? '— მოგვიანებით განთავსება —' : '— place later —'}</option>
                     {storageLocations.map(loc => (
                       <option key={loc.id} value={loc.id}>
@@ -410,7 +456,7 @@ export default function BottlingTab({
                       </option>
                     ))}
                   </select>
-                  {storageLocationId && selectedStorageLocation && totalUnits > 0 && (
+                  {effectiveStorageLocationId && selectedStorageLocation && totalUnits > 0 && (
                     <div className="text-[11px] font-mono text-sky-800 bg-white border border-sky-100 rounded-lg px-3 py-2 dark:bg-stone-900 dark:text-sky-300 dark:border-sky-900">
                       {ka ? 'შეიქმნება საწყობის შემოსავლის მოძრაობა:' : 'Will create inbound storage movement:'}{' '}
                       <strong>{totalUnits.toLocaleString()} {ka ? 'ბოთლი' : 'bottles'}</strong> → {selectedStorageLocation.name}
@@ -440,7 +486,8 @@ export default function BottlingTab({
               </button>
             </>
           )}
-        </div>
+          </div>
+        )}
 
         {/* ── History ───────────────────────────────────── */}
         <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
@@ -465,7 +512,7 @@ export default function BottlingTab({
                     <th className="p-2.5">{ka ? 'ლოტი' : 'Lot'}</th>
                     <th className="p-2.5 text-right">{ka ? 'ბოთლი' : 'Bottles'}</th>
                     <th className="p-2.5 text-right">{ka ? 'მოცულობა' : 'Volume'}</th>
-                    <th className="p-2.5"></th>
+                    {canDeleteBottling && <th className="p-2.5"><span className="sr-only">{ka ? 'მოქმედებები' : 'Actions'}</span></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
@@ -475,12 +522,19 @@ export default function BottlingTab({
                       <td className="p-2.5 font-bold text-stone-800 dark:text-amber-50">{r.lotName}<span className="block text-[9px] font-mono text-stone-400">{r.lotNumber || r.lotId}</span></td>
                       <td className="p-2.5 text-right font-bold">{r.totalBottles}{r.totalCeramic ? ` +${r.totalCeramic}🏺` : ''}</td>
                       <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300">{r.volumeBottledL} L</td>
-                      <td className="p-2.5 text-right">
-                        <button onClick={() => deleteRun(r.id)} title={ka ? 'წაშლა' : 'Delete'}
-                          className="text-stone-300 hover:text-rose-600 cursor-pointer transition-colors">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
+                      {canDeleteBottling && (
+                        <td className="p-2.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => deleteRun(r.id)}
+                            title={ka ? 'წაშლა' : 'Delete'}
+                            aria-label={ka ? `${r.lotName} ჩამოსხმის ჩანაწერის წაშლა` : `Delete bottling run for ${r.lotName}`}
+                            className="text-stone-300 hover:text-rose-600 cursor-pointer transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

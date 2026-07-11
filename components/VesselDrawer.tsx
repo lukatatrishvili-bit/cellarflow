@@ -329,6 +329,7 @@ interface VesselDrawerProps {
   onUpdateVessels?: (newVessels: Vessel[]) => void;
   /** Jump to the quick-operation form with this vessel (and its batch) preselected. */
   onLogOperation?: (vesselId: string) => void;
+  canUpdateVessel?: boolean;
 }
 
 export default function VesselDrawer({
@@ -342,7 +343,8 @@ export default function VesselDrawer({
   onToggleSanitation,
   onToggleCoolingJacket,
   onUpdateVessels,
-  onLogOperation
+  onLogOperation,
+  canUpdateVessel = true
 }: VesselDrawerProps) {
   const selectedVessel = selectedTankId ? vessels.find(v => v.id === selectedTankId) : null;
   const selectedLot = selectedVessel?.assignedLotId 
@@ -377,7 +379,7 @@ export default function VesselDrawer({
       setEditSoilTemperature(selectedVessel.soilTemperature ?? (selectedVessel.temperature - 2.5));
       setIsEditing(false);
     }
-  }, [selectedTankId, selectedVessel]);
+  }, [canUpdateVessel, selectedTankId, selectedVessel]);
 
   useEffect(() => {
     if (!selectedTankId || !selectedVessel) {
@@ -459,6 +461,45 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
     return list;
   })();
 
+  const handleAdjustTargetTemp = (increment: number) => {
+    if (!canUpdateVessel || !selectedVessel) return;
+    onAdjustTargetTemp(selectedVessel.id, increment);
+  };
+
+  const handleToggleSanitation = () => {
+    if (!canUpdateVessel || !selectedVessel) return;
+    onToggleSanitation(selectedVessel.id);
+  };
+
+  const handleEditSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canUpdateVessel || !selectedVessel || !onUpdateVessels) return;
+
+    if (editId.trim() !== selectedVessel.id && vessels.some(v => v.id === editId.trim())) {
+      alert(lang === 'ka' ? 'ეს ID უკვე გამოყენებულია სხვა ჭურჭლისთვის.' : 'This Vessel ID is already in use by another vessel.');
+      return;
+    }
+
+    const updatedVessels = vessels.map(v => {
+      if (v.id === selectedVessel.id) {
+        return {
+          ...v,
+          id: editId.trim(),
+          type: editType,
+          shape: editShape,
+          capacity: Number(editCapacity) || 0,
+          locationDetails: editLocationDetails,
+          lastSealedDate: editType === 'qvevri' ? editLastSealedDate : undefined,
+          soilTemperature: editType === 'qvevri' ? Number(editSoilTemperature) : undefined
+        };
+      }
+      return v;
+    });
+
+    onUpdateVessels(updatedVessels);
+    setIsEditing(false);
+  };
+
   useFocusTrap(drawerRef, { active: !!selectedTankId && !!selectedVessel, onClose });
 
   return (
@@ -495,13 +536,18 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     <span className="text-[10px] font-mono uppercase bg-amber-100 text-amber-955 px-2 py-0.5 rounded font-bold tracking-wider inline-block">
                       Cellar Core Vessel
                     </span>
-                    <button 
-                      onClick={() => setIsEditing(!isEditing)}
-                      className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
-                      title="Edit Properties"
-                    >
-                      ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
-                    </button>
+                    {canUpdateVessel && (
+                      <button
+                        onClick={() => {
+                          if (!canUpdateVessel) return;
+                          setIsEditing(!isEditing);
+                        }}
+                        className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
+                        title={lang === 'ka' ? 'პარამეტრების შეცვლა' : 'Edit Properties'}
+                      >
+                        ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
+                      </button>
+                    )}
                   </div>
                   <h2 id="vessel-drawer-title" className="text-xl font-serif font-bold text-[#4e0e15] mt-1">{selectedVessel.id}</h2>
                   <p className="text-xs text-slate-500 font-mono mt-0.5">{selectedVessel.locationDetails || 'Cellar Room A, main row'}</p>
@@ -523,35 +569,17 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                 </button>
               </div>
 
-              {isEditing ? (
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!selectedVessel || !onUpdateVessels) return;
-                  
-                  if (editId.trim() !== selectedVessel.id && vessels.some(v => v.id === editId.trim())) {
-                    alert(lang === 'ka' ? 'ეს ID უკვე გამოყენებულია სხვა ჭურჭლისთვის.' : 'This Vessel ID is already in use by another vessel.');
-                    return;
-                  }
+              {!canUpdateVessel && (
+                <div role="status" className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-[11px] font-semibold leading-relaxed text-sky-900">
+                  <strong>{lang === 'ka' ? 'ჭურჭლის დეტალები მხოლოდ სანახავია.' : 'Read-only vessel details.'}</strong>{' '}
+                  {lang === 'ka'
+                    ? 'შეგიძლიათ ნახოთ ტელემეტრია, ტემპერატურის ისტორია, სანიტარული მდგომარეობა, AI რჩევები და ბოლო ოპერაციები, მაგრამ ჭურჭელს ვერ შეცვლით.'
+                    : 'You can review telemetry, thermal history, sanitation status, AI guidance, and recent operations, but cannot change this vessel.'}
+                </div>
+              )}
 
-                  const updatedVessels = vessels.map(v => {
-                    if (v.id === selectedVessel.id) {
-                      return {
-                        ...v,
-                        id: editId.trim(),
-                        type: editType,
-                        shape: editShape,
-                        capacity: Number(editCapacity) || 0,
-                        locationDetails: editLocationDetails,
-                        lastSealedDate: editType === 'qvevri' ? editLastSealedDate : undefined,
-                        soilTemperature: editType === 'qvevri' ? Number(editSoilTemperature) : undefined
-                      };
-                    }
-                    return v;
-                  });
-
-                  onUpdateVessels(updatedVessels);
-                  setIsEditing(false);
-                }} className="space-y-4 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs text-stone-700">
+              {canUpdateVessel && isEditing ? (
+                <form onSubmit={handleEditSubmit} className="space-y-4 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs text-stone-700">
                   <h3 className="text-xs uppercase font-mono tracking-widest text-[#4e0e15] font-black border-b pb-1.5 mb-3 flex justify-between items-center">
                     <span>✏️ {lang === 'ka' ? 'პარამეტრების რედაქტირება' : 'Edit Vessel Properties'}</span>
                   </h3>
@@ -809,20 +837,24 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                             <strong className="text-xs font-semibold text-slate-750 font-mono">
                               {selectedVessel.targetTemperature ? `${selectedVessel.targetTemperature} °C` : '--'}
                             </strong>
-                            <div className="flex items-center gap-1 bg-white border border-slate-200 rounded shrink-0 shadow-2xs">
-                              <button 
-                                onClick={() => onAdjustTargetTemp(selectedVessel.id, -0.5)}
-                                className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold border-r border-slate-200 cursor-pointer"
-                              >
-                                -
-                              </button>
-                              <button 
-                                onClick={() => onAdjustTargetTemp(selectedVessel.id, 0.5)}
-                                className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold cursor-pointer"
-                              >
-                                +
-                              </button>
-                            </div>
+                            {canUpdateVessel && (
+                              <div className="flex items-center gap-1 bg-white border border-slate-200 rounded shrink-0 shadow-2xs">
+                                <button
+                                  onClick={() => handleAdjustTargetTemp(-0.5)}
+                                  aria-label={lang === 'ka' ? 'სამიზნე ტემპერატურის შემცირება' : 'Decrease target temperature'}
+                                  className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold border-r border-slate-200 cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <button
+                                  onClick={() => handleAdjustTargetTemp(0.5)}
+                                  aria-label={lang === 'ka' ? 'სამიზნე ტემპერატურის გაზრდა' : 'Increase target temperature'}
+                                  className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -902,12 +934,16 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                           {selectedVessel.lastCleaned ? selectedVessel.lastCleaned : 'Never/New'}
                         </strong>
                       </div>
-                      <button
-                        onClick={() => onToggleSanitation(selectedVessel.id)}
-                        className="px-2 py-1 text-[10px] font-mono font-semibold text-indigo-850 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded transition-all cursor-pointer"
-                      >
-                        {selectedVessel.cleaningStatus === 'clean' ? 'Flag: CIP Required' : '✓ Mark Sanitized Today'}
-                      </button>
+                      {canUpdateVessel && (
+                        <button
+                          onClick={handleToggleSanitation}
+                          className="px-2 py-1 text-[10px] font-mono font-semibold text-indigo-850 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded transition-all cursor-pointer"
+                        >
+                          {selectedVessel.cleaningStatus === 'clean'
+                            ? (lang === 'ka' ? 'CIP რეცხვა საჭიროა' : 'Flag: CIP Required')
+                            : (lang === 'ka' ? '✓ დღეს სანიტარიზებულია' : '✓ Mark Sanitized Today')}
+                        </button>
+                      )}
                     </div>
                   </div>
 

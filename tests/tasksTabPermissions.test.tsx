@@ -1,0 +1,88 @@
+import React, { type ComponentProps, type ReactElement, type ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import TasksTab from '../components/TasksTab';
+
+const tasks = [
+  {
+    id: 'task-pending',
+    title: 'Pending pump-over',
+    priority: 'high' as const,
+    dueDate: '2026-09-01',
+    assignedTo: 'Nino',
+    status: 'pending' as const,
+    description: 'Pump over twice.',
+  },
+  {
+    id: 'task-complete',
+    title: 'Completed lab check',
+    priority: 'medium' as const,
+    dueDate: '2026-08-30',
+    assignedTo: 'Giorgi',
+    status: 'completed' as const,
+    description: 'Record final density.',
+  },
+];
+
+function taskProps(overrides: Partial<ComponentProps<typeof TasksTab>> = {}): ComponentProps<typeof TasksTab> {
+  return {
+    lang: 'en',
+    tasks,
+    onToggleTaskStatus: vi.fn(),
+    onDeleteTask: vi.fn(),
+    onAddNewTask: vi.fn(),
+    ...overrides,
+  };
+}
+
+function flattenElements(node: ReactNode): ReactElement[] {
+  if (Array.isArray(node)) return node.flatMap(flattenElements);
+  if (!React.isValidElement(node)) return [];
+  const element = node as ReactElement<{ children?: ReactNode }>;
+  return [element, ...flattenElements(element.props.children)];
+}
+
+describe('TasksTab action permissions', () => {
+  it('preserves task browsing while hiding create/delete and disabling updates', () => {
+    const markup = renderToStaticMarkup(React.createElement(TasksTab, taskProps({
+      canCreateTask: false,
+      canUpdateTask: false,
+      canDeleteTask: false,
+    })));
+
+    expect(markup).toContain('Pending pump-over');
+    expect(markup).toContain('Completed lab check');
+    expect(markup).toContain('You can browse cellar tasks');
+    expect(markup).not.toContain('Schedule Cellar Task');
+    expect(markup).not.toContain('Assign Task Directive');
+    expect(markup).not.toContain('Delete Pending pump-over');
+    expect(markup).not.toContain('Delete Completed lab check');
+    expect(markup).toContain('Pending pump-over cannot be updated by your role');
+    expect(markup.match(/disabled=""/g)).toHaveLength(2);
+  });
+
+  it('guards update callbacks even if a disabled handler is invoked directly', () => {
+    const onToggleTaskStatus = vi.fn();
+    const tree = TasksTab(taskProps({ canUpdateTask: false, onToggleTaskStatus }));
+    const elements = flattenElements(tree);
+    const checkbox = elements.find(element => element.type === 'input' && element.props.type === 'checkbox');
+    const reopen = elements.find(element => element.type === 'button' && element.props['aria-label'] === 'Reopen Completed lab check');
+
+    expect(checkbox?.props.disabled).toBe(true);
+    expect(reopen?.props.disabled).toBe(true);
+    checkbox?.props.onChange();
+    reopen?.props.onClick();
+    expect(onToggleTaskStatus).not.toHaveBeenCalled();
+  });
+
+  it('keeps the original fully interactive behavior by default', () => {
+    const markup = renderToStaticMarkup(React.createElement(TasksTab, taskProps()));
+
+    expect(markup).toContain('Schedule Cellar Task');
+    expect(markup).toContain('Assign Task Directive');
+    expect(markup).toContain('Delete Pending pump-over');
+    expect(markup).toContain('Delete Completed lab check');
+    expect(markup).toContain('Mark Pending pump-over completed');
+    expect(markup).not.toContain('cannot be updated by your role');
+  });
+});

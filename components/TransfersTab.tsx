@@ -33,13 +33,17 @@ interface Props {
   clearPrefilled?: () => void;
   pastTransfers: CellarTransferRecord[];
   onUpdateTransfers: (transfers: CellarTransferRecord[]) => void;
+  canExecuteTransfer?: boolean;
+  canSanitizeVessels?: boolean;
+  canRollbackTransfer?: boolean;
 }
 
 type TransferRecord = CellarTransferRecord;
 
 export default function TransfersTab({ 
   lang, vessels, lots, onUpdateVessels, onUpdateLots, 
-  prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers
+  prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers,
+  canExecuteTransfer = true, canSanitizeVessels = true, canRollbackTransfer = true,
 }: Props) {
   const t = translations[lang];
 
@@ -140,6 +144,7 @@ export default function TransfersTab({
   // Execute transfer state
   const handleExecuteTransfer = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canExecuteTransfer) return;
     if (!sourceVessel || !destVessel) return;
     if (sourceIsEmpty || sourceHasInsufficient || destWillOverflow) return;
 
@@ -268,6 +273,7 @@ export default function TransfersTab({
 
   // Quick sanitation of vessels
   const handleSanitizeVessel = (id: string, stage: 'clean' | 'sterilized') => {
+    if (!canSanitizeVessels) return;
     const updated = vessels.map(v => {
       if (v.id === id) {
         return {
@@ -283,6 +289,7 @@ export default function TransfersTab({
 
   // Undo / Rollback a transfer log entry (for winemaker convenience if typo was made)
   const handleRollbackTransfer = (record: TransferRecord) => {
+    if (!canRollbackTransfer) return;
     const confirmRollback = window.confirm(
       `Do you want to ROLLBACK the transfer of ${record.volume}L from ${record.sourceId} to ${record.destId}? This will attempt to restore previous volume levels in the vessels.`
     );
@@ -531,6 +538,24 @@ export default function TransfersTab({
       .sort((a, b) => b.score - a.score);
   }, [sourceId, sourceVessel, vessels, lots]);
 
+  const restrictedActionLabels = lang === 'ka'
+    ? [
+        !canExecuteTransfer && 'ტრანსფერის შესრულება',
+        !canSanitizeVessels && 'ჭურჭლის სანიტარიზაცია',
+        !canRollbackTransfer && 'ტრანსფერის ჩანაწერის დაბრუნება',
+      ].filter((label): label is string => Boolean(label))
+    : [
+        !canExecuteTransfer && 'initiate transfers',
+        !canSanitizeVessels && 'sanitize vessels',
+        !canRollbackTransfer && 'roll back transfer records',
+      ].filter((label): label is string => Boolean(label));
+  const restrictedActionsText = lang === 'ka' || restrictedActionLabels.length < 2
+    ? restrictedActionLabels.join(', ')
+    : restrictedActionLabels.length === 2
+      ? `${restrictedActionLabels[0]} or ${restrictedActionLabels[1]}`
+      : `${restrictedActionLabels.slice(0, -1).join(', ')}, or ${restrictedActionLabels.at(-1)}`;
+  const isTransferReadOnly = !canExecuteTransfer && !canSanitizeVessels && !canRollbackTransfer;
+
   return (
     <div className="space-y-6 text-stone-850">
       
@@ -546,6 +571,24 @@ export default function TransfersTab({
           </p>
         </div>
       </div>
+
+      {restrictedActionLabels.length > 0 && (
+        <div role="status" className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+          <div>
+            <p className="text-xs font-bold">
+              {lang === 'ka'
+                ? (isTransferReadOnly ? 'ტრანსფერებზე მხოლოდ ნახვის წვდომა' : 'ტრანსფერის მოქმედებები შეზღუდულია')
+                : (isTransferReadOnly ? 'Read-only transfer access' : 'Limited transfer actions')}
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-amber-900">
+              {lang === 'ka'
+                ? `შეგიძლიათ ნახოთ რეკომენდაციები და გადაადგილების ისტორია, მაგრამ თქვენი როლი არ გაძლევთ უფლებას: ${restrictedActionsText}.`
+                : `You can review recommendations and movement history, but your role cannot ${restrictedActionsText}.`}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
@@ -659,7 +702,8 @@ export default function TransfersTab({
           </div>
 
           {/* Quick sanitization list */}
-          <div className="bg-amber-50/50 p-4 border border-[#e8dfd5] rounded-xl space-y-2">
+          {canSanitizeVessels && (
+            <div className="bg-amber-50/50 p-4 border border-[#e8dfd5] rounded-xl space-y-2">
             <h4 className="text-[10px] font-mono font-bold uppercase text-amber-955 flex items-center gap-1">
               <Compass className="w-3.5 h-3.5 text-amber-600 animate-spin" />
               Quick Sanitization Controls
@@ -691,7 +735,8 @@ export default function TransfersTab({
                 <p className="text-[10px] text-slate-400 italic text-center p-2">All empty tanks are already clean or sterilized!</p>
               )}
             </div>
-          </div>
+            </div>
+          )}
 
         </div>
 
@@ -731,7 +776,11 @@ export default function TransfersTab({
                         <span className="text-[8.5px] font-mono font-black text-[#801323] dark:text-amber-400 uppercase bg-rose-50 dark:bg-stone-900 border border-rose-100 dark:border-stone-800 px-2 py-0.5 rounded">
                           {lang === 'ka' ? rec.badgeKa : rec.badge}
                         </span>
-                        <span className="text-[9px] text-slate-400 font-bold font-mono group-hover:text-[#801323]">Autofill ⚡</span>
+                        <span className="text-[9px] text-slate-400 font-bold font-mono group-hover:text-[#801323]">
+                          {canExecuteTransfer
+                            ? (lang === 'ka' ? 'ავტოშევსება ⚡' : 'Autofill ⚡')
+                            : (lang === 'ka' ? 'ნახვა' : 'Review')}
+                        </span>
                       </div>
                       <h4 className="text-[11px] font-bold text-stone-900 dark:text-amber-100 leading-tight">
                         {lang === 'ka' ? rec.titleKa : rec.title}
@@ -813,7 +862,8 @@ export default function TransfersTab({
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
             
             {/* Controller main inputs */}
-            <div className="md:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+            {canExecuteTransfer && (
+              <div className="md:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
               <h3 className="text-sm font-serif font-bold text-[#4e0e15] border-b pb-2 flex items-center gap-1.5">
                 <Compass className="w-4 h-4 text-[#801323]" /> Racking & Blending Form
               </h3>
@@ -917,10 +967,11 @@ export default function TransfersTab({
                 </div>
               )}
 
-            </div>
+              </div>
+            )}
 
             {/* Safety parameters & Blending calculations panel */}
-            <div className="md:col-span-5 space-y-4">
+            <div className={`${canExecuteTransfer ? 'md:col-span-5' : 'md:col-span-12'} space-y-4`}>
               
               <div className="bg-[#FAF8F5] p-4 border border-stone-200 rounded-xl space-y-4">
                 <h4 className="text-xs font-mono font-bold uppercase text-stone-700 tracking-wider">Safety & Compatibility Check</h4>
@@ -1030,13 +1081,15 @@ export default function TransfersTab({
                     <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
                       <User className="w-3.5 h-3.5" /> {record.operator}
                     </span>
-                    <button
-                      title="Rollback / Undo Movement"
-                      onClick={() => handleRollbackTransfer(record)}
-                      className="p-1.5 hover:bg-rose-50 rounded text-slate-300 hover:text-red-650 transition-colors cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {canRollbackTransfer && (
+                      <button
+                        title="Rollback / Undo Movement"
+                        onClick={() => handleRollbackTransfer(record)}
+                        className="p-1.5 hover:bg-rose-50 rounded text-slate-300 hover:text-red-650 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

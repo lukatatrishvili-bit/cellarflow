@@ -1052,7 +1052,14 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
   return (
     <div className="space-y-6">
-      {loading && !weatherData ? (
+      {blocks.length === 0 ? (
+        <div className="bg-white border border-amber-200 rounded-3xl p-8 text-center text-stone-700 flex flex-col items-center gap-3">
+          <AlertTriangle className="w-8 h-8 text-amber-600" />
+          <div>
+            <h3 className="font-bold text-sm">{t.no_blocks}</h3>
+          </div>
+        </div>
+      ) : loading && !weatherData ? (
         <div className="bg-white border border-[#e8dfd5] rounded-3xl p-12 text-center text-stone-600 font-medium animate-pulse flex flex-col items-center gap-3">
           <RotateCw className="w-10 h-10 text-emerald-800 animate-spin" />
           <p className="text-xs font-semibold">{t.fetching}</p>
@@ -1985,14 +1992,11 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
               </div>
             </div>
 
-            {/* 5. WEATHER EXPLORER — real data for any date & location (Open-Meteo) */}
-            <div className="lg:col-span-3">
-              <WeatherExplorer lang={lang} blocks={blocks} />
-            </div>
-
           </div>
       )}
 
+      {/* 5. WEATHER EXPLORER — real data for any date & location (Open-Meteo) */}
+      <WeatherExplorer lang={lang} blocks={blocks} />
     </div>
   );
 }

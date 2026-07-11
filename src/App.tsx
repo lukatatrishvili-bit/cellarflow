@@ -11,7 +11,15 @@ import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
 import { usePerformanceManager } from '../hooks/usePerformanceManager';
 import { useFocusTrap } from '../components/useFocusTrap';
-import { canAccess, type PermissionModule } from '../server/permissions';
+import { canAccess } from '../server/permissions';
+import { parseAuthAccessLink } from '../lib/authAccess';
+import { localizedRoleLabel } from '../lib/roleLabels';
+import {
+  canViewAppDestination,
+  firstVisibleWineryTab,
+  permissionModuleFor,
+} from '../lib/navigationPermissions';
+import { cellarWorkflowPermissions } from '../lib/workflowPermissions';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -50,6 +58,11 @@ const GlobalCommandPalette = lazyRetry(() => import('../components/GlobalCommand
 import AuroraBackdrop from '../components/AuroraBackdrop';
 import SyncStatus from '../components/SyncStatus';
 import InstallButton from '../components/InstallButton';
+import AuthAccountFlows, {
+  type AuthAccountFlow,
+  type AuthenticatedStateNotice,
+  type ReturnToSignInContext,
+} from '../components/AuthAccountFlows';
 
 // Core Lucide Icons mapping
 import {
@@ -90,7 +103,9 @@ import {
   RefreshCw,
   Search,
   PlugZap,
-  BadgeCheck
+  BadgeCheck,
+  Settings,
+  Menu
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -101,41 +116,26 @@ function ModuleLoader() {
   );
 }
 
-function permissionModuleFor(moduleId: string, tabId?: string): PermissionModule {
-  if (moduleId === 'gvino') {
-    switch (tabId) {
-      case 'intake': return 'grape_intake';
-      case 'lots':
-      case 'lineage': return 'lots';
-      case 'vessels':
-      case 'qvevri': return 'vessels';
-      case 'operations': return 'operations';
-      case 'transfers': return 'transfers';
-      case 'fermentation': return 'fermentation';
-      case 'labs':
-      case 'calculators': return 'lab';
-      case 'bottling': return 'bottling';
-      case 'inventory': return 'inventory';
-      case 'tasks':
-      case 'ai': return 'tasks';
-      case 'notes': return 'notes';
-      default: return 'reports';
-    }
+const PENDING_INVITATION_TOKEN_KEY = 'vinos_pending_invitation_token';
+
+interface InitialAuthLinkContext {
+  flow: AuthAccountFlow | null;
+  resetToken: string;
+  username: string;
+  invitationToken: string;
+}
+
+function readInitialAuthLinkContext(): InitialAuthLinkContext {
+  if (typeof window === 'undefined') {
+    return { flow: null, resetToken: '', username: '', invitationToken: '' };
   }
-  const moduleMap: Record<string, PermissionModule> = {
-    portal: 'reports',
-    vazi: 'vineyard',
-    docs: 'official_docs',
-    certification: 'certification',
-    audit: 'audit',
-    costs: 'costs',
-    storage: 'storage',
-    sales: 'sales',
-    analytics: 'reports',
-    integrations: 'company_profile',
-    settings: 'company_profile',
-  };
-  return moduleMap[moduleId] || 'reports';
+  let storedInvitationToken = '';
+  try {
+    storedInvitationToken = localStorage.getItem(PENDING_INVITATION_TOKEN_KEY) || '';
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+  return parseAuthAccessLink(window.location.pathname, window.location.search, storedInvitationToken);
 }
 
 export default function App() {
@@ -146,8 +146,77 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [initialAuthLinkContext] = useState<InitialAuthLinkContext>(readInitialAuthLinkContext);
+  const [authAccountFlow, setAuthAccountFlow] = useState<AuthAccountFlow | null>(initialAuthLinkContext.flow);
+  const [pendingInvitationToken, setPendingInvitationToken] = useState(initialAuthLinkContext.invitationToken);
   const aiDrawerRef = useRef<HTMLDivElement | null>(null);
   useFocusTrap(aiDrawerRef, { active: isAiDrawerOpen, onClose: () => setIsAiDrawerOpen(false) });
+
+  useEffect(() => {
+    document.documentElement.lang = state.lang === 'ka' ? 'ka' : 'en';
+    document.title = state.lang === 'ka' ? 'VinOS — მარნის მართვა' : 'VinOS — Winery Management';
+  }, [state.lang]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !initialAuthLinkContext.flow) return;
+    if (initialAuthLinkContext.invitationToken) {
+      try {
+        localStorage.setItem(PENDING_INVITATION_TOKEN_KEY, initialAuthLinkContext.invitationToken);
+      } catch {
+        // Continue without persistence when storage is unavailable.
+      }
+    }
+    window.history.replaceState(
+      {},
+      '',
+      initialAuthLinkContext.flow === 'reset-password' ? '/reset-password' : '/accept-invite',
+    );
+  }, [initialAuthLinkContext]);
+
+  const rememberInvitation = (token: string) => {
+    setPendingInvitationToken(token);
+    try {
+      localStorage.setItem(PENDING_INVITATION_TOKEN_KEY, token);
+    } catch {
+      // In-memory intent still works for the current page session.
+    }
+  };
+
+  const clearPendingInvitation = () => {
+    setPendingInvitationToken('');
+    try {
+      localStorage.removeItem(PENDING_INVITATION_TOKEN_KEY);
+    } catch {
+      // Nothing else is required when storage is unavailable.
+    }
+  };
+
+  const handleAuthFlowReturn = (context: ReturnToSignInContext) => {
+    if (context.flow === 'accept-invite') {
+      if (context.reason === 'authentication-required' && context.invitationToken) {
+        rememberInvitation(context.invitationToken);
+      } else if (context.reason === 'cancelled') {
+        clearPendingInvitation();
+      }
+    }
+    if (typeof window !== 'undefined') window.history.replaceState({}, '', '/');
+    setAuthAccountFlow(null);
+  };
+
+  const handleAuthFlowStateChange = (notice: AuthenticatedStateNotice) => {
+    if (notice.reason === 'authentication-required') {
+      rememberInvitation(notice.invitationToken);
+      setAuthAccountFlow(null);
+      if (typeof window !== 'undefined') window.history.replaceState({}, '', '/');
+      return;
+    }
+    clearPendingInvitation();
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({}, '', '/');
+      window.setTimeout(() => window.location.assign('/'), 650);
+    }
+  };
 
   // Onboarding wizard toggling
   useEffect(() => {
@@ -239,6 +308,23 @@ export default function App() {
 
   // Conflict resolution choice state
   const [resolutions, setResolutions] = useState<Record<string, 'local' | 'server'>>({});
+
+  // Nav bar: which dropdown is open — a module-group id, 'settings', 'mobile', or null.
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const navRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!openMenu) return;
+    const onPointer = (e: MouseEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) setOpenMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenMenu(null); };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [openMenu]);
 
   // Latest tasks are read through a ref so the poller below doesn't restart
   // (and immediately re-fetch) every time the tasks array changes. Re-checking
@@ -407,23 +493,28 @@ export default function App() {
       ],
     },
   ];
-  const GVINO_TAB_IDS = ['intake', 'lots', 'lineage', 'vessels', 'qvevri', 'operations', 'transfers', 'fermentation', 'labs', 'calculators', 'bottling', 'inventory', 'tasks', 'ai', 'notes'];
-  const canViewModule = (moduleId: string, tabId?: string) => {
-    // Personal surfaces every authenticated role may open; admin-only content
-    // inside them stays gated server-side (e.g. /api/integrations is admin-only).
-    if (moduleId === 'portal' || moduleId === 'settings') return true;
-    // The gvino container (and its aggregate dashboard tab) is visible when the
-    // role can view ANY cellar tab. Checking the bare container id mapped it to
-    // 'reports', which hid the entire Cellar module from Winemaker, Cellar
-    // Worker, and Lab Technician — the roles that live in the cellar.
-    if (moduleId === 'gvino' && (tabId === undefined || tabId === 'dashboard')) {
-      return GVINO_TAB_IDS.some(tab => canAccess(state.currentUser.role, permissionModuleFor('gvino', tab), 'view'));
-    }
-    return canAccess(state.currentUser.role, permissionModuleFor(moduleId, tabId), 'view');
-  };
+  const canViewModule = (moduleId: string, tabId?: string) => (
+    canViewAppDestination(state.currentUser.role, moduleId, tabId)
+  );
+  const accessibleWineryTabGroups = wineryTabGroups
+    .map((group) => ({
+      ...group,
+      tabs: group.tabs.filter((tab) => canViewModule('gvino', tab.id)),
+    }))
+    .filter((group) => group.tabs.length > 0);
+  const cellarPermissions = useMemo(
+    () => cellarWorkflowPermissions(state.currentUser.role),
+    [state.currentUser.role],
+  );
   const activePermissionModule = permissionModuleFor(state.activeModule, state.activeTab);
   const canManageCurrentArea = canAccess(state.currentUser.role, activePermissionModule, 'create')
     || canAccess(state.currentUser.role, activePermissionModule, 'update');
+  const shouldShowReadOnlyNotice = state.isLoggedIn
+    && canViewModule(state.activeModule, state.activeTab)
+    && !canManageCurrentArea
+    && state.activeModule !== 'portal'
+    && state.activeModule !== 'settings'
+    && !(state.activeModule === 'gvino' && state.activeTab === 'dashboard');
   const moduleGroups = [
     {
       id: 'dashboard',
@@ -496,6 +587,13 @@ export default function App() {
   useEffect(() => {
     if (!state.isLoggedIn) return;
     if (canViewModule(state.activeModule, state.activeTab)) return;
+    if (state.activeModule === 'gvino') {
+      const fallbackTab = firstVisibleWineryTab(state.currentUser.role);
+      if (fallbackTab) {
+        state.setActiveTab(fallbackTab);
+        return;
+      }
+    }
     state.setActiveModule((moduleGroups[0]?.primary || 'portal') as any);
   }, [state.isLoggedIn, state.currentUser.role, state.activeModule, state.activeTab]);
 
@@ -506,6 +604,12 @@ export default function App() {
     }
   };
   const handleNavigate = (target: { module: string; tab?: string }) => {
+    if (!canViewModule(target.module, target.tab)) {
+      state.setToastMessage(state.lang === 'ka'
+        ? 'თქვენს როლს ამ განყოფილებაზე წვდომა არ აქვს.'
+        : 'Your workspace role does not have access to that area.');
+      return;
+    }
     state.setActiveModule(target.module as any);
     if (target.tab) state.setActiveTab(target.tab);
   };
@@ -683,6 +787,7 @@ export default function App() {
             tasks={state.tasks}
             orders={state.salesOrders}
             dispatches={state.salesDispatches}
+            role={state.currentUser.role}
             setActiveModule={(moduleId) => state.setActiveModule(moduleId as any)}
             setActiveTab={state.setActiveTab}
             setPassportLotId={state.setPassportLotId}
@@ -714,92 +819,261 @@ export default function App() {
         className="sticky top-3 z-40"
       >
       <header
+        ref={navRef}
         style={{
           transform: showHeader ? 'translateY(0)' : 'translateY(-130%)',
           opacity: showHeader ? 1 : 0,
           pointerEvents: showHeader ? 'auto' : 'none',
           transition: 'transform 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease',
         }}
-        className="relative max-w-[1720px] w-full mx-auto mt-4 px-6 md:px-8 py-3.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
+        className="relative max-w-[1720px] w-full mx-auto mt-4 px-3 md:px-4 py-2 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex items-center gap-2 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
         {/* Luxury Top Wine Edge Border */}
         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-[#801323] via-[#4e0e15] to-[#c5a059]" />
 
-        {/* Brand Crest */}
-        <div className="flex items-center gap-3">
-          <motion.div 
-            whileHover={{ scale: 1.08, rotate: [0, -10, 10, 0] }}
-            onClick={() => state.setActiveModule('portal')}
-            className="w-10 h-10 bg-gradient-to-br from-[#4e0e15] to-[#210204] text-amber-100 rounded-xl flex items-center justify-center shadow-md font-serif font-black text-xl border border-[#801323] cursor-pointer"
-          >
-            🍇
-          </motion.div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-serif tracking-[0.25em] text-[#1b1715] font-black dark:text-amber-100">VinOS</h1>
-            </div>
-            <p className="text-[10px] text-[#8a6425] dark:text-[#c5a059] font-mono tracking-widest font-extrabold uppercase mt-0.5">{state.companyProfile.companyName}</p>
-          </div>
-        </div>
+        {/* Brand Crest — compact */}
+        <button
+          onClick={() => state.setActiveModule('portal')}
+          className="shrink-0 w-9 h-9 bg-gradient-to-br from-[#4e0e15] to-[#210204] text-amber-100 rounded-xl flex items-center justify-center shadow-md font-serif font-black text-lg border border-[#801323] cursor-pointer"
+          title="VinOS"
+          aria-label="VinOS home"
+        >
+          🍇
+        </button>
+        <span className="hidden xl:block text-sm font-serif tracking-[0.22em] text-[#1b1715] font-black dark:text-amber-100 shrink-0">VinOS</span>
 
-        {/* Toolbar Controls: Language, Dark Mode, Notifications, and Profile */}
-        <div className="flex items-center gap-3 justify-end">
-          {/* Connection + offline-queue status */}
+        {/* LEFT — module navigation */}
+        {state.isLoggedIn && (
+          <>
+            {/* Desktop: inline module tabs, with dropdown submenus for grouped areas */}
+            <nav aria-label={state.lang === 'ka' ? 'მოდულების ნავიგაცია' : 'Module navigation'} className="hidden md:flex items-center gap-0.5 min-w-0">
+              {moduleGroups.filter(g => g.id !== 'settings').map(group => {
+                const Icon = group.icon;
+                const isActive = activeModuleGroup.id === group.id;
+                const hasSub = group.modules.length > 1;
+                const tabClass = `relative px-3 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${isActive ? 'text-amber-50' : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 dark:text-stone-300 dark:hover:bg-stone-800'}`;
+                const pill = isActive ? (
+                  <motion.span layoutId="module-nav-pill" className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md" transition={{ type: 'spring', stiffness: 480, damping: 38 }} />
+                ) : null;
+                if (!hasSub) {
+                  return (
+                    <button key={group.id} onClick={() => switchModule(group.primary)} title={group.label} aria-label={group.label} aria-current={isActive ? 'page' : undefined} className={tabClass}>
+                      {pill}
+                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
+                      <span className="relative z-10 hidden lg:inline">{group.label}</span>
+                    </button>
+                  );
+                }
+                return (
+                  <div key={group.id} className="relative">
+                    <button
+                      onClick={() => setOpenMenu(openMenu === group.id ? null : group.id)}
+                      title={group.label}
+                      aria-label={group.label}
+                      aria-haspopup="menu"
+                      aria-expanded={openMenu === group.id}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={tabClass}
+                    >
+                      {pill}
+                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
+                      <span className="relative z-10 hidden lg:inline">{group.label}</span>
+                      <ChevronDown className={`relative z-10 w-3 h-3 transition-transform ${openMenu === group.id ? 'rotate-180' : ''} ${isActive ? 'text-amber-200' : 'text-stone-400'}`} />
+                    </button>
+                    <AnimatePresence>
+                      {openMenu === group.id && (
+                        <motion.div
+                          role="menu"
+                          initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute left-0 top-full mt-2 z-50 min-w-[190px] p-1 bg-white border border-stone-200 rounded-xl shadow-xl dark:bg-[#1a1113] dark:border-stone-800"
+                        >
+                          {group.modules.map(mod => {
+                            const ModIcon = mod.icon;
+                            const modActive = state.activeModule === mod.id;
+                            return (
+                              <button
+                                key={mod.id}
+                                role="menuitem"
+                                onClick={() => { switchModule(mod.id); setOpenMenu(null); }}
+                                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold tracking-wide cursor-pointer transition-colors ${modActive ? 'bg-[#4e0e15] text-amber-50' : 'text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800'}`}
+                              >
+                                <ModIcon className={`w-3.5 h-3.5 ${modActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
+                                {mod.label}
+                              </button>
+                            );
+                          })}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })}
+            </nav>
+
+            {/* Mobile: single Menu button opening the full module list */}
+            <div className="relative md:hidden">
+              <button
+                onClick={() => setOpenMenu(openMenu === 'mobile' ? null : 'mobile')}
+                aria-label={state.lang === 'ka' ? 'მენიუ' : 'Menu'}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === 'mobile'}
+                className="min-w-[40px] min-h-[40px] flex items-center justify-center bg-stone-50 border border-stone-200 text-[#4e0e15] rounded-xl cursor-pointer dark:bg-stone-900 dark:border-stone-800 dark:text-amber-300"
+              >
+                <Menu className="w-4 h-4" />
+              </button>
+              <AnimatePresence>
+                {openMenu === 'mobile' && (
+                  <motion.div
+                    role="menu"
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute left-0 top-full mt-2 z-50 w-64 max-h-[70vh] overflow-y-auto p-1.5 bg-white border border-stone-200 rounded-xl shadow-xl dark:bg-[#1a1113] dark:border-stone-800"
+                  >
+                    {moduleGroups.filter(g => g.id !== 'settings').map(group => {
+                      const Icon = group.icon;
+                      const hasSub = group.modules.length > 1;
+                      if (!hasSub) {
+                        const modActive = state.activeModule === group.primary;
+                        return (
+                          <button key={group.id} role="menuitem" onClick={() => { switchModule(group.primary); setOpenMenu(null); }} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide cursor-pointer transition-colors ${modActive ? 'bg-[#4e0e15] text-amber-50' : 'text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800'}`}>
+                            <Icon className={`w-4 h-4 ${modActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
+                            {group.label}
+                          </button>
+                        );
+                      }
+                      return (
+                        <div key={group.id} className="mt-1 first:mt-0">
+                          <div className="flex items-center gap-2 px-3 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-stone-500 dark:text-stone-400">
+                            <Icon className="w-3 h-3" />{group.label}
+                          </div>
+                          {group.modules.map(mod => {
+                            const ModIcon = mod.icon;
+                            const modActive = state.activeModule === mod.id;
+                            return (
+                              <button key={mod.id} role="menuitem" onClick={() => { switchModule(mod.id); setOpenMenu(null); }} className={`w-full flex items-center gap-2.5 pl-6 pr-3 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${modActive ? 'bg-[#4e0e15] text-amber-50' : 'text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800'}`}>
+                                <ModIcon className={`w-3.5 h-3.5 ${modActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
+                                {mod.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </>
+        )}
+
+        {/* RIGHT — status, search, notifications, settings, logout */}
+        <div className="flex items-center gap-1.5 ml-auto shrink-0">
           <SyncStatus lang={state.lang} />
 
           {state.isLoggedIn && (
             <button
               type="button"
               onClick={() => setIsCommandOpen(true)}
-              className="hidden xl:flex items-center gap-2 min-w-[220px] rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-left text-[11px] font-semibold text-stone-500 shadow-2xs transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-amber-100"
+              className="hidden xl:flex items-center gap-2 w-40 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-left text-[11px] font-semibold text-stone-500 shadow-2xs transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-amber-100"
               title="Search everything"
             >
               <Search className="w-3.5 h-3.5 text-[#4e0e15] dark:text-amber-300" />
-              <span className="flex-1 truncate">Search wine, vessel, customer...</span>
+              <span className="flex-1 truncate">Search…</span>
               <kbd className="rounded-md border border-stone-200 bg-white px-1.5 py-0.5 text-[9px] font-black text-stone-400 dark:bg-stone-950 dark:border-stone-700">⌘K</kbd>
             </button>
           )}
 
-          {/* Language Switcher */}
-          <div className="flex items-center gap-1 bg-stone-50 border border-stone-200 px-2.5 py-1 rounded-xl shadow-2xs dark:bg-stone-900 dark:border-stone-800">
-            <Languages className="w-3.5 h-3.5 text-stone-550 shrink-0" />
-            <select
-              value={state.lang}
-              aria-label={state.lang === 'ka' ? 'ენის არჩევა' : 'Select language'}
-              onChange={(e) => {
-                const nextLang = e.target.value as Language;
-                state.setLang(nextLang);
-                localStorage.setItem('vinea_lang', nextLang);
-              }}
-              className="text-[10px] font-mono font-bold bg-transparent border-0 outline-none text-stone-700 w-14 cursor-pointer"
-            >
-              <option value="en">EN</option>
-              <option value="ka">KA</option>
-            </select>
-          </div>
-
-          {/* PWA install (only renders when installable) */}
           <InstallButton lang={state.lang} />
 
-          {/* Dark Mode Switcher */}
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className="p-2 min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 flex items-center justify-center bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
-            title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-          >
-            {darkMode ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5" />}
-          </button>
+          {state.isLoggedIn && <NotificationCenter alerts={alerts} onSelect={handleSelectAlert} lang={state.lang} />}
 
-          {/* Alerts Center */}
-          {state.isLoggedIn && <NotificationCenter alerts={alerts} onSelect={handleSelectAlert} />}
+          {/* Settings menu — theme, language, settings/integration links, hide bar */}
+          {state.isLoggedIn && (
+            <div className="relative">
+              <button
+                onClick={() => setOpenMenu(openMenu === 'settings' ? null : 'settings')}
+                aria-label={state.lang === 'ka' ? 'პარამეტრები' : 'Settings menu'}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === 'settings'}
+                className={`min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 md:p-2 flex items-center justify-center border rounded-xl cursor-pointer transition-colors ${openMenu === 'settings' ? 'bg-[#4e0e15] border-[#801323] text-amber-100' : 'bg-stone-50 border-stone-200 text-stone-600 hover:text-[#4e0e15] hover:bg-stone-100 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-300'}`}
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+              <AnimatePresence>
+                {openMenu === 'settings' && (
+                  <motion.div
+                    role="menu"
+                    initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute right-0 top-full mt-2 z-50 w-60 p-1.5 bg-white border border-stone-200 rounded-xl shadow-xl dark:bg-[#1a1113] dark:border-stone-800"
+                  >
+                    {/* Theme */}
+                    <button
+                      role="menuitem"
+                      onClick={() => setDarkMode(!darkMode)}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-[#4e0e15]" />}
+                        {darkMode ? (state.lang === 'ka' ? 'ნათელი თემა' : 'Light theme') : (state.lang === 'ka' ? 'მუქი თემა' : 'Dark theme')}
+                      </span>
+                    </button>
+
+                    {/* Language */}
+                    <div className="px-3 py-2">
+                      <div className="flex items-center gap-2 mb-1.5 text-[9px] font-black uppercase tracking-widest text-stone-500 dark:text-stone-400">
+                        <Languages className="w-3 h-3" />{state.lang === 'ka' ? 'ენა' : 'Language'}
+                      </div>
+                      <div className="flex gap-1">
+                        {(['en', 'ka'] as const).map(code => (
+                          <button
+                            key={code}
+                            role="menuitemradio"
+                            aria-checked={state.lang === code}
+                            onClick={() => { state.setLang(code); localStorage.setItem('vinea_lang', code); }}
+                            className={`flex-1 px-2 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wide cursor-pointer transition-colors ${state.lang === code ? 'bg-[#4e0e15] text-amber-50' : 'bg-stone-100 text-stone-600 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-300'}`}
+                          >
+                            {code === 'en' ? 'English' : 'ქართული'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="my-1 border-t border-stone-200/70 dark:border-stone-800" />
+
+                    {canViewModule('settings') && (
+                      <button role="menuitem" onClick={() => { switchModule('settings'); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
+                        <ClipboardList className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />{t.nav_settings || 'Settings'}
+                      </button>
+                    )}
+                    {canViewModule('integrations') && (
+                      <button role="menuitem" onClick={() => { switchModule('integrations'); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
+                        <PlugZap className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />Integration Hub
+                      </button>
+                    )}
+
+                    <div className="my-1 border-t border-stone-200/70 dark:border-stone-800" />
+                    <button role="menuitem" onClick={() => { setHeaderHidden(true); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
+                      <ChevronUp className="w-4 h-4 text-stone-400" />{state.lang === 'ka' ? 'ზოლის დამალვა' : 'Hide menu bar'}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
 
           {state.isLoggedIn && (
-            <div className="flex items-center gap-3.5 pl-3.5 border-l border-stone-200 dark:border-stone-800">
-              <div className="text-right hidden sm:block">
+            <div className="flex items-center gap-2 pl-1.5 md:pl-2.5 md:border-l border-stone-200 dark:border-stone-800">
+              <div className="text-right hidden lg:block">
                 <span className="font-bold text-xs text-stone-850 block leading-tight dark:text-amber-100">{state.currentUser.fullName}</span>
                 <span className="text-[8px] uppercase font-mono text-[#8a6425] dark:text-[#c5a059] font-extrabold block mt-0.5 tracking-wider">
-                  {state.currentUser.role === 'Viticulturist' ? (t.signin_role_viticulturist || 'Lead Viticulturist') :
-                   state.currentUser.role === 'Winemaker' ? (t.signin_role_winemaker || 'Head Winemaker') :
-                   (t.signin_role_owner || 'Owner & ERP Admin')}
+                  {localizedRoleLabel(state.currentUser.role, state.lang)}
                 </span>
               </div>
               <motion.button
@@ -809,103 +1083,37 @@ export default function App() {
                   state.handleAuthLogout();
                   state.setActiveModule('portal');
                 }}
-                className="bg-[#faf8f6] hover:bg-rose-50/50 border border-stone-200 text-[#801323] px-3.5 py-2 text-[10px] font-mono font-extrabold rounded-xl cursor-pointer transition-all duration-150 uppercase tracking-wider shadow-2xs dark:bg-stone-900 dark:border-stone-800"
+                className="bg-[#faf8f6] hover:bg-rose-50/50 border border-stone-200 text-[#801323] px-3 py-2 text-[10px] font-mono font-extrabold rounded-xl cursor-pointer transition-all duration-150 uppercase tracking-wider shadow-2xs dark:bg-stone-900 dark:border-stone-800 dark:text-rose-300"
                 title="Log Out"
               >
                 {t.nav_logout || 'Logout'}
               </motion.button>
             </div>
           )}
-
-          {/* Retract the header */}
-          <button
-            onClick={() => setHeaderHidden(true)}
-            className="p-2 min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 flex items-center justify-center bg-stone-50 border border-stone-200 text-stone-550 rounded-xl hover:text-[#4e0e15] hover:bg-stone-100 transition-colors cursor-pointer dark:bg-stone-900 dark:border-stone-800"
-            title={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
-            aria-label={state.lang === 'ka' ? 'მენიუს დამალვა' : 'Hide menu'}
-          >
-            <ChevronUp className="w-3.5 h-3.5" />
-          </button>
         </div>
       </header>
-
-      {/* 1b. Module Nav Window — its own floating glass bar, detached from the
-          header. Shares the sticky wrapper so both retract together. */}
-      {state.isLoggedIn && (
-        <nav
-          style={{
-            transform: showHeader ? 'translateY(0)' : 'translateY(-130%)',
-            opacity: showHeader ? 1 : 0,
-            pointerEvents: showHeader ? 'auto' : 'none',
-            transition: 'transform 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease',
-          }}
-          aria-label={state.lang === 'ka' ? 'მოდულების ნავიგაცია' : 'Module navigation'}
-          className="relative max-w-[1720px] w-full mx-auto mt-2 px-3 py-1.5 bg-white/85 backdrop-blur-xl border border-stone-200/80 rounded-2xl shadow-[0_10px_32px_-14px_rgba(78,14,21,0.22)] flex flex-col gap-1 text-xs font-semibold dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_10px_32px_-12px_rgba(0,0,0,0.6)]"
-        >
-          <div className="flex flex-wrap items-center justify-center gap-1">
-            {moduleGroups.map(group => {
-              const Icon = group.icon;
-              const isActive = activeModuleGroup.id === group.id;
-              return (
-                <button
-                  key={group.id}
-                  onClick={() => switchModule(group.primary)}
-                  title={group.label}
-                  aria-label={group.label}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`relative px-3.5 py-2 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 justify-center md:justify-start rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${
-                    isActive
-                      ? 'text-amber-50'
-                      : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 dark:hover:bg-stone-800'
-                  }`}
-                >
-                  {isActive && (
-                    <motion.span
-                      layoutId="module-nav-pill"
-                      className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md"
-                      transition={{ type: 'spring', stiffness: 480, damping: 38 }}
-                    />
-                  )}
-                  <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15]'}`} />
-                  <span className="relative z-10 hidden md:inline">{group.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          {activeModuleGroup.modules.length > 1 && (
-            <div className="flex flex-wrap items-center justify-center gap-1 border-t border-stone-200/70 pt-1 dark:border-stone-800">
-              {activeModuleGroup.modules.map(mod => {
-                const Icon = mod.icon;
-                const isActive = state.activeModule === mod.id;
-                return (
-                  <button
-                    key={mod.id}
-                    onClick={() => switchModule(mod.id)}
-                    title={mod.label}
-                    className={`px-2.5 py-1 min-h-[40px] min-w-[40px] md:min-h-0 md:min-w-0 justify-center md:justify-start rounded-lg flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide cursor-pointer transition-colors ${
-                      isActive
-                        ? 'bg-white text-[#4e0e15] shadow-sm ring-1 ring-[#e8dfd5] dark:bg-stone-800 dark:text-amber-100 dark:ring-stone-700'
-                        : 'text-stone-500 hover:text-stone-900 hover:bg-white/70 dark:hover:bg-stone-800 dark:hover:text-amber-100'
-                    }`}
-                  >
-                    <Icon className="w-3 h-3" />
-                    <span className="hidden lg:inline">{mod.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </nav>
-      )}
-      {state.isLoggedIn && !canManageCurrentArea && (
-        <div className="relative max-w-[1720px] w-full mx-auto mt-2 px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[10px] font-mono font-bold uppercase tracking-wide text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-          View-only access in this area: {activePermissionModule.replace(/_/g, ' ')}
+      {shouldShowReadOnlyNotice && (
+        <div role="status" className="relative max-w-[1720px] w-full mx-auto mt-2 px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[10px] font-mono font-bold uppercase tracking-wide text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+          {state.lang === 'ka' ? 'ამ განყოფილებაში მხოლოდ ნახვა შეგიძლიათ' : 'View-only access in this area'}: {activePermissionModule.replace(/_/g, ' ')}
         </div>
       )}
       </motion.div>
 
       {/* 2. Main Shell Layout */}
-      {!state.isLoggedIn ? (
+      {authAccountFlow ? (
+        <div className="flex-1 flex items-center justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
+          <AuthAccountFlows
+            lang={state.lang === 'ka' ? 'ka' : 'en'}
+            flow={authAccountFlow}
+            resetToken={initialAuthLinkContext.resetToken}
+            username={initialAuthLinkContext.username}
+            invitationToken={pendingInvitationToken}
+            isAuthenticated={state.isLoggedIn}
+            onReturnToSignIn={handleAuthFlowReturn}
+            onAuthenticatedStateChange={handleAuthFlowStateChange}
+          />
+        </div>
+      ) : !state.isLoggedIn ? (
         <div className="flex-1 flex items-stretch justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
           <div className="w-full max-w-5xl my-auto grid lg:grid-cols-[1.1fr_1fr] rounded-3xl overflow-hidden shadow-[0_35px_90px_-30px_rgba(78,14,21,0.38)] border border-stone-200/70 bg-white animate-fade-in dark:border-stone-850 dark:bg-stone-950">
 
@@ -1329,20 +1537,38 @@ export default function App() {
 
                   <form onSubmit={async (e) => {
                     e.preventDefault();
+                    if (authSubmitting) return;
                     const fd = new FormData(e.currentTarget);
                     const rememberMe = fd.get('rememberMe') === 'true';
-                    const success = await state.handleAuthLogin(
-                      String(fd.get('identifier') || ''),
-                      String(fd.get('passcode') || ''),
-                      rememberMe
-                    );
-                    if (success) {
-                      state.setActiveModule('portal');
+                    setAuthSubmitting(true);
+                    try {
+                      const success = await state.handleAuthLogin(
+                        String(fd.get('identifier') || ''),
+                        String(fd.get('passcode') || ''),
+                        rememberMe
+                      );
+                      if (success) {
+                        if (pendingInvitationToken) {
+                          setAuthAccountFlow('accept-invite');
+                        } else {
+                          state.setActiveModule('portal');
+                        }
+                      }
+                    } finally {
+                      setAuthSubmitting(false);
                     }
-                  }} className="space-y-4">
+                  }} className="space-y-4" aria-busy={authSubmitting}>
+                    {pendingInvitationToken && (
+                      <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200" role="status">
+                        {state.lang === 'ka'
+                          ? 'შედით იმ ელფოსტით, რომელზეც სამუშაო სივრცის მოსაწვევი მიიღეთ.'
+                          : 'Sign in with the email address that received the workspace invitation.'}
+                      </p>
+                    )}
                     <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_username || 'Account Username / Email'}</label>
+                      <label htmlFor="auth-login-identifier" className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_username || 'Account Username / Email'}</label>
                       <input
+                        id="auth-login-identifier"
                         type="text"
                         name="identifier"
                         placeholder={state.lang === 'ka' ? 'მომხმარებელი ან ელ-ფოსტა' : 'username or email'}
@@ -1352,8 +1578,21 @@ export default function App() {
                       />
                     </div>
                     <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_passcode || 'Passcode'}</label>
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <label htmlFor="auth-login-passcode" className="text-[9px] uppercase font-mono font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_passcode || 'Passcode'}</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            state.setLoginError(null);
+                            setAuthAccountFlow('forgot-password');
+                          }}
+                          className="min-h-9 rounded-lg px-2 text-xs font-bold text-[#4e0e15] hover:bg-stone-100 hover:underline dark:text-amber-300 dark:hover:bg-stone-800"
+                        >
+                          {state.lang === 'ka' ? 'დაგავიწყდათ კოდი?' : 'Forgot passcode?'}
+                        </button>
+                      </div>
                       <input
+                        id="auth-login-passcode"
                         type="password"
                         name="passcode"
                         placeholder="••••••••"
@@ -1377,16 +1616,20 @@ export default function App() {
                     </div>
 
                     {state.loginError && (
-                      <p className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-1.5">
+                      <p className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-1.5" role="alert">
                         <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {state.loginError}
                       </p>
                     )}
 
                     <button
                       type="submit"
+                      disabled={authSubmitting}
                       className="w-full bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase tracking-widest py-3 rounded-xl cursor-pointer shadow-sm transition-all duration-155 text-xs mt-2"
                     >
-                      {t.signin_btn || 'Secure Portal Login'}
+                      {authSubmitting && <Loader2 className="mr-2 inline h-4 w-4 animate-spin" aria-hidden="true" />}
+                      {authSubmitting
+                        ? (state.lang === 'ka' ? 'შესვლა მიმდინარეობს…' : 'Signing in…')
+                        : (t.signin_btn || 'Secure Portal Login')}
                     </button>
 
                     {state.demoLoginEnabled && (
@@ -1688,7 +1931,7 @@ export default function App() {
                 onChange={(event) => state.setActiveTab(event.target.value)}
                 className="w-full border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm font-bold text-stone-800 dark:bg-stone-950 dark:border-stone-700 dark:text-stone-100"
               >
-                {wineryTabGroups.map((group) => (
+                {accessibleWineryTabGroups.map((group) => (
                   <optgroup key={group.label} label={group.label}>
                     {group.tabs.map((tab) => (
                       <option key={tab.id} value={tab.id}>{tab.label}</option>
@@ -1717,24 +1960,23 @@ export default function App() {
                     {urgentAlertCount > 0 ? `${urgentAlertCount} urgent` : 'steady'}
                   </span>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => state.setActiveTab('tasks')}
-                    className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300"
-                  >
-                    <span className="block text-stone-400">Tasks</span>
-                    <strong className="text-lg text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => state.setActiveTab('fermentation')}
-                    className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300"
-                  >
-                    <span className="block text-stone-400">Ferments</span>
-                    <strong className="text-lg text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
-                  </button>
-                </div>
+                {(canViewModule('gvino', 'tasks') || canViewModule('gvino', 'fermentation')) && (
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
+                    {canViewModule('gvino', 'tasks') && (
+                      <button type="button" onClick={() => state.setActiveTab('tasks')} className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
+                        <span className="block text-stone-400">Tasks</span>
+                        <strong className="text-lg text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
+                      </button>
+                    )}
+                    {canViewModule('gvino', 'fermentation') && (
+                      <button type="button" onClick={() => state.setActiveTab('fermentation')} className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
+                        <span className="block text-stone-400">Ferments</span>
+                        <strong className="text-lg text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
+                      </button>
+                    )}
+                  </div>
+                )}
+                {canViewModule('gvino', 'vessels') && (
                 <div className="mt-3">
                   <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
                     <span>Capacity</span>
@@ -1750,6 +1992,7 @@ export default function App() {
                     {occupiedTanksCount} occupied vessels · avg {averageOccupiedTemp} °C
                   </span>
                 </div>
+                )}
               </div>
             )}
 
@@ -1765,7 +2008,7 @@ export default function App() {
             </div>
 
             <div className="hidden lg:flex lg:flex-col gap-3 lg:overflow-visible">
-              {wineryTabGroups.map(group => (
+              {accessibleWineryTabGroups.map(group => (
                 <div key={group.label} className="space-y-1">
                   {!state.isSidebarCollapsed && (
                     <div className="px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
@@ -1803,6 +2046,13 @@ export default function App() {
 
           {/* Content Tabs Area */}
           <section className="flex-1 min-w-0 space-y-4">
+            {!canViewModule('gvino', state.activeTab) ? (
+              <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                {state.lang === 'ka'
+                  ? 'თქვენს როლს ამ განყოფილებაზე წვდომა არ აქვს. ხელმისაწვდომ განყოფილებაზე გადაგიყვანთ.'
+                  : 'Your workspace role cannot open this area. Redirecting to an available section.'}
+              </div>
+            ) : (
             <Suspense fallback={<ModuleLoader />}>
             
             {/* A. DASHBOARD TAB */}
@@ -1819,6 +2069,8 @@ export default function App() {
                 selectedTankId={state.selectedTankId}
                 setSelectedTankId={state.setSelectedTankId}
                 onToggleTaskStatus={state.handleToggleTaskStatus}
+                role={state.currentUser.role}
+                canUpdateTasks={canAccess(state.currentUser.role, 'tasks', 'update')}
                 setActiveTab={state.setActiveTab}
                 setCalculatorLotId={state.setCalculatorLotId}
                 setPrefilledTaskTitle={state.setPrefilledTaskTitle}
@@ -1835,6 +2087,8 @@ export default function App() {
                   vessels={state.vessels} 
                   lots={state.lots} 
                   onUpdateVessels={state.setVessels} 
+                  {...cellarPermissions.vessels}
+                  canExecuteTransfer={cellarPermissions.transfers.canExecuteTransfer}
                   onSelectTank={state.setSelectedTankId} 
                   selectedTankId={state.selectedTankId} 
                   setActiveTab={state.setActiveTab}
@@ -1854,6 +2108,7 @@ export default function App() {
                 cellarOps={state.cellarOps}
                 certificationRecords={state.certificationRecords}
                 onUpdateVessels={state.setVessels}
+                canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
                 setActiveTab={state.setActiveTab}
                 setSelectedTankId={state.setSelectedTankId}
                 setToastMessage={state.setToastMessage}
@@ -1883,6 +2138,8 @@ export default function App() {
                 lang={state.lang} 
                 lots={state.lots} 
                 onUpdateLots={state.setLots} 
+                canCreateLot={canAccess(state.currentUser.role, 'lots', 'create')}
+                canUpdateLot={canAccess(state.currentUser.role, 'lots', 'update')}
                 onOpenPassport={state.setPassportLotId} 
                 vessels={state.vessels}
                 labLogs={state.labLogs}
@@ -1939,6 +2196,7 @@ export default function App() {
                 lots={state.lots} 
                 onUpdateVessels={state.setVessels} 
                 onUpdateLots={state.setLots} 
+                {...cellarPermissions.transfers}
                 prefilledSourceId={state.prefilledSourceId}
                 prefilledDestId={state.prefilledDestId}
                 pastTransfers={state.transfers}
@@ -1959,6 +2217,7 @@ export default function App() {
                 fermLogs={state.fermLogs}
                 currentUser={state.currentUser}
                 setActiveTab={state.setActiveTab}
+                {...cellarPermissions.fermentation}
                 onUpdateLots={state.setLots}
                 onUpdateVessels={state.setVessels}
                 onUpdateFermLogs={state.setFermLogs}
@@ -1969,6 +2228,7 @@ export default function App() {
             {state.activeTab === 'labs' && (
               <LabsTab
                 lang={state.lang}
+                canCreateLabAnalysis={canAccess(state.currentUser.role, 'lab', 'create')}
                 lots={state.lots}
                 vessels={state.vessels}
                 labLogs={state.labLogs}
@@ -2004,6 +2264,7 @@ export default function App() {
             {state.activeTab === 'bottling' && (
               <BottlingTab
                 lang={state.lang}
+                {...cellarPermissions.bottling}
                 lots={state.lots}
                 onUpdateLots={state.setLots}
                 history={state.bottlingRuns}
@@ -2041,7 +2302,14 @@ export default function App() {
 
             {/* H. RAW INVENTORY STOCK */}
             {state.activeTab === 'inventory' && (
-              <InventoryTab inventory={state.inventory} onUpdateInventory={state.setInventory} />
+              <InventoryTab
+                lang={state.lang}
+                inventory={state.inventory}
+                onUpdateInventory={state.setInventory}
+                canCreateInventory={canAccess(state.currentUser.role, 'inventory', 'create')}
+                canUpdateInventory={canAccess(state.currentUser.role, 'inventory', 'update')}
+                canDeleteInventory={canAccess(state.currentUser.role, 'inventory', 'delete')}
+              />
             )}
 
             {/* I. AI ASSISTANT WINEMAKER */}
@@ -2082,6 +2350,9 @@ export default function App() {
                 onToggleTaskStatus={state.handleToggleTaskStatus}
                 onDeleteTask={state.handleDeleteTask}
                 onAddNewTask={state.handleAddNewTask}
+                canCreateTask={canAccess(state.currentUser.role, 'tasks', 'create')}
+                canUpdateTask={canAccess(state.currentUser.role, 'tasks', 'update')}
+                canDeleteTask={canAccess(state.currentUser.role, 'tasks', 'delete')}
                 prefilledTaskTitle={state.prefilledTaskTitle}
                 setPrefilledTaskTitle={state.setPrefilledTaskTitle}
                 prefilledTaskPriority={state.prefilledTaskPriority}
@@ -2099,10 +2370,13 @@ export default function App() {
                 notesList={state.notesList}
                 onAddNewNote={state.handleAddNewNote}
                 onDeleteNote={state.handleDeleteNote}
+                canCreateNote={canAccess(state.currentUser.role, 'notes', 'create')}
+                canDeleteNote={canAccess(state.currentUser.role, 'notes', 'delete')}
               />
             )}
 
             </Suspense>
+            )}
           </section>
 
         </main>
@@ -2581,6 +2855,7 @@ export default function App() {
             onToggleSanitation={state.handleToggleSanitation}
             onToggleCoolingJacket={state.handleToggleCoolingJacket}
             onUpdateVessels={state.setVessels}
+            canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
           />
         </Suspense>
       )}

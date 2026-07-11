@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import type { InventoryItem } from '../lib/wineryState';
+import type { Language } from '../lib/i18n';
 import { 
   Plus, 
   Trash2, 
@@ -24,11 +25,22 @@ import {
 } from 'lucide-react';
 
 interface Props {
+  lang?: Language;
   inventory: InventoryItem[];
   onUpdateInventory: (newInv: InventoryItem[]) => void;
+  canCreateInventory?: boolean;
+  canUpdateInventory?: boolean;
+  canDeleteInventory?: boolean;
 }
 
-export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
+export default function InventoryTab({
+  lang = 'en',
+  inventory,
+  onUpdateInventory,
+  canCreateInventory = true,
+  canUpdateInventory = true,
+  canDeleteInventory = true,
+}: Props) {
   // Load or initialize categories list
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('yeasts');
@@ -91,6 +103,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
   // Add a new material category
   const handleAddCategory = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateInventory) return;
     const cleanName = newCategoryName.trim().toLowerCase();
     if (!cleanName) return;
 
@@ -107,6 +120,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Delete a material category
   const handleDeleteCategory = (cat: string) => {
+    if (!canUpdateInventory) return;
     const confirmDelete = window.confirm(
       `Are you sure you want to remove the category "${cat.toUpperCase()}"? All materials inside will stay in the master database but their category association will be updated to "unassigned".`
     );
@@ -133,6 +147,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
   // Add new material/item
   const handleAddItem = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateInventory) return;
     if (!itemName.trim()) return;
 
     const newItem: InventoryItem = {
@@ -162,6 +177,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Save changes to edited item
   const handleSaveItemEdit = (id: string) => {
+    if (!canUpdateInventory) return;
     const updated = inventory.map(item => {
       if (item.id === id) {
         return {
@@ -183,6 +199,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Populate editor states
   const startEditingItem = (item: InventoryItem) => {
+    if (!canUpdateInventory) return;
     setEditingItemId(item.id);
     setEditName(item.name);
     setEditStock(item.stock);
@@ -195,6 +212,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Delete an item
   const handleDeleteItem = (id: string, name: string) => {
+    if (!canDeleteInventory) return;
     const confirmDelete = window.confirm(`Are you sure you want to delete "${name}" from your stockpile inventory? This action is irreversible.`);
     if (confirmDelete) {
       onUpdateInventory(inventory.filter(item => item.id !== id));
@@ -203,6 +221,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Adjust stock inline (+ or -)
   const adjustStockInline = (itemId: string, current: number, amount: number) => {
+    if (!canUpdateInventory) return;
     const updated = inventory.map(item => {
       if (item.id === itemId) {
         return {
@@ -232,6 +251,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
             Track and log cellar additions, active strains, custom nutrients, glass bottle batches, and general packaging materials.
           </p>
         </div>
+        {canCreateInventory && (
         <div className="flex gap-2">
           <button
             onClick={() => setShowItemForm(!showItemForm)}
@@ -240,7 +260,16 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
             <Plus className="w-4 h-4" /> Add New Material
           </button>
         </div>
+        )}
       </div>
+
+      {!canCreateInventory && !canUpdateInventory && !canDeleteInventory && (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+          {lang === 'ka'
+            ? 'თქვენი სამუშაო სივრცის როლისთვის ინვენტარი მხოლოდ სანახავია. შეგიძლიათ შეამოწმოთ მარაგები, მომწოდებლები, ზღვრები და სპეციფიკაციები ბალანსების შეცვლის გარეშე.'
+            : 'Inventory is read-only for your workspace role. You can review stock, suppliers, thresholds, and specifications without changing balances.'}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
@@ -281,7 +310,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                         {count}
                       </span>
                       {/* Allow deleting categories except hardcoded ones to maintain stable fallback */}
-                      {!['yeasts', 'nutritions', 'bottles'].includes(cat) && (
+                      {canUpdateInventory && !['yeasts', 'nutritions', 'bottles'].includes(cat) && (
                         <button
                           title="Delete Category"
                           onClick={(e) => {
@@ -305,6 +334,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
             </div>
 
             {/* Add custom category form */}
+            {canCreateInventory && (
             <form onSubmit={handleAddCategory} className="border-t border-dashed border-stone-250/75 pt-3 space-y-2">
               <label className="block text-[9px] font-mono font-bold uppercase text-slate-400">
                 Create Custom Material Category
@@ -326,6 +356,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 </button>
               </div>
             </form>
+            )}
           </div>
 
           {/* Quick stock alert diagnostics info */}
@@ -353,7 +384,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
         <div className="lg:col-span-9 space-y-4">
           
           {/* Add Item form */}
-          {showItemForm && (
+          {canCreateInventory && showItemForm && (
             <form onSubmit={handleAddItem} className="bg-white p-5 border border-[#4e0e15] rounded-xl shadow-xs space-y-3">
               <div className="flex items-center justify-between border-b border-stone-100 pb-2">
                 <h3 className="text-xs font-mono font-bold uppercase text-[#4e0e15] flex items-center gap-1.5">
@@ -497,7 +528,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 const lowStock = item.stock < item.minThreshold;
                 const isEditing = editingItemId === item.id;
 
-                if (isEditing) {
+                if (isEditing && canUpdateInventory) {
                   return (
                     <div key={item.id} className="p-4 border border-[#4e0e15] bg-[#FCFAF8] rounded-xl text-stone-800 space-y-3 shadow-xs">
                       <div className="flex items-center justify-between border-b border-stone-200 pb-2">
@@ -602,7 +633,9 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                             {item.supplierName}
                           </span>
                         </div>
+                        {(canUpdateInventory || canDeleteInventory) && (
                         <div className="flex gap-1">
+                          {canUpdateInventory && (
                           <button
                             title="Edit Material"
                             onClick={() => startEditingItem(item)}
@@ -610,6 +643,8 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
+                          )}
+                          {canDeleteInventory && (
                           <button
                             title="Delete Item"
                             onClick={() => handleDeleteItem(item.id, item.name)}
@@ -617,7 +652,9 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
+                          )}
                         </div>
+                        )}
                       </div>
 
                       {/* Stock Figures */}
@@ -657,6 +694,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                         </span>
                       )}
 
+                      {canUpdateInventory && (
                       <div className="flex w-full sm:w-auto items-center gap-1 shrink-0">
                         <button
                           title="Consume Item (-Qty)"
@@ -673,6 +711,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                           + Refill
                         </button>
                       </div>
+                      )}
                     </div>
 
                   </div>
@@ -682,12 +721,14 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
               {filteredItems.length === 0 && (
                 <div className="md:col-span-2 py-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
                   <p>No materials found in the &ldquo;{selectedCategory}&rdquo; category.</p>
-                  <button
-                    onClick={() => setShowItemForm(true)}
-                    className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#801323] hover:underline cursor-pointer"
-                  >
-                    + Register the first stockpile material here
-                  </button>
+                  {canCreateInventory && (
+                    <button
+                      onClick={() => setShowItemForm(true)}
+                      className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#801323] hover:underline cursor-pointer"
+                    >
+                      + Register the first stockpile material here
+                    </button>
+                  )}
                 </div>
               )}
             </div>

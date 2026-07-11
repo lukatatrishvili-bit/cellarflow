@@ -5,6 +5,31 @@ const LEGACY_ITERATIONS = 10000;   // pre-2026 hashes stored as `salt:hash`
 const KEY_LENGTH = 64;
 const DIGEST = 'sha512';
 
+export const MIN_PASSCODE_LENGTH = 8;
+export const MAX_PASSCODE_LENGTH = 128;
+
+/**
+ * Shared passcode policy for registration and recovery. Keep the rule simple
+ * enough to explain in one sentence and friendly to password managers and
+ * passphrases; strength comes from length, not brittle character recipes.
+ */
+export function passcodeValidationError(passcode: unknown): string | null {
+  if (typeof passcode !== 'string' || passcode.length < MIN_PASSCODE_LENGTH) {
+    return `Passcode must be at least ${MIN_PASSCODE_LENGTH} characters`;
+  }
+  if (passcode.length > MAX_PASSCODE_LENGTH) {
+    return `Passcode must be at most ${MAX_PASSCODE_LENGTH} characters`;
+  }
+  return null;
+}
+
+export function sameNormalizedEmail(left: unknown, right: unknown): boolean {
+  if (typeof left !== 'string' || typeof right !== 'string') return false;
+  const normalizedLeft = left.trim().toLowerCase();
+  const normalizedRight = right.trim().toLowerCase();
+  return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+}
+
 /**
  * Resolve the HMAC signing secret for session tokens. In production a real
  * secret is mandatory — falling back to a hardcoded value would let anyone with

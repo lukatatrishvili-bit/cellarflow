@@ -11,6 +11,8 @@ interface NotesTabProps {
   notesList: CellarNote[];
   onAddNewNote: (title: string, category: 'Enology' | 'Tasting' | 'Sanitation' | 'General', content: string, relatedLotId: string) => void;
   onDeleteNote: (id: string) => void;
+  canCreateNote?: boolean;
+  canDeleteNote?: boolean;
 }
 
 export default function NotesTab({
@@ -18,12 +20,34 @@ export default function NotesTab({
   lots,
   notesList,
   onAddNewNote,
-  onDeleteNote
+  onDeleteNote,
+  canCreateNote = true,
+  canDeleteNote = true
 }: NotesTabProps) {
   const t = translations[lang];
+  const lotFilterId = React.useId();
+  const [lotFilter, setLotFilter] = React.useState('all');
+  const filteredNotes = lotFilter === 'all'
+    ? notesList
+    : notesList.filter(note => note.relatedLotId === lotFilter);
+
+  const permissionNotice = !canCreateNote && !canDeleteNote
+    ? (lang === 'ka'
+      ? 'მხოლოდ ნახვის წვდომა: შეგიძლიათ მარნის ჩანაწერების ნახვა და ლოტით გაფილტვრა, თუმცა ახალი ჩანაწერის შექმნა ან წაშლა არ შეგიძლიათ.'
+      : 'Read-only access: you can browse and filter winery notes, but you cannot create or delete entries.')
+    : !canCreateNote
+      ? (lang === 'ka'
+        ? 'შეგიძლიათ ჩანაწერების ნახვა და ლოტით გაფილტვრა, თუმცა თქვენი როლი ახალი ჩანაწერის შექმნას არ უშვებს.'
+        : 'You can browse and filter notes, but your role cannot create new entries.')
+      : !canDeleteNote
+        ? (lang === 'ka'
+          ? 'შეგიძლიათ ჩანაწერების ნახვა და ლოტით გაფილტვრა, თუმცა თქვენი როლი ჩანაწერების წაშლას არ უშვებს.'
+          : 'You can browse and filter notes, but your role cannot delete entries.')
+        : null;
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canCreateNote) return;
     const form = e.currentTarget;
     const formData = new FormData(form);
     const title = formData.get('title') as string;
@@ -34,6 +58,11 @@ export default function NotesTab({
       onAddNewNote(title, category, content, relatedLotId);
       form.reset();
     }
+  };
+
+  const handleDeleteNote = (id: string) => {
+    if (!canDeleteNote) return;
+    onDeleteNote(id);
   };
 
   return (
@@ -55,9 +84,16 @@ export default function NotesTab({
         </div>
       </div>
 
+      {permissionNotice && (
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-medium leading-relaxed text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300" role="note">
+          {permissionNotice}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Add Note Form */}
-        <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4">
+        {canCreateNote && (
+          <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4">
           <h4 className="font-serif font-bold text-sm text-[#4e0e15] border-b border-stone-100 pb-2">Record Winery Note</h4>
           <form onSubmit={handleSubmit} className="space-y-3.5 text-xs text-stone-600 font-sans">
             <div>
@@ -117,26 +153,55 @@ export default function NotesTab({
               Save Note Entry
             </button>
           </form>
-        </div>
+          </div>
+        )}
 
         {/* Notes List */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className={`${canCreateNote ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-4`}>
           <div className="bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
             <h4 className="font-serif font-bold text-sm text-[#4e0e15] flex items-center justify-between">
               <span>Winery Journal Logs</span>
               <span className="text-[10px] font-mono text-slate-400 font-normal">{notesList.length} entries recorded</span>
             </h4>
 
+            <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50/70 p-3 sm:flex-row sm:items-end sm:justify-between dark:border-stone-800 dark:bg-stone-950/30">
+              <div className="w-full sm:max-w-xs">
+                <label htmlFor={lotFilterId} className="mb-1 block text-[10px] font-mono font-bold uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                  {lang === 'ka' ? 'ჩანაწერების ლოტით გაფილტვრა' : 'Filter notes by lot'}
+                </label>
+                <select
+                  id={lotFilterId}
+                  value={lotFilter}
+                  onChange={(event) => setLotFilter(event.target.value)}
+                  className="min-h-10 w-full rounded-lg border border-[#e8dfd5] bg-white px-2.5 py-2 text-xs font-semibold text-stone-700 outline-none focus:border-[#801323] dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200"
+                >
+                  <option value="all">{lang === 'ka' ? 'ყველა ლოტი' : 'All lots'}</option>
+                  {lots.map(lot => (
+                    <option key={lot.id} value={lot.id}>{lot.name} ({lot.vintage})</option>
+                  ))}
+                </select>
+              </div>
+              <span className="text-[10px] font-mono font-medium text-stone-400" aria-live="polite">
+                {lang === 'ka'
+                  ? `ნაჩვენებია ${filteredNotes.length} / ${notesList.length}`
+                  : `Showing ${filteredNotes.length} of ${notesList.length}`}
+              </span>
+            </div>
+
             <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
-              {notesList.map((note) => (
+              {filteredNotes.map((note) => (
                 <div key={note.id} className="p-4 border border-stone-100 rounded-xl hover:bg-stone-50/50 transition-all space-y-2 relative group font-sans">
-                  <button 
-                    onClick={() => onDeleteNote(note.id)}
-                    className="absolute top-4 right-4 text-stone-300 hover:text-rose-600 transition-colors opacity-0 group-hover:opacity-100 duration-200 cursor-pointer"
-                    title="Delete Note"
-                  >
-                    <Trash className="w-4 h-4" />
-                  </button>
+                  {canDeleteNote && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteNote(note.id)}
+                      className="absolute top-4 right-4 text-stone-300 hover:text-rose-600 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 duration-200 cursor-pointer"
+                      title="Delete Note"
+                      aria-label={`Delete ${note.title}`}
+                    >
+                      <Trash className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  )}
 
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-[9px] uppercase font-mono px-2 py-0.5 rounded-sm font-bold ${
@@ -161,10 +226,16 @@ export default function NotesTab({
                 </div>
               ))}
 
-              {notesList.length === 0 && (
+              {filteredNotes.length === 0 && (
                 <div className="text-center py-12 text-[#4e0e15]/40 italic font-mono text-xs">
                   <FileText className="h-10 w-10 text-stone-300 mx-auto mb-2" />
-                  Your enology notebook is empty. Record vintage checkups or active cellar insights.
+                  {lotFilter === 'all'
+                    ? (lang === 'ka'
+                      ? 'მარნის ჩანაწერები ჯერ არ არის.'
+                      : 'Your enology notebook is empty. Record vintage checkups or active cellar insights.')
+                    : (lang === 'ka'
+                      ? 'არჩეული ლოტისთვის ჩანაწერები ვერ მოიძებნა.'
+                      : 'No notes were found for the selected lot.')}
                 </div>
               )}
             </div>

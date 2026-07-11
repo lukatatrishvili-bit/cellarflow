@@ -48,6 +48,30 @@ import {
   type AiDraftQueueItem,
   type AiDraftQueueStatus,
 } from '../lib/aiDraftActions';
+import { isKnownRole } from '../server/permissions';
+
+interface RolePersistence {
+  setItem(key: string, value: string): void;
+}
+
+export function applyOrganizationSwitchRole(
+  currentUser: UserProfile,
+  response: unknown,
+  storage?: RolePersistence,
+): UserProfile | null {
+  const role = response && typeof response === 'object'
+    ? (response as { role?: unknown }).role
+    : undefined;
+  if (!isKnownRole(role)) return null;
+
+  const updatedUser: UserProfile = { ...currentUser, role };
+  try {
+    storage?.setItem('vinea_curr_user', JSON.stringify(updatedUser));
+  } catch {
+    // React state remains authoritative when persistent storage is unavailable.
+  }
+  return updatedUser;
+}
 
 export interface CellarNote {
   id: string;
@@ -155,14 +179,25 @@ export function useWineryState() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ organizationId: orgId })
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        const switchedUser = applyOrganizationSwitchRole(currentUser, data, localStorage);
+        if (!switchedUser) {
+          setToastMessage(lang === 'ka'
+            ? '⚠️ სამუშაო სივრცე შეიცვალა, მაგრამ ახალი როლის განახლება ვერ მოხერხდა. გთხოვთ, განაახლოთ გვერდი.'
+            : '⚠️ Workspace switched, but its role could not be refreshed. Please reload the page.');
+          return false;
+        }
+        // Update permission-bearing client state before any follow-up fetches so
+        // the previous workspace role cannot keep controls visible while the new
+        // organization data hydrates.
+        setCurrentUser(switchedUser);
         await fetchOrganizations();
         await discardLocalUnsyncedChanges();
         setToastMessage(lang === 'ka' ? 'სამუშაო სივრცე შეიცვალა!' : 'Switched winery workspace!');
         return true;
       } else {
-        const err = await res.json().catch(() => ({}));
-        setToastMessage(`⚠️ ${err.error || 'Failed to switch workspace'}`);
+        setToastMessage(`⚠️ ${data.error || 'Failed to switch workspace'}`);
         return false;
       }
     } catch (err) {
@@ -859,6 +894,11 @@ export function useWineryState() {
           if (!cancelled && dbData) {
             updateAllStates(dbData);
           }
+        } else if (res.status === 401 && hasLocalSession && !cancelled) {
+          // A cached flag must never impersonate an authenticated session. Keep
+          // offline operation on network failure, but an authoritative 401
+          // clears stale identity and cached winery data.
+          await handleAuthLogout();
         }
       } catch (err) {
         console.error('Failed to restore session:', err);

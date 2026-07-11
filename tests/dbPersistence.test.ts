@@ -279,7 +279,11 @@ describe('database persistence', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
     const dbPath = path.join(root, 'db.json');
     const prisma = {
-      user: { findMany: vi.fn(async () => [{ username: 'owner', email: 'owner@example.com', fullName: 'Owner', role: 'Owner/Admin', language: 'en', passwordHash: 'hash', emailVerified: true, activeOrganizationId: 'org-core' }]) },
+      user: { findMany: vi.fn(async () => [{
+        username: 'owner', email: 'owner@example.com', fullName: 'Owner', role: 'Owner/Admin',
+        language: 'en', passwordHash: 'hash', emailVerified: true, activeOrganizationId: 'org-core',
+        resetTokenHash: 'reset-hash', resetTokenExpires: BigInt(1_800_000_000_000),
+      }]) },
       organization: { findMany: vi.fn(async () => [{ id: 'org-core', name: 'Core Estate' }]) },
       membership: { findMany: vi.fn(async () => [{ id: 'mem-core', userId: 'owner', organizationId: 'org-core', role: 'Owner/Admin' }]) },
       invitation: { findMany: vi.fn(async () => []) },
@@ -290,7 +294,12 @@ describe('database persistence', () => {
     const db = dbModule.getDB();
 
     expect(refreshed).toBe(true);
-    expect(db.users).toContainEqual(expect.objectContaining({ username: 'owner', activeOrganizationId: 'org-core' }));
+    expect(db.users).toContainEqual(expect.objectContaining({
+      username: 'owner',
+      activeOrganizationId: 'org-core',
+      resetTokenHash: 'reset-hash',
+      resetTokenExpires: 1_800_000_000_000,
+    }));
     expect(db.organizations).toContainEqual(expect.objectContaining({ id: 'org-core', name: 'Core Estate' }));
     expect(db.memberships).toContainEqual(expect.objectContaining({ id: 'mem-core', userId: 'owner' }));
     expect(db.orgData['org-core']).toBeTruthy();
@@ -311,7 +320,11 @@ describe('database persistence', () => {
     const dbModule = await loadDbModuleWithMockPrisma(dbPath, prisma);
 
     const db = dbModule.getDB();
-    db.users.push({ username: 'owner', email: 'owner@example.com', fullName: 'Owner', role: 'Owner/Admin', language: 'en', passwordHash: 'hash', emailVerified: true, activeOrganizationId: 'org-core' });
+    db.users.push({
+      username: 'owner', email: 'owner@example.com', fullName: 'Owner', role: 'Owner/Admin',
+      language: 'en', passwordHash: 'hash', emailVerified: true, activeOrganizationId: 'org-core',
+      resetTokenHash: 'reset-hash', resetTokenExpires: 1_800_000_000_000,
+    });
     db.organizations.push({ id: 'org-core', name: 'Core Estate' });
     db.memberships.push({ id: 'mem-core', userId: 'owner', organizationId: 'org-core', role: 'Owner/Admin' });
     db.invitations.push({ id: 'invite-core', email: 'guest@example.com', organizationId: 'org-core', role: 'Read-Only', token: 'token-core', expiresAt: '2026-07-08T00:00:00.000Z' });
@@ -319,7 +332,13 @@ describe('database persistence', () => {
     await dbModule.saveCoreMetadata('test-core-metadata');
 
     expect(tx.organization.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-core' } }));
-    expect(tx.user.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { username: 'owner' } }));
+    expect(tx.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { username: 'owner' },
+      update: expect.objectContaining({
+        resetTokenHash: 'reset-hash',
+        resetTokenExpires: BigInt(1_800_000_000_000),
+      }),
+    }));
     expect(tx.membership.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'mem-core' } }));
     expect(tx.invitation.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'invite-core' } }));
     expect(JSON.parse(fs.readFileSync(dbPath, 'utf8')).users).toContainEqual(expect.objectContaining({ username: 'owner' }));

@@ -14,12 +14,15 @@ import { prepareAuditLogsForServerMerge } from '../../lib/auditHash';
 import {
   attachmentMimeTypeMatchesInlineDataUrl,
   checksumAttachmentDataUrl,
+  inlineAttachmentDecodedBytes,
   isAllowedInlineAttachmentDataUrl,
   isSupportedAttachmentMimeType,
   isSupportedAttachmentFileName,
   isValidAttachmentChecksum,
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_TOTAL_INLINE_ATTACHMENT_BYTES,
+  normalizeAttachmentFileName,
+  normalizeAttachmentMimeType,
   normalizeExternalAttachmentUrl,
   sumInlineAttachmentBytes,
 } from '../../lib/attachments';
@@ -644,7 +647,11 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (typeof item.fileName !== 'string' || !item.fileName.trim()) {
               throw new Error(`Attachment ${item.id} requires a fileName.`);
             }
-            if (!isSupportedAttachmentFileName(item.fileName)) {
+            const attachmentFileName = normalizeAttachmentFileName(item.fileName);
+            if (!attachmentFileName) {
+              throw new Error(`Attachment ${item.id} requires a safe fileName.`);
+            }
+            if (!isSupportedAttachmentFileName(attachmentFileName)) {
               throw new Error(`Attachment ${item.id} has unsupported file type.`);
             }
             if (!['company', 'official_docs', 'certification', 'cadastre', 'qvevri', 'lab', 'vineyard_project', 'crm', 'other'].includes(item.module)) {
@@ -656,17 +663,18 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (item.sizeBytes !== undefined && (typeof item.sizeBytes !== 'number' || !Number.isFinite(item.sizeBytes) || item.sizeBytes < 0)) {
               throw new Error(`Attachment ${item.id} sizeBytes must be non-negative.`);
             }
-            if (!isSupportedAttachmentMimeType(item.mimeType, item.fileName)) {
+            if (!isSupportedAttachmentMimeType(item.mimeType, attachmentFileName)) {
               throw new Error(`Attachment ${item.id} has unsupported MIME type.`);
             }
             if (item.storage.kind === 'inline') {
-              if (!isAllowedInlineAttachmentDataUrl(item.storage.dataUrl, item.fileName)) {
+              if (!isAllowedInlineAttachmentDataUrl(item.storage.dataUrl, attachmentFileName)) {
                 throw new Error(`Attachment ${item.id} inline storage requires a supported PDF, image, Office, or CSV data URL.`);
               }
-              if (!attachmentMimeTypeMatchesInlineDataUrl(item.storage.dataUrl, item.mimeType, item.fileName)) {
+              if (!attachmentMimeTypeMatchesInlineDataUrl(item.storage.dataUrl, item.mimeType, attachmentFileName)) {
                 throw new Error(`Attachment ${item.id} MIME type does not match inline content.`);
               }
-              if ((item.sizeBytes || 0) > MAX_INLINE_ATTACHMENT_BYTES || item.storage.dataUrl.length > MAX_INLINE_ATTACHMENT_BYTES * 2) {
+              const decodedInlineBytes = inlineAttachmentDecodedBytes(item.storage.dataUrl) || 0;
+              if (Math.max(item.sizeBytes || 0, decodedInlineBytes) > MAX_INLINE_ATTACHMENT_BYTES) {
                 throw new Error(`Attachment ${item.id} is too large for inline sync.`);
               }
               if (item.checksum !== undefined && checksumAttachmentDataUrl(item.storage.dataUrl) !== String(item.checksum).toLowerCase()) {
@@ -674,7 +682,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               }
             }
             if (item.storage.kind === 'external' && !normalizeExternalAttachmentUrl(item.storage.url)) {
-              throw new Error(`Attachment ${item.id} external storage requires a valid HTTP(S) URL.`);
+              throw new Error(`Attachment ${item.id} external storage requires a valid HTTPS URL.`);
             }
             if (item.checksum !== undefined && !isValidAttachmentChecksum(item.checksum)) {
               throw new Error(`Attachment ${item.id} has invalid checksum.`);
@@ -849,6 +857,46 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
   }
 }
 
+export function prepareAttachmentsForServerMerge(attachments: any): any {
+  if (!Array.isArray(attachments)) return attachments;
+
+  return attachments.map((item: any) => {
+    if (!item || typeof item !== 'object') return item;
+
+    const fileName = normalizeAttachmentFileName(item.fileName) || item.fileName;
+    const rawStorage = item.storage && typeof item.storage === 'object' && !Array.isArray(item.storage)
+      ? item.storage
+      : {};
+    const storage = rawStorage.kind === 'inline'
+      ? { kind: 'inline', dataUrl: rawStorage.dataUrl }
+      : rawStorage.kind === 'external'
+        ? { kind: 'external', url: normalizeExternalAttachmentUrl(rawStorage.url) || rawStorage.url }
+        : { kind: 'metadata_only' };
+    const prepared: any = {
+      ...item,
+      fileName,
+      storage,
+    };
+
+    const mimeType = normalizeAttachmentMimeType(item.mimeType);
+    if (mimeType) {
+      prepared.mimeType = mimeType;
+    } else {
+      delete prepared.mimeType;
+    }
+
+    if (storage?.kind === 'inline' && typeof storage.dataUrl === 'string') {
+      prepared.checksum = item.checksum
+        ? String(item.checksum).toLowerCase()
+        : checksumAttachmentDataUrl(storage.dataUrl);
+    } else if (item.checksum) {
+      prepared.checksum = String(item.checksum).toLowerCase();
+    }
+
+    return prepared;
+  });
+}
+
 function syncActionsForCollection(userDb: any, collection: string, incoming: any): PermissionAction[] {
   if (collection === 'companyProfile' || collection === 'winePricing') return ['update'];
   if (!Array.isArray(incoming)) return [];
@@ -910,14 +958,26 @@ export function authorizeSyncPayload(role: string, userDb: any, collections: Rec
     }
     if (collection === 'attachments' && Array.isArray(incoming)) {
       const existing = Array.isArray(userDb[collection]) ? userDb[collection] : [];
-      const existingIds = new Set(existing.map((item: any) => item?.id).filter(Boolean));
+      const existingById = new Map<string, any>();
+      for (const existingItem of existing) {
+        if (existingItem?.id) existingById.set(existingItem.id, existingItem);
+      }
       for (const item of incoming) {
         if (!item || typeof item !== 'object' || !item.id) continue;
-        const module = moduleForAttachmentKind(item.module);
-        if (!module) return `Forbidden: attachment ${item.id} has unknown module.`;
-        const action: PermissionAction = existingIds.has(item.id) ? 'update' : 'create';
-        if (!canAccess(role, module, action)) {
-          return `Forbidden: ${role} cannot ${action} ${collection} for ${module}.`;
+        const existingItem = existingById.get(item.id);
+        const incomingModule = moduleForAttachmentKind(item.module);
+        if (!incomingModule) return `Forbidden: attachment ${item.id} has unknown module.`;
+        const action: PermissionAction = existingItem ? 'update' : 'create';
+        const modules = new Set([incomingModule]);
+        if (existingItem) {
+          const existingModule = moduleForAttachmentKind((existingItem as any).module);
+          if (!existingModule) return `Forbidden: attachment ${item.id} has unknown stored module.`;
+          modules.add(existingModule);
+        }
+        for (const module of modules) {
+          if (!canAccess(role, module, action)) {
+            return `Forbidden: ${role} cannot ${action} ${collection} for ${module}.`;
+          }
         }
       }
       continue;
@@ -971,6 +1031,9 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
           userDb.auditLogs || [],
           collections.auditLogs.map((log: any) => ({ ...log })),
         );
+      }
+      if (Array.isArray(collections.attachments)) {
+        merging.attachments = prepareAttachmentsForServerMerge(collections.attachments);
       }
     } catch (err: any) {
       return res.status(400).json({ error: err.message || 'Audit validation error' });

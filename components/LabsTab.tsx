@@ -5,6 +5,7 @@ import type { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
 
 interface LabsTabProps {
   lang: Language;
+  canCreateLabAnalysis?: boolean;
   lots: WineLot[];
   vessels: Vessel[];
   labLogs: LabAnalysis[];
@@ -37,6 +38,7 @@ interface LabsTabProps {
 
 export default function LabsTab({
   lang,
+  canCreateLabAnalysis = true,
   lots,
   vessels,
   labLogs,
@@ -66,12 +68,33 @@ export default function LabsTab({
   setLabTurbidity,
   onAddLabLog
 }: LabsTabProps) {
+  const handleAddLabLog = (event: React.FormEvent) => {
+    if (!canCreateLabAnalysis) {
+      event.preventDefault();
+      return;
+    }
+
+    onAddLabLog(event);
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-stone-800 animate-fade-in">
+      {!canCreateLabAnalysis && (
+        <div
+          role="status"
+          className="md:col-span-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"
+        >
+          {lang === 'ka'
+            ? 'ლაბორატორიის ისტორია მხოლოდ სანახავია თქვენი სამუშაო სივრცის როლისთვის. ჩანაწერებისა და ფილტრების ნახვა კვლავ შეგიძლიათ.'
+            : 'Lab history is read-only for your workspace role. You can still review records and use the filters.'}
+        </div>
+      )}
+
       {/* Lab Add entry */}
-      <div className="md:col-span-1 p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm">
-        <h3 className="text-sm font-serif font-bold text-[#4e0e15] border-b border-slate-100 pb-2 mb-4">Add Lab Readings</h3>
-        <form onSubmit={onAddLabLog} className="space-y-3">
+      {canCreateLabAnalysis && (
+        <div className="md:col-span-1 p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm">
+          <h3 className="text-sm font-serif font-bold text-[#4e0e15] border-b border-slate-100 pb-2 mb-4">Add Lab Readings</h3>
+          <form onSubmit={handleAddLabLog} className="space-y-3">
           <div>
             <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Wine Lot Code</label>
             <select
@@ -178,11 +201,12 @@ export default function LabsTab({
           >
             Commit Lab Reads
           </button>
-        </form>
-      </div>
+          </form>
+        </div>
+      )}
 
       {/* Lab reports database */}
-      <div className="md:col-span-2 p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm text-stone-800 space-y-4">
+      <div className={`${canCreateLabAnalysis ? 'md:col-span-2' : 'md:col-span-3'} p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm text-stone-800 space-y-4`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
           <h3 className="text-sm font-serif font-bold text-[#4e0e15]">Lab Chemical History Log</h3>
           <span className="text-xs text-slate-500 font-mono">

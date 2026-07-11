@@ -16,6 +16,9 @@ interface TasksTabProps {
   setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
   prefilledTaskDesc?: string;
   setPrefilledTaskDesc?: (desc: string) => void;
+  canCreateTask?: boolean;
+  canUpdateTask?: boolean;
+  canDeleteTask?: boolean;
 }
 
 export default function TasksTab({
@@ -29,12 +32,16 @@ export default function TasksTab({
   prefilledTaskPriority = 'medium',
   setPrefilledTaskPriority = () => {},
   prefilledTaskDesc = '',
-  setPrefilledTaskDesc = () => {}
+  setPrefilledTaskDesc = () => {},
+  canCreateTask = true,
+  canUpdateTask = true,
+  canDeleteTask = true
 }: TasksTabProps) {
   const t = translations[lang];
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!canCreateTask) return;
     const form = e.currentTarget;
     const formData = new FormData(form);
     const title = formData.get('title') as string;
@@ -48,6 +55,16 @@ export default function TasksTab({
       setPrefilledTaskPriority('medium');
       setPrefilledTaskDesc('');
     }
+  };
+
+  const handleToggleTaskStatus = (id: string) => {
+    if (!canUpdateTask) return;
+    onToggleTaskStatus(id);
+  };
+
+  const handleDeleteTask = (id: string) => {
+    if (!canDeleteTask) return;
+    onDeleteTask(id);
   };
 
   return (
@@ -75,68 +92,79 @@ export default function TasksTab({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Task Form */}
-        <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4">
-          <h4 className="font-serif font-bold text-sm text-[#4e0e15] border-b border-stone-100 pb-2">Schedule Cellar Task</h4>
-          <form onSubmit={handleSubmit} className="space-y-3.5 text-xs text-stone-600 font-sans">
-            <div>
-              <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Task Title *</label>
-              <input 
-                type="text" 
-                name="title"
-                value={prefilledTaskTitle}
-                onChange={(e) => setPrefilledTaskTitle(e.target.value)}
-                placeholder="e.g. Pumpover Lot CS-2025-01"
-                className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2.5 py-2 text-stone-800 focus:outline-[#801323] outline-none text-xs"
-                required
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
+        {canCreateTask && (
+          <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4">
+            <h4 className="font-serif font-bold text-sm text-[#4e0e15] border-b border-stone-100 pb-2">Schedule Cellar Task</h4>
+            <form onSubmit={handleSubmit} className="space-y-3.5 text-xs text-stone-600 font-sans">
               <div>
-                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Priority</label>
-                <select 
-                  name="priority"
-                  value={prefilledTaskPriority}
-                  onChange={(e) => setPrefilledTaskPriority(e.target.value as any)}
-                  className="w-full bg-white border border-[#e8dfd5] rounded px-2.5 py-1.5 text-stone-700 outline-none text-xs"
-                >
-                  <option value="high">🔴 High Priority</option>
-                  <option value="medium">🟡 Medium Priority</option>
-                  <option value="low">⚪ Low Priority</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Due Date</label>
-                <input 
-                  type="date" 
-                  name="dueDate"
-                  className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2 py-1 text-stone-700 text-xs"
+                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Task Title *</label>
+                <input
+                  type="text"
+                  name="title"
+                  value={prefilledTaskTitle}
+                  onChange={(e) => setPrefilledTaskTitle(e.target.value)}
+                  placeholder="e.g. Pumpover Lot CS-2025-01"
+                  className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2.5 py-2 text-stone-800 focus:outline-[#801323] outline-none text-xs"
+                  required
                 />
               </div>
-            </div>
 
-            <div>
-              <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Description / Details</label>
-              <textarea 
-                name="description"
-                value={prefilledTaskDesc}
-                onChange={(e) => setPrefilledTaskDesc(e.target.value)}
-                placeholder="e.g. Pump grape cap 2x daily, check sugar density readings."
-                className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-20 text-stone-800 focus:outline-[#801323] outline-none text-xs"
-              />
-            </div>
+              <div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Priority</label>
+                    <select
+                      name="priority"
+                      value={prefilledTaskPriority}
+                      onChange={(e) => setPrefilledTaskPriority(e.target.value as any)}
+                      className="w-full bg-white border border-[#e8dfd5] rounded px-2.5 py-1.5 text-stone-700 outline-none text-xs"
+                    >
+                      <option value="high">🔴 High Priority</option>
+                      <option value="medium">🟡 Medium Priority</option>
+                      <option value="low">⚪ Low Priority</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Due Date</label>
+                    <input
+                      type="date"
+                      name="dueDate"
+                      className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2 py-1 text-stone-700 text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
 
-            <button 
-              type="submit"
-              className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 rounded-lg font-bold uppercase transition-all duration-200 cursor-pointer text-xs"
-            >
-              Assign Task Directive
-            </button>
-          </form>
-        </div>
+              <div>
+                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Description / Details</label>
+                <textarea
+                  name="description"
+                  value={prefilledTaskDesc}
+                  onChange={(e) => setPrefilledTaskDesc(e.target.value)}
+                  placeholder="e.g. Pump grape cap 2x daily, check sugar density readings."
+                  className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-20 text-stone-800 focus:outline-[#801323] outline-none text-xs"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 rounded-lg font-bold uppercase transition-all duration-200 cursor-pointer text-xs"
+              >
+                Assign Task Directive
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* Task List */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className={`${canCreateTask ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-4`}>
+          {!canCreateTask && (
+            <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-xs font-medium text-stone-500" role="note">
+              {lang === 'ka'
+                ? 'თქვენ შეგიძლიათ დავალებების ნახვა, მაგრამ ახალი დავალების შექმნის უფლება არ გაქვთ.'
+                : 'You can browse cellar tasks, but your role cannot create new tasks.'}
+            </div>
+          )}
           <div className="bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
             <h4 className="font-serif font-bold text-sm text-[#4e0e15] flex items-center justify-between">
               <span>Pending Directives</span>
@@ -150,8 +178,11 @@ export default function TasksTab({
                     <input 
                       type="checkbox" 
                       checked={false}
-                      onChange={() => onToggleTaskStatus(task.id)}
-                      className="mt-1 cursor-pointer accent-[#4e0e15] w-4 h-4 shrink-0"
+                      onChange={() => handleToggleTaskStatus(task.id)}
+                      disabled={!canUpdateTask}
+                      aria-label={canUpdateTask ? `Mark ${task.title} completed` : `${task.title} cannot be updated by your role`}
+                      title={canUpdateTask ? 'Mark task completed' : 'Your role cannot update tasks'}
+                      className={`mt-1 accent-[#4e0e15] w-4 h-4 shrink-0 ${canUpdateTask ? 'cursor-pointer' : 'cursor-not-allowed opacity-45'}`}
                     />
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
@@ -168,13 +199,17 @@ export default function TasksTab({
                     </div>
                   </div>
 
-                  <button 
-                    onClick={() => onDeleteTask(task.id)}
-                    className="p-1 text-stone-300 hover:text-rose-600 transition-colors cursor-pointer shrink-0"
-                    title="Delete Task"
-                  >
-                    <Trash className="w-4 h-4" />
-                  </button>
+                  {canDeleteTask && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTask(task.id)}
+                      className="p-1 text-stone-300 hover:text-rose-600 transition-colors cursor-pointer shrink-0"
+                      title="Delete Task"
+                      aria-label={`Delete ${task.title}`}
+                    >
+                      <Trash className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
               ))}
 
@@ -199,17 +234,26 @@ export default function TasksTab({
                     </div>
                     <div className="flex items-center gap-2">
                       <button 
-                        onClick={() => onToggleTaskStatus(task.id)}
-                        className="text-stone-400 hover:text-[#4e0e15] text-[10px] underline"
+                        type="button"
+                        onClick={() => handleToggleTaskStatus(task.id)}
+                        disabled={!canUpdateTask}
+                        aria-label={`Reopen ${task.title}`}
+                        title={canUpdateTask ? 'Reopen task' : 'Your role cannot update tasks'}
+                        className={`text-[10px] underline ${canUpdateTask ? 'text-stone-400 hover:text-[#4e0e15] cursor-pointer' : 'text-stone-300 cursor-not-allowed no-underline'}`}
                       >
                         Reopen
                       </button>
-                      <button 
-                        onClick={() => onDeleteTask(task.id)}
-                        className="text-stone-300 hover:text-rose-600 transition-colors"
-                      >
-                        <Trash className="w-3.5 h-3.5" />
-                      </button>
+                      {canDeleteTask && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTask(task.id)}
+                          className="text-stone-300 hover:text-rose-600 transition-colors cursor-pointer"
+                          aria-label={`Delete ${task.title}`}
+                          title="Delete Task"
+                        >
+                          <Trash className="w-3.5 h-3.5" aria-hidden="true" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

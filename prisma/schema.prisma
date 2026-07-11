@@ -18,6 +18,8 @@ model User {
   emailVerified      Boolean         @default(false)
   verifyTokenHash    String?
   verifyTokenExpires BigInt?
+  resetTokenHash     String?
+  resetTokenExpires  BigInt?
   isDemo             Boolean         @default(false)
   activeOrganizationId String?
   enabledModules     Json?

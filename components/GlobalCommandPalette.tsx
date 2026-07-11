@@ -17,6 +17,8 @@ import {
   X,
 } from 'lucide-react';
 import type { InventoryItem, SalesDispatchRecord, SalesOrderRecord, Task, Vessel, WineLot } from '../lib/wineryState';
+import type { Role } from '../server/permissions';
+import { canViewAppDestination } from '../lib/navigationPermissions';
 import { useFocusTrap } from './useFocusTrap';
 
 type CommandKind = 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
@@ -40,6 +42,7 @@ interface Props {
   tasks: Task[];
   orders: SalesOrderRecord[];
   dispatches: SalesDispatchRecord[];
+  role?: Role;
   setActiveModule: (moduleId: string) => void;
   setActiveTab: (tabId: string) => void;
   setPassportLotId: (lotId: string | null) => void;
@@ -74,6 +77,7 @@ export default function GlobalCommandPalette({
   tasks,
   orders,
   dispatches,
+  role = 'Owner/Admin',
   setActiveModule,
   setActiveTab,
   setPassportLotId,
@@ -107,18 +111,21 @@ export default function GlobalCommandPalette({
   };
 
   const commands = useMemo<CommandItem[]>(() => {
-    const moduleCommands: CommandItem[] = [
-      { id: 'module-dashboard', kind: 'module', title: 'Dashboard', subtitle: 'Open main portal', keywords: 'dashboard portal home overview', icon: BarChart3, run: () => jump('portal') },
-      { id: 'module-vineyard', kind: 'module', title: 'Vineyard', subtitle: 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray', icon: Sprout, run: () => jump('vazi') },
-      { id: 'module-cellar', kind: 'module', title: 'Cellar', subtitle: 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels', icon: Wine, run: () => jump('gvino', 'dashboard') },
-      { id: 'module-sales', kind: 'module', title: 'Sales', subtitle: 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers', icon: ShoppingCart, run: () => jump('sales') },
-      { id: 'module-storage', kind: 'module', title: 'Storage', subtitle: 'Finished goods stock', keywords: 'storage warehouse stock bottles inventory finished goods', icon: Warehouse, run: () => jump('storage') },
-      { id: 'module-analytics', kind: 'module', title: 'Analytics', subtitle: 'Year comparison reports', keywords: 'analytics reports year comparison vintage margin', icon: BarChart3, run: () => jump('analytics') },
-      { id: 'module-docs', kind: 'module', title: 'Documents', subtitle: 'Official documents and exports', keywords: 'documents reports official forms exports', icon: FileSpreadsheet, run: () => jump('docs') },
-      { id: 'module-settings', kind: 'module', title: 'Settings', subtitle: 'Profile and company settings', keywords: 'settings profile company users', icon: Settings, run: () => jump('settings') },
+    const allModuleCommands: Array<CommandItem & { moduleId: string; tabId?: string }> = [
+      { id: 'module-dashboard', moduleId: 'portal', kind: 'module', title: 'Dashboard', subtitle: 'Open main portal', keywords: 'dashboard portal home overview', icon: BarChart3, run: () => jump('portal') },
+      { id: 'module-vineyard', moduleId: 'vazi', kind: 'module', title: 'Vineyard', subtitle: 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray', icon: Sprout, run: () => jump('vazi') },
+      { id: 'module-cellar', moduleId: 'gvino', tabId: 'dashboard', kind: 'module', title: 'Cellar', subtitle: 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels', icon: Wine, run: () => jump('gvino', 'dashboard') },
+      { id: 'module-sales', moduleId: 'sales', kind: 'module', title: 'Sales', subtitle: 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers', icon: ShoppingCart, run: () => jump('sales') },
+      { id: 'module-storage', moduleId: 'storage', kind: 'module', title: 'Storage', subtitle: 'Finished goods stock', keywords: 'storage warehouse stock bottles inventory finished goods', icon: Warehouse, run: () => jump('storage') },
+      { id: 'module-analytics', moduleId: 'analytics', kind: 'module', title: 'Analytics', subtitle: 'Year comparison reports', keywords: 'analytics reports year comparison vintage margin', icon: BarChart3, run: () => jump('analytics') },
+      { id: 'module-docs', moduleId: 'docs', kind: 'module', title: 'Documents', subtitle: 'Official documents and exports', keywords: 'documents reports official forms exports', icon: FileSpreadsheet, run: () => jump('docs') },
+      { id: 'module-settings', moduleId: 'settings', kind: 'module', title: 'Settings', subtitle: 'Profile and company settings', keywords: 'settings profile company users', icon: Settings, run: () => jump('settings') },
     ];
+    const moduleCommands = allModuleCommands.filter((item) => (
+      canViewAppDestination(role, item.moduleId, item.tabId)
+    ));
 
-    const lotCommands = lots.flatMap<CommandItem>((lot) => [
+    const lotCommands = canViewAppDestination(role, 'gvino', 'lots') ? lots.flatMap<CommandItem>((lot) => [
       {
         id: `lot-${lot.id}`,
         kind: 'lot',
@@ -148,9 +155,9 @@ export default function GlobalCommandPalette({
           close();
         },
       },
-    ]);
+    ]) : [];
 
-    const vesselCommands = vessels.map<CommandItem>((vessel) => ({
+    const vesselCommands = canViewAppDestination(role, 'gvino', 'vessels') ? vessels.map<CommandItem>((vessel) => ({
       id: `vessel-${vessel.id}`,
       kind: 'vessel',
       title: vessel.id,
@@ -163,9 +170,9 @@ export default function GlobalCommandPalette({
         setSelectedTankId(vessel.id);
         close();
       },
-    }));
+    })) : [];
 
-    const inventoryCommands = inventory.map<CommandItem>((item) => ({
+    const inventoryCommands = canViewAppDestination(role, 'gvino', 'inventory') ? inventory.map<CommandItem>((item) => ({
       id: `inventory-${item.id}`,
       kind: 'inventory',
       title: item.name,
@@ -173,9 +180,9 @@ export default function GlobalCommandPalette({
       keywords: `${item.id} ${item.name} ${item.category} ${item.supplierName} inventory additive packaging stock`,
       icon: Boxes,
       run: () => jump('gvino', 'inventory'),
-    }));
+    })) : [];
 
-    const taskCommands = tasks.map<CommandItem>((task) => ({
+    const taskCommands = canViewAppDestination(role, 'gvino', 'tasks') ? tasks.map<CommandItem>((task) => ({
       id: `task-${task.id}`,
       kind: 'task',
       title: task.title,
@@ -183,9 +190,9 @@ export default function GlobalCommandPalette({
       keywords: `${task.title} ${task.description} ${task.assignedTo} ${task.priority} ${task.status} task todo`,
       icon: ClipboardList,
       run: () => jump('gvino', 'tasks'),
-    }));
+    })) : [];
 
-    const orderCommands = orders.map<CommandItem>((order) => ({
+    const orderCommands = canViewAppDestination(role, 'sales') ? orders.map<CommandItem>((order) => ({
       id: `order-${order.id}`,
       kind: 'order',
       title: order.orderNumber || order.customerName,
@@ -193,9 +200,9 @@ export default function GlobalCommandPalette({
       keywords: `${order.id} ${order.orderNumber || ''} ${order.customerName} ${order.lotId} ${order.lotName} ${order.status} reservation order sales`,
       icon: ShoppingCart,
       run: () => jump('sales'),
-    }));
+    })) : [];
 
-    const dispatchCommands = dispatches.map<CommandItem>((dispatch) => ({
+    const dispatchCommands = canViewAppDestination(role, 'sales') ? dispatches.map<CommandItem>((dispatch) => ({
       id: `dispatch-${dispatch.id}`,
       kind: 'dispatch',
       title: dispatch.customerName,
@@ -203,7 +210,7 @@ export default function GlobalCommandPalette({
       keywords: `${dispatch.id} ${dispatch.customerName} ${dispatch.lotId} ${dispatch.lotName} dispatch sale revenue`,
       icon: Truck,
       run: () => jump('sales'),
-    }));
+    })) : [];
 
 
     return [
@@ -215,7 +222,7 @@ export default function GlobalCommandPalette({
       ...inventoryCommands,
       ...taskCommands,
     ];
-  }, [dispatches, inventory, lots, orders, tasks, vessels]);
+  }, [dispatches, inventory, lots, orders, role, tasks, vessels]);
 
   const results = useMemo(() => {
     const q = normalize(query);

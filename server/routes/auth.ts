@@ -11,6 +11,8 @@ import {
   hashPassword,
   verifyPassword,
   passwordNeedsUpgrade,
+  passcodeValidationError,
+  sameNormalizedEmail,
 } from '../auth';
 import {
   getDB,
@@ -127,6 +129,31 @@ function publicUser(user: any, extra: Record<string, unknown> = {}) {
   };
 }
 
+function activeMembershipRole(db: any, user: any): Role {
+  const membership = user?.activeOrganizationId
+    ? db.memberships?.find((item: any) => item.userId === user.username && item.organizationId === user.activeOrganizationId)
+    : null;
+  return normalizeRole(membership?.role, normalizeRole(user?.role));
+}
+
+export function publicUserForActiveOrganization(
+  db: any,
+  user: any,
+  extra: Record<string, unknown> = {},
+) {
+  return publicUser(user, { ...extra, role: activeMembershipRole(db, user) });
+}
+
+export interface OrganizationSwitchSuccess {
+  ok: true;
+  activeOrganizationId: string;
+  role: Role;
+}
+
+export function buildOrganizationSwitchResponse(activeOrganizationId: string, role: Role): OrganizationSwitchSuccess {
+  return { ok: true, activeOrganizationId, role };
+}
+
 function ensureDbCollections(db: any): void {
   if (!db.organizations) db.organizations = [];
   if (!db.memberships) db.memberships = [];
@@ -164,6 +191,10 @@ authRouter.post('/register', async (req, res) => {
 
   if (!username || !passcode) {
     return res.status(400).json({ error: 'Username and passcode are required' });
+  }
+  const passcodeError = passcodeValidationError(passcode);
+  if (passcodeError) {
+    return res.status(400).json({ error: passcodeError });
   }
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'A valid email address is required' });
@@ -297,16 +328,18 @@ authRouter.post('/resend-verification', async (req, res) => {
 
 authRouter.post('/forgot-password', async (req, res) => {
   const email = String(req.body?.email || '').toLowerCase().trim();
-  if (!email) {
-    return res.status(400).json({ error: 'Email is required' });
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'A valid email address is required' });
   }
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => (u.email || '').toLowerCase().trim() === email) as any;
 
+  // Always return the same public result for a syntactically valid email so
+  // this endpoint cannot be used to enumerate VinOS accounts.
   if (!user) {
-    return res.status(400).json({ error: 'No account found with this email address' });
+    return res.json({ ok: true });
   }
 
   const resetToken = generateVerificationToken();
@@ -333,6 +366,10 @@ authRouter.post('/reset-password', async (req, res) => {
   if (!token || !username || !passcode) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
+  const passcodeError = passcodeValidationError(passcode);
+  if (passcodeError) {
+    return res.status(400).json({ error: passcodeError });
+  }
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
@@ -340,7 +377,7 @@ authRouter.post('/reset-password', async (req, res) => {
   const user = db.users.find(u => u.username === cleanUsername) as any;
 
   if (!user) {
-    return res.status(400).json({ error: 'User not found' });
+    return res.status(400).json({ error: 'Invalid or expired reset token' });
   }
 
   const isValid = isVerificationTokenValid({
@@ -425,10 +462,11 @@ authRouter.post('/login', async (req, res) => {
     }
   }
 
-  const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
+  const effectiveRole = activeMembershipRole(db, user);
+  const token = createSessionToken({ username: user.username, role: effectiveRole }, rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400;
   res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
-  res.json(publicUser(user));
+  res.json(publicUser(user, { role: effectiveRole }));
 });
 
 authRouter.post('/demo', async (_req, res) => {
@@ -739,6 +777,7 @@ authRouter.get('/me', async (req, res) => {
   }
   
   res.json(publicUser(user, {
+    role: activeMembershipRole(db, user),
     ...(session.impersonatedBy ? { impersonatedBy: session.impersonatedBy } : {})
   }));
 });
@@ -841,7 +880,7 @@ authRouter.post('/update_profile', async (req, res) => {
   
   await saveCoreMetadata('auth-update-profile');
   
-  res.json(publicUser(user));
+  res.json(publicUserForActiveOrganization(db, user));
 });
 
 // ── Organization Endpoints ─────────────────────────────────────────────
@@ -852,6 +891,12 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
   const { email, role } = req.body;
   if (!email || !role) {
     return res.status(400).json({ error: 'Email and role are required' });
+  }
+  if (!isValidEmail(String(email).toLowerCase().trim())) {
+    return res.status(400).json({ error: 'A valid email address is required' });
+  }
+  if (!isKnownRole(role)) {
+    return res.status(400).json({ error: 'A valid role is required' });
   }
 
   await refreshCoreMetadataFromPostgres();
@@ -963,6 +1008,12 @@ orgRouter.post('/accept-invite', async (req, res) => {
   if (!user) {
     return res.status(401).json({ error: 'User not found' });
   }
+  if (!sameNormalizedEmail(user.email, invite.email)) {
+    return res.status(403).json({ error: 'This invitation was issued to a different email address' });
+  }
+  if ((user as any).emailVerified === false) {
+    return res.status(403).json({ error: 'Verify your email before accepting this invitation' });
+  }
 
   const memId = 'mem_' + Math.random().toString(36).substr(2, 9);
   const membership = {
@@ -1007,19 +1058,21 @@ orgRouter.post('/switch', async (req, res) => {
     return res.status(401).json({ error: 'User not found' });
   }
 
-  const isMember = db.memberships?.some(m => m.userId === user.username && m.organizationId === organizationId);
-  if (!isMember) {
+  const membership = db.memberships?.find(m => m.userId === user.username && m.organizationId === organizationId);
+  if (!membership) {
     return res.status(403).json({ error: 'You are not a member of this organization' });
+  }
+  if (!isKnownRole(membership.role)) {
+    return res.status(403).json({ error: 'The organization membership has an invalid role' });
   }
 
   user.activeOrganizationId = organizationId;
   await saveCoreMetadata('org-switch');
 
-  const membership = db.memberships.find(m => m.userId === user.username && m.organizationId === organizationId);
   const newToken = createSessionToken({ username: user.username, role: membership.role }, true);
   res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
 
-  res.json({ ok: true, activeOrganizationId: organizationId });
+  res.json(buildOrganizationSwitchResponse(organizationId, membership.role));
 });
 
 orgRouter.get('/members', checkWineryScope('read'), async (req, res) => {

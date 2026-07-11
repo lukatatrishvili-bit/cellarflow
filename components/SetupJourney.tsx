@@ -44,8 +44,8 @@ export default function SetupJourney({ lang, journey, onNavigate, onDismiss }: P
             </h3>
             <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5 max-w-md">
               {ka
-                ? 'ექვსი ნაბიჯი სრულ მიკვლევადობამდე — ვენახიდან ლაბორატორიამდე.'
-                : 'Six steps to full traceability — from vineyard to lab.'}
+                ? 'თქვენი როლის შესაბამისი ნაბიჯები მარნის სრულ მიკვლევადობამდე.'
+                : 'Role-relevant steps toward complete winery traceability.'}
             </p>
           </div>
           <button

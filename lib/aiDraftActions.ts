@@ -36,6 +36,7 @@ export interface AiDraftQueueItem extends AiDraftAction {
 interface DraftContext {
   contextModule?: string;
   contextTab?: string;
+  lang?: string;
   cellarState?: {
     tanksCount: number;
     activeFermsCount: number;
@@ -50,6 +51,11 @@ const REVIEW_ONLY_WARNING = 'Review before applying; AI draft actions do not mod
 const CHEMISTRY_WARNING = 'Confirm lot, volume, pH, target free SO2, and lab method before dosing.';
 const SPRAY_WARNING = 'Check PHI, REI, product registration, weather window, and local label restrictions before spraying.';
 const COMPLIANCE_WARNING = 'Verify official documents against source records before submission.';
+
+const REVIEW_ONLY_WARNING_KA = 'გადაამოწმეთ გამოყენებამდე; AI-ს მიერ შემოთავაზებული ქმედებები არ ცვლის ოფიციალურ მარნის ჩანაწერებს.';
+const CHEMISTRY_WARNING_KA = 'დოზირებამდე გადაამოწმეთ პარტია, მოცულობა, pH, სამიზნე თავისუფალი SO2 და ლაბორატორიული მეთოდი.';
+const SPRAY_WARNING_KA = 'შესხურებამდე შეამოწმეთ PHI, REI, პრეპარატის რეგისტრაცია, ამინდის ფანჯარა და ადგილობრივი ეტიკეტის შეზღუდვები.';
+const COMPLIANCE_WARNING_KA = 'წარდგენამდე შეამოწმეთ ოფიციალური დოკუმენტები პირველად წყაროებთან.';
 
 const ACTION_LABELS: Record<AiDraftActionType, string> = {
   task: 'Task draft',
@@ -91,9 +97,12 @@ function firstLot(context?: DraftContext): { id: string; name: string; volume: n
 function makeDraft(
   type: AiDraftActionType,
   content: string,
-  draft: Omit<AiDraftAction, 'id' | 'type' | 'reviewOnly'>
+  draft: Omit<AiDraftAction, 'id' | 'type' | 'reviewOnly'>,
+  lang?: string
 ): AiDraftAction {
-  const warningSet = new Set([REVIEW_ONLY_WARNING, ...draft.warnings]);
+  const isKa = lang === 'ka';
+  const defaultWarning = isKa ? REVIEW_ONLY_WARNING_KA : REVIEW_ONLY_WARNING;
+  const warningSet = new Set([defaultWarning, ...draft.warnings]);
   return {
     ...draft,
     id: `ai-draft-${type}-${hashDraft(`${type}:${draft.title}:${content.slice(0, 120)}`)}`,
@@ -103,7 +112,20 @@ function makeDraft(
   };
 }
 
-export function draftActionLabel(type: AiDraftActionType): string {
+export function draftActionLabel(type: AiDraftActionType, lang?: string): string {
+  if (lang === 'ka') {
+    const kaLabels: Record<AiDraftActionType, string> = {
+      task: 'დავალების პროექტი',
+      lab_check: 'ლაბორატორიული შემოწმების პროექტი',
+      cellar_operation: 'მარნის ოპერაციის პროექტი',
+      so2_calculation: 'SO2-ის გაანგარიშების პროექტი',
+      spray_recommendation: 'წამლობის რეკომენდაციის პროექტი',
+      compliance_warning: 'შესაბამისობის გაფრთხილების პროექტი',
+      official_document_explanation: 'ოფიციალური დოკუმენტის ველის განმარტება',
+      lot_passport_summary: 'ლოტის პასპორტის რეზიუმეს პროექტი'
+    };
+    return kaLabels[type];
+  }
   return ACTION_LABELS[type];
 }
 
@@ -114,10 +136,12 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
   const lot = firstLot(context);
   const contextModule = (context.contextModule || '').toLowerCase();
   const contextTab = (context.contextTab || '').toLowerCase();
+  const lang = context.lang;
+  const isKa = lang === 'ka';
   const drafts: AiDraftAction[] = [];
 
-  const so2Like = hasAny(text, ['so2', 'sulfur dioxide', 'sulphur dioxide', 'sulfite', 'sulphite', 'kmbs', 'metabisulfite']);
-  const labLike = so2Like || hasAny(text, ['lab', 'analysis', 'sample', 'ph', 'volatile acidity', ' va ', 'density', 'brix', 'ta ', 'tartaric']);
+  const so2Like = hasAny(text, ['so2', 'sulfur dioxide', 'sulphur dioxide', 'sulfite', 'sulphite', 'kmbs', 'metabisulfite', 'გოგირდ', 'KMBS']);
+  const labLike = so2Like || hasAny(text, ['lab', 'analysis', 'sample', 'ph', 'volatile acidity', ' va ', 'density', 'brix', 'ta ', 'tartaric', 'ლაბორატორი', 'ანალიზი', 'ნიმუში']);
   const cellarLike = hasAny(text, [
     'rack',
     'racking',
@@ -132,7 +156,13 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
     'wax',
     'seal',
     'fermentation restart',
-    'stuck fermentation'
+    'stuck fermentation',
+    'გადაღება',
+    'ტუმბვა',
+    'ქვევრი',
+    'ცვილი',
+    'დალუქვა',
+    'დუღილის გაჩერება'
   ]);
   const vaziLike = contextModule === 'vazi' || hasAny(text, [
     'mildew',
@@ -145,7 +175,12 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
     'phi',
     'rei',
     'humidity',
-    'rain'
+    'rain',
+    'ნაცარი',
+    'ჭრაქი',
+    'შესხურება',
+    'ვენახი',
+    'მავნებელი'
   ]);
   const complianceLike = hasAny(text, [
     'compliance',
@@ -158,10 +193,16 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
     'export',
     'document',
     'agency',
-    'traceability'
+    'traceability',
+    'შესაბამისობა',
+    'სერტიფიკატი',
+    'დეკლარაცია',
+    'ოფიციალური',
+    'ექსპორტი',
+    'დოკუმენტი'
   ]);
-  const officialFieldGapLike = hasAny(text, ['missing field', 'missing official', 'blank field', 'todo field', 'required field', 'annex', 'form', 'document warning'])
-    || (hasAny(text, ['explain', 'why', 'what is missing', 'missing']) && hasAny(text, ['official document', 'annex', 'form', 'georgian document', 'agency document']));
+  const officialFieldGapLike = hasAny(text, ['missing field', 'missing official', 'blank field', 'todo field', 'required field', 'annex', 'form', 'document warning', 'გამოტოვებული ველი', 'ცარიელი ველი', 'დანართი', 'ფორმა'])
+    || (hasAny(text, ['explain', 'why', 'what is missing', 'missing', 'განმარტება', 'რა აკლია', 'გამოტოვებული']) && hasAny(text, ['official document', 'annex', 'form', 'georgian document', 'agency document', 'დოკუმენტი', 'დანართი']));
   const passportLike = contextTab === 'lots' || hasAny(text, [
     'lot passport',
     'passport',
@@ -169,130 +210,158 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
     'chain of custody',
     'history',
     'traceability summary',
-    'batch summary'
+    'batch summary',
+    'პასპორტი',
+    'მიკვლევადობა'
   ]);
-  const urgentLike = hasAny(text, ['critical', 'urgent', 'immediately', 'high risk', 'high va', 'stuck', 'infection', 'contamination']);
+  const urgentLike = hasAny(text, ['critical', 'urgent', 'immediately', 'high risk', 'high va', 'stuck', 'infection', 'contamination', 'კრიტიკული', 'სასწრაფო', 'მაღალი რისკი']);
 
   if (labLike) {
     drafts.push(makeDraft('lab_check', content, {
-      title: lot ? `Verify chemistry for ${lot.name}` : 'Verify wine chemistry',
+      title: lot 
+        ? (isKa ? `ქიმიის გადამოწმება ${lot.name}-სთვის` : `Verify chemistry for ${lot.name}`)
+        : (isKa ? 'ღვინის ქიმიის გადამოწმება' : 'Verify wine chemistry'),
       priority: so2Like || urgentLike ? 'high' : 'medium',
       targetModule: 'labs',
       description: lot
-        ? `Create a reviewed lab-check draft for ${lot.name} (${lot.id}) before making chemistry or stability decisions.`
-        : 'Create a reviewed lab-check draft before making chemistry or stability decisions.',
-      warnings: so2Like ? [CHEMISTRY_WARNING] : [],
+        ? (isKa ? `შექმენით ლაბორატორიული შემოწმების პროექტი ${lot.name}-სთვის (${lot.id}), სანამ მიიღებთ გადაწყვეტილებას ქიმიის ან სტაბილურობის შესახებ.` : `Create a reviewed lab-check draft for ${lot.name} (${lot.id}) before making chemistry or stability decisions.`)
+        : (isKa ? 'შექმენით ლაბორატორიული შემოწმების პროექტი, სანამ მიიღებთ გადაწყვეტილებას ქიმიის ან სტაბილურობის შესახებ.' : 'Create a reviewed lab-check draft before making chemistry or stability decisions.'),
+      warnings: so2Like ? [isKa ? CHEMISTRY_WARNING_KA : CHEMISTRY_WARNING] : [],
       payload: {
         lotId: lot?.id,
         requestedChecks: so2Like ? ['pH', 'free SO2', 'total SO2'] : ['pH', 'density', 'TA', 'VA']
       }
-    }));
+    }, lang));
   }
 
   if (so2Like) {
     drafts.push(makeDraft('so2_calculation', content, {
-      title: lot ? `Review SO2 calculation for ${lot.name}` : 'Review SO2 calculation',
+      title: lot 
+        ? (isKa ? `SO2-ის გაანგარიშება ${lot.name}-სთვის` : `Review SO2 calculation for ${lot.name}`)
+        : (isKa ? 'SO2-ის გაანგარიშება' : 'Review SO2 calculation'),
       priority: 'high',
       targetModule: 'labs',
       description: lot
-        ? `Prepare a draft SO2 review for ${lot.name} using the current volume (${lot.volume} L), measured pH, current free SO2, and target molecular SO2.`
-        : 'Prepare a draft SO2 review using confirmed lot volume, measured pH, current free SO2, and target molecular SO2.',
-      warnings: [CHEMISTRY_WARNING],
+        ? (isKa ? `მოამზადეთ SO2-ის კალკულაციის ვერსია ${lot.name}-სთვის მიმდინარე მოცულობის (${lot.volume} ლ), pH-ის, თავისუფალი SO2-ის და სამიზნე მოლეკულური SO2-ის გამოყენებით.` : `Prepare a draft SO2 review for ${lot.name} using the current volume (${lot.volume} L), measured pH, current free SO2, and target molecular SO2.`)
+        : (isKa ? 'მოამზადეთ SO2-ის კალკულაციის ვერსია პარტიის დადასტურებული მოცულობის, pH-ის, თავისუფალი SO2-ის და სამიზნე მოლეკულური SO2-ის გამოყენებით.' : 'Prepare a draft SO2 review using confirmed lot volume, measured pH, current free SO2, and target molecular SO2.'),
+      warnings: [isKa ? CHEMISTRY_WARNING_KA : CHEMISTRY_WARNING],
       payload: {
         lotId: lot?.id,
         volumeL: lot?.volume,
         requiresConfirmedInputs: ['pH', 'currentFreeSo2', 'targetFreeSo2', 'wineVolumeL']
       }
-    }));
+    }, lang));
   }
 
   if (cellarLike) {
     drafts.push(makeDraft('cellar_operation', content, {
-      title: lot ? `Review cellar operation for ${lot.name}` : 'Review cellar operation',
+      title: lot 
+        ? (isKa ? `მარნის ოპერაცია ${lot.name}-სთვის` : `Review cellar operation for ${lot.name}`)
+        : (isKa ? 'მარნის ოპერაცია' : 'Review cellar operation'),
       priority: urgentLike ? 'high' : 'medium',
       targetModule: 'operations',
-      description: 'Turn the assistant recommendation into a reviewed cellar-operation draft before assigning operators or changing vessels.',
+      description: isKa 
+        ? 'გადააქციეთ ასისტენტის რეკომენდაცია განსახილველ მარნის ოპერაციის პროექტად, სანამ დანიშნავთ შემსრულებლებს ან შეცვლით რეზერვუარებს.' 
+        : 'Turn the assistant recommendation into a reviewed cellar-operation draft before assigning operators or changing vessels.',
       warnings: [],
       payload: {
         lotId: lot?.id,
         operationHints: ['operator', 'vessel', 'volume', 'materials', 'sanitation check']
       }
-    }));
+    }, lang));
   }
 
   if (vaziLike) {
     drafts.push(makeDraft('spray_recommendation', content, {
-      title: 'Review vineyard protection recommendation',
-      priority: urgentLike || hasAny(text, ['mildew', 'botrytis', 'high risk']) ? 'high' : 'medium',
+      title: isKa ? 'ვენახის წამლობის რეკომენდაცია' : 'Review vineyard protection recommendation',
+      priority: urgentLike || hasAny(text, ['mildew', 'botrytis', 'high risk', 'ჭრაქი', 'ნაცარი']) ? 'high' : 'medium',
       targetModule: 'vazi',
-      description: 'Convert the vineyard recommendation into a checked scouting or spray-plan draft after confirming field pressure and label constraints.',
-      warnings: [SPRAY_WARNING],
+      description: isKa 
+        ? 'გადააქციეთ ვენახის რეკომენდაცია შემოწმებულ ფიტოსანიტარულ ან წამლობის გეგმის პროექტად ნაკვეთზე მავნებლების წნევისა და ეტიკეტის შეზღუდვების დადასტურების შემდეგ.' 
+        : 'Convert the vineyard recommendation into a checked scouting or spray-plan draft after confirming field pressure and label constraints.',
+      warnings: [isKa ? SPRAY_WARNING_KA : SPRAY_WARNING],
       payload: {
         contextModule,
         suggestedChecks: ['weather window', 'scouting severity', 'PHI', 'REI', 'operator safety']
       }
-    }));
+    }, lang));
   }
 
   if (complianceLike) {
     drafts.push(makeDraft('compliance_warning', content, {
-      title: 'Review compliance and document risk',
-      priority: urgentLike || hasAny(text, ['missing', 'expired', 'rejected']) ? 'high' : 'medium',
+      title: isKa ? 'შესაბამისობის და დოკუმენტების რისკები' : 'Review compliance and document risk',
+      priority: urgentLike || hasAny(text, ['missing', 'expired', 'rejected', 'გამოტოვებული', 'ვადაგასული']) ? 'high' : 'medium',
       targetModule: 'documents',
-      description: 'Create a review-only compliance warning so official files, declarations, and certification data can be checked against source records.',
-      warnings: [COMPLIANCE_WARNING],
+      description: isKa 
+        ? 'შექმენით მხოლოდ განსახილველი შესაბამისობის გაფრთხილება, რათა ოფიციალური ფაილები, დეკლარაციები და სერტიფიკატის მონაცემები გადამოწმდეს პირველად ჩანაწერებთან.' 
+        : 'Create a review-only compliance warning so official files, declarations, and certification data can be checked against source records.',
+      warnings: [isKa ? COMPLIANCE_WARNING_KA : COMPLIANCE_WARNING],
       payload: {
         suggestedChecks: ['lot origin', 'certificate status', 'declaration numbers', 'export purpose', 'attachments']
       }
-    }));
+    }, lang));
   }
 
   if (officialFieldGapLike) {
     drafts.push(makeDraft('official_document_explanation', content, {
-      title: 'Explain missing official document fields',
-      priority: hasAny(text, ['critical', 'export', 'submission', 'submit']) ? 'high' : 'medium',
+      title: isKa ? 'ოფიციალური დოკუმენტის ცარიელი ველები' : 'Explain missing official document fields',
+      priority: hasAny(text, ['critical', 'export', 'submission', 'submit', 'კრიტიკული', 'ექსპორტი']) ? 'high' : 'medium',
       targetModule: 'documents',
-      description: 'Prepare a review-only explanation of missing official document fields, their likely source records, and what must be entered before export or submission.',
-      warnings: [COMPLIANCE_WARNING],
+      description: isKa 
+        ? 'მოამზადეთ მხოლოდ განსახილველი განმარტება დოკუმენტის ცარიელ ველებზე, მათ სავარაუდო პირველად წყაროებზე და იმაზე, თუ რა უნდა შეივსოს ექსპორტამდე.' 
+        : 'Prepare a review-only explanation of missing official document fields, their likely source records, and what must be entered before export or submission.',
+      warnings: [isKa ? COMPLIANCE_WARNING_KA : COMPLIANCE_WARNING],
       payload: {
         suggestedSections: ['missing fields', 'source module', 'blocking vs warning', 'next data-entry step']
       }
-    }));
+    }, lang));
   }
 
   if (passportLike) {
     drafts.push(makeDraft('lot_passport_summary', content, {
-      title: lot ? `Draft lot passport summary for ${lot.name}` : 'Draft lot passport summary',
+      title: lot 
+        ? (isKa ? `ლოტის პასპორტის რეზიუმე ${lot.name}-სთვის` : `Draft lot passport summary for ${lot.name}`)
+        : (isKa ? 'ლოტის პასპორტის რეზიუმე' : 'Draft lot passport summary'),
       priority: 'low',
       targetModule: 'lots',
-      description: 'Prepare a review-only lot passport summary from lineage, intake, lab, cellar, and document records.',
-      warnings: [COMPLIANCE_WARNING],
+      description: isKa 
+        ? 'მოამზადეთ მხოლოდ განსახილველი ლოტის პასპორტის რეზიუმე გენეალოგიის, მიღების, ლაბორატორიის, მარნისა და დოკუმენტების ჩანაწერებიდან.' 
+        : 'Prepare a review-only lot passport summary from lineage, intake, lab, cellar, and document records.',
+      warnings: [isKa ? COMPLIANCE_WARNING_KA : COMPLIANCE_WARNING],
       payload: {
         lotId: lot?.id,
         sections: ['origin', 'operations', 'chemistry', 'certification', 'audit']
       }
-    }));
+    }, lang));
   }
 
-  if (drafts.length === 0 || hasAny(text, ['todo', 'task', 'action', 'next step', 'protocol', 'checklist', 'schedule'])) {
+  if (drafts.length === 0 || hasAny(text, ['todo', 'task', 'action', 'next step', 'protocol', 'checklist', 'schedule', 'დავალება', 'ნაბიჯი', 'გეგმა'])) {
     drafts.unshift(makeDraft('task', content, {
-      title: urgentLike ? 'Review urgent AI-recommended task' : 'Review AI-recommended task',
+      title: urgentLike 
+        ? (isKa ? 'სასწრაფო AI-რეკომენდებული დავალება' : 'Review urgent AI-recommended task') 
+        : (isKa ? 'AI-რეკომენდებული დავალება' : 'Review AI-recommended task'),
       priority: urgentLike ? 'high' : 'medium',
       targetModule: 'tasks',
-      description: 'Create a task draft from the assistant recommendation after a human review.',
+      description: isKa 
+        ? 'შექმენით დავალების პროექტი ასისტენტის რეკომენდაციიდან ადამიანური გადამოწმების შემდეგ.' 
+        : 'Create a task draft from the assistant recommendation after a human review.',
       warnings: [],
       payload: {
         source: 'ai_assistant'
       }
-    }));
+    }, lang));
   }
 
   return drafts;
 }
 
-export function formatDraftTaskDescription(action: AiDraftAction): string {
-  const warningText = action.warnings.length > 0 ? `\n\nReview notes:\n- ${action.warnings.join('\n- ')}` : '';
-  return `AI draft action (${draftActionLabel(action.type)}): ${action.description}${warningText}`;
+export function formatDraftTaskDescription(action: AiDraftAction, lang?: string): string {
+  const isKa = lang === 'ka';
+  const warningText = action.warnings.length > 0 
+    ? `\n\n${isKa ? 'შენიშვნები' : 'Review notes'}:\n- ${action.warnings.join('\n- ')}` 
+    : '';
+  const prefix = isKa ? 'AI პროექტი' : 'AI draft action';
+  return `${prefix} (${draftActionLabel(action.type, lang)}): ${action.description}${warningText}`;
 }
 
 export function createAiDraftQueueItems(

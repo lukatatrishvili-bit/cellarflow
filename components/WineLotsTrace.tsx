@@ -13,6 +13,8 @@ interface Props {
   lang: Language;
   lots: WineLot[];
   onUpdateLots: (newLots: WineLot[]) => void;
+  canCreateLot?: boolean;
+  canUpdateLot?: boolean;
   onOpenPassport?: (lotId: string) => void;
   vessels?: Vessel[];
   labLogs?: LabAnalysis[];
@@ -28,10 +30,22 @@ interface Props {
   setCalculatorLotIdA?: (lotId: string) => void;
 }
 
+export function commitWineLotMutationIfAllowed(
+  allowed: boolean,
+  nextLots: WineLot[],
+  onUpdateLots: (newLots: WineLot[]) => void,
+): boolean {
+  if (!allowed) return false;
+  onUpdateLots(nextLots);
+  return true;
+}
+
 export default function WineLotsTrace({
   lang,
   lots,
   onUpdateLots,
+  canCreateLot = true,
+  canUpdateLot = true,
   onOpenPassport,
   vessels = [],
   labLogs = [],
@@ -92,6 +106,7 @@ export default function WineLotsTrace({
 
   const handleAddLot = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateLot) return;
     if (!newId || !newName) return;
 
     const newLot: WineLot = {
@@ -116,7 +131,7 @@ export default function WineLotsTrace({
       ]
     };
 
-    onUpdateLots([...lots, newLot]);
+    if (!commitWineLotMutationIfAllowed(canCreateLot, [...lots, newLot], onUpdateLots)) return;
     setNewId('');
     setNewName('');
     setNewVineyard('');
@@ -133,9 +148,27 @@ export default function WineLotsTrace({
   });
 
   const uniqueVintages = Array.from(new Set(lots.map(l => l.vintage))).sort((a, b) => b - a);
+  const isReadOnly = !canCreateLot && !canUpdateLot;
+  const readOnlyNotice = lang === 'ka'
+    ? {
+        title: 'ღვინის პარტიებზე მხოლოდ ნახვის წვდომა',
+        body: 'შეგიძლიათ დაათვალიეროთ პარტიის დეტალები, მიკვლევადობა, წარმოშობის კავშირები, პასპორტები და მარნის დაკავშირებული ჩანაწერები, მაგრამ თქვენი როლი ვერ ქმნის ან ცვლის ღვინის პარტიებს.',
+      }
+    : {
+        title: 'Read-only wine lot access',
+        body: 'You can browse lot details, traceability, lineage, passports, and linked cellar records, but your role cannot create or change wine lots.',
+      };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+      {isReadOnly && (
+        <div role="status" className="lg:col-span-3 xl:col-span-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+          <strong className="block text-xs font-bold">{readOnlyNotice.title}</strong>
+          <span className="mt-0.5 block text-[11px] leading-relaxed">
+            {readOnlyNotice.body}
+          </span>
+        </div>
+      )}
       {/* List Panel */}
       <div className="lg:col-span-1 space-y-4">
         <div className="flex items-center justify-between">
@@ -149,7 +182,7 @@ export default function WineLotsTrace({
               de: 'Aktive Chargen'
             }[lang] || 'Active Lots'} ({filteredLots.length})
           </h3>
-          <button 
+          {canCreateLot && <button
             onClick={() => setShowAddForm(!showAddForm)}
             className="inline-flex items-center gap-0.5 px-2.5 py-1 text-[11px] font-semibold text-white bg-[#4e0e15] hover:bg-[#6b151e] rounded transition-colors cursor-pointer"
           >
@@ -161,7 +194,7 @@ export default function WineLotsTrace({
               fr: 'Créer un Lot',
               de: 'Charge erstellen'
             }[lang] || 'Create Lot'}
-          </button>
+          </button>}
         </div>
 
         {/* Filters */}
@@ -234,7 +267,7 @@ export default function WineLotsTrace({
         </div>
 
         {/* Add Lot form popup */}
-        {showAddForm && (
+        {canCreateLot && showAddForm && (
           <form onSubmit={handleAddLot} className="p-3 bg-white border border-[#4e0e15] rounded-xl space-y-2.5 shadow-sm text-stone-800">
             <div>
               <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
@@ -397,7 +430,7 @@ export default function WineLotsTrace({
               salesOrders={salesOrders}
               salesDispatches={salesDispatches}
               currency={currency}
-              onEdit={() => setIsEditingLot(!isEditingLot)}
+              onEdit={canUpdateLot ? () => setIsEditingLot(!isEditingLot) : undefined}
               onOpenPassport={onOpenPassport}
               setActiveTab={setActiveTab}
               setSelectedTankId={setSelectedTankId}
@@ -411,14 +444,14 @@ export default function WineLotsTrace({
                   <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 font-bold bg-[#f5efe9] border border-[#e3d7cb] text-[#4e0e15] rounded">
                     {selectedLot.id}
                   </span>
-                  <button
+                  {canUpdateLot && <button
                     type="button"
                     onClick={() => setIsEditingLot(!isEditingLot)}
                     className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
                     title="Edit Lot Properties"
                   >
                     ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
-                  </button>
+                  </button>}
                 </div>
                 <p className="text-xs text-slate-400 mt-1 font-medium font-sans">
                   Vintage {selectedLot.vintage} • Traditional Single-Lot Mapping trace
@@ -441,9 +474,10 @@ export default function WineLotsTrace({
               </div>
             </div>
 
-            {isEditingLot ? (
+            {canUpdateLot && isEditingLot ? (
               <form onSubmit={(e) => {
                 e.preventDefault();
+                if (!canUpdateLot) return;
                 const updatedLots = lots.map(l => {
                   if (l.id === selectedLot.id) {
                     return {
@@ -458,7 +492,7 @@ export default function WineLotsTrace({
                   }
                   return l;
                 });
-                onUpdateLots(updatedLots);
+                if (!commitWineLotMutationIfAllowed(canUpdateLot, updatedLots, onUpdateLots)) return;
                 setIsEditingLot(false);
               }} className="space-y-4 bg-[#FAF8F5] p-5 border border-[#e8dfd5] rounded-xl text-xs text-stone-700">
                 <h3 className="text-xs uppercase font-mono tracking-widest text-[#4e0e15] font-black border-b pb-1.5 mb-3 flex justify-between items-center">
@@ -741,8 +775,9 @@ export default function WineLotsTrace({
                     <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
                       🍇 Winemaking Stage Workflow
                     </h4>
-                    <button
+                    {canUpdateLot && <button
                       onClick={() => {
+                        if (!canUpdateLot) return;
                         const currentIndex = stagesOrdered.indexOf(selectedLot.stage);
                         const nextIndex = Math.min(stagesOrdered.length - 1, currentIndex + 1);
                         setTransitionTarget(stagesOrdered[nextIndex]);
@@ -753,7 +788,7 @@ export default function WineLotsTrace({
                       className="px-2 py-1 text-[10px] font-bold text-white bg-[#801323] hover:bg-[#4e0e15] rounded transition-all cursor-pointer shadow-2xs"
                     >
                       Advance / Modify Stage
-                    </button>
+                    </button>}
                   </div>
 
                   {/* Stage Progress Stepper (Flex row) */}
@@ -794,7 +829,7 @@ export default function WineLotsTrace({
                   </div>
 
                   {/* Transition form drawer */}
-                  {showTransitionForm && (
+                  {canUpdateLot && showTransitionForm && (
                     <div className="bg-white border border-stone-200 p-4 rounded-xl space-y-3.5 shadow-2xs text-xs dark:bg-stone-950 dark:border-stone-800">
                       <h5 className="font-bold text-[#4e0e15] border-b border-stone-100 pb-1.5 uppercase text-[10px] tracking-wide dark:text-amber-100 dark:border-stone-850">
                         Log Stage Transition
@@ -850,6 +885,7 @@ export default function WineLotsTrace({
                         <button
                           type="button"
                           onClick={() => {
+                            if (!canUpdateLot) return;
                             if (transitionOperator.trim() && transitionNotes.trim()) {
                               const updatedLots = lots.map(l => {
                                 if (l.id === selectedLot.id) {
@@ -869,7 +905,7 @@ export default function WineLotsTrace({
                                 }
                                 return l;
                               });
-                              onUpdateLots(updatedLots);
+                              if (!commitWineLotMutationIfAllowed(canUpdateLot, updatedLots, onUpdateLots)) return;
                               setShowTransitionForm(false);
                             } else {
                               alert('Please provide Operator name and Transition notes.');
