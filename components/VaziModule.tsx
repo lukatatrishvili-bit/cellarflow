@@ -23,6 +23,27 @@ import { calculateVaziRisk, vaziRiskColor } from '../lib/vaziRisk';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
 import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
 
+// Google Maps key is baked in at build time (vite `define`). When it is absent
+// or blank, mounting <APIProvider> with an empty key renders a broken Google
+// error map and floods the console — so we render a calm placeholder instead.
+const MAPS_KEY = (process.env.GOOGLE_MAPS_PLATFORM_KEY || '').trim();
+
+function MapUnavailable({ lang }: { lang: Language }) {
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-stone-100 text-center px-3 dark:bg-stone-900">
+      <span className="text-lg" aria-hidden="true">🗺️</span>
+      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+        {lang === 'ka' ? 'რუკა მიუწვდომელია' : 'Map unavailable'}
+      </span>
+      <span className="text-[9px] text-stone-400 dark:text-stone-500 max-w-[220px] leading-snug">
+        {lang === 'ka'
+          ? 'Google Maps გასაღები არ არის კონფიგურირებული ამ გარემოში.'
+          : 'Google Maps key is not configured for this environment.'}
+      </span>
+    </div>
+  );
+}
+
 interface MapPolygonProps {
   paths: { lat: number; lng: number }[];
   fillColor?: string;
@@ -859,7 +880,8 @@ export default function VaziModule({
                   </div>
 
                   <div className="w-full h-40 mt-2 rounded-lg overflow-hidden border border-stone-200 relative z-0">
-                    <APIProvider apiKey={process.env.GOOGLE_MAPS_PLATFORM_KEY || ''}>
+                    {!MAPS_KEY ? <MapUnavailable lang={lang} /> : (
+                    <APIProvider apiKey={MAPS_KEY}>
                       <Map
                         defaultCenter={defaultCenter}
                         defaultZoom={14}
@@ -883,6 +905,7 @@ export default function VaziModule({
                         })}
                       </Map>
                     </APIProvider>
+                    )}
                   </div>
 
                   {/* Micro legend */}
@@ -2561,7 +2584,8 @@ export default function VaziModule({
                 />
                 
                 <div className="w-full h-40 rounded-lg overflow-hidden border border-stone-200 mt-2 relative z-0">
-                  <APIProvider apiKey={process.env.GOOGLE_MAPS_PLATFORM_KEY || ''}>
+                  {!MAPS_KEY ? <MapUnavailable lang={lang} /> : (
+                  <APIProvider apiKey={MAPS_KEY}>
                     <Map
                       defaultCenter={defaultCenter}
                       center={{ lat: addBlockLat, lng: addBlockLng }}
@@ -2593,6 +2617,7 @@ export default function VaziModule({
                       )}
                     </Map>
                   </APIProvider>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between mt-1">
