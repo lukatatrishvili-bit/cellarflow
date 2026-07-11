@@ -326,6 +326,16 @@ export default function App() {
     };
   }, [openMenu]);
 
+  // Navigating to another module/tab must land at the top. The app scrolls the
+  // window (no inner scroll container), so a state-driven view change otherwise
+  // keeps the previous scroll offset and opens the new page mid-screen. Reset to
+  // the top on every module/tab change (instant — smooth scrolling on nav is
+  // janky and fights reduced-motion preferences).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [state.activeModule, state.activeTab]);
+
   // Latest tasks are read through a ref so the poller below doesn't restart
   // (and immediately re-fetch) every time the tasks array changes. Re-checking
   // the ref each 15s poll also self-heals the startup race where login
