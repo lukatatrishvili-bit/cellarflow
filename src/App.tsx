@@ -1966,10 +1966,10 @@ export default function App() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
-                      Today focus
+                      {state.lang === 'ka' ? 'დღის ფოკუსი' : 'Today focus'}
                     </span>
                     <strong className="mt-1 block text-sm font-black text-stone-900 dark:text-amber-100">
-                      {activeModuleGroup.label} workspace
+                      {state.lang === 'ka' ? `${activeModuleGroup.label} — სივრცე` : `${activeModuleGroup.label} workspace`}
                     </strong>
                   </div>
                   <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
@@ -1977,20 +1977,20 @@ export default function App() {
                       ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
                       : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
                   }`}>
-                    {urgentAlertCount > 0 ? `${urgentAlertCount} urgent` : 'steady'}
+                    {urgentAlertCount > 0 ? `${urgentAlertCount} ${state.lang === 'ka' ? 'გადაუდებელი' : 'urgent'}` : (state.lang === 'ka' ? 'სტაბილური' : 'steady')}
                   </span>
                 </div>
                 {(canViewModule('gvino', 'tasks') || canViewModule('gvino', 'fermentation')) && (
                   <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
                     {canViewModule('gvino', 'tasks') && (
                       <button type="button" onClick={() => state.setActiveTab('tasks')} className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-                        <span className="block text-stone-400">Tasks</span>
+                        <span className="block text-stone-400">{t.tasks || 'Tasks'}</span>
                         <strong className="text-lg text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
                       </button>
                     )}
                     {canViewModule('gvino', 'fermentation') && (
                       <button type="button" onClick={() => state.setActiveTab('fermentation')} className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-                        <span className="block text-stone-400">Ferments</span>
+                        <span className="block text-stone-400">{state.lang === 'ka' ? 'დუღილი' : 'Ferments'}</span>
                         <strong className="text-lg text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
                       </button>
                     )}
@@ -1999,7 +1999,7 @@ export default function App() {
                 {canViewModule('gvino', 'vessels') && (
                 <div className="mt-3">
                   <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
-                    <span>Capacity</span>
+                    <span>{state.lang === 'ka' ? 'ტევადობა' : 'Capacity'}</span>
                     <span>{cellarCapacityPct}%</span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
@@ -2009,7 +2009,9 @@ export default function App() {
                     />
                   </div>
                   <span className="mt-2 block text-[10px] font-semibold text-stone-400">
-                    {occupiedTanksCount} occupied vessels · avg {averageOccupiedTemp} °C
+                    {state.lang === 'ka'
+                      ? `${occupiedTanksCount} დაკავებული ჭურჭელი · საშ. ${averageOccupiedTemp} °C`
+                      : `${occupiedTanksCount} occupied vessels · avg ${averageOccupiedTemp} °C`}
                   </span>
                 </div>
                 )}
@@ -2017,11 +2019,11 @@ export default function App() {
             )}
 
             <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
-              {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">Winery Menu</span>}
+              {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">{state.lang === 'ka' ? 'მარნის მენიუ' : 'Winery Menu'}</span>}
               <button
                 onClick={() => state.setIsSidebarCollapsed(!state.isSidebarCollapsed)}
                 className="ml-auto p-1.5 text-stone-400 hover:text-[#4e0e15] hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
-                title={state.isSidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+                title={state.isSidebarCollapsed ? (state.lang === 'ka' ? 'მენიუს გაშლა' : 'Expand menu') : (state.lang === 'ka' ? 'მენიუს ჩაკეცვა' : 'Collapse menu')}
               >
                 {state.isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
               </button>

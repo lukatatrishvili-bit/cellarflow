@@ -133,42 +133,48 @@ export default function WineryDashboardTab({
     ...(canViewLab ? lowSO2Alerts.map(log => ({
       id: `so2-${log.id}`,
       tone: 'danger' as const,
-      title: `Low SO₂: ${lots.find(l => l.id === log.lotId)?.name || log.lotId}`,
-      detail: `${log.freeSo2} mg/L free SO₂ · ${log.date}`,
+      title: `${isKa ? 'დაბალი SO₂' : 'Low SO₂'}: ${lots.find(l => l.id === log.lotId)?.name || log.lotId}`,
+      detail: `${log.freeSo2} ${isKa ? 'მგ/ლ თავისუფალი SO₂' : 'mg/L free SO₂'} · ${log.date}`,
       action: () => {
         setCalculatorLotId?.(log.lotId);
         setActiveTab?.('calculators');
       },
-      actionLabel: 'Run SO₂ calculator',
+      actionLabel: isKa ? 'SO₂ კალკულატორი' : 'Run SO₂ calculator',
     })) : []),
     ...(canViewLab ? highVAAlerts.map(log => ({
       id: `va-${log.id}`,
       tone: 'danger' as const,
-      title: `Volatile acidity warning: ${lots.find(l => l.id === log.lotId)?.name || log.lotId}`,
-      detail: `${log.volatileAcid} g/L VA · ${log.date}`,
+      title: `${isKa ? 'აქროლადი მჟავიანობის გაფრთხილება' : 'Volatile acidity warning'}: ${lots.find(l => l.id === log.lotId)?.name || log.lotId}`,
+      detail: `${log.volatileAcid} ${isKa ? 'გ/ლ VA' : 'g/L VA'} · ${log.date}`,
       action: canCreateTasks ? () => {
-        setPrefilledTaskTitle?.(`Inspect & seal vessel for Lot ${log.lotId}`);
+        setPrefilledTaskTitle?.(isKa
+          ? `შეამოწმეთ და დაალუქეთ ჭურჭელი პარტიისთვის ${log.lotId}`
+          : `Inspect & seal vessel for Lot ${log.lotId}`);
         setPrefilledTaskPriority?.('high');
-        setPrefilledTaskDesc?.(`Acetation alert: volatile acidity is elevated at ${log.volatileAcid} g/L. Check cooling jacket, clean headspace, verify lid gasket tightness, and purge with CO2/Argon if necessary.`);
+        setPrefilledTaskDesc?.(isKa
+          ? `აცეტაციის გაფრთხილება: აქროლადი მჟავიანობა აწეულია ${log.volatileAcid} გ/ლ-მდე. შეამოწმეთ გამაგრილებელი პერანგი, გაწმინდეთ თავისუფალი სივრცე, დაარწმუნეთ სახურავის ჰერმეტულობა და საჭიროების შემთხვევაში გაფილტრეთ CO2/Argon-ით.`
+          : `Acetation alert: volatile acidity is elevated at ${log.volatileAcid} g/L. Check cooling jacket, clean headspace, verify lid gasket tightness, and purge with CO2/Argon if necessary.`);
         setActiveTab?.('tasks');
       } : undefined,
-      actionLabel: 'Create inspection task',
+      actionLabel: isKa ? 'ინსპექციის დავალება' : 'Create inspection task',
     })) : []),
     ...(canViewFermentation ? fermentsMissingReading.map(lot => ({
       id: `ferm-${lot.id}`,
       tone: 'warning' as const,
-      title: `Fermentation reading missing: ${lot.name}`,
+      title: `${isKa ? 'დუღილის ჩანაწერი აკლია' : 'Fermentation reading missing'}: ${lot.name}`,
       detail: `${lot.currentVolume.toLocaleString()} L · ${lot.variety}`,
       action: go('fermentation'),
-      actionLabel: canCreateFermentation ? 'Log reading' : 'Review fermentation',
+      actionLabel: canCreateFermentation ? (isKa ? 'ჩაწერა' : 'Log reading') : (isKa ? 'დუღილის ნახვა' : 'Review fermentation'),
     })) : []),
     ...(canViewTasks ? overdueTasks.slice(0, 4).map(task => ({
       id: `task-${task.id}`,
       tone: 'warning' as const,
       title: task.title,
-      detail: `Overdue since ${task.dueDate} · ${task.priority} priority`,
+      detail: isKa
+        ? `ვადაგადაცილებულია ${task.dueDate}-დან · ${task.priority} პრიორიტეტი`
+        : `Overdue since ${task.dueDate} · ${task.priority} priority`,
       action: go('tasks'),
-      actionLabel: 'Review tasks',
+      actionLabel: isKa ? 'დავალებების ნახვა' : 'Review tasks',
     })) : []),
   ].slice(0, 8);
 
@@ -195,7 +201,7 @@ export default function WineryDashboardTab({
   return (
     <div className="space-y-5 animate-fade-in text-stone-800 relative z-10">
       <PageHeader
-        eyebrow={isKa ? 'Cellar command' : 'Cellar command'}
+        eyebrow={isKa ? 'მარნის ცენტრი' : 'Cellar command'}
         title={t.dashboard || 'Winery Dashboard'}
         description={isKa
           ? 'თქვენი როლის შესაბამისი პრიორიტეტები და გადაუდებელი სამუშაო.'
@@ -205,17 +211,17 @@ export default function WineryDashboardTab({
           <div className="flex flex-wrap gap-2">
             {canCreateFermentation && (
               <ActionButton onClick={go('fermentation')} className="gap-1.5">
-                <Activity className="h-3.5 w-3.5" /> Log fermentation
+                <Activity className="h-3.5 w-3.5" /> {isKa ? 'დუღილის ჩაწერა' : 'Log fermentation'}
               </ActionButton>
             )}
             {canCreateLab && (
               <ActionButton tone="secondary" onClick={go('labs')} className="gap-1.5">
-                <TestTube className="h-3.5 w-3.5" /> Add lab
+                <TestTube className="h-3.5 w-3.5" /> {isKa ? 'ანალიზის დამატება' : 'Add lab'}
               </ActionButton>
             )}
             {canViewTasks && (
               <ActionButton tone="secondary" onClick={go('tasks')} className="gap-1.5">
-                <ClipboardList className="h-3.5 w-3.5" /> Tasks
+                <ClipboardList className="h-3.5 w-3.5" /> {t.tasks || 'Tasks'}
               </ActionButton>
             )}
           </div>
@@ -227,7 +233,7 @@ export default function WineryDashboardTab({
           <MetricCard
             label={t.total_volume || 'Wine volume'}
             value={formatVolume(totalLotsVolume)}
-            detail={`${lots.length} active wine lots`}
+            detail={`${lots.length} ${isKa ? 'აქტიური პარტია' : 'active wine lots'}`}
             icon={Wine}
             tone="brand"
             onClick={go('lots')}
@@ -237,7 +243,7 @@ export default function WineryDashboardTab({
           <MetricCard
             label={t.total_tanks || 'Vessels'}
             value={`${occupiedTanksCount}/${vessels.length}`}
-            detail={`${Math.round(vesselUsePct)}% of cellar capacity used`}
+            detail={isKa ? `გამოყენებულია ტევადობის ${Math.round(vesselUsePct)}%` : `${Math.round(vesselUsePct)}% of cellar capacity used`}
             icon={Container}
             tone={vesselUsePct > 85 ? 'warning' : 'info'}
             onClick={go('vessels')}
@@ -247,7 +253,9 @@ export default function WineryDashboardTab({
           <MetricCard
             label={t.active_ferms || 'Fermenting'}
             value={activeFermsCount}
-            detail={fermentsMissingReading.length ? `${fermentsMissingReading.length} need readings today` : 'Readings up to date'}
+            detail={fermentsMissingReading.length
+              ? (isKa ? `${fermentsMissingReading.length} საჭიროებს ჩაწერას დღეს` : `${fermentsMissingReading.length} need readings today`)
+              : (isKa ? 'ჩანაწერები განახლებულია' : 'Readings up to date')}
             icon={Activity}
             tone={fermentsMissingReading.length ? 'warning' : 'success'}
             onClick={go('fermentation')}
@@ -257,7 +265,9 @@ export default function WineryDashboardTab({
           <MetricCard
             label={t.temperature || 'Avg vessel temp'}
             value={`${avgTemp} °C`}
-            detail={occupiedTanksCount ? `${occupiedTanksCount} occupied vessels` : 'No occupied vessels'}
+            detail={occupiedTanksCount
+              ? (isKa ? `${occupiedTanksCount} დაკავებული ჭურჭელი` : `${occupiedTanksCount} occupied vessels`)
+              : (isKa ? 'დაკავებული ჭურჭელი არ არის' : 'No occupied vessels')}
             icon={Thermometer}
             tone="neutral"
             onClick={go('vessels')}
@@ -267,16 +277,20 @@ export default function WineryDashboardTab({
 
       <div className={`grid grid-cols-1 gap-5 ${showCellarHealth ? 'xl:grid-cols-[1.25fr_0.75fr]' : ''}`}>
         <SectionCard
-          title="Today’s cellar queue"
-          subtitle="Chemistry risks, missing fermentation readings, and overdue work first."
+          title={isKa ? 'მარნის დღის რიგი' : 'Today’s cellar queue'}
+          subtitle={isKa
+            ? 'ჯერ ქიმიის რისკები, გამოტოვებული დუღილის ჩანაწერები და ვადაგადაცილებული სამუშაო.'
+            : 'Chemistry risks, missing fermentation readings, and overdue work first.'}
           icon={ShieldAlert}
-          actions={<StatusBadge tone={workQueue.length ? 'warning' : 'success'}>{workQueue.length ? `${workQueue.length} open` : 'clear'}</StatusBadge>}
+          actions={<StatusBadge tone={workQueue.length ? 'warning' : 'success'}>{workQueue.length ? `${workQueue.length} ${isKa ? 'ღია' : 'open'}` : (isKa ? 'სუფთა' : 'clear')}</StatusBadge>}
         >
           {workQueue.length === 0 ? (
             <EmptyState
               icon={CheckCircle2}
-              title="No urgent cellar work"
-              description="Chemistry, fermentation, and overdue task signals are clear for the recorded data."
+              title={isKa ? 'გადაუდებელი სამუშაო არ არის' : 'No urgent cellar work'}
+              description={isKa
+                ? 'ქიმიის, დუღილისა და ვადაგადაცილებული დავალებების სიგნალები სუფთაა ჩაწერილი მონაცემებისთვის.'
+                : 'Chemistry, fermentation, and overdue task signals are clear for the recorded data.'}
             />
           ) : (
             <div className="space-y-2.5">
@@ -308,8 +322,10 @@ export default function WineryDashboardTab({
 
         {showCellarHealth && (
           <SectionCard
-            title="Cellar health"
-            subtitle="Fast read on the cellar signals available to your role."
+            title={isKa ? 'მარნის მდგომარეობა' : 'Cellar health'}
+            subtitle={isKa
+              ? 'თქვენი როლისთვის ხელმისაწვდომი მარნის სიგნალების სწრაფი მიმოხილვა.'
+              : 'Fast read on the cellar signals available to your role.'}
             icon={BarChart3}
           >
             <div className="space-y-4">
@@ -317,32 +333,34 @@ export default function WineryDashboardTab({
                 <ProgressBar
                   value={vesselUsePct}
                   tone={vesselUsePct > 85 ? 'warning' : 'brand'}
-                  label="Capacity utilization"
+                  label={isKa ? 'ტევადობის გამოყენება' : 'Capacity utilization'}
                 />
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {canViewBottling && (
               <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950/40">
-                <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">Ready soon</span>
+                <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">{isKa ? 'მალე მზადაა' : 'Ready soon'}</span>
                 <strong className="mt-1 block text-xl font-black text-stone-900 dark:text-amber-50">{readyForBottling.length}</strong>
-                <span className="text-[10px] font-semibold text-stone-500">lots near bottling</span>
+                <span className="text-[10px] font-semibold text-stone-500">{isKa ? 'პარტია ჩამოსხმის ზღვარზე' : 'lots near bottling'}</span>
               </div>
               )}
               {canViewLab && (
               <div className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950/40">
-                <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">Chemistry</span>
+                <span className="block text-[9px] font-mono font-bold uppercase text-stone-500 dark:text-stone-400">{isKa ? 'ქიმია' : 'Chemistry'}</span>
                 <strong className={`mt-1 block text-xl font-black ${lowSO2Alerts.length || highVAAlerts.length ? 'text-rose-700' : 'text-emerald-700'}`}>
                   {lowSO2Alerts.length + highVAAlerts.length}
                 </strong>
-                <span className="text-[10px] font-semibold text-stone-500">latest lab alerts</span>
+                <span className="text-[10px] font-semibold text-stone-500">{isKa ? 'ბოლო ლაბ. გაფრთხილება' : 'latest lab alerts'}</span>
               </div>
               )}
               </div>
 
               {canViewVessels && vesselUsePct > 85 && (
                 <InlineNotice tone="warning">
-                  Cellar capacity is getting tight. Consider bottling, transfers, or adding temporary storage before receiving more fruit.
+                  {isKa
+                    ? 'მარნის ტევადობა იწურება. განიხილეთ ჩამოსხმა, გადატანა ან დროებითი საწყობის დამატება ახალი ყურძნის მიღებამდე.'
+                    : 'Cellar capacity is getting tight. Consider bottling, transfers, or adding temporary storage before receiving more fruit.'}
                 </InlineNotice>
               )}
             </div>
@@ -354,13 +372,13 @@ export default function WineryDashboardTab({
       <div className={`grid grid-cols-1 gap-5 ${canViewVessels && canViewFermentation ? 'lg:grid-cols-2' : ''}`}>
         {canViewVessels && (
         <SectionCard
-          title={isKa ? 'Cellar vessel utilization' : 'Cellar vessel utilization'}
-          subtitle="Capacity vs active liquid volume."
+          title={isKa ? 'მარნის ჭურჭლის გამოყენება' : 'Cellar vessel utilization'}
+          subtitle={isKa ? 'ტევადობა აქტიური სითხის მოცულობასთან.' : 'Capacity vs active liquid volume.'}
           icon={Container}
           actions={<StatusBadge tone="info">D3</StatusBadge>}
         >
           {vessels.length === 0 ? (
-            <EmptyState icon={Container} title="No vessels yet" description="Add tanks, qvevri, barrels, or bins to start capacity planning." />
+            <EmptyState icon={Container} title={isKa ? 'ჭურჭელი ჯერ არ არის' : 'No vessels yet'} description={isKa ? 'დაამატეთ რეზერვუარები, ქვევრი, კასრი ან ავზი ტევადობის დასაგეგმად.' : 'Add tanks, qvevri, barrels, or bins to start capacity planning.'} />
           ) : (
             <TankCapacityChart tanks={mappedTanks} onSelectTank={setSelectedTankId} selectedTankId={selectedTankId} />
           )}
@@ -369,8 +387,8 @@ export default function WineryDashboardTab({
 
         {canViewFermentation && (
         <SectionCard
-          title={isKa ? 'Kinetics & sugar degradation' : 'Kinetics & sugar degradation'}
-          subtitle="Fermentation trend for the selected lot."
+          title={isKa ? 'კინეტიკა და შაქრის დაშლა' : 'Kinetics & sugar degradation'}
+          subtitle={isKa ? 'დუღილის ტრენდი არჩეული პარტიისთვის.' : 'Fermentation trend for the selected lot.'}
           icon={Activity}
           actions={chartableLotIds.length > 0 && (
             <select
@@ -390,7 +408,7 @@ export default function WineryDashboardTab({
           )}
         >
           {chartableLotIds.length === 0 ? (
-            <EmptyState icon={Activity} title="No fermentation readings yet" description="Log the first daily density and temperature reading to start the curve." />
+            <EmptyState icon={Activity} title={isKa ? 'დუღილის ჩანაწერები ჯერ არ არის' : 'No fermentation readings yet'} description={isKa ? 'ჩაწერეთ პირველი დღიური სიმკვრივე და ტემპერატურა მრუდის დასაწყებად.' : 'Log the first daily density and temperature reading to start the curve.'} />
           ) : (
             <FermentationCurveChart logs={fermLogs} selectedLotId={selectedChartLotId} />
           )}
@@ -404,12 +422,14 @@ export default function WineryDashboardTab({
         {canViewTasks && (
         <SectionCard
           title={t.upcoming_tasks || 'Upcoming tasks'}
-          subtitle={canUpdateTasks ? 'A short work queue, not an endless ledger.' : 'Task status is view-only for your role.'}
+          subtitle={canUpdateTasks
+            ? (isKa ? 'მოკლე სამუშაო რიგი, არა უსასრულო ჟურნალი.' : 'A short work queue, not an endless ledger.')
+            : (isKa ? 'დავალების სტატუსი თქვენი როლისთვის მხოლოდ სანახავია.' : 'Task status is view-only for your role.')}
           icon={ClipboardList}
-          actions={<StatusBadge tone={overdueTasks.length ? 'danger' : 'neutral'}>{pendingTasks.length} pending</StatusBadge>}
+          actions={<StatusBadge tone={overdueTasks.length ? 'danger' : 'neutral'}>{pendingTasks.length} {isKa ? 'მოლოდინში' : 'pending'}</StatusBadge>}
         >
           {recentTasks.length === 0 ? (
-            <EmptyState icon={CheckCircle2} title="No open tasks" description="Nothing is scheduled in the cellar task list." />
+            <EmptyState icon={CheckCircle2} title={isKa ? 'ღია დავალებები არ არის' : 'No open tasks'} description={isKa ? 'მარნის დავალებების სიაში არაფერია დაგეგმილი.' : 'Nothing is scheduled in the cellar task list.'} />
           ) : (
             <div className="space-y-2">
               {recentTasks.map(task => (
@@ -427,7 +447,7 @@ export default function WineryDashboardTab({
                   <span className="min-w-0 flex-1">
                     <strong className={`block text-xs font-black ${task.status === 'completed' ? 'text-stone-500 dark:text-stone-400 line-through' : 'text-stone-900 dark:text-amber-50'}`}>{task.title}</strong>
                     <span className="mt-1 block text-[10px] font-mono font-bold text-stone-500 dark:text-stone-400">
-                      Due {task.dueDate} · {task.assignedTo || 'Unassigned'} · {task.priority}
+                      {isKa ? 'ვადა' : 'Due'} {task.dueDate} · {task.assignedTo || (isKa ? 'დაუნიშნავი' : 'Unassigned')} · {task.priority}
                     </span>
                   </span>
                 </label>
@@ -439,12 +459,12 @@ export default function WineryDashboardTab({
 
         {canViewFermentation && (
         <SectionCard
-          title="Recent fermentation logs"
-          subtitle="Latest cellar readings across lots."
+          title={isKa ? 'ბოლო დუღილის ჩანაწერები' : 'Recent fermentation logs'}
+          subtitle={isKa ? 'ბოლო მაჩვენებლები პარტიების მიხედვით.' : 'Latest cellar readings across lots.'}
           icon={TestTube}
         >
           {recentFermLogs.length === 0 ? (
-            <EmptyState icon={TestTube} title="No readings logged" description="Daily logs will appear here once fermentation tracking starts." />
+            <EmptyState icon={TestTube} title={isKa ? 'ჩანაწერები არ არის' : 'No readings logged'} description={isKa ? 'დღიური ჩანაწერები აქ გამოჩნდება დუღილის მონიტორინგის დაწყებისას.' : 'Daily logs will appear here once fermentation tracking starts.'} />
           ) : (
             <div className="space-y-2.5">
               {recentFermLogs.map(log => {
@@ -459,7 +479,7 @@ export default function WineryDashboardTab({
                       <StatusBadge tone="info">{log.temperature} °C</StatusBadge>
                     </div>
                     <p className="mt-2 text-[11px] font-semibold text-stone-500 dark:text-stone-400">
-                      Density {log.density} SG{log.tastingNotes ? ` · ${log.tastingNotes}` : ''}
+                      {isKa ? 'სიმკვრივე' : 'Density'} {log.density} SG{log.tastingNotes ? ` · ${log.tastingNotes}` : ''}
                     </p>
                   </div>
                 );

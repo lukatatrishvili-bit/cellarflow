@@ -153,7 +153,7 @@ export default function DashboardTab({
     const longitude = companyProfile.longitude;
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       setWeather(null);
-      setWeatherError('Estate coordinates are not configured.');
+      setWeatherError(lang === 'ka' ? 'მამულის კოორდინატები არ არის მითითებული.' : 'Estate coordinates are not configured.');
       return;
     }
 
@@ -167,7 +167,7 @@ export default function DashboardTab({
       .catch((error) => {
         if (active) {
           setWeather(null);
-          setWeatherError(error instanceof Error ? error.message : 'Weather is unavailable.');
+          setWeatherError(error instanceof Error ? error.message : (lang === 'ka' ? 'ამინდი მიუწვდომელია.' : 'Weather is unavailable.'));
         }
       })
       .finally(() => {
@@ -177,7 +177,7 @@ export default function DashboardTab({
     return () => {
       active = false;
     };
-  }, [companyProfile.latitude, companyProfile.longitude, today]);
+  }, [companyProfile.latitude, companyProfile.longitude, today, lang]);
 
   // Compute oenology alerts
   const derivedAlerts = computeAlerts({
@@ -223,7 +223,7 @@ export default function DashboardTab({
           <div className="bg-[#FAF8F5]/85 dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left shadow-2xs">
             <span className="text-stone-500 dark:text-stone-400 block text-[9px] uppercase tracking-widest font-extrabold flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
-              Oenology Clock
+              {lang === 'ka' ? 'ენოლოგიის საათი' : 'Oenology Clock'}
             </span>
             <LiveClock className="text-stone-900 dark:text-amber-200 block mt-1 font-mono font-bold text-xs text-[#4e0e15]" />
           </div>
@@ -310,28 +310,30 @@ export default function DashboardTab({
             {
               label: lang === 'ka' ? 'კრიტიკული გაფრთხილებები' : 'Critical alerts',
               value: criticalAlerts.length,
-              detail: derivedAlerts.length ? `${derivedAlerts.length} open total` : 'No active alerts',
+              detail: derivedAlerts.length
+                ? (lang === 'ka' ? `${derivedAlerts.length} ღია სულ` : `${derivedAlerts.length} open total`)
+                : (lang === 'ka' ? 'აქტიური გაფრთხილება არ არის' : 'No active alerts'),
               action: canViewCellar ? () => { setActiveModule('gvino'); setActiveTab('dashboard'); } : undefined,
               tone: criticalAlerts.length ? 'text-rose-700' : 'text-emerald-700',
             },
             {
               label: lang === 'ka' ? 'ვადაგადაცილებული დავალებები' : 'Overdue tasks',
               value: overdueTasks.length,
-              detail: `${pendingTasks.length} pending`,
+              detail: lang === 'ka' ? `${pendingTasks.length} მოლოდინში` : `${pendingTasks.length} pending`,
               action: canViewTasks ? () => { setActiveModule('gvino'); setActiveTab('tasks'); } : undefined,
               tone: overdueTasks.length ? 'text-rose-700' : 'text-stone-800',
             },
             {
               label: lang === 'ka' ? 'დღიური ჩანაწერის გარეშე' : 'Ferments missing today',
               value: fermentsMissingReading.length,
-              detail: `${activeFerments.length} active fermentations`,
+              detail: lang === 'ka' ? `${activeFerments.length} აქტიური დუღილი` : `${activeFerments.length} active fermentations`,
               action: canViewCellarTab('fermentation') ? () => { setActiveModule('gvino'); setActiveTab('fermentation'); } : undefined,
               tone: fermentsMissingReading.length ? 'text-amber-700' : 'text-emerald-700',
             },
             {
               label: lang === 'ka' ? 'ჭურჭლის გარეშე დარჩენილი პარტია' : 'Lots without a vessel',
               value: unassignedLots.length,
-              detail: `${lots.length} lots recorded`,
+              detail: lang === 'ka' ? `${lots.length} ჩაწერილი პარტია` : `${lots.length} lots recorded`,
               action: canViewCellarTab('vessels') ? () => { setActiveModule('gvino'); setActiveTab('vessels'); } : undefined,
               tone: unassignedLots.length ? 'text-amber-700' : 'text-stone-800',
             },
@@ -383,7 +385,7 @@ export default function DashboardTab({
                 </span>
                 <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-500 font-mono">
                   <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  {blocks.length} {blocks.length === 1 ? 'BLOCK' : 'BLOCKS'} RECORDED
+                  {blocks.length} {lang === 'ka' ? 'ჩაწერილი ნაკვეთი' : `${blocks.length === 1 ? 'BLOCK' : 'BLOCKS'} RECORDED`}
                 </span>
               </div>
               
@@ -405,7 +407,11 @@ export default function DashboardTab({
                 <div>
                   <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400 block pb-0.5 font-bold">{t.portal_scout_status || 'Scouting Reports'}</span>
                   <strong className={`text-lg lg:text-xl font-display font-extrabold block mt-0.5 ${highRiskScoutings.length ? 'text-rose-700' : 'text-emerald-800 dark:text-emerald-400'}`}>
-                    {scoutings.length === 0 ? 'No reports' : highRiskScoutings.length ? `${highRiskScoutings.length} high risk` : `${scoutings.length} recorded`}
+                    {scoutings.length === 0
+                      ? (lang === 'ka' ? 'ანგარიში არ არის' : 'No reports')
+                      : highRiskScoutings.length
+                        ? (lang === 'ka' ? `${highRiskScoutings.length} მაღალი რისკი` : `${highRiskScoutings.length} high risk`)
+                        : (lang === 'ka' ? `${scoutings.length} ჩაწერილი` : `${scoutings.length} recorded`)}
                   </strong>
                 </div>
               </div>
@@ -438,7 +444,7 @@ export default function DashboardTab({
                 </span>
                 <span className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 dark:text-amber-500 font-mono">
                   <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
-                  {vessels.filter((vessel) => vessel.currentVolume > 0).length} ACTIVE VESSELS
+                  {vessels.filter((vessel) => vessel.currentVolume > 0).length} {lang === 'ka' ? 'აქტიური ჭურჭელი' : 'ACTIVE VESSELS'}
                 </span>
               </div>
               
@@ -522,13 +528,13 @@ export default function DashboardTab({
               <div className="space-y-3.5">
                 {weatherLoading && (
                   <div className="p-5 rounded-2xl border border-stone-200 bg-stone-50 text-xs font-medium text-stone-500">
-                    Loading current weather from Open-Meteo…
+                    {lang === 'ka' ? 'მიმდინარე ამინდის ჩატვირთვა Open-Meteo-დან…' : 'Loading current weather from Open-Meteo…'}
                   </div>
                 )}
 
                 {!weatherLoading && weatherError && (
                   <div className="p-5 rounded-2xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
-                    <strong className="block font-bold">Current weather unavailable</strong>
+                    <strong className="block font-bold">{lang === 'ka' ? 'მიმდინარე ამინდი მიუწვდომელია' : 'Current weather unavailable'}</strong>
                     <span className="mt-1 block">{weatherError}</span>
                   </div>
                 )}
@@ -538,19 +544,19 @@ export default function DashboardTab({
                     <div className="p-4 bg-stone-50/70 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex items-center justify-between gap-4">
                       <div>
                         <strong className="block text-stone-900 dark:text-amber-100 font-display font-extrabold text-sm">
-                          {[companyProfile.municipality, companyProfile.region].filter(Boolean).join(', ') || 'Estate location'}
+                          {[companyProfile.municipality, companyProfile.region].filter(Boolean).join(', ') || (lang === 'ka' ? 'მამულის მდებარეობა' : 'Estate location')}
                         </strong>
                         <span className="block text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1">
                           GPS: {companyProfile.latitude?.toFixed(3)}, {companyProfile.longitude?.toFixed(3)} · Open-Meteo
                         </span>
                         <span className="block text-[11px] text-stone-600 dark:text-stone-300 mt-1">
-                          {weatherSummary?.emoji} {weatherSummary?.label} · Humidity {weather.current?.humidity ?? '—'}%
+                          {weatherSummary?.emoji} {weatherSummary?.label} · {lang === 'ka' ? 'ტენიანობა' : 'Humidity'} {weather.current?.humidity ?? '—'}%
                         </span>
                       </div>
                       <div className="text-right shrink-0">
                         <span className="text-xl font-sans font-black text-stone-900 dark:text-amber-100">{weatherTemp.toFixed(1)} °C</span>
                         <span className="block text-[10px] text-emerald-700 font-bold uppercase tracking-wider mt-0.5">
-                          Wind: {(weather.current?.wind ?? weather.daily.windMax).toFixed(1)} km/h
+                          {lang === 'ka' ? 'ქარი' : 'Wind'}: {(weather.current?.wind ?? weather.daily.windMax).toFixed(1)} km/h
                         </span>
                       </div>
                     </div>
@@ -565,15 +571,15 @@ export default function DashboardTab({
                       <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
                       <div>
                         <strong className="block text-xs leading-tight font-extrabold">
-                          Weather-based disease risk: {diseaseRisk === 'high' ? 'High' : diseaseRisk === 'watch' ? 'Watch' : 'Low'}
+                          {lang === 'ka' ? 'ამინდზე დაფუძნებული დაავადების რისკი' : 'Weather-based disease risk'}: {diseaseRisk === 'high' ? (lang === 'ka' ? 'მაღალი' : 'High') : diseaseRisk === 'watch' ? (lang === 'ka' ? 'საყურადღებო' : 'Watch') : (lang === 'ka' ? 'დაბალი' : 'Low')}
                         </strong>
                         <p className="text-xs leading-relaxed mt-1 font-medium">
-                          Today: {weather.daily.precipSum.toFixed(1)} mm precipitation, {weather.daily.tempMin.toFixed(1)}–{weather.daily.tempMax.toFixed(1)} °C.
+                          {lang === 'ka' ? 'დღეს' : 'Today'}: {weather.daily.precipSum.toFixed(1)} mm {lang === 'ka' ? 'ნალექი' : 'precipitation'}, {weather.daily.tempMin.toFixed(1)}–{weather.daily.tempMax.toFixed(1)} °C.
                           {blocks.length === 0
-                            ? ' Add vineyard blocks to connect this weather signal to field scouting.'
+                            ? (lang === 'ka' ? ' დაამატეთ ვენახის ნაკვეთები ამ ამინდის სიგნალის საველე მონიტორინგთან დასაკავშირებლად.' : ' Add vineyard blocks to connect this weather signal to field scouting.')
                             : latestScouting
-                              ? ` Latest scouting report: ${latestScouting.problemType} (${latestScouting.severity}, ${latestScouting.date}).`
-                              : ' No scouting reports have been recorded yet.'}
+                              ? (lang === 'ka' ? ` ბოლო მონიტორინგის ანგარიში: ${latestScouting.problemType} (${latestScouting.severity}, ${latestScouting.date}).` : ` Latest scouting report: ${latestScouting.problemType} (${latestScouting.severity}, ${latestScouting.date}).`)
+                              : (lang === 'ka' ? ' მონიტორინგის ანგარიშები ჯერ არ არის ჩაწერილი.' : ' No scouting reports have been recorded yet.')}
                         </p>
                       </div>
                     </div>
@@ -602,19 +608,19 @@ export default function DashboardTab({
                       <div key={lot.id} className="p-4 bg-stone-50/50 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex justify-between items-center hover-glow transition-all">
                         <div>
                           <strong className="text-xs text-stone-900 dark:text-amber-100 block font-display font-extrabold">{lot.name} ({lot.variety})</strong>
-                          <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono mt-1">Vessel: {vessel ? vessel.id : 'Unassigned'} • Vol: {lot.currentVolume} L</span>
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono mt-1">{lang === 'ka' ? 'ჭურჭელი' : 'Vessel'}: {vessel ? vessel.id : (lang === 'ka' ? 'დაუნიშნავი' : 'Unassigned')} • {lang === 'ka' ? 'მოც' : 'Vol'}: {lot.currentVolume} L</span>
                         </div>
                         <div className="text-right font-mono">
                           <span className="text-sm font-black text-red-800 dark:text-red-400 block">{vessel ? `${vessel.temperature}°C` : '--'}</span>
                           <span className="text-[10px] text-slate-450 block mt-0.5">
-                            {latestLog ? `Gravity: ${latestLog.density} SG · ${latestLog.date}` : 'No fermentation reading yet'}
+                            {latestLog ? `${lang === 'ka' ? 'სიმკვრივე' : 'Gravity'}: ${latestLog.density} SG · ${latestLog.date}` : (lang === 'ka' ? 'დუღილის ჩანაწერი ჯერ არ არის' : 'No fermentation reading yet')}
                           </span>
                         </div>
                       </div>
                     );
                   })
                 ) : (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">No active fermentations logged in the system.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">{lang === 'ka' ? 'სისტემაში აქტიური დუღილი არ არის ჩაწერილი.' : 'No active fermentations logged in the system.'}</p>
                 )}
               </div>
             </div>
@@ -633,7 +639,7 @@ export default function DashboardTab({
                   <div key={block.id} className="p-4 bg-stone-50/50 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex justify-between items-center hover-glow transition-all">
                     <div>
                       <strong className="text-xs text-stone-900 dark:text-amber-100 block font-display font-extrabold">{block.name} ({block.grapeVariety})</strong>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono mt-1">{block.area} ha • Plant Year: {block.plantingYear}</span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-mono mt-1">{block.area} ha • {lang === 'ka' ? 'დარგვის წელი' : 'Plant Year'}: {block.plantingYear}</span>
                     </div>
                     <span className="text-[10px] font-mono bg-emerald-50 dark:bg-emerald-955/25 text-emerald-800 dark:text-emerald-300 px-3 py-1 rounded-lg border border-emerald-150 dark:border-emerald-900 font-bold shrink-0">
                       {block.currentPhenology}
@@ -667,13 +673,13 @@ export default function DashboardTab({
                       <div className="flex-grow">
                         <span className={`block font-extrabold text-stone-900 dark:text-amber-100 text-xs ${task.status === 'completed' ? 'line-through text-stone-400 font-normal' : ''}`}>{task.title}</span>
                         <span className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 font-bold mt-1">
-                          {t.task_assign || 'Assignee'}: {task.assignedTo || 'Unassigned'} • {t.task_due || 'Due'}: {task.dueDate} • Priority: <span className={`uppercase font-black ${task.priority === 'high' ? 'text-red-700' : task.priority === 'medium' ? 'text-amber-600' : 'text-stone-500'}`}>{task.priority === 'high' ? (t.task_high || 'High') : task.priority === 'medium' ? (t.task_med || 'Medium') : (t.task_low || 'Low')}</span>
+                          {t.task_assign || 'Assignee'}: {task.assignedTo || (lang === 'ka' ? 'დაუნიშნავი' : 'Unassigned')} • {t.task_due || 'Due'}: {task.dueDate} • {lang === 'ka' ? 'პრიორიტეტი' : 'Priority'}: <span className={`uppercase font-black ${task.priority === 'high' ? 'text-red-700' : task.priority === 'medium' ? 'text-amber-600' : 'text-stone-500'}`}>{task.priority === 'high' ? (t.task_high || 'High') : task.priority === 'medium' ? (t.task_med || 'Medium') : (t.task_low || 'Low')}</span>
                         </span>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">No operations tasks currently scheduled.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">{lang === 'ka' ? 'ამჟამად ოპერაციული დავალებები არ არის დაგეგმილი.' : 'No operations tasks currently scheduled.'}</p>
                 )}
               </div>
             </div>
@@ -693,7 +699,7 @@ export default function DashboardTab({
                   auditLogs.slice(0, 10).map(log => (
                     <div key={log.id} className="p-4 bg-[#fdfdfb] dark:bg-stone-950/20 border border-stone-200 dark:border-stone-850 rounded-2xl space-y-1.5 hover-glow transition-all text-xs">
                       <div className="flex justify-between items-center text-[9px] text-slate-450 font-mono">
-                        <span>{new Date(log.timestamp).toLocaleTimeString()} • Operator: {log.user}</span>
+                        <span>{new Date(log.timestamp).toLocaleTimeString()} • {lang === 'ka' ? 'ოპერატორი' : 'Operator'}: {log.user}</span>
                         <span className="bg-stone-200/70 dark:bg-stone-800 text-stone-600 dark:text-stone-300 px-2 py-0.5 rounded-md uppercase font-extrabold text-[8px]">{log.module === 'VAZI' ? (t.nav_vazi || 'Vazi') : (t.nav_gvino || 'Gvino')}</span>
                       </div>
                       <strong className="block text-stone-950 dark:text-amber-100 font-display font-extrabold text-stone-900">{log.actionType}</strong>
@@ -701,7 +707,7 @@ export default function DashboardTab({
                     </div>
                   ))
                 ) : (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">No system operations logged.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 italic font-mono py-6 text-center">{lang === 'ka' ? 'სისტემური ოპერაციები არ არის ჩაწერილი.' : 'No system operations logged.'}</p>
                 )}
               </div>
             </div>
