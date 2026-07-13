@@ -42,6 +42,15 @@ export default function InventoryTab({
   canDeleteInventory = true,
 }: Props) {
   const ka = lang === 'ka';
+  // Georgian display names for the seeded default categories. Custom categories
+  // fall back to their raw (user-entered) key.
+  const CATEGORY_KA: Record<string, string> = {
+    yeasts: 'საფუარები', nutritions: 'ნუტრიენტები', additives: 'დანამატები',
+    packaging: 'შესაფუთი', bottles: 'ბოთლები', closures: 'საცობები',
+    labels: 'ეტიკეტები', boxes: 'ყუთები', sanitation: 'სანიტარია',
+    cleaning: 'წმენდა', unassigned: 'მიუკუთვნებელი',
+  };
+  const catLabel = (cat: string) => (ka && CATEGORY_KA[cat]) ? CATEGORY_KA[cat] : cat.replace('_', ' ');
   // Load or initialize categories list
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('yeasts');
@@ -308,7 +317,7 @@ export default function InventoryTab({
                   >
                     <span className="capitalize truncate pr-2 flex items-center gap-1.5">
                       <span className="opacity-75">📂</span>
-                      {cat.replace('_', ' ')}
+                      {catLabel(cat)}
                     </span>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <span className={`px-1.5 py-0.2 text-[9px] font-mono rounded-full font-bold ${
@@ -396,7 +405,7 @@ export default function InventoryTab({
               <div className="flex items-center justify-between border-b border-stone-100 pb-2">
                 <h3 className="text-xs font-mono font-bold uppercase text-[#4e0e15] flex items-center gap-1.5">
                   <FolderPlus className="w-4.5 h-4.5" />
-                  {ka ? 'მასალის დამატება კატეგორიაში' : 'Adding Material under'} &ldquo;<span className="text-[#801323]">{selectedCategory.toUpperCase()}</span>&rdquo;{ka ? '' : ' Category'}
+                  {ka ? 'მასალის დამატება კატეგორიაში' : 'Adding Material under'} &ldquo;<span className="text-[#801323]">{catLabel(selectedCategory).toUpperCase()}</span>&rdquo;{ka ? '' : ' Category'}
                 </h3>
                 <button
                   type="button"
@@ -517,7 +526,7 @@ export default function InventoryTab({
             <div className="flex items-center justify-between border-b border-stone-100 pb-3 flex-wrap gap-2">
               <div>
                 <span className="text-[10px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded uppercase">
-                  {ka ? 'აქტიური კატეგორია' : 'ACTIVE CATEGORY'}: {selectedCategory.replace('_', ' ')}
+                  {ka ? 'აქტიური კატეგორია' : 'ACTIVE CATEGORY'}: {catLabel(selectedCategory)}
                 </span>
                 <h3 className="text-sm font-serif font-bold text-stone-850 mt-1">
                   {ka ? 'რეგისტრირებული მასალები' : 'Registered stockpile items'}
@@ -727,7 +736,7 @@ export default function InventoryTab({
 
               {filteredItems.length === 0 && (
                 <div className="md:col-span-2 py-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
-                  <p>{ka ? `„${selectedCategory}" კატეგორიაში მასალა არ მოიძებნა.` : `No materials found in the "${selectedCategory}" category.`}</p>
+                  <p>{ka ? `„${catLabel(selectedCategory)}" კატეგორიაში მასალა არ მოიძებნა.` : `No materials found in the "${selectedCategory}" category.`}</p>
                   {canCreateInventory && (
                     <button
                       onClick={() => setShowItemForm(true)}
