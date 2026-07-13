@@ -18,10 +18,16 @@ import {
 } from 'lucide-react';
 import type { InventoryItem, SalesDispatchRecord, SalesOrderRecord, Task, Vessel, WineLot } from '../lib/wineryState';
 import type { Role } from '../server/permissions';
+import type { Language } from '../lib/i18n';
 import { canViewAppDestination } from '../lib/navigationPermissions';
 import { useFocusTrap } from './useFocusTrap';
 
 type CommandKind = 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
+
+const KIND_LABEL_KA: Record<CommandKind, string> = {
+  module: 'მოდული', lot: 'პარტია', lineage: 'გენეალოგია', vessel: 'ჭურჭელი',
+  inventory: 'ინვენტარი', task: 'დავალება', order: 'შეკვეთა', dispatch: 'გატანა',
+};
 
 interface CommandItem {
   id: string;
@@ -35,6 +41,7 @@ interface CommandItem {
 
 interface Props {
   open: boolean;
+  lang?: Language;
   onOpenChange: (open: boolean) => void;
   lots: WineLot[];
   vessels: Vessel[];
@@ -70,6 +77,7 @@ function kindTone(kind: CommandKind): string {
 
 export default function GlobalCommandPalette({
   open,
+  lang = 'en',
   onOpenChange,
   lots,
   vessels,
@@ -84,6 +92,7 @@ export default function GlobalCommandPalette({
   setSelectedTankId,
   setLineageLotId,
 }: Props) {
+  const ka = lang === 'ka';
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -112,14 +121,14 @@ export default function GlobalCommandPalette({
 
   const commands = useMemo<CommandItem[]>(() => {
     const allModuleCommands: Array<CommandItem & { moduleId: string; tabId?: string }> = [
-      { id: 'module-dashboard', moduleId: 'portal', kind: 'module', title: 'Dashboard', subtitle: 'Open main portal', keywords: 'dashboard portal home overview', icon: BarChart3, run: () => jump('portal') },
-      { id: 'module-vineyard', moduleId: 'vazi', kind: 'module', title: 'Vineyard', subtitle: 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray', icon: Sprout, run: () => jump('vazi') },
-      { id: 'module-cellar', moduleId: 'gvino', tabId: 'dashboard', kind: 'module', title: 'Cellar', subtitle: 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels', icon: Wine, run: () => jump('gvino', 'dashboard') },
-      { id: 'module-sales', moduleId: 'sales', kind: 'module', title: 'Sales', subtitle: 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers', icon: ShoppingCart, run: () => jump('sales') },
-      { id: 'module-storage', moduleId: 'storage', kind: 'module', title: 'Storage', subtitle: 'Finished goods stock', keywords: 'storage warehouse stock bottles inventory finished goods', icon: Warehouse, run: () => jump('storage') },
-      { id: 'module-analytics', moduleId: 'analytics', kind: 'module', title: 'Analytics', subtitle: 'Year comparison reports', keywords: 'analytics reports year comparison vintage margin', icon: BarChart3, run: () => jump('analytics') },
-      { id: 'module-docs', moduleId: 'docs', kind: 'module', title: 'Documents', subtitle: 'Official documents and exports', keywords: 'documents reports official forms exports', icon: FileSpreadsheet, run: () => jump('docs') },
-      { id: 'module-settings', moduleId: 'settings', kind: 'module', title: 'Settings', subtitle: 'Profile and company settings', keywords: 'settings profile company users', icon: Settings, run: () => jump('settings') },
+      { id: 'module-dashboard', moduleId: 'portal', kind: 'module', title: ka ? 'მთავარი' : 'Dashboard', subtitle: ka ? 'მთავარი პორტალის გახსნა' : 'Open main portal', keywords: 'dashboard portal home overview მთავარი', icon: BarChart3, run: () => jump('portal') },
+      { id: 'module-vineyard', moduleId: 'vazi', kind: 'module', title: ka ? 'ვენახი' : 'Vineyard', subtitle: ka ? 'ვაზის მოდულის გახსნა' : 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray ვენახი', icon: Sprout, run: () => jump('vazi') },
+      { id: 'module-cellar', moduleId: 'gvino', tabId: 'dashboard', kind: 'module', title: ka ? 'მარანი' : 'Cellar', subtitle: ka ? 'ღვინის მოდულის გახსნა' : 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels მარანი', icon: Wine, run: () => jump('gvino', 'dashboard') },
+      { id: 'module-sales', moduleId: 'sales', kind: 'module', title: ka ? 'გაყიდვები' : 'Sales', subtitle: ka ? 'შეკვეთები, ჯავშნები, გატანა' : 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers გაყიდვები', icon: ShoppingCart, run: () => jump('sales') },
+      { id: 'module-storage', moduleId: 'storage', kind: 'module', title: ka ? 'საწყობი' : 'Storage', subtitle: ka ? 'მზა პროდუქციის მარაგი' : 'Finished goods stock', keywords: 'storage warehouse stock bottles inventory finished goods საწყობი', icon: Warehouse, run: () => jump('storage') },
+      { id: 'module-analytics', moduleId: 'analytics', kind: 'module', title: ka ? 'ანალიტიკა' : 'Analytics', subtitle: ka ? 'წლების შედარების ანგარიშები' : 'Year comparison reports', keywords: 'analytics reports year comparison vintage margin ანალიტიკა', icon: BarChart3, run: () => jump('analytics') },
+      { id: 'module-docs', moduleId: 'docs', kind: 'module', title: ka ? 'დოკუმენტები' : 'Documents', subtitle: ka ? 'ოფიციალური დოკუმენტები და ექსპორტი' : 'Official documents and exports', keywords: 'documents reports official forms exports დოკუმენტები', icon: FileSpreadsheet, run: () => jump('docs') },
+      { id: 'module-settings', moduleId: 'settings', kind: 'module', title: ka ? 'პარამეტრები' : 'Settings', subtitle: ka ? 'პროფილი და კომპანიის პარამეტრები' : 'Profile and company settings', keywords: 'settings profile company users პარამეტრები', icon: Settings, run: () => jump('settings') },
     ];
     const moduleCommands = allModuleCommands.filter((item) => (
       canViewAppDestination(role, item.moduleId, item.tabId)
@@ -143,7 +152,7 @@ export default function GlobalCommandPalette({
       {
         id: `lineage-${lot.id}`,
         kind: 'lineage',
-        title: `Lineage: ${lot.id}`,
+        title: `${ka ? 'გენეალოგია' : 'Lineage'}: ${lot.id}`,
         subtitle: lot.name,
         keywords: `${lot.id} ${lot.name} lineage traceability genealogy tree blend`,
         icon: PackageSearch,
@@ -186,7 +195,9 @@ export default function GlobalCommandPalette({
       id: `task-${task.id}`,
       kind: 'task',
       title: task.title,
-      subtitle: `${task.priority} priority · due ${task.dueDate || 'n/a'} · ${task.status}`,
+      subtitle: ka
+        ? `${task.priority} · ვადა ${task.dueDate || '—'} · ${task.status}`
+        : `${task.priority} priority · due ${task.dueDate || 'n/a'} · ${task.status}`,
       keywords: `${task.title} ${task.description} ${task.assignedTo} ${task.priority} ${task.status} task todo`,
       icon: ClipboardList,
       run: () => jump('gvino', 'tasks'),
@@ -222,7 +233,7 @@ export default function GlobalCommandPalette({
       ...inventoryCommands,
       ...taskCommands,
     ];
-  }, [dispatches, inventory, lots, orders, role, tasks, vessels]);
+  }, [dispatches, inventory, lots, orders, role, tasks, vessels, ka]);
 
   const results = useMemo(() => {
     const q = normalize(query);
@@ -261,7 +272,7 @@ export default function GlobalCommandPalette({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Global command palette"
+        aria-label={ka ? 'გლობალური ბრძანებების პანელი' : 'Global command palette'}
         tabIndex={-1}
         className="mx-auto mt-10 max-w-2xl overflow-hidden rounded-3xl border border-[#e8dfd5] bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950"
         onMouseDown={(event) => event.stopPropagation()}
@@ -287,7 +298,7 @@ export default function GlobalCommandPalette({
                 select(results[selectedIndex]);
               }
             }}
-            placeholder="Search wine code, vessel, customer, task, document..."
+            placeholder={ka ? 'ძიება: ღვინის კოდი, ჭურჭელი, მომხმარებელი, დავალება, დოკუმენტი...' : 'Search wine code, vessel, customer, task, document...'}
             className="min-w-0 flex-1 bg-transparent py-2 text-sm font-semibold text-stone-900 outline-none placeholder:text-stone-400 dark:text-amber-50"
           />
           <button
@@ -303,8 +314,8 @@ export default function GlobalCommandPalette({
           {results.length === 0 ? (
             <div className="px-4 py-12 text-center">
               <FileText className="mx-auto mb-3 h-10 w-10 text-stone-300" />
-              <h3 className="text-sm font-bold text-stone-700 dark:text-stone-200">No results found</h3>
-              <p className="mt-1 text-xs text-stone-400">Try a wine code, vessel ID, customer name, or module.</p>
+              <h3 className="text-sm font-bold text-stone-700 dark:text-stone-200">{ka ? 'შედეგი არ მოიძებნა' : 'No results found'}</h3>
+              <p className="mt-1 text-xs text-stone-400">{ka ? 'სცადეთ ღვინის კოდი, ჭურჭლის ID, მომხმარებლის სახელი ან მოდული.' : 'Try a wine code, vessel ID, customer name, or module.'}</p>
             </div>
           ) : (
             <div className="space-y-1">
@@ -330,7 +341,7 @@ export default function GlobalCommandPalette({
                       <div className="flex items-center gap-2">
                         <strong className="truncate text-sm">{item.title}</strong>
                         <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide ${selected ? 'border-amber-300/40 text-amber-200' : kindTone(item.kind)}`}>
-                          {item.kind}
+                          {ka ? KIND_LABEL_KA[item.kind] : item.kind}
                         </span>
                       </div>
                       <p className={`truncate text-xs ${selected ? 'text-amber-100/75' : 'text-stone-400'}`}>{item.subtitle}</p>
@@ -343,7 +354,7 @@ export default function GlobalCommandPalette({
         </div>
 
         <div className="flex items-center justify-between border-t border-[#e8dfd5] px-4 py-2 text-[10px] font-mono text-stone-400 dark:border-stone-800">
-          <span>↑↓ navigate · Enter open · Esc close</span>
+          <span>{ka ? '↑↓ ნავიგაცია · Enter გახსნა · Esc დახურვა' : '↑↓ navigate · Enter open · Esc close'}</span>
           <span>Ctrl / Cmd + K</span>
         </div>
       </div>

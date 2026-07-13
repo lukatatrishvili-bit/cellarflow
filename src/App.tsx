@@ -790,6 +790,7 @@ export default function App() {
         <Suspense fallback={null}>
           <GlobalCommandPalette
             open={isCommandOpen}
+            lang={state.lang}
             onOpenChange={setIsCommandOpen}
             lots={state.lots}
             vessels={state.vessels}

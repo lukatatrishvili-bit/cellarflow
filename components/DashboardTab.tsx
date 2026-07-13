@@ -225,7 +225,7 @@ export default function DashboardTab({
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
               {lang === 'ka' ? 'ენოლოგიის საათი' : 'Oenology Clock'}
             </span>
-            <LiveClock className="text-stone-900 dark:text-amber-200 block mt-1 font-mono font-bold text-xs text-[#4e0e15]" />
+            <LiveClock lang={lang} className="text-stone-900 dark:text-amber-200 block mt-1 font-mono font-bold text-xs text-[#4e0e15]" />
           </div>
           <div className="bg-[#fcfbf9] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left">
             <span className="text-stone-500 dark:text-stone-400 block text-[9px] uppercase tracking-wider font-extrabold">{t.portal_appellation || 'Active Appellation'}</span>
