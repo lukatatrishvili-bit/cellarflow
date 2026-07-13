@@ -1786,6 +1786,7 @@ export default function App() {
       ) : state.activeModule === 'integrations' ? (
         <Suspense fallback={<ModuleLoader />}>
           <IntegrationHubTab
+            lang={state.lang}
             setToastMessage={state.setToastMessage}
           />
         </Suspense>

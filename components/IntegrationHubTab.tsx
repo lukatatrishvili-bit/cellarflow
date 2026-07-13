@@ -26,6 +26,7 @@ import {
   StatusBadge,
   cx,
 } from './ui/primitives';
+import type { Language } from '../lib/i18n';
 import type {
   ConnectorConfigInput,
   FieldMappingInput,
@@ -45,6 +46,7 @@ import type {
 } from '../lib/integrations';
 
 interface IntegrationHubTabProps {
+  lang?: Language;
   setToastMessage: (msg: string | null) => void;
 }
 
@@ -73,10 +75,10 @@ function statusTone(status: string): 'neutral' | 'brand' | 'success' | 'warning'
   return 'neutral';
 }
 
-function formatDate(value?: string | null): string {
-  if (!value) return 'Not yet';
+function formatDate(value: string | null | undefined, ka: boolean): string {
+  if (!value) return ka ? 'ჯერ არა' : 'Not yet';
   try {
-    return new Date(value).toLocaleString();
+    return new Date(value).toLocaleString(ka ? 'ka-GE' : undefined);
   } catch {
     return value;
   }
@@ -96,7 +98,8 @@ function downloadArtifact(job: IntegrationSyncJob): void {
   URL.revokeObjectURL(url);
 }
 
-export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTabProps) {
+export default function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationHubTabProps) {
+  const ka = lang === 'ka';
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [running, setRunning] = React.useState(false);
@@ -125,6 +128,8 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
     })),
   );
 
+  const dirLabel = (dir: IntegrationSyncDirection) => ka ? (dir === 'export' ? 'ექსპორტი' : 'იმპორტი') : dir;
+
   const connector = hub?.connectors[0] || null;
   const definition = catalog[0] || null;
   const failedJobs = hub?.jobs.filter((job) => job.status === 'failed' || job.status === 'needs_review') || [];
@@ -143,11 +148,11 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       setSourceOfTruth(payload.sourceOfTruth || {});
       setHub(payload.hub);
     } catch (err) {
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Load failed'}`);
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'ჩატვირთვა ვერ მოხერხდა' : 'Load failed')}`);
     } finally {
       setLoading(false);
     }
-  }, [setToastMessage]);
+  }, [setToastMessage, ka]);
 
   React.useEffect(() => {
     loadHub();
@@ -205,9 +210,9 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       if (!res.ok) throw new Error(data.error || 'Configuration failed');
       setHub(data.hub);
       setSecretValue('');
-      setToastMessage('Integration connector saved.');
+      setToastMessage(ka ? 'კონექტორი შენახულია.' : 'Integration connector saved.');
     } catch (err) {
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'შენახვა ვერ მოხერხდა' : 'Save failed')}`);
     } finally {
       setSaving(false);
     }
@@ -232,10 +237,12 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Sync job failed');
       setHub(data.hub);
-      setToastMessage(data.job?.status === 'needs_review' ? 'Sync job needs review.' : 'Sync job completed.');
+      setToastMessage(data.job?.status === 'needs_review'
+        ? (ka ? 'სინქრონიზაცია საჭიროებს გადახედვას.' : 'Sync job needs review.')
+        : (ka ? 'სინქრონიზაცია დასრულდა.' : 'Sync job completed.'));
       if (data.job?.exportArtifact) downloadArtifact(data.job);
     } catch (err) {
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Job failed'}`);
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'დავალება ვერ შესრულდა' : 'Job failed')}`);
     } finally {
       setRunning(false);
     }
@@ -249,11 +256,11 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       const res = await fetch(`/api/integrations/connectors/${connector.id}/test`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Connection test failed');
-      setTestResult({ ok: true, message: data.probe?.message || 'Connected.', entitySets: data.probe?.entitySets || [] });
-      setToastMessage('1C connection test succeeded.');
+      setTestResult({ ok: true, message: data.probe?.message || (ka ? 'დაკავშირებულია.' : 'Connected.'), entitySets: data.probe?.entitySets || [] });
+      setToastMessage(ka ? '1C-სთან კავშირის ტესტი წარმატებულია.' : '1C connection test succeeded.');
     } catch (err) {
-      setTestResult({ ok: false, message: err instanceof Error ? err.message : 'Connection test failed', entitySets: [] });
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Test failed'}`);
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : (ka ? 'კავშირის ტესტი ჩავარდა' : 'Connection test failed'), entitySets: [] });
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'ტესტი ჩავარდა' : 'Test failed')}`);
     } finally {
       setTesting(false);
     }
@@ -271,9 +278,11 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Live pull failed');
       setHub(data.hub);
-      setToastMessage(data.job?.status === 'needs_review' ? 'Live pull needs review.' : 'Live pull completed.');
+      setToastMessage(data.job?.status === 'needs_review'
+        ? (ka ? 'პირდაპირი მოზიდვა საჭიროებს გადახედვას.' : 'Live pull needs review.')
+        : (ka ? 'პირდაპირი მოზიდვა დასრულდა.' : 'Live pull completed.'));
     } catch (err) {
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Live pull failed'}`);
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'პირდაპირი მოზიდვა ჩავარდა' : 'Live pull failed')}`);
     } finally {
       setPulling(false);
     }
@@ -285,9 +294,9 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Retry failed');
       setHub(data.hub);
-      setToastMessage('Sync job retried.');
+      setToastMessage(ka ? 'დავალება ხელახლა გაეშვა.' : 'Sync job retried.');
     } catch (err) {
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Retry failed'}`);
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'ხელახლა ცდა ჩავარდა' : 'Retry failed')}`);
     }
   };
 
@@ -312,16 +321,16 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Mapping save failed');
       setHub(data.hub);
-      setToastMessage('Field mappings saved.');
+      setToastMessage(ka ? 'ველების შესაბამისობა შენახულია.' : 'Field mappings saved.');
     } catch (err) {
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Mapping save failed'}`);
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'შესაბამისობის შენახვა ჩავარდა' : 'Mapping save failed')}`);
     }
   };
 
   const resolveConflict = async (conflictId: string) => {
     const resolution = conflictNotes[conflictId]?.trim();
     if (!resolution) {
-      setToastMessage('Add a resolution note first.');
+      setToastMessage(ka ? 'ჯერ დაამატეთ გადაწყვეტის შენიშვნა.' : 'Add a resolution note first.');
       return;
     }
     try {
@@ -334,9 +343,9 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       if (!res.ok) throw new Error(data.error || 'Conflict resolution failed');
       setHub(data.hub);
       setConflictNotes((prev) => ({ ...prev, [conflictId]: '' }));
-      setToastMessage('Conflict marked resolved.');
+      setToastMessage(ka ? 'კონფლიქტი მოგვარებულად მოინიშნა.' : 'Conflict marked resolved.');
     } catch (err) {
-      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : 'Resolution failed'}`);
+      setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'მოგვარება ჩავარდა' : 'Resolution failed')}`);
     }
   };
 
@@ -349,7 +358,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6">
         <div className="flex items-center justify-center py-20 text-stone-500">
           <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          Loading Integration Hub
+          {ka ? 'ინტეგრაციების ცენტრი იტვირთება' : 'Loading Integration Hub'}
         </div>
       </main>
     );
@@ -358,7 +367,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
   if (!hub || !connector) {
     return (
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6">
-        <EmptyState icon={PlugZap} title="Integration Hub unavailable" description="The current workspace could not load integration state." />
+        <EmptyState icon={PlugZap} title={ka ? 'ინტეგრაციების ცენტრი მიუწვდომელია' : 'Integration Hub unavailable'} description={ka ? 'მიმდინარე სამუშაო სივრცემ ვერ ჩატვირთა ინტეგრაციის მდგომარეობა.' : 'The current workspace could not load integration state.'} />
       </main>
     );
   }
@@ -366,44 +375,44 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
   return (
     <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 space-y-4 font-sans text-stone-700 dark:text-stone-200">
       <PageHeader
-        eyebrow="Settings / Admin"
-        title="Integration Hub"
-        description="Controlled synchronization for accounting and ERP systems, starting with a safe 1C placeholder."
+        eyebrow={ka ? 'პარამეტრები / ადმინი' : 'Settings / Admin'}
+        title={ka ? 'ინტეგრაციების ცენტრი' : 'Integration Hub'}
+        description={ka ? 'ბუღალტრული და ERP სისტემების კონტროლირებადი სინქრონიზაცია, უსაფრთხო 1C საწყისით.' : 'Controlled synchronization for accounting and ERP systems, starting with a safe 1C placeholder.'}
         icon={DatabaseZap}
         actions={
           <ActionButton onClick={loadHub} tone="secondary">
             <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-            Refresh
+            {ka ? 'განახლება' : 'Refresh'}
           </ActionButton>
         }
       />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <MetricCard
-          label="Connector"
-          value={connector.enabled ? 'Enabled' : 'Disabled'}
+          label={ka ? 'კონექტორი' : 'Connector'}
+          value={connector.enabled ? (ka ? 'ჩართული' : 'Enabled') : (ka ? 'გამორთული' : 'Disabled')}
           detail={connector.displayName}
           icon={PlugZap}
           tone={connector.enabled ? 'success' : 'neutral'}
         />
         <MetricCard
-          label="Last sync"
-          value={connector.lastSuccessfulSyncAt ? 'Successful' : 'No success'}
-          detail={formatDate(connector.lastSyncAt || connector.lastSuccessfulSyncAt)}
+          label={ka ? 'ბოლო სინქრონიზაცია' : 'Last sync'}
+          value={connector.lastSuccessfulSyncAt ? (ka ? 'წარმატებული' : 'Successful') : (ka ? 'წარმატება არ ყოფილა' : 'No success')}
+          detail={formatDate(connector.lastSyncAt || connector.lastSuccessfulSyncAt, ka)}
           icon={CheckCircle2}
           tone={connector.lastSuccessfulSyncAt ? 'success' : 'warning'}
         />
         <MetricCard
-          label="Queue"
+          label={ka ? 'რიგი' : 'Queue'}
           value={hub.jobs.length}
-          detail={`${failedJobs.length} failed or review`}
+          detail={ka ? `${failedJobs.length} ჩავარდნილი ან გადასახედი` : `${failedJobs.length} failed or review`}
           icon={GitBranch}
           tone={failedJobs.length ? 'warning' : 'info'}
         />
         <MetricCard
-          label="Conflicts"
+          label={ka ? 'კონფლიქტები' : 'Conflicts'}
           value={openConflicts.length}
-          detail={`${hub.externalRefs.length} external ID mappings`}
+          detail={ka ? `${hub.externalRefs.length} გარე ID შესაბამისობა` : `${hub.externalRefs.length} external ID mappings`}
           icon={AlertTriangle}
           tone={openConflicts.length ? 'danger' : 'success'}
         />
@@ -411,10 +420,10 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
 
       <div className="flex flex-wrap gap-2 rounded-2xl border border-[#e8dfd5] bg-white/90 p-2 dark:border-stone-800 dark:bg-stone-900/90">
         {[
-          ['overview', 'Overview'],
-          ['queue', 'Queue & conflicts'],
-          ['mappings', 'Field mappings'],
-          ['refs', 'External IDs'],
+          ['overview', ka ? 'მიმოხილვა' : 'Overview'],
+          ['queue', ka ? 'რიგი და კონფლიქტები' : 'Queue & conflicts'],
+          ['mappings', ka ? 'ველების შესაბამისობა' : 'Field mappings'],
+          ['refs', ka ? 'გარე ID-ები' : 'External IDs'],
         ].map(([id, label]) => (
           <button
             key={id}
@@ -435,17 +444,19 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
       {activePanel === 'overview' && (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)] gap-4">
           <SectionCard
-            title="1C Connector"
-            subtitle="Manual JSON/CSV exchange now; API settings are placeholders for a future connector."
+            title={ka ? '1C კონექტორი' : '1C Connector'}
+            subtitle={ka ? 'ახლა ხელით JSON/CSV გაცვლა; API პარამეტრები მომავალი კონექტორისთვისაა.' : 'Manual JSON/CSV exchange now; API settings are placeholders for a future connector.'}
             icon={PlugZap}
           >
             <form onSubmit={saveConnector} className="space-y-4">
               <InlineNotice tone="warning">
-                CellarFlow does not share its database with 1C. Accounting apps can return document, payment, valuation, VAT/tax, and official ID metadata through this controlled layer.
+                {ka
+                  ? 'CellarFlow არ აზიარებს თავის ბაზას 1C-სთან. ბუღალტრულ აპლიკაციებს შეუძლიათ დააბრუნონ დოკუმენტის, გადახდის, შეფასების, დღგ/გადასახადის და ოფიციალური ID მეტამონაცემები ამ კონტროლირებადი ფენის მეშვეობით.'
+                  : 'CellarFlow does not share its database with 1C. Accounting apps can return document, payment, valuation, VAT/tax, and official ID metadata through this controlled layer.'}
               </InlineNotice>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-800 dark:bg-stone-950/40">
-                  <span className="text-xs font-bold">Connector enabled</span>
+                  <span className="text-xs font-bold">{ka ? 'კონექტორი ჩართულია' : 'Connector enabled'}</span>
                   <input
                     name="enabled"
                     type="checkbox"
@@ -454,80 +465,78 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                   />
                 </label>
                 <div>
-                  <FieldLabel required>Default export format</FieldLabel>
-                  <select name="defaultExportFormat" aria-label="Default export format" defaultValue={connector.defaultExportFormat} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                  <FieldLabel required>{ka ? 'ნაგულისხმევი ექსპორტის ფორმატი' : 'Default export format'}</FieldLabel>
+                  <select name="defaultExportFormat" aria-label={ka ? 'ნაგულისხმევი ექსპორტის ფორმატი' : 'Default export format'} defaultValue={connector.defaultExportFormat} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
                     <option value="json">JSON</option>
                     <option value="csv">CSV</option>
                   </select>
                 </div>
                 <div>
-                  <FieldLabel required>Exchange mode</FieldLabel>
-                  <select name="exchangeMode" aria-label="Exchange mode" defaultValue={connector.exchangeMode} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
-                    <option value="manual_json_csv">Manual file exchange</option>
-                    <option value="live_odata">Live OData (HTTPS)</option>
+                  <FieldLabel required>{ka ? 'გაცვლის რეჟიმი' : 'Exchange mode'}</FieldLabel>
+                  <select name="exchangeMode" aria-label={ka ? 'გაცვლის რეჟიმი' : 'Exchange mode'} defaultValue={connector.exchangeMode} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                    <option value="manual_json_csv">{ka ? 'ფაილების ხელით გაცვლა' : 'Manual file exchange'}</option>
+                    <option value="live_odata">{ka ? 'პირდაპირი OData (HTTPS)' : 'Live OData (HTTPS)'}</option>
                   </select>
                 </div>
                 <div className="md:col-span-2">
-                  <FieldLabel required>Endpoint URL or exchange reference</FieldLabel>
+                  <FieldLabel required>{ka ? 'Endpoint URL ან გაცვლის მისამართი' : 'Endpoint URL or exchange reference'}</FieldLabel>
                   <input
                     name="endpointUrl"
                     defaultValue={connector.endpointUrl}
-                    placeholder="https://1c.example.local/exchange or manual exchange folder"
+                    placeholder={ka ? 'https://1c.example.local/exchange ან ხელით გაცვლის საქაღალდე' : 'https://1c.example.local/exchange or manual exchange folder'}
                     className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-950"
                   />
                 </div>
                 <div>
-                  <FieldLabel required>Authentication mode</FieldLabel>
-                  <select name="authMode" aria-label="Authentication mode" defaultValue={connector.authMode} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
-                    <option value="none">None / manual file exchange</option>
-                    <option value="basic">Basic placeholder</option>
-                    <option value="api_key">API key placeholder</option>
-                    <option value="bearer">Bearer token placeholder</option>
-                    <option value="oauth_placeholder">OAuth placeholder</option>
+                  <FieldLabel required>{ka ? 'ავთენტიფიკაციის რეჟიმი' : 'Authentication mode'}</FieldLabel>
+                  <select name="authMode" aria-label={ka ? 'ავთენტიფიკაციის რეჟიმი' : 'Authentication mode'} defaultValue={connector.authMode} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                    <option value="none">{ka ? 'არცერთი / ფაილების ხელით გაცვლა' : 'None / manual file exchange'}</option>
+                    <option value="basic">{ka ? 'Basic (რეზერვი)' : 'Basic placeholder'}</option>
+                    <option value="api_key">{ka ? 'API key (რეზერვი)' : 'API key placeholder'}</option>
+                    <option value="bearer">{ka ? 'Bearer token (რეზერვი)' : 'Bearer token placeholder'}</option>
+                    <option value="oauth_placeholder">{ka ? 'OAuth (რეზერვი)' : 'OAuth placeholder'}</option>
                   </select>
                 </div>
                 <div>
-                  <FieldLabel>Username</FieldLabel>
-                  <input name="username" aria-label="Integration username" defaultValue={connector.username || ''} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none dark:border-stone-800 dark:bg-stone-950" />
+                  <FieldLabel>{ka ? 'მომხმარებელი' : 'Username'}</FieldLabel>
+                  <input name="username" aria-label={ka ? 'ინტეგრაციის მომხმარებელი' : 'Integration username'} defaultValue={connector.username || ''} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none dark:border-stone-800 dark:bg-stone-950" />
                 </div>
                 <div>
-                  <FieldLabel>1C database name</FieldLabel>
-                  <input name="databaseName" aria-label="1C database name" defaultValue={connector.databaseName || ''} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none dark:border-stone-800 dark:bg-stone-950" />
+                  <FieldLabel>{ka ? '1C ბაზის სახელი' : '1C database name'}</FieldLabel>
+                  <input name="databaseName" aria-label={ka ? '1C ბაზის სახელი' : '1C database name'} defaultValue={connector.databaseName || ''} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none dark:border-stone-800 dark:bg-stone-950" />
                 </div>
                 <div>
-                  <FieldLabel>Secret value</FieldLabel>
+                  <FieldLabel>{ka ? 'საიდუმლო მნიშვნელობა' : 'Secret value'}</FieldLabel>
                   <input
                     type="password"
                     value={secretValue}
                     onChange={(e) => setSecretValue(e.target.value)}
-                    placeholder={connector.secretConfigured ? 'Secret already marked configured' : 'Write-only placeholder'}
+                    placeholder={connector.secretConfigured ? (ka ? 'საიდუმლო უკვე კონფიგურირებულია' : 'Secret already marked configured') : (ka ? 'მხოლოდ ჩასაწერი ველი' : 'Write-only placeholder')}
                     className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none dark:border-stone-800 dark:bg-stone-950"
                   />
                 </div>
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-stone-100 pt-3 dark:border-stone-800">
                 <div className="text-[11px] text-stone-500">
-                  Required: {definition?.requiredSettings.join(', ') || 'endpoint/auth mode'}. Optional: {definition?.optionalSettings.join(', ') || 'username, database name'}.
+                  {ka ? 'სავალდებულო' : 'Required'}: {definition?.requiredSettings.join(', ') || (ka ? 'endpoint/ავთენტიფიკაცია' : 'endpoint/auth mode')}. {ka ? 'არჩევითი' : 'Optional'}: {definition?.optionalSettings.join(', ') || (ka ? 'მომხმარებელი, ბაზის სახელი' : 'username, database name')}.
                 </div>
                 <ActionButton type="submit" disabled={saving}>
                   {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
-                  Save
+                  {ka ? 'შენახვა' : 'Save'}
                 </ActionButton>
               </div>
             </form>
           </SectionCard>
 
-          <SectionCard title="Live 1C Connection" subtitle="Test the OData endpoint and pull entities directly." icon={PlugZap}>
+          <SectionCard title={ka ? 'პირდაპირი 1C კავშირი' : 'Live 1C Connection'} subtitle={ka ? 'შეამოწმეთ OData endpoint და პირდაპირ მოზიდეთ ერთეულები.' : 'Test the OData endpoint and pull entities directly.'} icon={PlugZap}>
             <div className="space-y-4">
               <InlineNotice>
-                Requires exchange mode <strong>Live OData</strong>, an HTTPS endpoint, and saved credentials.
-                Credentials are sealed server-side and never leave the server; the endpoint is checked for
-                private/internal addresses before every call.
+                {ka ? <>საჭიროა გაცვლის რეჟიმი <strong>Live OData</strong>, HTTPS endpoint და შენახული მონაცემები. მონაცემები დაცულია სერვერზე და არასდროს ტოვებს მას; endpoint მოწმდება პრივატულ/შიდა მისამართებზე ყოველ გამოძახებამდე.</> : <>Requires exchange mode <strong>Live OData</strong>, an HTTPS endpoint, and saved credentials. Credentials are sealed server-side and never leave the server; the endpoint is checked for private/internal addresses before every call.</>}
               </InlineNotice>
               <div className="flex flex-wrap items-center gap-2">
                 <ActionButton onClick={testConnection} disabled={testing || !connector?.enabled}>
                   {testing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />}
-                  Test Connection
+                  {ka ? 'კავშირის ტესტი' : 'Test Connection'}
                 </ActionButton>
                 {testResult && (
                   <span className={cx('text-[11px] font-bold', testResult.ok ? 'text-emerald-700 dark:text-emerald-500' : 'text-red-700 dark:text-red-400')}>
@@ -551,35 +560,35 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
               )}
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
                 <div>
-                  <FieldLabel>OData entity set</FieldLabel>
+                  <FieldLabel>{ka ? 'OData ერთეულთა ნაკრები' : 'OData entity set'}</FieldLabel>
                   <input
                     value={liveEntitySet}
                     onChange={(e) => setLiveEntitySet(e.target.value)}
                     placeholder="Catalog_Номенклатура"
-                    aria-label="OData entity set"
+                    aria-label={ka ? 'OData ერთეულთა ნაკრები' : 'OData entity set'}
                     className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-mono outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-950"
                   />
                 </div>
                 <ActionButton onClick={livePull} disabled={pulling || !liveEntitySet.trim()}>
                   {pulling ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ArrowDownToLine className="w-3.5 h-3.5 mr-1.5" />}
-                  Pull into {selectedDomain}
+                  {ka ? `მოზიდვა → ${selectedDomain}` : `Pull into ${selectedDomain}`}
                 </ActionButton>
               </div>
             </div>
           </SectionCard>
 
-          <SectionCard title="Manual Exchange" subtitle="Create controlled export/import jobs." icon={FileJson}>
+          <SectionCard title={ka ? 'ხელით გაცვლა' : 'Manual Exchange'} subtitle={ka ? 'შექმენით კონტროლირებადი ექსპორტის/იმპორტის დავალებები.' : 'Create controlled export/import jobs.'} icon={FileJson}>
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <FieldLabel required>Domain</FieldLabel>
-                  <select aria-label="Sync domain" value={selectedDomain} onChange={(e) => setSelectedDomain(e.target.value as IntegrationSyncDomain)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                  <FieldLabel required>{ka ? 'დომენი' : 'Domain'}</FieldLabel>
+                  <select aria-label={ka ? 'სინქრონიზაციის დომენი' : 'Sync domain'} value={selectedDomain} onChange={(e) => setSelectedDomain(e.target.value as IntegrationSyncDomain)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
                     {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}
                   </select>
                 </div>
                 <div>
-                  <FieldLabel required>Format</FieldLabel>
-                  <select aria-label="Job format" value={jobFormat} onChange={(e) => setJobFormat(e.target.value as IntegrationSyncFormat)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                  <FieldLabel required>{ka ? 'ფორმატი' : 'Format'}</FieldLabel>
+                  <select aria-label={ka ? 'დავალების ფორმატი' : 'Job format'} value={jobFormat} onChange={(e) => setJobFormat(e.target.value as IntegrationSyncFormat)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
                     <option value="json">JSON</option>
                     <option value="csv">CSV</option>
                   </select>
@@ -599,13 +608,13 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                     )}
                   >
                     {direction === 'export' ? <ArrowUpFromLine className="inline w-3.5 h-3.5 mr-1" /> : <ArrowDownToLine className="inline w-3.5 h-3.5 mr-1" />}
-                    {direction}
+                    {dirLabel(direction)}
                   </button>
                 ))}
               </div>
               {jobDirection === 'import' && (
                 <div>
-                  <FieldLabel required>Import payload</FieldLabel>
+                  <FieldLabel required>{ka ? 'იმპორტის მონაცემები' : 'Import payload'}</FieldLabel>
                   <textarea
                     value={importPayload}
                     onChange={(e) => setImportPayload(e.target.value)}
@@ -617,7 +626,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
               )}
               <ActionButton onClick={runJob} disabled={running || !connector.enabled || (jobDirection === 'import' && !importPayload.trim())} className="w-full">
                 {running ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <DatabaseZap className="w-3.5 h-3.5 mr-1.5" />}
-                Run {jobDirection}
+                {ka ? `გაშვება: ${dirLabel(jobDirection)}` : `Run ${jobDirection}`}
               </ActionButton>
               {lastJob?.exportArtifact && (
                 <button
@@ -625,13 +634,13 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                   onClick={() => downloadArtifact(lastJob)}
                   className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300"
                 >
-                  Download latest {lastJob.exportArtifact.format.toUpperCase()} export
+                  {ka ? `ბოლო ${lastJob.exportArtifact.format.toUpperCase()} ექსპორტის ჩამოტვირთვა` : `Download latest ${lastJob.exportArtifact.format.toUpperCase()} export`}
                 </button>
               )}
             </div>
           </SectionCard>
 
-          <SectionCard title="Source Of Truth" icon={ShieldCheck} className="xl:col-span-2">
+          <SectionCard title={ka ? 'ჭეშმარიტების წყარო' : 'Source Of Truth'} icon={ShieldCheck} className="xl:col-span-2">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               {Object.values(sourceOfTruth).map((rule) => (
                 <div key={rule.domain} className="rounded-xl border border-stone-200 bg-stone-50/60 p-3 dark:border-stone-800 dark:bg-stone-950/30">
@@ -642,11 +651,11 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                   <p className="text-[11px] leading-relaxed text-stone-500">{rule.notes}</p>
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
                     <div className="rounded-lg bg-white p-2 dark:bg-stone-900">
-                      <strong className="block text-emerald-700 dark:text-emerald-300">CellarFlow owns</strong>
+                      <strong className="block text-emerald-700 dark:text-emerald-300">{ka ? 'CellarFlow ფლობს' : 'CellarFlow owns'}</strong>
                       {rule.cellarFlowOwns.join(', ')}
                     </div>
                     <div className="rounded-lg bg-white p-2 dark:bg-stone-900">
-                      <strong className="block text-sky-700 dark:text-sky-300">1C owns</strong>
+                      <strong className="block text-sky-700 dark:text-sky-300">{ka ? '1C ფლობს' : '1C owns'}</strong>
                       {rule.externalOwns.join(', ')}
                     </div>
                   </div>
@@ -659,18 +668,18 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
 
       {activePanel === 'queue' && (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
-          <SectionCard title="Sync Queue & History" icon={RefreshCw}>
+          <SectionCard title={ka ? 'სინქრონიზაციის რიგი და ისტორია' : 'Sync Queue & History'} icon={RefreshCw}>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="text-[9px] uppercase tracking-widest text-stone-500 dark:text-stone-400">
                   <tr className="border-b border-stone-200 dark:border-stone-800">
-                    <th className="py-2 pr-3">Job</th>
-                    <th className="py-2 pr-3">Domain</th>
-                    <th className="py-2 pr-3">Direction</th>
-                    <th className="py-2 pr-3">Status</th>
-                    <th className="py-2 pr-3">Records</th>
-                    <th className="py-2 pr-3">Updated</th>
-                    <th className="py-2 text-right">Action</th>
+                    <th className="py-2 pr-3">{ka ? 'დავალება' : 'Job'}</th>
+                    <th className="py-2 pr-3">{ka ? 'დომენი' : 'Domain'}</th>
+                    <th className="py-2 pr-3">{ka ? 'მიმართულება' : 'Direction'}</th>
+                    <th className="py-2 pr-3">{ka ? 'სტატუსი' : 'Status'}</th>
+                    <th className="py-2 pr-3">{ka ? 'ჩანაწერები' : 'Records'}</th>
+                    <th className="py-2 pr-3">{ka ? 'განახლდა' : 'Updated'}</th>
+                    <th className="py-2 text-right">{ka ? 'ქმედება' : 'Action'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
@@ -678,19 +687,19 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                     <tr key={job.id}>
                       <td className="py-2 pr-3 font-mono text-[10px] text-stone-500">{job.id}</td>
                       <td className="py-2 pr-3 font-bold">{job.domain}</td>
-                      <td className="py-2 pr-3">{job.direction}</td>
+                      <td className="py-2 pr-3">{dirLabel(job.direction)}</td>
                       <td className="py-2 pr-3"><StatusBadge tone={statusTone(job.status)}>{job.status}</StatusBadge></td>
                       <td className="py-2 pr-3">{job.resultSummary?.recordCount ?? '-'}</td>
-                      <td className="py-2 pr-3 whitespace-nowrap">{formatDate(job.updatedAt)}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap">{formatDate(job.updatedAt, ka)}</td>
                       <td className="py-2 text-right">
                         <div className="flex justify-end gap-2">
                           {job.exportArtifact && (
-                            <button type="button" onClick={() => downloadArtifact(job)} className="rounded-lg bg-stone-100 px-2 py-1 text-[10px] font-bold text-stone-700 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-200">Download</button>
+                            <button type="button" onClick={() => downloadArtifact(job)} className="rounded-lg bg-stone-100 px-2 py-1 text-[10px] font-bold text-stone-700 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-200">{ka ? 'ჩამოტვირთვა' : 'Download'}</button>
                           )}
                           {(job.status === 'failed' || job.status === 'needs_review') && (
                             <button type="button" onClick={() => retryJob(job.id)} className="rounded-lg bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-900 hover:bg-amber-200 dark:bg-amber-950/30 dark:text-amber-300">
                               <RotateCcw className="inline h-3 w-3 mr-1" />
-                              Retry
+                              {ka ? 'ხელახლა' : 'Retry'}
                             </button>
                           )}
                         </div>
@@ -699,13 +708,13 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                   ))}
                 </tbody>
               </table>
-              {hub.jobs.length === 0 && <EmptyState icon={RefreshCw} title="No sync jobs yet" />}
+              {hub.jobs.length === 0 && <EmptyState icon={RefreshCw} title={ka ? 'სინქრონიზაციის დავალებები ჯერ არ არის' : 'No sync jobs yet'} />}
             </div>
           </SectionCard>
 
-          <SectionCard title="Conflicts" icon={AlertTriangle}>
+          <SectionCard title={ka ? 'კონფლიქტები' : 'Conflicts'} icon={AlertTriangle}>
             <div className="space-y-3">
-              {openConflicts.length === 0 && <EmptyState icon={CheckCircle2} title="No open conflicts" />}
+              {openConflicts.length === 0 && <EmptyState icon={CheckCircle2} title={ka ? 'ღია კონფლიქტები არ არის' : 'No open conflicts'} />}
               {openConflicts.map((conflict) => (
                 <div key={conflict.id} className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900 dark:bg-rose-950/20">
                   <div className="flex items-start justify-between gap-2">
@@ -713,14 +722,14 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                       <strong className="block text-xs text-rose-900 dark:text-rose-200">{conflict.domain}</strong>
                       <span className="text-[10px] text-rose-700 dark:text-rose-300">{conflict.reason}</span>
                     </div>
-                    <StatusBadge tone="danger">open</StatusBadge>
+                    <StatusBadge tone="danger">{ka ? 'ღია' : 'open'}</StatusBadge>
                   </div>
                   {conflict.fieldPath && (
                     <div className="mt-2 rounded-lg bg-white p-2 text-[10px] dark:bg-stone-900">
                       <strong>{conflict.fieldPath}</strong>
                       <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-stone-500">
                         <span>CellarFlow: {JSON.stringify(conflict.localValue)}</span>
-                        <span>External: {JSON.stringify(conflict.externalValue)}</span>
+                        <span>{ka ? 'გარე' : 'External'}: {JSON.stringify(conflict.externalValue)}</span>
                       </div>
                     </div>
                   )}
@@ -728,7 +737,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                     value={conflictNotes[conflict.id] || ''}
                     onChange={(e) => setConflictNotes((prev) => ({ ...prev, [conflict.id]: e.target.value }))}
                     rows={2}
-                    placeholder="Resolution note"
+                    placeholder={ka ? 'გადაწყვეტის შენიშვნა' : 'Resolution note'}
                     className="mt-2 w-full rounded-lg border border-rose-200 bg-white px-2 py-1 text-[11px] outline-none dark:border-rose-900 dark:bg-stone-950"
                   />
                   <button
@@ -736,20 +745,20 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                     onClick={() => resolveConflict(conflict.id)}
                     className="mt-2 w-full rounded-lg bg-rose-700 px-3 py-1.5 text-[10px] font-bold uppercase text-white hover:bg-rose-800"
                   >
-                    Mark resolved
+                    {ka ? 'მოგვარებულად მონიშვნა' : 'Mark resolved'}
                   </button>
                 </div>
               ))}
             </div>
           </SectionCard>
 
-          <SectionCard title="Events" icon={GitBranch} className="xl:col-span-2">
+          <SectionCard title={ka ? 'მოვლენები' : 'Events'} icon={GitBranch} className="xl:col-span-2">
             <div className="max-h-80 overflow-y-auto">
               <table className="w-full text-left text-xs">
                 <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
                   {hub.events.slice(0, 60).map((event: IntegrationSyncEvent) => (
                     <tr key={event.id}>
-                      <td className="py-2 pr-3 whitespace-nowrap text-[10px] text-stone-500 dark:text-stone-400">{formatDate(event.createdAt)}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-[10px] text-stone-500 dark:text-stone-400">{formatDate(event.createdAt, ka)}</td>
                       <td className="py-2 pr-3"><StatusBadge tone={event.level === 'error' ? 'danger' : event.level === 'warning' ? 'warning' : 'info'}>{event.level}</StatusBadge></td>
                       <td className="py-2 pr-3 font-bold">{event.action}</td>
                       <td className="py-2 text-stone-500">{event.message}</td>
@@ -757,7 +766,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                   ))}
                 </tbody>
               </table>
-              {hub.events.length === 0 && <EmptyState icon={GitBranch} title="No events recorded" />}
+              {hub.events.length === 0 && <EmptyState icon={GitBranch} title={ka ? 'მოვლენები არ არის ჩაწერილი' : 'No events recorded'} />}
             </div>
           </SectionCard>
         </div>
@@ -765,24 +774,24 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
 
       {activePanel === 'mappings' && (
         <SectionCard
-          title="Field Mappings"
-          subtitle="Mappings translate manual exchange files without granting external database access."
+          title={ka ? 'ველების შესაბამისობა' : 'Field Mappings'}
+          subtitle={ka ? 'შესაბამისობა თარგმნის ხელით გაცვლის ფაილებს გარე ბაზაზე წვდომის მინიჭების გარეშე.' : 'Mappings translate manual exchange files without granting external database access.'}
           icon={GitBranch}
-          actions={<ActionButton onClick={saveMappings}><Save className="w-3.5 h-3.5 mr-1.5" />Save mappings</ActionButton>}
+          actions={<ActionButton onClick={saveMappings}><Save className="w-3.5 h-3.5 mr-1.5" />{ka ? 'შესაბამისობის შენახვა' : 'Save mappings'}</ActionButton>}
         >
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <FieldLabel required>Domain</FieldLabel>
-                <select aria-label="Sync domain" value={selectedDomain} onChange={(e) => setSelectedDomain(e.target.value as IntegrationSyncDomain)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                <FieldLabel required>{ka ? 'დომენი' : 'Domain'}</FieldLabel>
+                <select aria-label={ka ? 'სინქრონიზაციის დომენი' : 'Sync domain'} value={selectedDomain} onChange={(e) => setSelectedDomain(e.target.value as IntegrationSyncDomain)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
                   {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}
                 </select>
               </div>
               <div>
-                <FieldLabel required>Direction</FieldLabel>
-                <select aria-label="Mapping direction" value={mappingDirection} onChange={(e) => setMappingDirection(e.target.value as IntegrationSyncDirection)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
-                  <option value="export">Export</option>
-                  <option value="import">Import</option>
+                <FieldLabel required>{ka ? 'მიმართულება' : 'Direction'}</FieldLabel>
+                <select aria-label={ka ? 'შესაბამისობის მიმართულება' : 'Mapping direction'} value={mappingDirection} onChange={(e) => setMappingDirection(e.target.value as IntegrationSyncDirection)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
+                  <option value="export">{ka ? 'ექსპორტი' : 'Export'}</option>
+                  <option value="import">{ka ? 'იმპორტი' : 'Import'}</option>
                 </select>
               </div>
             </div>
@@ -790,10 +799,10 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
               <table className="w-full text-left text-xs">
                 <thead className="text-[9px] uppercase tracking-widest text-stone-500 dark:text-stone-400">
                   <tr className="border-b border-stone-200 dark:border-stone-800">
-                    <th className="py-2 pr-3">CellarFlow field</th>
-                    <th className="py-2 pr-3">External field</th>
-                    <th className="py-2 pr-3">Transform</th>
-                    <th className="py-2">Required</th>
+                    <th className="py-2 pr-3">{ka ? 'CellarFlow ველი' : 'CellarFlow field'}</th>
+                    <th className="py-2 pr-3">{ka ? 'გარე ველი' : 'External field'}</th>
+                    <th className="py-2 pr-3">{ka ? 'გარდაქმნა' : 'Transform'}</th>
+                    <th className="py-2">{ka ? 'სავალდებულო' : 'Required'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
@@ -806,12 +815,12 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                         <input value={row.externalField} onChange={(e) => updateMappingRow(index, { externalField: e.target.value })} className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none dark:border-stone-800 dark:bg-stone-950" />
                       </td>
                       <td className="py-2 pr-3">
-                        <select aria-label="Field transform" value={row.transform || 'none'} onChange={(e) => updateMappingRow(index, { transform: e.target.value as IntegrationFieldMapping['transform'] })} className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none dark:border-stone-800 dark:bg-stone-950">
-                          <option value="none">None</option>
-                          <option value="string">String</option>
-                          <option value="number">Number</option>
-                          <option value="date">Date</option>
-                          <option value="boolean">Boolean</option>
+                        <select aria-label={ka ? 'ველის გარდაქმნა' : 'Field transform'} value={row.transform || 'none'} onChange={(e) => updateMappingRow(index, { transform: e.target.value as IntegrationFieldMapping['transform'] })} className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none dark:border-stone-800 dark:bg-stone-950">
+                          <option value="none">{ka ? 'არცერთი' : 'None'}</option>
+                          <option value="string">{ka ? 'ტექსტი' : 'String'}</option>
+                          <option value="number">{ka ? 'რიცხვი' : 'Number'}</option>
+                          <option value="date">{ka ? 'თარიღი' : 'Date'}</option>
+                          <option value="boolean">{ka ? 'ლოგიკური' : 'Boolean'}</option>
                         </select>
                       </td>
                       <td className="py-2">
@@ -827,7 +836,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
               onClick={() => setMappingRows((rows) => [...rows, { domain: selectedDomain, direction: mappingDirection, localField: '', externalField: '', required: false, transform: 'none' }])}
               className="rounded-xl bg-stone-100 px-3 py-2 text-xs font-bold text-stone-700 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-200"
             >
-              Add mapping row
+              {ka ? 'შესაბამისობის რიგის დამატება' : 'Add mapping row'}
             </button>
           </div>
         </SectionCard>
@@ -835,16 +844,16 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
 
       {activePanel === 'refs' && (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4">
-          <SectionCard title="External ID References" icon={GitBranch}>
+          <SectionCard title={ka ? 'გარე ID მითითებები' : 'External ID References'} icon={GitBranch}>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="text-[9px] uppercase tracking-widest text-stone-500 dark:text-stone-400">
                   <tr className="border-b border-stone-200 dark:border-stone-800">
-                    <th className="py-2 pr-3">Domain</th>
-                    <th className="py-2 pr-3">Local ID</th>
-                    <th className="py-2 pr-3">External ID</th>
-                    <th className="py-2 pr-3">Display</th>
-                    <th className="py-2">Updated</th>
+                    <th className="py-2 pr-3">{ka ? 'დომენი' : 'Domain'}</th>
+                    <th className="py-2 pr-3">{ka ? 'ლოკალური ID' : 'Local ID'}</th>
+                    <th className="py-2 pr-3">{ka ? 'გარე ID' : 'External ID'}</th>
+                    <th className="py-2 pr-3">{ka ? 'ჩვენება' : 'Display'}</th>
+                    <th className="py-2">{ka ? 'განახლდა' : 'Updated'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
@@ -854,17 +863,17 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                       <td className="py-2 pr-3 font-mono text-[10px]">{ref.localId}</td>
                       <td className="py-2 pr-3 font-mono text-[10px]">{ref.externalId}</td>
                       <td className="py-2 pr-3">{ref.displayName || '-'}</td>
-                      <td className="py-2 whitespace-nowrap">{formatDate(ref.updatedAt)}</td>
+                      <td className="py-2 whitespace-nowrap">{formatDate(ref.updatedAt, ka)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {hub.externalRefs.length === 0 && <EmptyState icon={GitBranch} title="No external IDs mapped yet" />}
+              {hub.externalRefs.length === 0 && <EmptyState icon={GitBranch} title={ka ? 'გარე ID-ები ჯერ არ არის შესაბამისობაში' : 'No external IDs mapped yet'} />}
             </div>
           </SectionCard>
           <FormSection
-            title="Accounting Metadata"
-            description="External references store official IDs and accounting status without rewriting cellar facts."
+            title={ka ? 'ბუღალტრული მეტამონაცემები' : 'Accounting Metadata'}
+            description={ka ? 'გარე მითითებები ინახავს ოფიციალურ ID-ებსა და ბუღალტრულ სტატუსს მარნის მონაცემების გადაწერის გარეშე.' : 'External references store official IDs and accounting status without rewriting cellar facts.'}
             icon={ShieldCheck}
           >
             <div className="space-y-2">
@@ -879,7 +888,7 @@ export default function IntegrationHubTab({ setToastMessage }: IntegrationHubTab
                   </pre>
                 </div>
               ))}
-              {hub.externalRefs.length === 0 && <InlineNotice tone="neutral">External IDs appear after a successful manual import.</InlineNotice>}
+              {hub.externalRefs.length === 0 && <InlineNotice tone="neutral">{ka ? 'გარე ID-ები გამოჩნდება წარმატებული ხელით იმპორტის შემდეგ.' : 'External IDs appear after a successful manual import.'}</InlineNotice>}
             </div>
           </FormSection>
         </div>
