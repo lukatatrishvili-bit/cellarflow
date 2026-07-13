@@ -598,7 +598,7 @@ export default function QvevriPassportTab({
                   <LogRow key={`${entry.date}-${entry.action}-${index}`} entry={entry} />
                 ))}
                 {(!selectedVessel.dailyMixingLog || selectedVessel.dailyMixingLog.length === 0) && (
-                  <p className="text-[11px] font-semibold text-stone-500">No mixing entries.</p>
+                  <p className="text-[11px] font-semibold text-stone-500">{ka ? 'შერევის ჩანაწერი არ არის.' : 'No mixing entries.'}</p>
                 )}
               </div>
             </div>
@@ -627,7 +627,7 @@ export default function QvevriPassportTab({
                   <LogRow key={op.id} entry={{ date: op.date.slice(0, 10), action: op.customLabel || 'Cleaning operation', operator: op.operator, notes: op.notes }} />
                 ))}
                 {(!selectedVessel.sanitationHistory || selectedVessel.sanitationHistory.length === 0) && sanitationOps.length === 0 && (
-                  <p className="text-[11px] font-semibold text-stone-500">No sanitation entries.</p>
+                  <p className="text-[11px] font-semibold text-stone-500">{ka ? 'სანიტარიის ჩანაწერი არ არის.' : 'No sanitation entries.'}</p>
                 )}
               </div>
             </div>

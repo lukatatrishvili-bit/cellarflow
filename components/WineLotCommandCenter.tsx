@@ -23,10 +23,12 @@ import type {
 } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
+import type { Language } from '../lib/i18n';
 import { isActiveReservation } from '../lib/sales';
 import { StatusBadge } from './ui/primitives';
 
 interface Props {
+  lang?: Language;
   lot: WineLot;
   vessels: Vessel[];
   labLogs: LabAnalysis[];
@@ -65,6 +67,18 @@ const stageLabels: Record<WinemakingStage, string> = {
   filtration: 'Filtration',
   bottled: 'Bottled',
   sold: 'Sold',
+};
+
+const stageLabelsKa: Record<WinemakingStage, string> = {
+  crushing: 'დაწურვა',
+  fermenting: 'დუღილი',
+  maceration: 'მაცერაცია',
+  pressing: 'დაწნეხა',
+  aging: 'დავარგება',
+  stabilization: 'სტაბილიზაცია',
+  filtration: 'ფილტრაცია',
+  bottled: 'ჩამოსხმული',
+  sold: 'გაყიდული',
 };
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -110,6 +124,7 @@ function ActionChip({
 }
 
 export default function WineLotCommandCenter({
+  lang = 'en',
   lot,
   vessels,
   labLogs,
@@ -125,6 +140,8 @@ export default function WineLotCommandCenter({
   setSelectedTankId,
   setCalculatorLotId,
 }: Props) {
+  const ka = lang === 'ka';
+  const stageLabel = (stage: WinemakingStage) => (ka ? stageLabelsKa[stage] : stageLabels[stage]);
   const containingVessels = vessels.filter(v => v.assignedLotId === lot.id);
   const latestLab = labLogs
     .filter(log => log.lotId === lot.id)
@@ -158,40 +175,40 @@ export default function WineLotCommandCenter({
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge tone="brand">{lot.id}</StatusBadge>
               <StatusBadge tone={lot.stage === 'sold' ? 'success' : lot.stage === 'bottled' ? 'info' : 'neutral'}>
-                {stageLabels[lot.stage] || lot.stage}
+                {stageLabel(lot.stage) || lot.stage}
               </StatusBadge>
               <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-stone-400">
-                Vintage {lot.vintage}
+                {ka ? 'მოსავალი' : 'Vintage'} {lot.vintage}
               </span>
             </div>
             <h2 className="mt-2 text-2xl font-serif font-black leading-tight text-stone-950 dark:text-amber-100">
               {lot.name}
             </h2>
             <p className="mt-1 max-w-3xl text-sm text-stone-500 dark:text-stone-400">
-              {lot.variety} from {lot.vineyardBlock || 'unassigned block'} · {lot.region || 'unknown region'}
+              {lot.variety} · {lot.vineyardBlock || (ka ? 'ბლოკი მიუთითებელია' : 'unassigned block')} · {lot.region || (ka ? 'უცნობი რეგიონი' : 'unknown region')}
             </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {onEdit && <ActionChip icon={Pencil} onClick={onEdit}>Edit</ActionChip>}
-            <ActionChip icon={GitMerge} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>Lineage</ActionChip>
-            <ActionChip icon={FileText} onClick={onOpenPassport ? () => onOpenPassport(lot.id) : undefined}>Passport</ActionChip>
+            {onEdit && <ActionChip icon={Pencil} onClick={onEdit}>{ka ? 'რედაქტირება' : 'Edit'}</ActionChip>}
+            <ActionChip icon={GitMerge} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'გენეალოგია' : 'Lineage'}</ActionChip>
+            <ActionChip icon={FileText} onClick={onOpenPassport ? () => onOpenPassport(lot.id) : undefined}>{ka ? 'პასპორტი' : 'Passport'}</ActionChip>
           </div>
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-7">
-          <MetricCard label="Current volume" value={`${lot.currentVolume.toLocaleString()} L`} hint={`${lot.initialVolume.toLocaleString()} L initial`} />
-          <MetricCard label="Bottled" value={`${bottled.toLocaleString()} btl`} hint={bottled > 0 ? 'finished goods' : 'not bottled yet'} />
-          <MetricCard label="Stock now" value={`${stockOnHand.toLocaleString()} btl`} hint={reserved > 0 ? `${reserved.toLocaleString()} reserved` : 'unreserved'} />
-          <MetricCard label="Dispatched" value={`${dispatched.toLocaleString()} btl`} hint={revenue > 0 ? money(revenue, currency) : 'no sales yet'} />
-          <MetricCard label="Lot cost" value={money(totalCost, currency)} hint={costPerBottle != null ? `${costPerBottle} ${currency}/btl` : 'cost/btl pending'} />
-          <MetricCard label="Latest pH" value={latestLab ? String(latestLab.ph) : '—'} hint={latestLab ? latestLab.date : 'no lab yet'} />
-          <MetricCard label="Free SO₂" value={latestLab ? `${latestLab.freeSo2} mg/L` : '—'} hint={latestLab && latestLab.freeSo2 < 15 ? 'needs review' : 'latest lab'} />
+          <MetricCard label={ka ? 'მიმდინარე მოცულობა' : 'Current volume'} value={`${lot.currentVolume.toLocaleString()} L`} hint={`${lot.initialVolume.toLocaleString()} L ${ka ? 'საწყისი' : 'initial'}`} />
+          <MetricCard label={ka ? 'ჩამოსხმული' : 'Bottled'} value={`${bottled.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={bottled > 0 ? (ka ? 'მზა პროდუქცია' : 'finished goods') : (ka ? 'ჯერ არ ჩამოსხმულა' : 'not bottled yet')} />
+          <MetricCard label={ka ? 'მარაგი ახლა' : 'Stock now'} value={`${stockOnHand.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={reserved > 0 ? `${reserved.toLocaleString()} ${ka ? 'დაჯავშნილი' : 'reserved'}` : (ka ? 'დაუჯავშნავი' : 'unreserved')} />
+          <MetricCard label={ka ? 'გატანილი' : 'Dispatched'} value={`${dispatched.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={revenue > 0 ? money(revenue, currency) : (ka ? 'გაყიდვები ჯერ არ არის' : 'no sales yet')} />
+          <MetricCard label={ka ? 'პარტიის ხარჯი' : 'Lot cost'} value={money(totalCost, currency)} hint={costPerBottle != null ? `${costPerBottle} ${currency}/${ka ? 'ბოთ.' : 'btl'}` : (ka ? 'ხარჯი/ბოთ. მოლოდინში' : 'cost/btl pending')} />
+          <MetricCard label={ka ? 'ბოლო pH' : 'Latest pH'} value={latestLab ? String(latestLab.ph) : '—'} hint={latestLab ? latestLab.date : (ka ? 'ანალიზი ჯერ არ არის' : 'no lab yet')} />
+          <MetricCard label={`${ka ? 'თავისუფალი' : 'Free'} SO₂`} value={latestLab ? `${latestLab.freeSo2} mg/L` : '—'} hint={latestLab && latestLab.freeSo2 < 15 ? (ka ? 'საჭიროებს შემოწმებას' : 'needs review') : (ka ? 'ბოლო ანალიზი' : 'latest lab')} />
         </div>
 
         <div className="mt-5 rounded-2xl border border-stone-200 bg-white/55 p-3 dark:border-stone-800 dark:bg-stone-950/30">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-[9px] font-mono font-black uppercase tracking-widest text-stone-400">Winemaking progress</span>
+            <span className="text-[9px] font-mono font-black uppercase tracking-widest text-stone-400">{ka ? 'წარმოების პროგრესი' : 'Winemaking progress'}</span>
             <span className="text-[10px] font-mono font-bold text-stone-500">{progressPct}%</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">
@@ -207,7 +224,7 @@ export default function WineLotCommandCenter({
                     : 'bg-stone-100 text-stone-400 dark:bg-stone-800'
                 }`}
               >
-                {stageLabels[stage]}
+                {stageLabel(stage)}
               </span>
             ))}
           </div>
@@ -216,7 +233,7 @@ export default function WineLotCommandCenter({
         <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-stone-200 bg-white/65 p-4 dark:border-stone-800 dark:bg-stone-950/30">
             <h3 className="flex items-center gap-1.5 text-xs font-black text-stone-700 dark:text-amber-100">
-              <MapPin className="h-4 w-4 text-[#4e0e15]" /> Where it is now
+              <MapPin className="h-4 w-4 text-[#4e0e15]" /> {ka ? 'სად არის ახლა' : 'Where it is now'}
             </h3>
             {containingVessels.length > 0 ? (
               <div className="mt-3 space-y-2">
@@ -236,21 +253,21 @@ export default function WineLotCommandCenter({
                 ))}
               </div>
             ) : (
-              <p className="mt-3 text-xs text-stone-400">No vessel currently assigned. If bottled, check finished-goods stock and storage.</p>
+              <p className="mt-3 text-xs text-stone-400">{ka ? 'ამჟამად ჭურჭელი მიბმული არ არის. თუ ჩამოსხმულია, შეამოწმეთ მზა პროდუქციის მარაგი და საწყობი.' : 'No vessel currently assigned. If bottled, check finished-goods stock and storage.'}</p>
             )}
           </div>
 
           <div className="rounded-2xl border border-stone-200 bg-white/65 p-4 dark:border-stone-800 dark:bg-stone-950/30">
             <h3 className="flex items-center gap-1.5 text-xs font-black text-stone-700 dark:text-amber-100">
-              <Wine className="h-4 w-4 text-[#4e0e15]" /> Next useful actions
+              <Wine className="h-4 w-4 text-[#4e0e15]" /> {ka ? 'შემდეგი სასარგებლო ქმედებები' : 'Next useful actions'}
             </h3>
             <div className="mt-3 flex flex-wrap gap-2">
-              <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => setActiveTab('labs') : undefined}>Lab</ActionChip>
-              <ActionChip icon={Calculator} onClick={setActiveTab && setCalculatorLotId ? () => { setCalculatorLotId(lot.id); setActiveTab('calculators'); } : undefined}>Calculator</ActionChip>
-              <ActionChip icon={PackageCheck} onClick={setActiveTab ? () => setActiveTab('bottling') : undefined}>Bottling</ActionChip>
-              <ActionChip icon={Warehouse} onClick={setActiveTab ? () => setActiveTab('inventory') : undefined}>Materials</ActionChip>
-              <ActionChip icon={ShoppingCart} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>Trace sales</ActionChip>
-              <ActionChip icon={BadgeDollarSign} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>Trace value</ActionChip>
+              <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => setActiveTab('labs') : undefined}>{ka ? 'ლაბორატორია' : 'Lab'}</ActionChip>
+              <ActionChip icon={Calculator} onClick={setActiveTab && setCalculatorLotId ? () => { setCalculatorLotId(lot.id); setActiveTab('calculators'); } : undefined}>{ka ? 'კალკულატორი' : 'Calculator'}</ActionChip>
+              <ActionChip icon={PackageCheck} onClick={setActiveTab ? () => setActiveTab('bottling') : undefined}>{ka ? 'ჩამოსხმა' : 'Bottling'}</ActionChip>
+              <ActionChip icon={Warehouse} onClick={setActiveTab ? () => setActiveTab('inventory') : undefined}>{ka ? 'მასალები' : 'Materials'}</ActionChip>
+              <ActionChip icon={ShoppingCart} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'გაყიდვების კვალი' : 'Trace sales'}</ActionChip>
+              <ActionChip icon={BadgeDollarSign} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'ღირებულების კვალი' : 'Trace value'}</ActionChip>
             </div>
           </div>
         </div>

@@ -888,7 +888,7 @@ export default function CertificationManagerTab({
                   disabled={!canManageCertification}
                   className={cx('mt-2', editableControlClass)}
                 >
-                  <option value="">No bottling run linked</option>
+                  <option value="">{isKa ? 'ჩამოსხმის პარტია არ არის მიბმული' : 'No bottling run linked'}</option>
                   {relatedBottlingRuns.map(run => (
                     <option key={run.id} value={run.id}>
                       {run.date} - {run.totalBottles + run.totalCeramic} bottles ({run.id})

@@ -440,7 +440,7 @@ export default function FermentationTab({
                   <label className="block text-[10px] font-semibold text-stone-500 mb-0.5">Organoleptic / Tasting Notes</label>
                   <textarea
                     value={logNotes}
-                    placeholder="Notes on cap integrity, gas evolution, carbon dioxide aromas"
+                    placeholder={lang === 'ka' ? 'შენიშვნები ქუდის მთლიანობაზე, გაზის გამოყოფასა და არომატებზე' : 'Notes on cap integrity, gas evolution, carbon dioxide aromas'}
                     onChange={(e) => setLogNotes(e.target.value)}
                     className="w-full px-2 py-1 text-xs border rounded h-14 bg-white text-stone-800"
                   />
@@ -652,7 +652,7 @@ export default function FermentationTab({
                         <label className="block text-[9px] font-medium text-slate-500">Daily Tasting Reflections</label>
                         <textarea
                           value={logNotes}
-                          placeholder="Arresting fruit esters, dynamic density decrease..."
+                          placeholder={lang === 'ka' ? 'ხილის ესთერები, სიმკვრივის დინამიური ვარდნა...' : 'Arresting fruit esters, dynamic density decrease...'}
                           onChange={(e) => setLogNotes(e.target.value)}
                           className="w-full px-2 py-1 text-xs border rounded h-14 bg-white"
                         />
@@ -684,7 +684,7 @@ export default function FermentationTab({
             
             {activeFerments.length === 0 && (
               <div className="p-8 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-500">
-                <p className="font-serif italic">No active fermentation campaigns.</p>
+                <p className="font-serif italic">{lang === 'ka' ? 'აქტიური დუღილის კამპანიები არ არის.' : 'No active fermentation campaigns.'}</p>
                 <button
                   type="button"
                   onClick={() => setActiveTab('lots')}
@@ -762,7 +762,7 @@ export default function FermentationTab({
                         <span className="text-[10px] text-slate-400 font-mono">{log.date}</span>
                         {canDeleteFermentationLog && (
                           <button
-                            title="Delete Entry"
+                            title={lang === 'ka' ? 'ჩანაწერის წაშლა' : 'Delete Entry'}
                             onClick={() => handleDeleteLog(log.id)}
                             className="text-slate-300 hover:text-red-600 transition-colors p-1 rounded-full hover:bg-red-50"
                           >
@@ -799,7 +799,7 @@ export default function FermentationTab({
               })}
 
               {fermLogs.length === 0 && (
-                <p className="p-8 text-stone-400 italic text-center font-serif">No fermentation log ledger entries recorded.</p>
+                <p className="p-8 text-stone-400 italic text-center font-serif">{lang === 'ka' ? 'დუღილის ჟურნალის ჩანაწერები არ არის.' : 'No fermentation log ledger entries recorded.'}</p>
               )}
             </div>
 

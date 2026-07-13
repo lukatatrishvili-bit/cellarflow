@@ -1083,7 +1083,7 @@ export default function TransfersTab({
                     </span>
                     {canRollbackTransfer && (
                       <button
-                        title="Rollback / Undo Movement"
+                        title={lang === 'ka' ? 'მოქმედების გაუქმება' : 'Rollback / Undo Movement'}
                         onClick={() => handleRollbackTransfer(record)}
                         className="p-1.5 hover:bg-rose-50 rounded text-slate-300 hover:text-red-650 transition-colors cursor-pointer"
                       >

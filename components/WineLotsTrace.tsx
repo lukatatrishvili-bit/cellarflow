@@ -421,6 +421,7 @@ export default function WineLotsTrace({
         {selectedLot ? (
           <div className="p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-xs text-stone-900 dark:text-stone-200 space-y-8">
             <WineLotCommandCenter
+              lang={lang}
               lot={selectedLot}
               vessels={vessels}
               labLogs={labLogs}

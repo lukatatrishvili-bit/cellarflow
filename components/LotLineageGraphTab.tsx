@@ -525,7 +525,7 @@ export default function LotLineageGraphTab({
                 type="button"
                 onClick={() => setZoom(value => Math.max(0.7, Math.round((value - 0.1) * 10) / 10))}
                 className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
-                title="Zoom out"
+                title={ka ? 'დაშორება' : 'Zoom out'}
               >
                 <ZoomOut className="h-3.5 w-3.5" />
               </button>
@@ -533,7 +533,7 @@ export default function LotLineageGraphTab({
                 type="button"
                 onClick={() => setZoom(1)}
                 className="min-w-10 rounded-lg px-2 py-2 text-center text-[10px] font-mono font-black text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
-                title="Reset zoom"
+                title={ka ? 'გადიდების გადატვირთვა' : 'Reset zoom'}
               >
                 {Math.round(zoom * 100)}%
               </button>
@@ -541,7 +541,7 @@ export default function LotLineageGraphTab({
                 type="button"
                 onClick={() => setZoom(value => Math.min(1.4, Math.round((value + 0.1) * 10) / 10))}
                 className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
-                title="Zoom in"
+                title={ka ? 'გადიდება' : 'Zoom in'}
               >
                 <ZoomIn className="h-3.5 w-3.5" />
               </button>

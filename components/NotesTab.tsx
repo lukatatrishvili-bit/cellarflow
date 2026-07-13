@@ -140,7 +140,7 @@ export default function NotesTab({
               <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Note Content *</label>
               <textarea 
                 name="content"
-                placeholder="Detail enological readings, mouthfeel characters, or cellar changes..."
+                placeholder={lang === 'ka' ? 'აღწერეთ ენოლოგიური მაჩვენებლები, გემოს დახასიათება ან მარნის ცვლილებები...' : 'Detail enological readings, mouthfeel characters, or cellar changes...'}
                 className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-32 text-stone-800 focus:outline-[#801323] outline-none text-xs"
                 required
               />
@@ -196,7 +196,7 @@ export default function NotesTab({
                       type="button"
                       onClick={() => handleDeleteNote(note.id)}
                       className="absolute top-4 right-4 text-stone-300 hover:text-rose-600 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 duration-200 cursor-pointer"
-                      title="Delete Note"
+                      title={lang === 'ka' ? 'შენიშვნის წაშლა' : 'Delete Note'}
                       aria-label={`Delete ${note.title}`}
                     >
                       <Trash className="w-4 h-4" aria-hidden="true" />
