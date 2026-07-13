@@ -3,19 +3,19 @@
 import React, { useState, useEffect } from 'react';
 import type { InventoryItem } from '../lib/wineryState';
 import type { Language } from '../lib/i18n';
-import { 
-  Plus, 
-  Trash2, 
-  Tag, 
-  Package, 
-  FileText, 
-  TrendingDown, 
-  Scale, 
-  Filter, 
-  Building2, 
-  DollarSign, 
-  Edit3, 
-  Save, 
+import {
+  Plus,
+  Trash2,
+  Tag,
+  Package,
+  FileText,
+  TrendingDown,
+  Scale,
+  Filter,
+  Building2,
+  DollarSign,
+  Edit3,
+  Save,
   X,
   AlertTriangle,
   FolderPlus,
@@ -41,11 +41,12 @@ export default function InventoryTab({
   canUpdateInventory = true,
   canDeleteInventory = true,
 }: Props) {
+  const ka = lang === 'ka';
   // Load or initialize categories list
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('yeasts');
   const [newCategoryName, setNewCategoryName] = useState<string>('');
-  
+
   // New Item form states
   const [showItemForm, setShowItemForm] = useState(false);
   const [itemName, setItemName] = useState('');
@@ -108,7 +109,7 @@ export default function InventoryTab({
     if (!cleanName) return;
 
     if (categories.includes(cleanName)) {
-      alert('This category already exists.');
+      alert(ka ? 'ეს კატეგორია უკვე არსებობს.' : 'This category already exists.');
       return;
     }
 
@@ -122,7 +123,9 @@ export default function InventoryTab({
   const handleDeleteCategory = (cat: string) => {
     if (!canUpdateInventory) return;
     const confirmDelete = window.confirm(
-      `Are you sure you want to remove the category "${cat.toUpperCase()}"? All materials inside will stay in the master database but their category association will be updated to "unassigned".`
+      ka
+        ? `დარწმუნებული ხართ, რომ გსურთ კატეგორიის „${cat.toUpperCase()}" წაშლა? მასში არსებული მასალები დარჩება ბაზაში, მაგრამ მათი კატეგორია შეიცვლება „მიუკუთვნებელით".`
+        : `Are you sure you want to remove the category "${cat.toUpperCase()}"? All materials inside will stay in the master database but their category association will be updated to "unassigned".`
     );
     if (!confirmDelete) return;
 
@@ -213,7 +216,9 @@ export default function InventoryTab({
   // Delete an item
   const handleDeleteItem = (id: string, name: string) => {
     if (!canDeleteInventory) return;
-    const confirmDelete = window.confirm(`Are you sure you want to delete "${name}" from your stockpile inventory? This action is irreversible.`);
+    const confirmDelete = window.confirm(ka
+      ? `დარწმუნებული ხართ, რომ გსურთ „${name}" წაშლა ინვენტარიდან? ეს მოქმედება შეუქცევადია.`
+      : `Are you sure you want to delete "${name}" from your stockpile inventory? This action is irreversible.`);
     if (confirmDelete) {
       onUpdateInventory(inventory.filter(item => item.id !== id));
     }
@@ -239,16 +244,18 @@ export default function InventoryTab({
 
   return (
     <div className="space-y-6 text-stone-800">
-      
+
       {/* Intro section */}
       <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-serif font-black text-[#4e0e15] flex items-center gap-2">
             <Package className="w-5 h-5 text-[#801323]" />
-            Winemaker Material & Stockpile Command Center
+            {ka ? 'მასალებისა და მარაგების მართვის ცენტრი' : 'Winemaker Material & Stockpile Command Center'}
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Track and log cellar additions, active strains, custom nutrients, glass bottle batches, and general packaging materials.
+            {ka
+              ? 'აღრიცხეთ მარნის დანამატები, აქტიური საფუარები, ნუტრიენტები, ბოთლების პარტიები და შესაფუთი მასალები.'
+              : 'Track and log cellar additions, active strains, custom nutrients, glass bottle batches, and general packaging materials.'}
           </p>
         </div>
         {canCreateInventory && (
@@ -257,7 +264,7 @@ export default function InventoryTab({
             onClick={() => setShowItemForm(!showItemForm)}
             className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#4e0e15] hover:bg-[#6b151e] rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
           >
-            <Plus className="w-4 h-4" /> Add New Material
+            <Plus className="w-4 h-4" /> {ka ? 'ახალი მასალა' : 'Add New Material'}
           </button>
         </div>
         )}
@@ -265,22 +272,22 @@ export default function InventoryTab({
 
       {!canCreateInventory && !canUpdateInventory && !canDeleteInventory && (
         <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
-          {lang === 'ka'
+          {ka
             ? 'თქვენი სამუშაო სივრცის როლისთვის ინვენტარი მხოლოდ სანახავია. შეგიძლიათ შეამოწმოთ მარაგები, მომწოდებლები, ზღვრები და სპეციფიკაციები ბალანსების შეცვლის გარეშე.'
             : 'Inventory is read-only for your workspace role. You can review stock, suppliers, thresholds, and specifications without changing balances.'}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
+
         {/* Left column: Categories Navigation and Creation */}
         <div className="lg:col-span-3 space-y-4">
-          
+
           <div className="bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-xs font-mono font-bold uppercase text-slate-400 tracking-wider flex items-center justify-between border-b border-stone-100 pb-2">
-              <span>Cellar Categories</span>
+              <span>{ka ? 'კატეგორიები' : 'Cellar Categories'}</span>
               <span className="text-[10px] bg-slate-100 px-1.5 py-0.2 rounded font-normal text-slate-500 font-mono">
-                {categories.length} Total
+                {categories.length} {ka ? 'სულ' : 'Total'}
               </span>
             </h3>
 
@@ -290,11 +297,11 @@ export default function InventoryTab({
                 const count = inventory.filter(item => item.category === cat).length;
                 const isSelected = selectedCategory === cat;
                 return (
-                  <div 
-                    key={cat} 
+                  <div
+                    key={cat}
                     className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition-all group cursor-pointer ${
-                      isSelected 
-                        ? 'bg-[#4e0e15] text-white' 
+                      isSelected
+                        ? 'bg-[#4e0e15] text-white'
                         : 'bg-stone-50 hover:bg-stone-100 text-stone-650'
                     }`}
                     onClick={() => setSelectedCategory(cat)}
@@ -312,7 +319,7 @@ export default function InventoryTab({
                       {/* Allow deleting categories except hardcoded ones to maintain stable fallback */}
                       {canUpdateInventory && !['yeasts', 'nutritions', 'bottles'].includes(cat) && (
                         <button
-                          title="Delete Category"
+                          title={ka ? 'კატეგორიის წაშლა' : 'Delete Category'}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDeleteCategory(cat);
@@ -329,7 +336,7 @@ export default function InventoryTab({
                 );
               })}
               {categories.length === 0 && (
-                <p className="text-stone-400 italic text-[11px] p-2 text-center">No categories found. Create one lower down.</p>
+                <p className="text-stone-400 italic text-[11px] p-2 text-center">{ka ? 'კატეგორია არ მოიძებნა. შექმენით ქვემოთ.' : 'No categories found. Create one lower down.'}</p>
               )}
             </div>
 
@@ -337,19 +344,19 @@ export default function InventoryTab({
             {canCreateInventory && (
             <form onSubmit={handleAddCategory} className="border-t border-dashed border-stone-250/75 pt-3 space-y-2">
               <label className="block text-[9px] font-mono font-bold uppercase text-slate-400">
-                Create Custom Material Category
+                {ka ? 'ახალი კატეგორიის შექმნა' : 'Create Custom Material Category'}
               </label>
               <div className="flex gap-1.5">
                 <input
                   type="text"
-                  placeholder="e.g. Oak Chips, Enzy"
+                  placeholder={ka ? 'მაგ. მუხის ჩიპსი, ფერმენტები' : 'e.g. Oak Chips, Enzy'}
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
                   className="flex-1 min-w-0 px-2 py-1 text-xs border border-stone-200 rounded-lg bg-stone-50 font-medium focus:bg-white focus:border-[#4e0e15] outline-none"
                 />
                 <button
                   type="submit"
-                  title="Add Category"
+                  title={ka ? 'კატეგორიის დამატება' : 'Add Category'}
                   className="p-1 px-2.5 bg-[#4e0e15] text-white text-xs font-bold rounded-lg hover:bg-[#6b151e] shadow-xs cursor-pointer flex items-center justify-center shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -363,7 +370,7 @@ export default function InventoryTab({
           <div className="p-4 bg-amber-50 border border-amber-205 rounded-xl space-y-2">
             <h4 className="text-[10px] font-mono font-bold uppercase text-amber-950 flex items-center gap-1">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-              Depleted Stock Warnings
+              {ka ? 'დაბალი მარაგის გაფრთხილებები' : 'Depleted Stock Warnings'}
             </h4>
             <div className="space-y-1.5">
               {inventory.filter(item => item.stock < item.minThreshold).map(item => (
@@ -373,7 +380,7 @@ export default function InventoryTab({
                 </div>
               ))}
               {inventory.filter(item => item.stock < item.minThreshold).length === 0 && (
-                <p className="text-[10px] text-amber-900/60 italic font-medium">All item balances are safely above minimum thresholds.</p>
+                <p className="text-[10px] text-amber-900/60 italic font-medium">{ka ? 'ყველა მასალის ბალანსი უსაფრთხოდ არის მინიმალურ ზღვარზე მაღლა.' : 'All item balances are safely above minimum thresholds.'}</p>
               )}
             </div>
           </div>
@@ -382,17 +389,17 @@ export default function InventoryTab({
 
         {/* Right column: Items List, Form, & Item management */}
         <div className="lg:col-span-9 space-y-4">
-          
+
           {/* Add Item form */}
           {canCreateInventory && showItemForm && (
             <form onSubmit={handleAddItem} className="bg-white p-5 border border-[#4e0e15] rounded-xl shadow-xs space-y-3">
               <div className="flex items-center justify-between border-b border-stone-100 pb-2">
                 <h3 className="text-xs font-mono font-bold uppercase text-[#4e0e15] flex items-center gap-1.5">
                   <FolderPlus className="w-4.5 h-4.5" />
-                  Adding Material under &ldquo;<span className="text-[#801323]">{selectedCategory.toUpperCase()}</span>&rdquo; Category
+                  {ka ? 'მასალის დამატება კატეგორიაში' : 'Adding Material under'} &ldquo;<span className="text-[#801323]">{selectedCategory.toUpperCase()}</span>&rdquo;{ka ? '' : ' Category'}
                 </h3>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setShowItemForm(false)}
                   className="text-stone-400 hover:text-stone-700 p-1 rounded-full cursor-pointer hover:bg-stone-100"
                 >
@@ -403,12 +410,12 @@ export default function InventoryTab({
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                 <div className="md:col-span-6">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Material / Product Name *
+                    {ka ? 'მასალის / პროდუქტის სახელი *' : 'Material / Product Name *'}
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Optimum-Red Active Nutrient, Go-Ferm Sterol"
+                    placeholder={ka ? 'მაგ. Optimum-Red ნუტრიენტი, Go-Ferm Sterol' : 'e.g. Optimum-Red Active Nutrient, Go-Ferm Sterol'}
                     value={itemName}
                     onChange={(e) => setItemName(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] font-medium focus:bg-white outline-none"
@@ -416,7 +423,7 @@ export default function InventoryTab({
                 </div>
                 <div className="md:col-span-3">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Initial Stock Level
+                    {ka ? 'საწყისი მარაგი' : 'Initial Stock Level'}
                   </label>
                   <input
                     type="number"
@@ -429,18 +436,18 @@ export default function InventoryTab({
                 </div>
                 <div className="md:col-span-3">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Item Unit
+                    {ka ? 'ერთეული' : 'Item Unit'}
                   </label>
                   <select
                     value={itemUnit}
                     onChange={(e) => setItemUnit(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] font-medium outline-none"
                   >
-                    <option value="kg">kg (Kilogram)</option>
-                    <option value="g">g (Grams)</option>
-                    <option value="units">units (Individual)</option>
-                    <option value="bags">bags (Bags)</option>
-                    <option value="liters">liters (Liters)</option>
+                    <option value="kg">{ka ? 'კგ (კილოგრამი)' : 'kg (Kilogram)'}</option>
+                    <option value="g">{ka ? 'გ (გრამი)' : 'g (Grams)'}</option>
+                    <option value="units">{ka ? 'ცალი' : 'units (Individual)'}</option>
+                    <option value="bags">{ka ? 'ტომარა' : 'bags (Bags)'}</option>
+                    <option value="liters">{ka ? 'ლიტრი' : 'liters (Liters)'}</option>
                   </select>
                 </div>
               </div>
@@ -448,7 +455,7 @@ export default function InventoryTab({
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                 <div className="md:col-span-4">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Min Alert Threshold
+                    {ka ? 'მინ. გაფრთხილების ზღვარი' : 'Min Alert Threshold'}
                   </label>
                   <input
                     type="number"
@@ -459,7 +466,7 @@ export default function InventoryTab({
                 </div>
                 <div className="md:col-span-4">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Unit Cost (Est. $)
+                    {ka ? 'ერთე. ფასი (სავარაუდო)' : 'Unit Cost (Est. $)'}
                   </label>
                   <input
                     type="number"
@@ -471,7 +478,7 @@ export default function InventoryTab({
                 </div>
                 <div className="md:col-span-4">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Supplier Name
+                    {ka ? 'მომწოდებელი' : 'Supplier Name'}
                   </label>
                   <input
                     type="text"
@@ -484,11 +491,11 @@ export default function InventoryTab({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Chemical Specs / Product Details & Remarks</span>
-                  <span className="text-[9px] text-slate-400 font-normal">Highly recommended for yeast strains, yeast nutrients & cork lots</span>
+                  <span>{ka ? 'ქიმიური სპეც. / პროდუქტის დეტალები' : 'Chemical Specs / Product Details & Remarks'}</span>
+                  <span className="text-[9px] text-slate-400 font-normal">{ka ? 'რეკომენდებულია საფუარებისთვის, ნუტრიენტებისა და საცობებისთვის' : 'Highly recommended for yeast strains, yeast nutrients & cork lots'}</span>
                 </label>
                 <textarea
-                  placeholder="Record essential specifications. For yeasts: fermentation temp range, strain characteristics, nitrogen appetite. For packages: bottle glass thickness, box weights."
+                  placeholder={ka ? 'ჩაწერეთ ძირითადი სპეციფიკაციები. საფუარებისთვის: დუღილის ტემპ. დიაპაზონი, შტამის მახასიათებლები, აზოტის მოთხოვნა. შესაფუთისთვის: მინის სისქე, ყუთის წონები.' : 'Record essential specifications. For yeasts: fermentation temp range, strain characteristics, nitrogen appetite. For packages: bottle glass thickness, box weights.'}
                   value={itemDetails}
                   onChange={(e) => setItemDetails(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] focus:bg-white outline-none h-20 leading-relaxed font-serif"
@@ -499,26 +506,26 @@ export default function InventoryTab({
                 type="submit"
                 className="w-full py-2 bg-[#4e0e15] hover:bg-[#6b151e] text-white text-xs font-semibold rounded-lg shadow-sm cursor-pointer transition-colors"
               >
-                Assemble & Commit to Inventory Stockpile
+                {ka ? 'ინვენტარში დამატება' : 'Assemble & Commit to Inventory Stockpile'}
               </button>
             </form>
           )}
 
           {/* Core materials header and card grid */}
           <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
-            
+
             <div className="flex items-center justify-between border-b border-stone-100 pb-3 flex-wrap gap-2">
               <div>
                 <span className="text-[10px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded uppercase">
-                  ACTIVE CATEGORY: {selectedCategory.replace('_', ' ')}
+                  {ka ? 'აქტიური კატეგორია' : 'ACTIVE CATEGORY'}: {selectedCategory.replace('_', ' ')}
                 </span>
                 <h3 className="text-sm font-serif font-bold text-stone-850 mt-1">
-                  Registered stockpile items
+                  {ka ? 'რეგისტრირებული მასალები' : 'Registered stockpile items'}
                 </h3>
               </div>
-              
+
               <span className="text-xs text-slate-500 font-mono">
-                Matching items: {filteredItems.length}
+                {ka ? 'ნაპოვნია' : 'Matching items'}: {filteredItems.length}
               </span>
             </div>
 
@@ -532,7 +539,7 @@ export default function InventoryTab({
                   return (
                     <div key={item.id} className="p-4 border border-[#4e0e15] bg-[#FCFAF8] rounded-xl text-stone-800 space-y-3 shadow-xs">
                       <div className="flex items-center justify-between border-b border-stone-200 pb-2">
-                        <span className="text-[10px] font-mono font-black uppercase text-[#801323]">Editing Product Specifications</span>
+                        <span className="text-[10px] font-mono font-black uppercase text-[#801323]">{ka ? 'პროდუქტის რედაქტირება' : 'Editing Product Specifications'}</span>
                         <button
                           type="button"
                           onClick={() => setEditingItemId(null)}
@@ -544,8 +551,8 @@ export default function InventoryTab({
 
                       <div className="space-y-2">
                         <div>
-                          <label className="block text-[8px] font-mono text-slate-400 uppercase">Product Name</label>
-                          <input 
+                          <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'სახელი' : 'Product Name'}</label>
+                          <input
                             type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
                             className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-bold"
                           />
@@ -553,15 +560,15 @@ export default function InventoryTab({
 
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Current Stock</label>
-                            <input 
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'მიმდინარე მარაგი' : 'Current Stock'}</label>
+                            <input
                               type="number" step="0.1" value={editStock} onChange={(e) => setEditStock(parseFloat(e.target.value) || 0)}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-mono"
                             />
                           </div>
                           <div>
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Units</label>
-                            <input 
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'ერთეული' : 'Units'}</label>
+                            <input
                               type="text" value={editUnit} onChange={(e) => setEditUnit(e.target.value)}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded"
                             />
@@ -570,15 +577,15 @@ export default function InventoryTab({
 
                         <div className="grid grid-cols-3 gap-2">
                           <div>
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Min Threshold</label>
-                            <input 
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'მინ. ზღვარი' : 'Min Threshold'}</label>
+                            <input
                               type="number" value={editMinThresh} onChange={(e) => setEditMinThresh(parseFloat(e.target.value) || 0)}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-mono"
                             />
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Supplier</label>
-                            <input 
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'მომწოდებელი' : 'Supplier'}</label>
+                            <input
                               type="text" value={editSupplier} onChange={(e) => setEditSupplier(e.target.value)}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded"
                             />
@@ -586,8 +593,8 @@ export default function InventoryTab({
                         </div>
 
                         <div>
-                          <label className="block text-[8px] font-mono text-slate-400 uppercase">Custom Details / Winemaker Info</label>
-                          <textarea 
+                          <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'დამატებითი დეტალები' : 'Custom Details / Winemaker Info'}</label>
+                          <textarea
                             value={editDetails} onChange={(e) => setEditDetails(e.target.value)}
                             className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-200 rounded h-16 leading-relaxed font-serif"
                           />
@@ -600,14 +607,14 @@ export default function InventoryTab({
                           onClick={() => handleSaveItemEdit(item.id)}
                           className="flex-1 py-1 bg-emerald-700 text-white text-[11px] font-bold rounded-lg hover:bg-emerald-800 flex items-center justify-center gap-1 cursor-pointer"
                         >
-                          <Save className="w-3.5 h-3.5" /> Save Specs
+                          <Save className="w-3.5 h-3.5" /> {ka ? 'შენახვა' : 'Save Specs'}
                         </button>
                         <button
                           type="button"
                           onClick={() => setEditingItemId(null)}
                           className="px-2.5 py-1 bg-slate-100 text-slate-600 hover:bg-slate-200 text-[11px] font-bold rounded-lg cursor-pointer"
                         >
-                          Cancel
+                          {ka ? 'გაუქმება' : 'Cancel'}
                         </button>
                       </div>
                     </div>
@@ -615,11 +622,11 @@ export default function InventoryTab({
                 }
 
                 return (
-                  <div 
-                    key={item.id} 
+                  <div
+                    key={item.id}
                     className={`p-4 border rounded-xl flex flex-col justify-between hover:shadow-xs transition-shadow ${
-                      lowStock 
-                        ? 'bg-red-50/15 border-red-200/95' 
+                      lowStock
+                        ? 'bg-red-50/15 border-red-200/95'
                         : 'bg-stone-50/50 border-[#e8dfd5]/85'
                     }`}
                   >
@@ -637,7 +644,7 @@ export default function InventoryTab({
                         <div className="flex gap-1">
                           {canUpdateInventory && (
                           <button
-                            title="Edit Material"
+                            title={ka ? 'რედაქტირება' : 'Edit Material'}
                             onClick={() => startEditingItem(item)}
                             className="p-1 hover:bg-stone-200 rounded text-slate-500 hover:text-stone-800 transition-colors cursor-pointer shrink-0"
                           >
@@ -646,7 +653,7 @@ export default function InventoryTab({
                           )}
                           {canDeleteInventory && (
                           <button
-                            title="Delete Item"
+                            title={ka ? 'წაშლა' : 'Delete Item'}
                             onClick={() => handleDeleteItem(item.id, item.name)}
                             className="p-1 hover:bg-red-100 rounded text-slate-400 hover:text-red-700 transition-colors cursor-pointer shrink-0"
                           >
@@ -663,7 +670,7 @@ export default function InventoryTab({
                           {item.stock} {item.unit}
                         </strong>
                         <span className="text-[9px] text-slate-405 font-mono">
-                          Min Alert limit: {item.minThreshold} {item.unit}
+                          {ka ? 'მინ. ზღვარი' : 'Min Alert limit'}: {item.minThreshold} {item.unit}
                         </span>
                       </div>
 
@@ -676,7 +683,7 @@ export default function InventoryTab({
                         ) : (
                           <p className="text-[10px] text-slate-400 italic flex items-center gap-1">
                             <HelpCircle className="w-3.5 h-3.5 opacity-60" />
-                            No remarks or chemical strain specifications provided. Add details above.
+                            {ka ? 'შენიშვნა ან სპეციფიკაცია არ არის მითითებული. დაამატეთ დეტალები ზემოთ.' : 'No remarks or chemical strain specifications provided. Add details above.'}
                           </p>
                         )}
                       </div>
@@ -686,29 +693,29 @@ export default function InventoryTab({
                     <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-dashed border-[#e8dfd5] pt-2 text-[10px] gap-2">
                       {lowStock ? (
                         <span className="text-red-650 font-bold uppercase animate-pulse flex items-center gap-0.5">
-                          ⚠️ LOW STOCK
+                          ⚠️ {ka ? 'დაბალი მარაგი' : 'LOW STOCK'}
                         </span>
                       ) : (
                         <span className="text-emerald-700 font-mono flex items-center gap-0.5 font-bold">
-                          <CheckCircle className="w-3 h-3" /> Safe Level
+                          <CheckCircle className="w-3 h-3" /> {ka ? 'ნორმა' : 'Safe Level'}
                         </span>
                       )}
 
                       {canUpdateInventory && (
                       <div className="flex w-full sm:w-auto items-center gap-1 shrink-0">
                         <button
-                          title="Consume Item (-Qty)"
+                          title={ka ? 'ხარჯვა (-რაოდ.)' : 'Consume Item (-Qty)'}
                           onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? -50 : -2.5)}
                           className="flex-1 sm:flex-none px-2 py-1 bg-stone-100 text-stone-700 text-[10px] font-bold rounded-lg hover:bg-stone-200 border border-stone-200 cursor-pointer"
                         >
-                          - Consume
+                          - {ka ? 'ხარჯვა' : 'Consume'}
                         </button>
                         <button
-                          title="Refill Stock (+Qty)"
+                          title={ka ? 'შევსება (+რაოდ.)' : 'Refill Stock (+Qty)'}
                           onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? 100 : 5)}
                           className="flex-1 sm:flex-none px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer flex items-center justify-center gap-0.5"
                         >
-                          + Refill
+                          + {ka ? 'შევსება' : 'Refill'}
                         </button>
                       </div>
                       )}
@@ -720,13 +727,13 @@ export default function InventoryTab({
 
               {filteredItems.length === 0 && (
                 <div className="md:col-span-2 py-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
-                  <p>No materials found in the &ldquo;{selectedCategory}&rdquo; category.</p>
+                  <p>{ka ? `„${selectedCategory}" კატეგორიაში მასალა არ მოიძებნა.` : `No materials found in the "${selectedCategory}" category.`}</p>
                   {canCreateInventory && (
                     <button
                       onClick={() => setShowItemForm(true)}
                       className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#801323] hover:underline cursor-pointer"
                     >
-                      + Register the first stockpile material here
+                      + {ka ? 'დაარეგისტრირეთ პირველი მასალა აქ' : 'Register the first stockpile material here'}
                     </button>
                   )}
                 </div>
