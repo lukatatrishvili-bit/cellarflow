@@ -568,7 +568,7 @@ export default function App() {
       primary: 'docs',
       modules: [
         { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
-        { id: 'certification', label: state.lang === 'ka' ? 'Certification' : 'Certification', icon: BadgeCheck },
+        { id: 'certification', label: state.lang === 'ka' ? 'სერტიფიცირება' : 'Certification', icon: BadgeCheck },
         { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
       ],
     },
@@ -578,7 +578,7 @@ export default function App() {
       icon: ClipboardList,
       primary: 'integrations',
       modules: [
-        { id: 'integrations', label: 'Integration Hub', icon: PlugZap },
+        { id: 'integrations', label: state.lang === 'ka' ? 'ინტეგრაციები' : 'Integration Hub', icon: PlugZap },
         { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList },
       ],
     },
@@ -633,7 +633,7 @@ export default function App() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#FAF8F5] text-[#2c241e]">
         <Loader2 className="w-10 h-10 animate-spin text-emerald-800 mb-2" />
-        <span className="text-xs font-semibold tracking-wide uppercase font-serif">Powering up VinOS Unified Platform...</span>
+        <span className="text-xs font-semibold tracking-wide uppercase font-serif">{state.lang === 'ka' ? 'VinOS ერთიანი პლატფორმა იტვირთება...' : 'Powering up VinOS Unified Platform...'}</span>
       </div>
     );
   }
@@ -989,10 +989,10 @@ export default function App() {
               type="button"
               onClick={() => setIsCommandOpen(true)}
               className="hidden xl:flex items-center gap-2 w-40 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-left text-[11px] font-semibold text-stone-500 shadow-2xs transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-amber-100"
-              title="Search everything"
+              title={state.lang === 'ka' ? 'ყველაფრის ძიება' : 'Search everything'}
             >
               <Search className="w-3.5 h-3.5 text-[#4e0e15] dark:text-amber-300" />
-              <span className="flex-1 truncate">Search…</span>
+              <span className="flex-1 truncate">{state.lang === 'ka' ? 'ძიება…' : 'Search…'}</span>
               <kbd className="rounded-md border border-stone-200 bg-white px-1.5 py-0.5 text-[9px] font-black text-stone-400 dark:bg-stone-950 dark:border-stone-700">⌘K</kbd>
             </button>
           )}
@@ -1064,7 +1064,7 @@ export default function App() {
                     )}
                     {canViewModule('integrations') && (
                       <button role="menuitem" onClick={() => { switchModule('integrations'); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
-                        <PlugZap className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />Integration Hub
+                        <PlugZap className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />{state.lang === 'ka' ? 'ინტეგრაციები' : 'Integration Hub'}
                       </button>
                     )}
 
@@ -1094,7 +1094,7 @@ export default function App() {
                   state.setActiveModule('portal');
                 }}
                 className="bg-[#faf8f6] hover:bg-rose-50/50 border border-stone-200 text-[#801323] px-3 py-2 text-[10px] font-mono font-extrabold rounded-xl cursor-pointer transition-all duration-150 uppercase tracking-wider shadow-2xs dark:bg-stone-900 dark:border-stone-800 dark:text-rose-300"
-                title="Log Out"
+                title={state.lang === 'ka' ? 'გამოსვლა' : 'Log Out'}
               >
                 {t.nav_logout || 'Logout'}
               </motion.button>
@@ -1851,6 +1851,10 @@ export default function App() {
             pricing={state.winePricing}
             onUpdatePricing={state.setWinePricing}
             onNavigate={handleNavigate}
+            canCreateCost={canAccess(state.currentUser.role, 'costs', 'create')}
+            canDeleteCost={canAccess(state.currentUser.role, 'costs', 'delete')}
+            canUpdatePricing={canAccess(state.currentUser.role, 'sales', 'update')}
+            canExportCosts={canAccess(state.currentUser.role, 'costs', 'export') && canAccess(state.currentUser.role, 'sales', 'export')}
           />
         </Suspense>
       ) : state.activeModule === 'storage' ? (
@@ -1861,9 +1865,15 @@ export default function App() {
             bottlingRuns={state.bottlingRuns}
             locations={state.storageLocations}
             movements={state.stockMovements}
+            orders={state.salesOrders}
             onUpdateLocations={state.setStorageLocations}
             onUpdateMovements={state.setStockMovements}
+            setToastMessage={state.setToastMessage}
             onNavigate={handleNavigate}
+            canCreateLocation={canAccess(state.currentUser.role, 'storage', 'create')}
+            canDeleteLocation={canAccess(state.currentUser.role, 'storage', 'delete')}
+            canCreateMovement={canAccess(state.currentUser.role, 'storage', 'create')}
+            canDeleteMovement={canAccess(state.currentUser.role, 'storage', 'delete')}
           />
         </Suspense>
       ) : state.activeModule === 'sales' ? (
@@ -2137,6 +2147,7 @@ export default function App() {
                 currentUserName={state.currentUser.fullName}
                 currency={state.companyProfile.currency || 'GEL'}
                 onReceiveGrapes={state.handleReceiveGrapes}
+                {...cellarPermissions.intake}
                 setActiveTab={state.setActiveTab}
                 setToastMessage={state.setToastMessage}
               />
@@ -2194,6 +2205,7 @@ export default function App() {
                 ops={state.cellarOps}
                 currentUserName={state.currentUser.fullName}
                 onAddOperation={state.handleAddCellarOperation}
+                {...cellarPermissions.operations}
                 setToastMessage={state.setToastMessage}
               />
             )}
