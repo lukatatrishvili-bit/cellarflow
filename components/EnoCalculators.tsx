@@ -555,7 +555,7 @@ export default function EnoCalculators({
           }`}
         >
           <Sliders className="w-3.5 h-3.5" />
-          <span>Acid Modeller</span>
+          <span>{lang === 'ka' ? 'მჟავიანობის მოდელირება' : 'Acid Modeller'}</span>
         </button>
       </div>
 
@@ -1358,7 +1358,7 @@ export default function EnoCalculators({
 
               <div className="border-t border-slate-100 pt-3">
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1.5 flex justify-between">
-                  <span>Measured Liquid Depth Level</span>
+                  <span>{lang === 'ka' ? 'გაზომილი სითხის სიღრმე' : 'Measured Liquid Depth Level'}</span>
                   <span className="text-[#801323]">{measuredLiquidHeight} meters</span>
                 </label>
                 <input 

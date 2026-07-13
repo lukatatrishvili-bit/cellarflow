@@ -266,7 +266,7 @@ export default function ProfileSettingsTab({
                 onChange={(e) => setSelectedDirectoryId(e.target.value)}
                 className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-[10.5px] font-semibold outline-none"
               >
-                <option value="">No parsed record selected</option>
+                <option value="">{lang === 'ka' ? 'დამუშავებული ჩანაწერი არ არის არჩეული' : 'No parsed record selected'}</option>
                 {directoryRecords.map(record => (
                   <option key={record.directoryId} value={record.directoryId}>
                     {directoryRecordLabel(record)}
@@ -788,8 +788,8 @@ export default function ProfileSettingsTab({
                   >
                     <option value="Owner/Admin">Owner/Admin</option>
                     <option value="Winemaker">Winemaker</option>
-                    <option value="Lab Technician">Lab Technician</option>
-                    <option value="Cellar Worker">Cellar Worker</option>
+                    <option value="Lab Technician">{lang === 'ka' ? 'ლაბორანტი' : 'Lab Technician'}</option>
+                    <option value="Cellar Worker">{lang === 'ka' ? 'მარნის მუშა' : 'Cellar Worker'}</option>
                     <option value="Read-Only">Read-Only</option>
                   </select>
                 </div>

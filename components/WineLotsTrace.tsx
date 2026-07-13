@@ -365,7 +365,7 @@ export default function WineLotsTrace({
                 }[lang] || 'Vineyard Block Source'}
               </label>
               <input 
-                type="text" placeholder="Mukuzani West Block B"
+                type="text" placeholder={lang === 'ka' ? 'მაგ. მუკუზანი, დასავლეთი ბლოკი B' : 'Mukuzani West Block B'}
                 value={newVineyard} onChange={(e) => setNewVineyard(e.target.value)}
                 className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
               />
@@ -449,7 +449,7 @@ export default function WineLotsTrace({
                     type="button"
                     onClick={() => setIsEditingLot(!isEditingLot)}
                     className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
-                    title="Edit Lot Properties"
+                    title={lang === 'ka' ? 'პარტიის თვისებების რედაქტირება' : 'Edit Lot Properties'}
                   >
                     ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
                   </button>}
@@ -870,7 +870,7 @@ export default function WineLotsTrace({
                           value={transitionNotes}
                           onChange={(e) => setTransitionNotes(e.target.value)}
                           className="w-full bg-[#FAF8F5] border border-stone-200 p-2 rounded outline-none h-16 text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
-                          placeholder="Describe action: racking, dynamic skin maceration, sulfur adjustment, or filtration check..."
+                          placeholder={lang === 'ka' ? 'აღწერეთ ქმედება: გადაღება, მაცერაცია, გოგირდის კორექცია ან ფილტრაციის შემოწმება...' : 'Describe action: racking, dynamic skin maceration, sulfur adjustment, or filtration check...'}
                           required
                         />
                       </div>

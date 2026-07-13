@@ -491,7 +491,7 @@ export default function TanksVessels({
                     ? 'bg-white text-[#4e0e15] shadow-xs' 
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
-                title="Board Grid Representation"
+                title={ka ? 'დაფის ბადე' : 'Board Grid Representation'}
               >
                 <LayoutGrid className="w-3.5 h-3.5" />
               </button>
@@ -503,7 +503,7 @@ export default function TanksVessels({
                     ? 'bg-white text-[#4e0e15] shadow-xs' 
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
-                title="Compact Power-Winery Table"
+                title={ka ? 'კომპაქტური ცხრილი' : 'Compact Power-Winery Table'}
               >
                 <List className="w-3.5 h-3.5" />
               </button>
@@ -515,7 +515,7 @@ export default function TanksVessels({
                     ? 'bg-white text-[#4e0e15] shadow-xs' 
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
-                title="Interactive Cellar Floor Map"
+                title={ka ? 'ინტერაქტიული მარნის რუკა' : 'Interactive Cellar Floor Map'}
               >
                 <Map className="w-3.5 h-3.5" />
               </button>
@@ -736,7 +736,7 @@ export default function TanksVessels({
                         handleDeleteVessel(v.id);
                       }}
                       className="p-1 text-slate-300 hover:text-red-500 cursor-pointer transition-colors"
-                      title="Commission out / destroy vessel"
+                      title={ka ? 'ჭურჭლის ჩამოწერა / განადგურება' : 'Commission out / destroy vessel'}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -1170,7 +1170,7 @@ export default function TanksVessels({
                               <button
                                 onClick={() => handleClean(v.id)}
                                 className="px-2 py-1 bg-[#4e0e15] text-white hover:bg-[#6b151e] rounded text-[10px] font-bold inline-flex items-center gap-0.5 cursor-pointer"
-                                title="Wash and sanitize unit"
+                                title={ka ? 'ერთეულის რეცხვა და სანიტარია' : 'Wash and sanitize unit'}
                               >
                                 <RotateCw className="w-2.5 h-2.5" />
                                 Washing
@@ -1180,7 +1180,7 @@ export default function TanksVessels({
                               <button
                                 onClick={() => handleDeleteVessel(v.id)}
                                 className="p-1 text-slate-300 hover:text-red-500 rounded cursor-pointer hover:bg-red-50"
-                                title="Decommission vessel unit"
+                                title={ka ? 'ჭურჭლის ჩამოწერა' : 'Decommission vessel unit'}
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>

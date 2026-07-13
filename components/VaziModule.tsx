@@ -1151,7 +1151,7 @@ export default function VaziModule({
                         type="button"
                         onClick={() => setIsEditingBlock(!isEditingBlock)}
                         className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
-                        title="Edit Block Properties"
+                        title={lang === 'ka' ? 'ბლოკის თვისებების რედაქტირება' : 'Edit Block Properties'}
                       >
                         ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
                       </button>

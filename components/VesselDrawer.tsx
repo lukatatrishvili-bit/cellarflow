@@ -601,11 +601,11 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                           value={editType} onChange={(e) => setEditType(e.target.value as any)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-bold text-stone-900 outline-none"
                         >
-                          <option value="stainless_steel">Stainless Steel</option>
-                          <option value="qvevri">Clay Qvevri</option>
-                          <option value="barrel">Oak Barrel</option>
-                          <option value="plastic">Plastic Tank</option>
-                          <option value="concrete">Concrete Egg</option>
+                          <option value="stainless_steel">{lang === 'ka' ? 'უჟანგავი ფოლადი' : 'Stainless Steel'}</option>
+                          <option value="qvevri">{lang === 'ka' ? 'თიხის ქვევრი' : 'Clay Qvevri'}</option>
+                          <option value="barrel">{lang === 'ka' ? 'მუხის კასრი' : 'Oak Barrel'}</option>
+                          <option value="plastic">{lang === 'ka' ? 'პლასტმასის ავზი' : 'Plastic Tank'}</option>
+                          <option value="concrete">{lang === 'ka' ? 'ბეტონის კვერცხი' : 'Concrete Egg'}</option>
                           <option value="other">Other</option>
                         </select>
                       </div>
@@ -988,7 +988,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     </h3>
                     <div className="p-3.5 bg-white border border-stone-200 rounded-xl space-y-2 text-[11px]">
                       <div className="flex justify-between items-center text-slate-400 font-mono text-[9px]">
-                        <span>Last Operation recorded</span>
+                        <span>{lang === 'ka' ? 'ბოლო ჩაწერილი ოპერაცია' : 'Last Operation recorded'}</span>
                         <span>AUTOMATED SENSOR LOG</span>
                       </div>
                       <p className="text-stone-700 font-medium">
