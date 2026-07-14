@@ -28,6 +28,7 @@ import type {
   WineLot,
 } from '../lib/wineryState';
 import type { StorageLocation, StockMovement } from '../lib/storage';
+import { stageLabel } from '../lib/enumLabels';
 import {
   buildLotLineageGraph,
   layoutLineageGraph,
@@ -565,7 +566,7 @@ export default function LotLineageGraphTab({
         <div className="flex flex-wrap gap-2 text-[10px] font-mono">
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.vintage}</span>
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.variety}</span>
-          <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.stage}</span>
+          <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{stageLabel(selectedLot.stage, lang)}</span>
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.currentVolume.toLocaleString()} {ka ? 'ლ ამჟამად' : 'L current'}</span>
         </div>
       )}

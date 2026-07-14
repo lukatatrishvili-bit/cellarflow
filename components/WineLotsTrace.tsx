@@ -6,6 +6,7 @@ import type { Language } from '../lib/i18n';
 import type { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
+import { stageLabel } from '../lib/enumLabels';
 import WineLotCommandCenter from './WineLotCommandCenter';
 import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
 
@@ -746,30 +747,6 @@ export default function WineLotsTrace({
                 'sold'
               ];
 
-              const stageLabelsEn: Record<WinemakingStage, string> = {
-                crushing: 'Crushing',
-                fermenting: 'Fermenting',
-                maceration: 'Maceration',
-                pressing: 'Pressing',
-                aging: 'Aging',
-                stabilization: 'Stabilization',
-                filtration: 'Filtration',
-                bottled: 'Bottled',
-                sold: 'Sold'
-              };
-
-              const stageLabelsKa: Record<WinemakingStage, string> = {
-                crushing: 'დაწურვა',
-                fermenting: 'ფერმენტაცია',
-                maceration: 'მაცერაცია',
-                pressing: 'დაწნეხვა',
-                aging: 'დავარგება',
-                stabilization: 'სტაბილიზაცია',
-                filtration: 'ფილტრაცია',
-                bottled: 'ჩამოსხმა',
-                sold: 'გაყიდვა'
-              };
-
               return (
                 <div className="space-y-4 border border-stone-200/80 bg-stone-50/50 p-4 rounded-xl dark:bg-stone-900/50 dark:border-stone-800">
                   <div className="flex items-center justify-between">
@@ -802,7 +779,7 @@ export default function WineLotsTrace({
                         const currentStageIndex = stagesOrdered.indexOf(selectedLot.stage);
                         const isCompleted = idx < currentStageIndex;
                         const isActive = idx === currentStageIndex;
-                        const label = lang === 'ka' ? stageLabelsKa[st] : stageLabelsEn[st];
+                        const label = stageLabel(st, lang);
 
                         return (
                           <div key={st} className="flex flex-col items-center z-10 relative">
@@ -846,7 +823,7 @@ export default function WineLotsTrace({
                           >
                             {stagesOrdered.map(st => (
                               <option key={st} value={st}>
-                                {lang === 'ka' ? stageLabelsKa[st] : stageLabelsEn[st]}
+                                {stageLabel(st, lang)}
                               </option>
                             ))}
                           </select>

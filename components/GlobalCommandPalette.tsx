@@ -20,6 +20,14 @@ import type { InventoryItem, SalesDispatchRecord, SalesOrderRecord, Task, Vessel
 import type { Role } from '../server/permissions';
 import type { Language } from '../lib/i18n';
 import { canViewAppDestination } from '../lib/navigationPermissions';
+import {
+  inventoryCategoryLabel,
+  reservationStatusLabel,
+  stageLabel,
+  taskPriorityLabel,
+  taskStatusLabel,
+  vesselTypeLabel,
+} from '../lib/enumLabels';
 import { useFocusTrap } from './useFocusTrap';
 
 type CommandKind = 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
@@ -139,7 +147,7 @@ export default function GlobalCommandPalette({
         id: `lot-${lot.id}`,
         kind: 'lot',
         title: lot.id,
-        subtitle: `${lot.name} · ${lot.vintage} · ${lot.stage}`,
+        subtitle: `${lot.name} · ${lot.vintage} · ${stageLabel(lot.stage, lang)}`,
         keywords: `${lot.id} ${lot.name} ${lot.variety} ${lot.vineyardBlock} ${lot.region} ${lot.vintage} wine lot passport`,
         icon: Wine,
         run: () => {
@@ -170,7 +178,7 @@ export default function GlobalCommandPalette({
       id: `vessel-${vessel.id}`,
       kind: 'vessel',
       title: vessel.id,
-      subtitle: `${(vessel.type || 'vessel').replace(/_/g, ' ')} · ${(vessel.currentVolume || 0).toLocaleString()} / ${(vessel.capacity || 0).toLocaleString()} L`,
+      subtitle: `${vessel.type ? vesselTypeLabel(vessel.type, lang) : (ka ? 'ჭურჭელი' : 'vessel')} · ${(vessel.currentVolume || 0).toLocaleString()} / ${(vessel.capacity || 0).toLocaleString()} L`,
       keywords: `${vessel.id} ${vessel.type || ''} ${vessel.assignedLotId || ''} ${vessel.locationDetails || ''} tank vessel qvevri barrel`,
       icon: Grape,
       run: () => {
@@ -185,7 +193,7 @@ export default function GlobalCommandPalette({
       id: `inventory-${item.id}`,
       kind: 'inventory',
       title: item.name,
-      subtitle: `${item.category} · ${(item.stock || 0).toLocaleString()} ${item.unit}`,
+      subtitle: `${inventoryCategoryLabel(item.category, lang)} · ${(item.stock || 0).toLocaleString()} ${item.unit}`,
       keywords: `${item.id} ${item.name} ${item.category} ${item.supplierName} inventory additive packaging stock`,
       icon: Boxes,
       run: () => jump('gvino', 'inventory'),
@@ -196,8 +204,8 @@ export default function GlobalCommandPalette({
       kind: 'task',
       title: task.title,
       subtitle: ka
-        ? `${task.priority} · ვადა ${task.dueDate || '—'} · ${task.status}`
-        : `${task.priority} priority · due ${task.dueDate || 'n/a'} · ${task.status}`,
+        ? `${taskPriorityLabel(task.priority, lang)} · ვადა ${task.dueDate || '—'} · ${taskStatusLabel(task.status, lang)}`
+        : `${taskPriorityLabel(task.priority, lang)} priority · due ${task.dueDate || 'n/a'} · ${taskStatusLabel(task.status, lang)}`,
       keywords: `${task.title} ${task.description} ${task.assignedTo} ${task.priority} ${task.status} task todo`,
       icon: ClipboardList,
       run: () => jump('gvino', 'tasks'),
@@ -207,7 +215,7 @@ export default function GlobalCommandPalette({
       id: `order-${order.id}`,
       kind: 'order',
       title: order.orderNumber || order.customerName,
-      subtitle: `${order.customerName} · ${(order.bottles || 0).toLocaleString()} btl · ${order.status}`,
+      subtitle: `${order.customerName} · ${(order.bottles || 0).toLocaleString()} ${ka ? 'ბოთლი' : 'btl'} · ${reservationStatusLabel(order.status, lang)}`,
       keywords: `${order.id} ${order.orderNumber || ''} ${order.customerName} ${order.lotId} ${order.lotName} ${order.status} reservation order sales`,
       icon: ShoppingCart,
       run: () => jump('sales'),

@@ -25,6 +25,7 @@ import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import type { Language } from '../lib/i18n';
 import { isActiveReservation } from '../lib/sales';
+import { stageLabel as sharedStageLabel } from '../lib/enumLabels';
 import { StatusBadge } from './ui/primitives';
 
 interface Props {
@@ -56,30 +57,6 @@ const stageOrder: WinemakingStage[] = [
   'bottled',
   'sold',
 ];
-
-const stageLabels: Record<WinemakingStage, string> = {
-  crushing: 'Crushing',
-  fermenting: 'Fermenting',
-  maceration: 'Maceration',
-  pressing: 'Pressing',
-  aging: 'Aging',
-  stabilization: 'Stabilization',
-  filtration: 'Filtration',
-  bottled: 'Bottled',
-  sold: 'Sold',
-};
-
-const stageLabelsKa: Record<WinemakingStage, string> = {
-  crushing: 'დაწურვა',
-  fermenting: 'დუღილი',
-  maceration: 'მაცერაცია',
-  pressing: 'დაწნეხა',
-  aging: 'დავარგება',
-  stabilization: 'სტაბილიზაცია',
-  filtration: 'ფილტრაცია',
-  bottled: 'ჩამოსხმული',
-  sold: 'გაყიდული',
-};
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -141,7 +118,7 @@ export default function WineLotCommandCenter({
   setCalculatorLotId,
 }: Props) {
   const ka = lang === 'ka';
-  const stageLabel = (stage: WinemakingStage) => (ka ? stageLabelsKa[stage] : stageLabels[stage]);
+  const stageLabel = (stage: WinemakingStage) => sharedStageLabel(stage, lang);
   const containingVessels = vessels.filter(v => v.assignedLotId === lot.id);
   const latestLab = labLogs
     .filter(log => log.lotId === lot.id)

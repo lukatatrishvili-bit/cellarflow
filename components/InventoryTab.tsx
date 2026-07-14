@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import type { InventoryItem } from '../lib/wineryState';
 import type { Language } from '../lib/i18n';
+import { inventoryCategoryLabel } from '../lib/enumLabels';
 import {
   Plus,
   Trash2,
@@ -42,15 +43,7 @@ export default function InventoryTab({
   canDeleteInventory = true,
 }: Props) {
   const ka = lang === 'ka';
-  // Georgian display names for the seeded default categories. Custom categories
-  // fall back to their raw (user-entered) key.
-  const CATEGORY_KA: Record<string, string> = {
-    yeasts: 'საფუარები', nutritions: 'ნუტრიენტები', additives: 'დანამატები',
-    packaging: 'შესაფუთი', bottles: 'ბოთლები', closures: 'საცობები',
-    labels: 'ეტიკეტები', boxes: 'ყუთები', sanitation: 'სანიტარია',
-    cleaning: 'წმენდა', unassigned: 'მიუკუთვნებელი',
-  };
-  const catLabel = (cat: string) => (ka && CATEGORY_KA[cat]) ? CATEGORY_KA[cat] : cat.replace('_', ' ');
+  const catLabel = (cat: string) => inventoryCategoryLabel(cat, lang);
   // Load or initialize categories list
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('yeasts');

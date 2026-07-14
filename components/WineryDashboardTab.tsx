@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog, LabAnalysis, Task } from '../lib/wineryState';
+import { taskPriorityLabel } from '../lib/enumLabels';
 import { canAccess, type Role } from '../server/permissions';
 import TankCapacityChart from './TankCapacityChart';
 import FermentationCurveChart from './FermentationCurveChart';
@@ -171,8 +172,8 @@ export default function WineryDashboardTab({
       tone: 'warning' as const,
       title: task.title,
       detail: isKa
-        ? `ვადაგადაცილებულია ${task.dueDate}-დან · ${task.priority} პრიორიტეტი`
-        : `Overdue since ${task.dueDate} · ${task.priority} priority`,
+        ? `ვადაგადაცილებულია ${task.dueDate}-დან · ${taskPriorityLabel(task.priority, lang)} პრიორიტეტი`
+        : `Overdue since ${task.dueDate} · ${taskPriorityLabel(task.priority, lang)} priority`,
       action: go('tasks'),
       actionLabel: isKa ? 'დავალებების ნახვა' : 'Review tasks',
     })) : []),
@@ -447,7 +448,7 @@ export default function WineryDashboardTab({
                   <span className="min-w-0 flex-1">
                     <strong className={`block text-xs font-black ${task.status === 'completed' ? 'text-stone-500 dark:text-stone-400 line-through' : 'text-stone-900 dark:text-amber-50'}`}>{task.title}</strong>
                     <span className="mt-1 block text-[10px] font-mono font-bold text-stone-500 dark:text-stone-400">
-                      {isKa ? 'ვადა' : 'Due'} {task.dueDate} · {task.assignedTo || (isKa ? 'დაუნიშნავი' : 'Unassigned')} · {task.priority}
+                      {isKa ? 'ვადა' : 'Due'} {task.dueDate} · {task.assignedTo || (isKa ? 'დაუნიშნავი' : 'Unassigned')} · {taskPriorityLabel(task.priority, lang)}
                     </span>
                   </span>
                 </label>

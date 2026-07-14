@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Thermometer, RefreshCw } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
+import { stageLabel } from '../lib/enumLabels';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import QvevriCrossSection from './QvevriCrossSection';
 import { ambientMotionEnabled, prefersReducedMotion } from './motion';
@@ -707,7 +708,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                         <div className="flex items-center justify-between">
                           <h4 className="text-sm font-serif font-bold text-[#4e0e15]">{selectedLot.name}</h4>
                           <span className="px-2 py-0.5 text-[9px] font-semibold text-[#801323] bg-rose-50 border border-rose-100 rounded-full uppercase">
-                            {selectedLot.stage}
+                            {stageLabel(selectedLot.stage, lang)}
                           </span>
                         </div>
 
