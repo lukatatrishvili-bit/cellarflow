@@ -342,6 +342,10 @@ export default function App() {
   // hydration overwrites a task created before the first server snapshot.
   const tasksRef = useRef(state.tasks);
   tasksRef.current = state.tasks;
+  // Same pattern for language: the telemetry poller below runs on a 15s
+  // interval whose closure would otherwise pin the login-time language.
+  const langRef = useRef(state.lang);
+  langRef.current = state.lang;
 
   // Periodically poll fermentation telemetry and run stuck fermentation detector
   useEffect(() => {
@@ -358,16 +362,24 @@ export default function App() {
           // Slope Anomaly Detector
           data.forEach((reading: any) => {
             if (reading.dailySlope < 0.002 && reading.status === 'stuck') {
-              const taskTitle = `Diagnose stuck fermentation in ${reading.tankId} (Lot ${reading.lotId})`;
-              const hasTask = tasksRef.current.some(t => t.title === taskTitle);
+              const isKa = langRef.current === 'ka';
+              const titleEn = `Diagnose stuck fermentation in ${reading.tankId} (Lot ${reading.lotId})`;
+              const titleKa = `გაჩერებული დუღილის დიაგნოსტიკა ${reading.tankId}-ში (პარტია ${reading.lotId})`;
+              // Dedup against both languages so switching mid-session can't
+              // re-create the same task under the other title.
+              const hasTask = tasksRef.current.some(t => t.title === titleEn || t.title === titleKa);
               if (!hasTask) {
                 state.handleAddNewTask(
-                  taskTitle,
+                  isKa ? titleKa : titleEn,
                   'high',
                   new Date().toISOString().split('T')[0],
-                  `Stuck fermentation alert triggered by real-time IoT sensor. Temperature is ${reading.temperature}°C, density is ${reading.density} SG, and daily slope drop is ${reading.dailySlope} SG/day (< 0.002 SG/day threshold). Initiate warning restart procedures immediately.`
+                  isKa
+                    ? `გაჩერებული დუღილის განგაში რეალურ დროში IoT სენსორიდან. ტემპერატურა ${reading.temperature}°C, სიმკვრივე ${reading.density} SG, დღიური ვარდნა ${reading.dailySlope} SG/დღე (< 0.002 SG/დღე ზღვარი). დაუყოვნებლივ დაიწყეთ დუღილის აღდგენის პროცედურები.`
+                    : `Stuck fermentation alert triggered by real-time IoT sensor. Temperature is ${reading.temperature}°C, density is ${reading.density} SG, and daily slope drop is ${reading.dailySlope} SG/day (< 0.002 SG/day threshold). Initiate warning restart procedures immediately.`
                 );
-                state.setToastMessage(`CRITICAL STUCK FERMENTATION DETECTED on ${reading.tankId}!`);
+                state.setToastMessage(isKa
+                  ? `კრიტიკული: გაჩერებული დუღილი ${reading.tankId}-ზე!`
+                  : `CRITICAL STUCK FERMENTATION DETECTED on ${reading.tankId}!`);
               }
             }
           });
@@ -390,9 +402,11 @@ export default function App() {
       fermLogs: state.fermLogs,
       labLogs: state.labLogs,
       inventory: state.inventory,
-      tasks: state.tasks
+      tasks: state.tasks,
+      lang: state.lang
     });
 
+    const isKa = state.lang === 'ka';
     const telemetryAlerts: Alert[] = [];
     activeTelemetry.forEach((t: any) => {
       if (t.dailySlope < 0.002 && t.status === 'stuck') {
@@ -402,8 +416,12 @@ export default function App() {
           id: `telemetry-stuck-${t.lotId}`,
           severity: 'critical',
           category: 'fermentation',
-          title: `Stuck fermentation — ${name} (Telemetry)`,
-          message: `Sensor detected gravity drop rate of ${t.dailySlope.toFixed(4)} SG/day (< 0.002 SG/day threshold). Current SG: ${t.density}. Temperature: ${t.temperature}°C.`,
+          title: isKa
+            ? `გაჩერებული დუღილი — ${name} (ტელემეტრია)`
+            : `Stuck fermentation — ${name} (Telemetry)`,
+          message: isKa
+            ? `სენსორმა დააფიქსირა სიმკვრივის ვარდნა ${t.dailySlope.toFixed(4)} SG/დღეში (< 0.002 SG/დღე ზღვარი). მიმდინარე SG: ${t.density}. ტემპერატურა: ${t.temperature}°C.`
+            : `Sensor detected gravity drop rate of ${t.dailySlope.toFixed(4)} SG/day (< 0.002 SG/day threshold). Current SG: ${t.density}. Temperature: ${t.temperature}°C.`,
           relatedLotId: t.lotId,
           relatedTankId: t.tankId
         });
@@ -413,7 +431,7 @@ export default function App() {
     const combined = [...telemetryAlerts, ...baseAlerts];
     const SEVERITY_RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
     return combined.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
-  }, [state.vessels, state.lots, state.fermLogs, state.labLogs, state.inventory, state.tasks, activeTelemetry]);
+  }, [state.vessels, state.lots, state.fermLogs, state.labLogs, state.inventory, state.tasks, activeTelemetry, state.lang]);
 
   const handleSelectAlert = (a: Alert) => {
     const tabByCategory: Record<Alert['category'], string> = {

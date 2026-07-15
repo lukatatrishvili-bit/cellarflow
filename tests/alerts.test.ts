@@ -87,6 +87,23 @@ describe('computeAlerts', () => {
     ]);
   });
 
+  it('renders Georgian alert text when lang is ka, English otherwise', () => {
+    const inputs = {
+      ...baseInputs(),
+      tasks: [{ id: 't1', title: 'Rack T1', status: 'pending', dueDate: '2026-06-01', assignedTo: 'Nino' } as any],
+      inventory: [{ id: 'i1', name: 'Yeast', stock: 0, minThreshold: 3, unit: 'kg', supplierName: 'Lallemand' } as any],
+    };
+    const en = computeAlerts(inputs);
+    expect(en.find((a) => a.category === 'task')?.title).toBe('Overdue: Rack T1');
+    expect(en.find((a) => a.category === 'inventory')?.title).toBe('Out of stock: Yeast');
+
+    const ge = computeAlerts({ ...inputs, lang: 'ka' });
+    expect(ge.find((a) => a.category === 'task')?.title).toBe('ვადაგადაცილებული: Rack T1');
+    expect(ge.find((a) => a.category === 'inventory')?.title).toBe('მარაგი ამოიწურა: Yeast');
+    // Identity fields must not change with language.
+    expect(ge.map((a) => [a.id, a.severity, a.category])).toEqual(en.map((a) => [a.id, a.severity, a.category]));
+  });
+
   it('sorts results critical first', () => {
     const alerts = computeAlerts({
       ...baseInputs(),

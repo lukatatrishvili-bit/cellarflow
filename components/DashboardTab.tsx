@@ -186,7 +186,8 @@ export default function DashboardTab({
     fermLogs,
     labLogs,
     inventory,
-    tasks
+    tasks,
+    lang
   });
   const criticalAlerts = derivedAlerts.filter((alert) => alert.severity === 'critical');
   const displayedAlerts = derivedAlerts.slice(0, 3);
