@@ -44,6 +44,12 @@ import type {
   IntegrationConflictRecord,
   SourceOfTruthRule,
 } from '../lib/integrations';
+import {
+  connectorDisplayName,
+  connectorSettingsDisplay,
+  integrationDomainLabel,
+  sourceOfTruthDisplay,
+} from '../lib/integrationLabels';
 
 interface IntegrationHubTabProps {
   lang?: Language;
@@ -391,7 +397,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
         <MetricCard
           label={ka ? 'კონექტორი' : 'Connector'}
           value={connector.enabled ? (ka ? 'ჩართული' : 'Enabled') : (ka ? 'გამორთული' : 'Disabled')}
-          detail={connector.displayName}
+          detail={connectorDisplayName(connector.displayName, lang)}
           icon={PlugZap}
           tone={connector.enabled ? 'success' : 'neutral'}
         />
@@ -518,7 +524,14 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-stone-100 pt-3 dark:border-stone-800">
                 <div className="text-[11px] text-stone-500">
-                  {ka ? 'სავალდებულო' : 'Required'}: {definition?.requiredSettings.join(', ') || (ka ? 'endpoint/ავთენტიფიკაცია' : 'endpoint/auth mode')}. {ka ? 'არჩევითი' : 'Optional'}: {definition?.optionalSettings.join(', ') || (ka ? 'მომხმარებელი, ბაზის სახელი' : 'username, database name')}.
+                  {(() => {
+                    const settings = definition
+                      ? connectorSettingsDisplay(definition, lang)
+                      : { requiredSettings: [], optionalSettings: [] };
+                    const required = settings.requiredSettings.join(', ') || (ka ? 'endpoint/ავთენტიფიკაცია' : 'endpoint/auth mode');
+                    const optional = settings.optionalSettings.join(', ') || (ka ? 'მომხმარებელი, ბაზის სახელი' : 'username, database name');
+                    return `${ka ? 'სავალდებულო' : 'Required'}: ${required}. ${ka ? 'არჩევითი' : 'Optional'}: ${optional}.`;
+                  })()}
                 </div>
                 <ActionButton type="submit" disabled={saving}>
                   {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
@@ -583,7 +596,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
                 <div>
                   <FieldLabel required>{ka ? 'დომენი' : 'Domain'}</FieldLabel>
                   <select aria-label={ka ? 'სინქრონიზაციის დომენი' : 'Sync domain'} value={selectedDomain} onChange={(e) => setSelectedDomain(e.target.value as IntegrationSyncDomain)} className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs font-bold outline-none dark:border-stone-800 dark:bg-stone-950">
-                    {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.label}</option>)}
+                    {domains.map((domain) => <option key={domain.id} value={domain.id}>{integrationDomainLabel(domain, lang)}</option>)}
                   </select>
                 </div>
                 <div>
@@ -642,25 +655,28 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
 
           <SectionCard title={ka ? 'ჭეშმარიტების წყარო' : 'Source Of Truth'} icon={ShieldCheck} className="xl:col-span-2">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {Object.values(sourceOfTruth).map((rule) => (
+              {Object.values(sourceOfTruth).map((rule) => {
+                const ruleText = sourceOfTruthDisplay(rule, lang);
+                return (
                 <div key={rule.domain} className="rounded-xl border border-stone-200 bg-stone-50/60 p-3 dark:border-stone-800 dark:bg-stone-950/30">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-xs font-black uppercase text-stone-800 dark:text-amber-100">{domains.find((domain) => domain.id === rule.domain)?.label || rule.domain}</span>
+                    <span className="text-xs font-black uppercase text-stone-800 dark:text-amber-100">{integrationDomainLabel(rule.domain, lang)}</span>
                     <StatusBadge tone="info">{rule.domain}</StatusBadge>
                   </div>
-                  <p className="text-[11px] leading-relaxed text-stone-500">{rule.notes}</p>
+                  <p className="text-[11px] leading-relaxed text-stone-500">{ruleText.notes}</p>
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
                     <div className="rounded-lg bg-white p-2 dark:bg-stone-900">
                       <strong className="block text-emerald-700 dark:text-emerald-300">{ka ? 'CellarFlow ფლობს' : 'CellarFlow owns'}</strong>
-                      {rule.cellarFlowOwns.join(', ')}
+                      {ruleText.cellarFlowOwns.join(', ')}
                     </div>
                     <div className="rounded-lg bg-white p-2 dark:bg-stone-900">
                       <strong className="block text-sky-700 dark:text-sky-300">{ka ? '1C ფლობს' : '1C owns'}</strong>
-                      {rule.externalOwns.join(', ')}
+                      {ruleText.externalOwns.join(', ')}
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </SectionCard>
         </div>
@@ -686,7 +702,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
                   {hub.jobs.map((job) => (
                     <tr key={job.id}>
                       <td className="py-2 pr-3 font-mono text-[10px] text-stone-500">{job.id}</td>
-                      <td className="py-2 pr-3 font-bold">{job.domain}</td>
+                      <td className="py-2 pr-3 font-bold">{integrationDomainLabel(job.domain, lang)}</td>
                       <td className="py-2 pr-3">{dirLabel(job.direction)}</td>
                       <td className="py-2 pr-3"><StatusBadge tone={statusTone(job.status)}>{job.status}</StatusBadge></td>
                       <td className="py-2 pr-3">{job.resultSummary?.recordCount ?? '-'}</td>
@@ -719,7 +735,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
                 <div key={conflict.id} className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900 dark:bg-rose-950/20">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <strong className="block text-xs text-rose-900 dark:text-rose-200">{conflict.domain}</strong>
+                      <strong className="block text-xs text-rose-900 dark:text-rose-200">{integrationDomainLabel(conflict.domain, lang)}</strong>
                       <span className="text-[10px] text-rose-700 dark:text-rose-300">{conflict.reason}</span>
                     </div>
                     <StatusBadge tone="danger">{ka ? 'ღია' : 'open'}</StatusBadge>
@@ -859,7 +875,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
                 <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
                   {hub.externalRefs.map((ref: IntegrationExternalReference) => (
                     <tr key={ref.id}>
-                      <td className="py-2 pr-3 font-bold">{ref.domain}</td>
+                      <td className="py-2 pr-3 font-bold">{integrationDomainLabel(ref.domain, lang)}</td>
                       <td className="py-2 pr-3 font-mono text-[10px]">{ref.localId}</td>
                       <td className="py-2 pr-3 font-mono text-[10px]">{ref.externalId}</td>
                       <td className="py-2 pr-3">{ref.displayName || '-'}</td>
@@ -881,7 +897,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
                 <div key={ref.id} className="rounded-xl border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-900">
                   <div className="flex items-center justify-between gap-2">
                     <strong className="text-xs">{ref.displayName || ref.localId}</strong>
-                    <StatusBadge tone="brand">{ref.domain}</StatusBadge>
+                    <StatusBadge tone="brand">{integrationDomainLabel(ref.domain, lang)}</StatusBadge>
                   </div>
                   <pre className="mt-2 max-h-24 overflow-auto rounded-lg bg-stone-50 p-2 text-[10px] text-stone-500 dark:bg-stone-950">
                     {JSON.stringify(ref.accounting || {}, null, 2)}
