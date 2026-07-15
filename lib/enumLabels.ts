@@ -33,6 +33,12 @@ const RESERVATION_STATUS_LABELS: Record<'reserved' | 'fulfilled' | 'cancelled', 
   cancelled: { en: 'Cancelled', ka: 'გაუქმებული' },
 };
 
+const ALERT_SEVERITY_LABELS: Record<'critical' | 'warning' | 'info', { en: string; ka: string }> = {
+  critical: { en: 'Critical', ka: 'კრიტიკული' },
+  warning: { en: 'Warning', ka: 'გაფრთხილება' },
+  info: { en: 'Info', ka: 'ინფორმაცია' },
+};
+
 function pick(labels: { en: string; ka: string } | undefined, raw: string, lang: Language): string {
   if (!labels) return raw;
   return lang === 'ka' ? labels.ka : labels.en;
@@ -52,6 +58,10 @@ export function taskStatusLabel(status: string, lang: Language): string {
 
 export function reservationStatusLabel(status: string, lang: Language): string {
   return pick(RESERVATION_STATUS_LABELS[status as 'reserved' | 'fulfilled' | 'cancelled'], status, lang);
+}
+
+export function alertSeverityLabel(severity: string, lang: Language): string {
+  return pick(ALERT_SEVERITY_LABELS[severity as 'critical' | 'warning' | 'info'], severity, lang);
 }
 
 // Vessel types are already in the main dictionary (stainless_steel, qvevri, …);

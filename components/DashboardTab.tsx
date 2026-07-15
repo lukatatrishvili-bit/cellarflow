@@ -27,6 +27,7 @@ import {
   Activity, Thermometer, ShieldAlert, Sliders, ClipboardList, CheckSquare 
 } from 'lucide-react';
 import { computeAlerts } from '../lib/alerts';
+import { alertSeverityLabel } from '../lib/enumLabels';
 import { CountUp } from './motion';
 import { localizedRoleLabel } from '../lib/roleLabels';
 import { canAccess, type PermissionAction, type PermissionModule } from '../server/permissions';
@@ -503,7 +504,7 @@ export default function DashboardTab({
                     <div key={alert.id} className="p-4 bg-red-50/50 dark:bg-red-950/20 border border-red-200/60 dark:border-red-900/50 rounded-2xl space-y-1.5 hover-glow transition-all">
                       <div className="flex justify-between items-center text-[10px] font-mono font-bold text-red-850 dark:text-red-400">
                         <span>{alert.title}</span>
-                        <span className="uppercase bg-red-100 dark:bg-red-950/60 px-2 py-0.5 rounded-md text-[9px]">{alert.severity}</span>
+                        <span className="uppercase bg-red-100 dark:bg-red-950/60 px-2 py-0.5 rounded-md text-[9px]">{alertSeverityLabel(alert.severity, lang)}</span>
                       </div>
                       <p className="text-stone-700 dark:text-stone-355 text-xs leading-relaxed font-medium">{alert.message}</p>
                     </div>

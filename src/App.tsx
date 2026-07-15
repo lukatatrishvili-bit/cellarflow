@@ -3024,7 +3024,9 @@ export default function App() {
 
 
       <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-500 dark:text-slate-400 font-mono font-medium">
-        VinOS • Operational Winemaking Control Loop • Offline-capable traceability
+        {state.lang === 'ka'
+          ? 'VinOS • მარნის ოპერაციული მართვა • ოფლაინ მიკვლევადობა'
+          : 'VinOS • Operational Winemaking Control Loop • Offline-capable traceability'}
       </footer>
     </div>
     </ToastProvider>
