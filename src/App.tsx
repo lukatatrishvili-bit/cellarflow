@@ -1497,6 +1497,7 @@ export default function App() {
                       </label>
                       <Suspense fallback={<div className="h-10 rounded-xl bg-stone-100 animate-pulse" />}>
                       <LocationPicker
+                        lang={state.lang}
                         latitude={regLocation?.latitude ?? state.companyProfile.latitude ?? 41.9056}
                         longitude={regLocation?.longitude ?? state.companyProfile.longitude ?? 45.474}
                         showManual={false}
@@ -2762,6 +2763,7 @@ export default function App() {
                     </label>
                     <Suspense fallback={<div className="h-10 rounded-xl bg-stone-100 animate-pulse" />}>
                       <LocationPicker
+                        lang={state.lang}
                         latitude={regLocation?.latitude ?? state.companyProfile.latitude ?? 41.9056}
                         longitude={regLocation?.longitude ?? state.companyProfile.longitude ?? 45.474}
                         showManual={false}

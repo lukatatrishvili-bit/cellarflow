@@ -175,6 +175,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
               </select>
             ) : (
               <LocationPicker
+                lang={lang}
                 latitude={custom.latitude}
                 longitude={custom.longitude}
                 onChange={(loc) => setCustom(prev => ({ ...prev, ...loc, label: loc.label ?? prev.label }))}

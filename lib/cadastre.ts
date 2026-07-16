@@ -46,37 +46,51 @@ const hasPolygon = (block: VineyardBlock): boolean => {
 function req(
   id: string,
   labelEn: string,
+  labelKa: string,
   value: unknown,
   critical = false,
 ): CadastreRequirement {
-  return { id, labelEn, labelKa: labelEn, met: hasValue(value), critical };
+  return { id, labelEn, labelKa, met: hasValue(value), critical };
+}
+
+/** Georgian display names for the completeness badges (canonical values stay English). */
+export function cadastreBadgeLabel(badge: CadastreBadge, lang: string): string {
+  if (lang !== 'ka') return badge;
+  const ka: Record<CadastreBadge, string> = {
+    'Complete': 'სრული',
+    'Good': 'კარგი',
+    'Needs review': 'გადასამოწმებელი',
+    'Missing critical data': 'აკლია კრიტიკული მონაცემები',
+    'Not started': 'დაუწყებელი',
+  };
+  return ka[badge] || badge;
 }
 
 export function calculateCadastreCompleteness(block: VineyardBlock): CadastreCompleteness {
   const hasCoordinates = isValidCoordinate(block.latitude) && isValidCoordinate(block.longitude);
   const requirements: CadastreRequirement[] = [
-    req('cadastral_code', 'cadastral code', block.cadastralCode, true),
-    req('municipality', 'municipality', block.municipality, true),
-    req('village', 'village', block.village, true),
-    req('microzone', 'microzone / appellation area', block.microzone, true),
-    req('parcel_area', 'parcel or block area', block.parcelArea || block.area, true),
-    req('grape_variety', 'grape variety', block.grapeVariety, true),
-    req('planting_year', 'planting year', block.plantingYear, true),
-    req('spacing', 'row and vine spacing', block.spacing, true),
-    req('coordinates', 'GPS coordinates', hasCoordinates, true),
-    req('official_document', 'official cadastre document', block.officialCadastreDocumentName),
-    req('land_owner', 'land owner or grower', block.landOwner || block.grower),
-    req('community', 'community', block.community),
-    req('parcel_name', 'parcel name', block.parcelName),
-    req('polygon', 'GPS polygon / boundary', hasPolygon(block)),
-    req('elevation', 'elevation', block.elevation),
-    req('slope', 'slope profile', block.slope),
-    req('aspect', 'aspect exposure', block.aspect),
-    req('soil_type', 'soil profile', block.soilType),
-    req('rootstock', 'rootstock', block.rootstock),
-    req('clone', 'clone', block.clone),
-    req('irrigation', 'irrigation status', block.irrigationEnabled),
-    req('vineyard_condition', 'vineyard condition', block.vineyardCondition),
+    req('cadastral_code', 'cadastral code', 'საკადასტრო კოდი', block.cadastralCode, true),
+    req('municipality', 'municipality', 'მუნიციპალიტეტი', block.municipality, true),
+    req('village', 'village', 'სოფელი', block.village, true),
+    req('microzone', 'microzone / appellation area', 'მიკროზონა / დასახელების ზონა', block.microzone, true),
+    req('parcel_area', 'parcel or block area', 'ნაკვეთის ფართობი', block.parcelArea || block.area, true),
+    req('grape_variety', 'grape variety', 'ყურძნის ჯიში', block.grapeVariety, true),
+    req('planting_year', 'planting year', 'დარგვის წელი', block.plantingYear, true),
+    req('spacing', 'row and vine spacing', 'დარგვის სქემა', block.spacing, true),
+    req('coordinates', 'GPS coordinates', 'GPS კოორდინატები', hasCoordinates, true),
+    req('official_document', 'official cadastre document', 'ოფიციალური საკადასტრო დოკუმენტი', block.officialCadastreDocumentName),
+    req('land_owner', 'land owner or grower', 'მიწის მესაკუთრე ან მევენახე', block.landOwner || block.grower),
+    req('community', 'community', 'თემი', block.community),
+    req('parcel_name', 'parcel name', 'ნაკვეთის დასახელება', block.parcelName),
+    req('polygon', 'GPS polygon / boundary', 'GPS პოლიგონი / საზღვარი', hasPolygon(block)),
+    req('elevation', 'elevation', 'სიმაღლე', block.elevation),
+    req('slope', 'slope profile', 'დაქანება', block.slope),
+    req('aspect', 'aspect exposure', 'ექსპოზიცია', block.aspect),
+    req('soil_type', 'soil profile', 'ნიადაგის პროფილი', block.soilType),
+    req('rootstock', 'rootstock', 'საძირე', block.rootstock),
+    req('clone', 'clone', 'კლონი', block.clone),
+    req('irrigation', 'irrigation status', 'მორწყვის სტატუსი', block.irrigationEnabled),
+    req('vineyard_condition', 'vineyard condition', 'ვენახის მდგომარეობა', block.vineyardCondition),
   ];
 
   const total = requirements.length || 1;

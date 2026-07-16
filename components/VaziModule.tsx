@@ -18,7 +18,7 @@ import LocationPicker from './LocationPicker';
 import IpmPhenoscheme from './IpmPhenoscheme';
 import VineyardProjectsTab from './VineyardProjectsTab';
 import { useFocusTrap } from './useFocusTrap';
-import { calculateCadastreCompleteness } from '../lib/cadastre';
+import { calculateCadastreCompleteness, cadastreBadgeLabel } from '../lib/cadastre';
 import { calculateVaziRisk, vaziRiskColor } from '../lib/vaziRisk';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
 import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
@@ -145,6 +145,40 @@ const cadastreBadgeClass = (score: number, missingCriticalCount: number) => {
   if (score >= 85) return 'bg-emerald-50 text-emerald-800 border-emerald-200';
   return 'bg-stone-100 text-stone-700 border-stone-200';
 };
+
+// Phenology stages are stored as English values (state/data); localize display only.
+const PHENOLOGY_STAGES = [
+  'Dormancy / before bud swelling',
+  'Budburst',
+  'Budburst / early shoot growth',
+  '4-6 leaves / inflorescences visible',
+  'Pre-flowering',
+  'Flowering',
+  'Fruit set',
+  'Post-flowering / fruit set',
+  'Pea-size berry / berry growth',
+  'Bunch closure',
+  'Veraison',
+  'Ripening',
+  'Pre-harvest / ripening',
+] as const;
+const PHENOLOGY_KA: Record<string, string> = {
+  'Dormancy / before bud swelling': 'მოსვენება / კვირტის დაბერვამდე',
+  'Budburst': 'კვირტის გაშლა',
+  'Budburst / early shoot growth': 'კვირტის გაშლა / ყლორტის ადრეული ზრდა',
+  '4-6 leaves / inflorescences visible': '4-6 ფოთოლი / ყვავილედები ჩანს',
+  'Pre-flowering': 'ყვავილობამდე',
+  'Flowering': 'ყვავილობა',
+  'Fruit set': 'ნაყოფის გამონასკვა',
+  'Post-flowering / fruit set': 'ყვავილობის შემდეგ / გამონასკვა',
+  'Pea-size berry / berry growth': 'ბარდისებრი მარცვალი / მარცვლის ზრდა',
+  'Bunch closure': 'მტევნის შეკვრა',
+  'Veraison': 'შეთვალება',
+  'Ripening': 'მწიფობა',
+  'Pre-harvest / ripening': 'რთველამდე / მწიფობა',
+};
+const phenologyLabel = (stage: string, lang: string) =>
+  (lang === 'ka' && PHENOLOGY_KA[stage]) ? PHENOLOGY_KA[stage] : stage;
 const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flatMap(region => region.mainMicrozones))).sort();
 
 export default function VaziModule({
@@ -593,7 +627,7 @@ export default function VaziModule({
       {/* Module Title bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between bg-emerald-950/95 text-white p-5 rounded-2xl border border-emerald-900 shadow-md gap-4">
         <div>
-          <span className="text-[10px] uppercase font-mono tracking-widest bg-emerald-800 text-emerald-100 px-2.5 py-1 rounded-full font-bold">VINEA VAZI MODULE</span>
+          <span className="text-[10px] uppercase font-mono tracking-widest bg-emerald-800 text-emerald-100 px-2.5 py-1 rounded-full font-bold">{lang === 'ka' ? 'ვაზის მოდული' : 'VINEA VAZI MODULE'}</span>
           <h2 className="text-2xl font-serif font-black flex items-center gap-2 mt-2">
             <Sprout className="h-6 w-6 text-emerald-400 animate-pulse" />
             {label.title}
@@ -604,12 +638,12 @@ export default function VaziModule({
         {/* Unit & Area Stats Badge */}
         <div className="flex flex-wrap items-center gap-4">
           <div className="px-3.5 py-2 bg-emerald-900/50 rounded-xl border border-emerald-850 text-center">
-            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">Total Vineyard Area</span>
+            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">{lang === 'ka' ? 'ვენახის საერთო ფართობი' : 'Total Vineyard Area'}</span>
             <span className="text-lg font-serif font-black text-amber-300 block mt-0.5">{totalArea.toFixed(1)} ha</span>
           </div>
           <div className="px-3.5 py-2 bg-emerald-900/50 rounded-xl border border-emerald-850 text-center">
-            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">Active Vines</span>
-            <span className="text-lg font-serif font-bold text-emerald-200 block mt-0.5">{totalVines.toLocaleString()} vines</span>
+            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">{lang === 'ka' ? 'აქტიური ვაზები' : 'Active Vines'}</span>
+            <span className="text-lg font-serif font-bold text-emerald-200 block mt-0.5">{totalVines.toLocaleString()} {lang === 'ka' ? 'ვაზი' : 'vines'}</span>
           </div>
         </div>
       </div>
@@ -747,9 +781,9 @@ export default function VaziModule({
       {(['spraying', 'scouting', 'sampling', 'yield'] as const).includes(vaziTab as any) && !selectedBlock && (
         <div className="rounded-2xl border border-dashed border-[#e8dfd5] bg-white p-10 text-center shadow-sm">
           <Layers className="w-12 h-12 text-stone-300 mx-auto mb-3" />
-          <h3 className="text-sm font-serif font-black text-[#4e0e15]">Select a vineyard block first</h3>
+          <h3 className="text-sm font-serif font-black text-[#4e0e15]">{lang === 'ka' ? 'ჯერ აირჩიეთ ვენახის ნაკვეთი' : 'Select a vineyard block first'}</h3>
           <p className="mt-1 text-xs text-stone-500 max-w-md mx-auto">
-            Spraying, scouting, sampling, and harvest planning are recorded against a specific block.
+            {lang === 'ka' ? 'წამლობა, დაკვირვება, ნიმუშები და რთველის დაგეგმვა კონკრეტულ ნაკვეთზე იწერება.' : 'Spraying, scouting, sampling, and harvest planning are recorded against a specific block.'}
           </p>
           <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
             <button
@@ -816,20 +850,20 @@ export default function VaziModule({
                       <strong className="text-xs font-serif font-bold text-[#4e0e15] group-hover:text-emerald-900 duration-100">{b.name}</strong>
                       <span className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">{b.area} ha • {b.grapeVariety}</span>
                     </div>
-                    <span className="text-[10px] font-bold bg-amber-50 text-amber-700 font-mono px-2 py-0.5 rounded border border-amber-100 font-semibold">{b.currentPhenology}</span>
+                    <span className="text-[10px] font-bold bg-amber-50 text-amber-700 font-mono px-2 py-0.5 rounded border border-amber-100 font-semibold">{phenologyLabel(b.currentPhenology, lang)}</span>
                   </button>
                 ))}
                 {blocks.length === 0 && (
                   <div className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 p-5 text-center">
                     <Layers className="w-9 h-9 text-emerald-700/40 mx-auto mb-2" />
-                    <p className="text-xs font-bold text-emerald-950">No vineyard blocks yet</p>
-                    <p className="mt-1 text-[11px] text-stone-500">Create the first block before scouting, sampling, sprays, or harvest planning.</p>
+                    <p className="text-xs font-bold text-emerald-950">{lang === 'ka' ? 'ვენახის ნაკვეთები ჯერ არ არის' : 'No vineyard blocks yet'}</p>
+                    <p className="mt-1 text-[11px] text-stone-500">{lang === 'ka' ? 'შექმენით პირველი ნაკვეთი მონიტორინგის, ნიმუშების აღების, წამლობის ან რთველის დაგეგმვამდე.' : 'Create the first block before scouting, sampling, sprays, or harvest planning.'}</p>
                     <button
                       type="button"
                       onClick={() => setShowAddBlockModal(true)}
                       className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-900"
                     >
-                      <Plus className="w-3.5 h-3.5" /> Add block
+                      <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
                     </button>
                   </div>
                 )}
@@ -913,23 +947,23 @@ export default function VaziModule({
                     <span className="font-bold uppercase tracking-wider">{lang === 'ka' ? 'ლეგენდა:' : 'Legend:'}</span>
                     {mapOverlay === 'mildew' && (
                       <div className="flex gap-2">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Low</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" />Mod</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />High</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'დაბალი' : 'Low'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" />{lang === 'ka' ? 'საშ.' : 'Mod'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{lang === 'ka' ? 'მაღალი' : 'High'}</span>
                       </div>
                     )}
                     {mapOverlay === 'moisture' && (
                       <div className="flex gap-2">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />Dry</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Opt</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />Wet</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{lang === 'ka' ? 'მშრალი' : 'Dry'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'ოპტ.' : 'Opt'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />{lang === 'ka' ? 'სველი' : 'Wet'}</span>
                       </div>
                     )}
                     {mapOverlay === 'phenology' && (
                       <div className="flex gap-2">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" />Ver</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" />Rip</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Set</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" />{lang === 'ka' ? 'შეთვ.' : 'Ver'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" />{lang === 'ka' ? 'მწიფ.' : 'Rip'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'გამონ.' : 'Set'}</span>
                       </div>
                     )}
                   </div>
@@ -945,9 +979,9 @@ export default function VaziModule({
                       return (
                         <div className="h-full flex flex-col items-center justify-center text-center gap-2 text-stone-500">
                           <AlertTriangle className="w-6 h-6 text-amber-600" />
-                          <strong className="text-xs text-stone-800">Live weather unavailable</strong>
+                          <strong className="text-xs text-stone-800">{lang === 'ka' ? 'ცოცხალი ამინდი მიუწვდომელია' : 'Live weather unavailable'}</strong>
                           <span className="text-[10px] max-w-sm">
-                            {blockWeatherError || 'No simulated readings are shown. Check the connection and block coordinates.'}
+                            {blockWeatherError || (lang === 'ka' ? 'მონაცემები არ არის. შეამოწმეთ კავშირი და ნაკვეთის კოორდინატები.' : 'No simulated readings are shown. Check the connection and block coordinates.')}
                           </span>
                         </div>
                       );
@@ -963,7 +997,7 @@ export default function VaziModule({
                       <div className="flex flex-col justify-between h-full space-y-2">
                         <div className="flex items-center justify-between">
                           <div>
-                            <strong className="text-xs font-serif font-black text-emerald-950 block">{block.name} Forecast</strong>
+                            <strong className="text-xs font-serif font-black text-emerald-950 block">{block.name} {lang === 'ka' ? 'პროგნოზი' : 'Forecast'}</strong>
                             <span className="text-[9px] text-stone-500 font-mono">GPS: {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)} • Recorded GDD: {computedGDD}</span>
                           </div>
                           <span className="text-[9px] font-mono font-bold bg-sky-50 text-sky-800 px-2 py-0.5 rounded border border-sky-200">
@@ -973,19 +1007,19 @@ export default function VaziModule({
 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-stone-850">
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Temperature</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'ტემპერატურა' : 'Temperature'}</span>
                             <strong className="text-sm font-black mt-0.5 block">{temp}°C</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Rain Today</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'წვიმა დღეს' : 'Rain Today'}</span>
                             <strong className="text-sm font-black mt-0.5 block">{rainMm} mm</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Wind Max</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'ქარის მაქს.' : 'Wind Max'}</span>
                             <strong className="text-sm font-black mt-0.5 block">{wind} km/h</strong>
                           </div>
                           <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Humidity</span>
+                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'ტენიანობა' : 'Humidity'}</span>
                             <strong className="text-sm font-black mt-0.5 block">{humidity}%</strong>
                           </div>
                         </div>
@@ -1095,7 +1129,7 @@ export default function VaziModule({
                 className="bg-emerald-800 hover:bg-emerald-900 text-white px-2.5 py-1 text-[10px] uppercase font-mono tracking-wider font-extrabold rounded-md cursor-pointer flex items-center gap-1 transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" />
-                New Block
+                {lang === 'ka' ? 'ახალი ნაკვეთი' : 'New Block'}
               </button>
             </div>
 
@@ -1122,10 +1156,10 @@ export default function VaziModule({
                     </div>
                     <div className="flex justify-between items-center mt-2 font-mono text-[9px] text-stone-500">
                       <span>{b.grapeVariety}</span>
-                      <span className="text-emerald-700 font-extrabold">{b.currentPhenology}</span>
+                      <span className="text-emerald-700 font-extrabold">{phenologyLabel(b.currentPhenology, lang)}</span>
                     </div>
                     <div className="mt-2 flex items-center justify-between gap-2">
-                      <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400">Cadastre mirror</span>
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400">{lang === 'ka' ? 'საკადასტრო' : 'Cadastre mirror'}</span>
                       <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${cadastreBadgeClass(cadastre.score, cadastre.missingCritical.length)}`}>
                         {cadastre.score}%
                       </span>
@@ -1162,16 +1196,16 @@ export default function VaziModule({
                   {/* Local Quick actions */}
                   <div className="bg-neutral-50 border border-stone-200/55 p-3 rounded-xl flex items-center gap-3 w-fit text-[10px] font-mono shrink-0">
                     <div className="text-center shrink-0 pr-3 border-r border-stone-150">
-                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Variety Status</span>
+                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">{lang === 'ka' ? 'ჯიში' : 'Variety Status'}</span>
                       <strong className="text-xs block text-[#4e0e15] font-bold font-serif">{selectedBlock.grapeVariety}</strong>
                     </div>
                     <div>
-                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Farming</span>
+                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">{lang === 'ka' ? 'მართვა' : 'Farming'}</span>
                       <strong className="text-xs uppercase block text-emerald-750 font-bold">{selectedBlock.farmingStatus}</strong>
                     </div>
                     {selectedCadastre && (
                       <div className="pl-3 border-l border-stone-150">
-                        <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Cadastre</span>
+                        <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">{lang === 'ka' ? 'კადასტრი' : 'Cadastre'}</span>
                         <strong className="text-xs uppercase block text-amber-700 font-bold">{selectedCadastre.score}%</strong>
                       </div>
                     )}
@@ -1186,7 +1220,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Block Name</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის სახელი' : 'Block Name'}</label>
                         <input 
                           type="text" required
                           value={editBlockName} onChange={(e) => setEditBlockName(e.target.value)}
@@ -1194,7 +1228,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vineyard Name</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვენახის სახელი' : 'Vineyard Name'}</label>
                         <input 
                           type="text" required
                           value={editVineyardName} onChange={(e) => setEditVineyardName(e.target.value)}
@@ -1202,7 +1236,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Location Name</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მდებარეობის სახელი' : 'Location Name'}</label>
                         <input 
                           type="text" required
                           value={editLocationName} onChange={(e) => setEditLocationName(e.target.value)}
@@ -1214,11 +1248,11 @@ export default function VaziModule({
                     <div className="rounded-lg border border-amber-200 bg-amber-50/35 p-3 space-y-3">
                       <h4 className="text-[10px] uppercase font-mono tracking-widest text-amber-900 font-black flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5" />
-                        Government Cadastre Mirror
+                        {lang === 'ka' ? 'სახელმწიფო საკადასტრო მონაცემები' : 'Government Cadastre Mirror'}
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Cadastral Code</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'საკადასტრო კოდი' : 'Cadastral Code'}</label>
                           <input
                             type="text"
                             value={editCadastralCode}
@@ -1227,17 +1261,17 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Cadastre Document</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'საკადასტრო დოკუმენტი' : 'Cadastre Document'}</label>
                           <input
                             type="text"
                             value={editOfficialCadastreDocumentName}
                             onChange={(e) => setEditOfficialCadastreDocumentName(e.target.value)}
-                            placeholder="file name or registry ref"
+                            placeholder={lang === 'ka' ? 'ფაილის სახელი ან რეესტრის ნომერი' : 'file name or registry ref'}
                             className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Parcel Name</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის დასახელება' : 'Parcel Name'}</label>
                           <input
                             type="text"
                             value={editParcelName}
@@ -1248,7 +1282,7 @@ export default function VaziModule({
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Municipality</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
                           <input
                             type="text"
                             value={editMunicipality}
@@ -1257,7 +1291,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Community</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'თემი' : 'Community'}</label>
                           <input
                             type="text"
                             value={editCommunity}
@@ -1266,7 +1300,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Village</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სოფელი' : 'Village'}</label>
                           <input
                             type="text"
                             value={editVillage}
@@ -1275,7 +1309,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Microzone / PDO</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მიკროზონა / PDO' : 'Microzone / PDO'}</label>
                           <input
                             type="text"
                             value={editMicrozone}
@@ -1287,7 +1321,7 @@ export default function VaziModule({
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Parcel Area (ha)</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის ფართობი (ჰა)' : 'Parcel Area (ha)'}</label>
                           <input
                             type="number"
                             min="0"
@@ -1299,7 +1333,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Land Owner</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მიწის მესაკუთრე' : 'Land Owner'}</label>
                           <input
                             type="text"
                             value={editLandOwner}
@@ -1308,7 +1342,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Grower</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მევენახე' : 'Grower'}</label>
                           <input
                             type="text"
                             value={editGrower}
@@ -1321,7 +1355,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Area (ha)</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ფართობი (ჰა)' : 'Area (ha)'}</label>
                         <input 
                           type="number" step="0.01" required
                           value={editArea} onChange={(e) => setEditArea(Number(e.target.value) || 0)}
@@ -1329,7 +1363,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Elevation (m)</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სიმაღლე (მ)' : 'Elevation (m)'}</label>
                         <input 
                           type="number" required
                           value={editElevation} onChange={(e) => setEditElevation(Number(e.target.value) || 0)}
@@ -1337,7 +1371,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Slope</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დაქანება' : 'Slope'}</label>
                         <input 
                           type="text" required
                           value={editSlope} onChange={(e) => setEditSlope(e.target.value)}
@@ -1345,7 +1379,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Aspect</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ექსპოზიცია' : 'Aspect'}</label>
                         <input 
                           type="text" required
                           value={editAspect} onChange={(e) => setEditAspect(e.target.value)}
@@ -1356,7 +1390,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Grape Variety</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ყურძნის ჯიში' : 'Grape Variety'}</label>
                         <input 
                           type="text" required
                           value={editGrapeVariety} onChange={(e) => setEditGrapeVariety(e.target.value)}
@@ -1365,7 +1399,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Planting Year</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დარგვის წელი' : 'Planting Year'}</label>
                         <input 
                           type="number" required
                           value={editPlantingYear} onChange={(e) => setEditPlantingYear(Number(e.target.value) || 2018)}
@@ -1373,7 +1407,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Training System</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ფორმირების სისტემა' : 'Training System'}</label>
                         <input 
                           type="text" required
                           value={editTrainingSystem} onChange={(e) => setEditTrainingSystem(e.target.value)}
@@ -1384,7 +1418,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Rootstock</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'საძირე' : 'Rootstock'}</label>
                         <input
                           type="text"
                           value={editRootstock}
@@ -1393,7 +1427,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Clone</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'კლონი' : 'Clone'}</label>
                         <input
                           type="text"
                           value={editClone}
@@ -1402,12 +1436,12 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vineyard Condition</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვენახის მდგომარეობა' : 'Vineyard Condition'}</label>
                         <input
                           type="text"
                           value={editVineyardCondition}
                           onChange={(e) => setEditVineyardCondition(e.target.value)}
-                          placeholder="productive, replanted, young vines"
+                          placeholder={lang === 'ka' ? 'პროდუქტიული, ხელახლა დარგული, ახალგაზრდა ვაზები' : 'productive, replanted, young vines'}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
@@ -1415,7 +1449,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Spacing</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დარგვის სქემა' : 'Spacing'}</label>
                         <input 
                           type="text" required
                           value={editSpacing} onChange={(e) => setEditSpacing(e.target.value)}
@@ -1423,7 +1457,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Rows Count</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'რიგების რაოდენობა' : 'Rows Count'}</label>
                         <input 
                           type="number" required
                           value={editRowsCount} onChange={(e) => setEditRowsCount(Number(e.target.value) || 0)}
@@ -1431,7 +1465,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vines Count</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვაზების რაოდენობა' : 'Vines Count'}</label>
                         <input 
                           type="number" required
                           value={editVinesCount} onChange={(e) => setEditVinesCount(Number(e.target.value) || 0)}
@@ -1439,7 +1473,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Farming Status</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მართვის სტატუსი' : 'Farming Status'}</label>
                         <input 
                           type="text" required
                           value={editFarmingStatus} onChange={(e) => setEditFarmingStatus(e.target.value)}
@@ -1450,7 +1484,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="sm:col-span-2">
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Soil Type</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნიადაგის ტიპი' : 'Soil Type'}</label>
                         <input 
                           type="text" required
                           value={editSoilType} onChange={(e) => setEditSoilType(e.target.value)}
@@ -1463,12 +1497,12 @@ export default function VaziModule({
                           checked={editIrrigationEnabled} onChange={(e) => setEditIrrigationEnabled(e.target.checked)}
                           className="h-4 w-4 text-emerald-800 focus:ring-emerald-700 rounded accent-emerald-800"
                         />
-                        <label htmlFor="editIrrigationEnabled" className="font-bold text-[10px] text-stone-700 cursor-pointer">Irrigation Enabled</label>
+                        <label htmlFor="editIrrigationEnabled" className="font-bold text-[10px] text-stone-700 cursor-pointer">{lang === 'ka' ? 'მორწყვა ჩართულია' : 'Irrigation Enabled'}</label>
                       </div>
                     </div>
 
                     <div>
-                      <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Block Notes / Description</label>
+                      <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის შენიშვნები / აღწერა' : 'Block Notes / Description'}</label>
                       <textarea 
                         value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
                         className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none h-16"
@@ -1502,39 +1536,39 @@ export default function VaziModule({
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between gap-2 border-b border-dashed border-amber-200 pb-1.5">
                         <span className="flex items-center gap-1.5">
                           <FileText className="w-3.5 h-3.5" />
-                          Government Cadastre Mirror
+                          {lang === 'ka' ? 'სახელმწიფო საკადასტრო მონაცემები' : 'Government Cadastre Mirror'}
                         </span>
                         <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${cadastreBadgeClass(selectedCadastre.score, selectedCadastre.missingCritical.length)}`}>
-                          {selectedCadastre.score}% {selectedCadastre.badge}
+                          {selectedCadastre.score}% {cadastreBadgeLabel(selectedCadastre.badge, lang)}
                         </span>
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[11px]">
                         {([
-                          ['Cadastral code', selectedBlock.cadastralCode],
-                          ['Municipality', selectedBlock.municipality],
-                          ['Village', selectedBlock.village],
-                          ['Microzone', selectedBlock.microzone],
-                          ['Parcel', selectedBlock.parcelName],
-                          ['Parcel area', `${selectedBlock.parcelArea ?? selectedBlock.area} ha`],
-                          ['Owner / grower', selectedBlock.landOwner || selectedBlock.grower],
-                          ['Document', selectedBlock.officialCadastreDocumentName],
+                          [lang === 'ka' ? 'საკადასტრო კოდი' : 'Cadastral code', selectedBlock.cadastralCode],
+                          [lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality', selectedBlock.municipality],
+                          [lang === 'ka' ? 'სოფელი' : 'Village', selectedBlock.village],
+                          [lang === 'ka' ? 'მიკროზონა' : 'Microzone', selectedBlock.microzone],
+                          [lang === 'ka' ? 'ნაკვეთი' : 'Parcel', selectedBlock.parcelName],
+                          [lang === 'ka' ? 'ნაკვეთის ფართობი' : 'Parcel area', `${selectedBlock.parcelArea ?? selectedBlock.area} ha`],
+                          [lang === 'ka' ? 'მესაკუთრე / მევენახე' : 'Owner / grower', selectedBlock.landOwner || selectedBlock.grower],
+                          [lang === 'ka' ? 'დოკუმენტი' : 'Document', selectedBlock.officialCadastreDocumentName],
                         ] as Array<[string, string | number | undefined]>).map(([field, value]) => (
                           <div key={field} className="border border-amber-100 bg-white/70 rounded-lg p-2">
                             <span className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold">{field}</span>
-                            <strong className="mt-0.5 block text-stone-800 font-serif">{value || 'Missing'}</strong>
+                            <strong className="mt-0.5 block text-stone-800 font-serif">{value || (lang === 'ka' ? 'არ არის' : 'Missing')}</strong>
                           </div>
                         ))}
                       </div>
                       {selectedCadastre.missing.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 text-[9px] font-mono">
-                          {selectedCadastre.missing.slice(0, 7).map(item => (
-                            <span key={item} className="rounded-full border border-amber-200 bg-amber-100/70 px-2 py-0.5 text-amber-900">
-                              Missing: {item}
+                          {selectedCadastre.requirements.filter(r => !r.met).slice(0, 7).map(item => (
+                            <span key={item.id} className="rounded-full border border-amber-200 bg-amber-100/70 px-2 py-0.5 text-amber-900">
+                              {lang === 'ka' ? 'აკლია' : 'Missing'}: {lang === 'ka' ? item.labelKa : item.labelEn}
                             </span>
                           ))}
                           {selectedCadastre.missing.length > 7 && (
                             <span className="rounded-full border border-stone-200 bg-stone-100 px-2 py-0.5 text-stone-600">
-                              +{selectedCadastre.missing.length - 7} more
+                              +{selectedCadastre.missing.length - 7} {lang === 'ka' ? 'სხვა' : 'more'}
                             </span>
                           )}
                         </div>
@@ -1546,36 +1580,36 @@ export default function VaziModule({
                   <div className="space-y-3 p-4 bg-stone-50 rounded-xl border border-stone-100">
                     <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center gap-1.5 border-b border-dashed border-stone-200 pb-1.5">
                       <Mountain className="w-3.5 h-3.5" />
-                      Block Terrain & Vineyard Soil Specs
+                      {lang === 'ka' ? 'ნაკვეთის რელიეფი და ნიადაგი' : 'Block Terrain & Vineyard Soil Specs'}
                     </h4>
                     <ul className="text-xs space-y-2 font-medium">
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Altitude / Elevation:</span>
-                        <span className="font-mono text-stone-800">{selectedBlock.elevation} Meters</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სიმაღლე ზ. დ.:' : 'Altitude / Elevation:'}</span>
+                        <span className="font-mono text-stone-800">{selectedBlock.elevation} {lang === 'ka' ? 'მ' : 'Meters'}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Slope Profile:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დაქანება:' : 'Slope Profile:'}</span>
                         <span className="font-mono text-stone-800">{selectedBlock.slope}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Aspect Exposure:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ექსპოზიცია:' : 'Aspect Exposure:'}</span>
                         <span className="font-mono text-stone-800">{selectedBlock.aspect}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Planting Spacing:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დარგვის სქემა:' : 'Planting Spacing:'}</span>
                         <span className="font-mono text-stone-800">{selectedBlock.spacing}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Soil Geological Profile:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნიადაგის პროფილი:' : 'Soil Geological Profile:'}</span>
                         <span className="font-serif text-[11px] text-[#4e0e15] text-right font-bold inline-block max-w-40">{selectedBlock.soilType}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Rootstock / Clone:</span>
-                        <span className="font-mono text-stone-800 text-right">{selectedBlock.rootstock || 'Missing'} / {selectedBlock.clone || 'Missing'}</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საძირე / კლონი:' : 'Rootstock / Clone:'}</span>
+                        <span className="font-mono text-stone-800 text-right">{selectedBlock.rootstock || (lang === 'ka' ? 'არ არის' : 'Missing')} / {selectedBlock.clone || (lang === 'ka' ? 'არ არის' : 'Missing')}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Vineyard Condition:</span>
-                        <span className="font-mono text-stone-800 text-right">{selectedBlock.vineyardCondition || 'Missing'}</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ვენახის მდგომარეობა:' : 'Vineyard Condition:'}</span>
+                        <span className="font-mono text-stone-800 text-right">{selectedBlock.vineyardCondition || (lang === 'ka' ? 'არ არის' : 'Missing')}</span>
                       </li>
                     </ul>
                   </div>
@@ -1586,7 +1620,7 @@ export default function VaziModule({
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between border-b border-dashed border-stone-200 pb-1.5 w-full">
                         <span className="flex items-center gap-1.5">
                           <MapPin className="w-3.5 h-3.5" />
-                          Interactive Digital Block Polygon Map
+                          {lang === 'ka' ? 'ნაკვეთის ინტერაქტიული პოლიგონის რუკა' : 'Interactive Digital Block Polygon Map'}
                         </span>
                       </h4>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1">
@@ -1606,13 +1640,13 @@ export default function VaziModule({
                             isDrawingPolygon ? 'bg-red-600 text-white' : 'bg-emerald-800 text-white hover:bg-emerald-900'
                           }`}
                         >
-                          {isDrawingPolygon ? 'Cancel Map' : 'Draw Polygon'}
+                          {isDrawingPolygon ? (lang === 'ka' ? 'გაუქმება' : 'Cancel Map') : (lang === 'ka' ? 'პოლიგონის დახაზვა' : 'Draw Polygon')}
                         </button>
                       </div>
 
                       {/* Map backdrop and custom canvas outline helper */}
                       <div className="absolute inset-0 bg-stone-200 opacity-30 flex items-center justify-center select-none">
-                        <span className="text-[8px] font-mono text-stone-400 uppercase tracking-widest">[Satellite View Simulation]</span>
+                        <span className="text-[8px] font-mono text-stone-400 uppercase tracking-widest">{lang === 'ka' ? '[სატელიტური ხედის სიმულაცია]' : '[Satellite View Simulation]'}</span>
                       </div>
                       
                       {isDrawingPolygon ? (
@@ -1640,13 +1674,15 @@ export default function VaziModule({
                             ))}
                           </svg>
                           <span className="text-[8px] font-bold font-mono tracking-wider bg-[#4e0e15] text-white px-2 py-0.5 rounded shadow-sm relative z-15">
-                            Click {4 - drawnPixels.length > 0 ? `${4 - drawnPixels.length} more` : 'Completed'} times to snap block boundary
+                            {lang === 'ka'
+                              ? `დააწკაპუნეთ კიდევ ${4 - drawnPixels.length > 0 ? `${4 - drawnPixels.length}` : '0'}-ჯერ საზღვრის დასახაზად`
+                              : `Click ${4 - drawnPixels.length > 0 ? `${4 - drawnPixels.length} more` : 'Completed'} times to snap block boundary`}
                           </span>
                         </div>
                       ) : (
                         <div className="text-center p-3 relative z-10 font-mono">
                           <Compass className="w-8 h-8 text-emerald-800 mx-auto opacity-70 animate-spin" style={{ animationDuration: '8s' }} />
-                          <span className="text-[8px] uppercase tracking-wider block mt-2 text-stone-500 font-bold">Polygon Bound Calibrations Ready</span>
+                          <span className="text-[8px] uppercase tracking-wider block mt-2 text-stone-500 font-bold">{lang === 'ka' ? 'პოლიგონის კალიბრაცია მზადაა' : 'Polygon Bound Calibrations Ready'}</span>
                         </div>
                       )}
                     </div>
@@ -1660,49 +1696,35 @@ export default function VaziModule({
                     <div>
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-emerald-900 flex items-center gap-1.5">
                         <Sprout className="w-3.5 h-3.5" />
-                        Growing Degree Days Phenological Predictor
+                        {lang === 'ka' ? 'ფენოლოგიის პროგნოზი (GDD)' : 'Growing Degree Days Phenological Predictor'}
                       </h4>
-                      <p className="text-[9px] text-slate-500 dark:text-slate-400 mt-0.5">Automated heat sum index algorithms mapping current vegetative progression</p>
+                      <p className="text-[9px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'სითბოს ჯამის ავტომატური ინდექსი ვეგეტაციის მიმდინარე ეტაპის შესაფასებლად' : 'Automated heat sum index algorithms mapping current vegetative progression'}</p>
                     </div>
-                    <span className="text-[9px] font-mono bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded font-extrabold">Active Prediction Model</span>
+                    <span className="text-[9px] font-mono bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded font-extrabold">{lang === 'ka' ? 'აქტიური პროგნოზის მოდელი' : 'Active Prediction Model'}</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
-                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Accumulated GDD Heat</span>
-                      <strong className="text-base text-emerald-950 block mt-0.5">{computedGDD} °C-Days</strong>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'დაგროვილი GDD სითბო' : 'Accumulated GDD Heat'}</span>
+                      <strong className="text-base text-emerald-950 block mt-0.5">{computedGDD} {lang === 'ka' ? '°C-დღე' : '°C-Days'}</strong>
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono flex flex-col justify-between items-center">
-                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Estimated Canopy Stage</span>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო ფენოლოგიური ფაზა' : 'Estimated Canopy Stage'}</span>
                       <select
                         value={selectedBlock.currentPhenology}
                         onChange={(e) => onUpdateBlock(selectedBlock.id, { currentPhenology: e.target.value })}
                         className="text-xs font-serif font-bold text-amber-700 text-center bg-transparent border border-amber-200/50 rounded-lg px-2.5 py-1 outline-none cursor-pointer mt-1.5 hover:text-amber-950 hover:border-amber-400 transition-all font-semibold max-w-full"
                       >
-                        {[
-                          'Dormancy / before bud swelling',
-                          'Budburst',
-                          'Budburst / early shoot growth',
-                          '4-6 leaves / inflorescences visible',
-                          'Pre-flowering',
-                          'Flowering',
-                          'Fruit set',
-                          'Post-flowering / fruit set',
-                          'Pea-size berry / berry growth',
-                          'Bunch closure',
-                          'Veraison',
-                          'Ripening',
-                          'Pre-harvest / ripening'
-                        ].map((stage) => (
+                        {PHENOLOGY_STAGES.map((stage) => (
                           <option key={stage} value={stage} className="text-stone-800 bg-white">
-                            {stage}
+                            {phenologyLabel(stage, lang)}
                           </option>
                         ))}
                       </select>
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
-                      <span className="text-[9px] text-slate-450 uppercase block font-sans">Confidence Index</span>
-                      <strong className="text-base text-emerald-700 block mt-0.5">92% Reliable</strong>
+                      <span className="text-[9px] text-slate-450 uppercase block font-sans">{lang === 'ka' ? 'სანდოობის ინდექსი' : 'Confidence Index'}</span>
+                      <strong className="text-base text-emerald-700 block mt-0.5">{lang === 'ka' ? '92% სანდო' : '92% Reliable'}</strong>
                     </div>
                   </div>
 
@@ -1716,14 +1738,18 @@ export default function VaziModule({
                           gdd: computedGDD,
                           confidence: 92,
                           status: 'confirmed',
-                          notes: `Confirmed physiological status on late spring checkup. GDD tracking matches stage expectation.`,
+                          notes: lang === 'ka'
+                            ? `ფენოლოგიური სტატუსი დადასტურდა. GDD მონიტორინგი შეესაბამება ფაზის მოლოდინს.`
+                            : `Confirmed physiological status on late spring checkup. GDD tracking matches stage expectation.`,
                           observer: currentUser.fullName
                         });
-                        alert(`Broadcasting canopy confirmation: Block ${selectedBlock.name} successfully registered at ${selectedBlock.currentPhenology}!`);
+                        alert(lang === 'ka'
+                          ? `ფენოლოგიის დადასტურება: ნაკვეთი ${selectedBlock.name} რეგისტრირდა ფაზაზე „${phenologyLabel(selectedBlock.currentPhenology, lang)}“!`
+                          : `Broadcasting canopy confirmation: Block ${selectedBlock.name} successfully registered at ${selectedBlock.currentPhenology}!`);
                       }}
                       className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold rounded-md cursor-pointer flex items-center gap-1 transition-all"
                     >
-                      <Check className="w-3 h-3" /> Confirm Viticulturist Status
+                      <Check className="w-3 h-3" /> {lang === 'ka' ? 'სტატუსის დადასტურება' : 'Confirm Viticulturist Status'}
                     </button>
                   </div>
                 </div>
@@ -1734,7 +1760,7 @@ export default function VaziModule({
             ) : (
               <div className="bg-stone-50 border border-dashed border-[#e8dfd5] text-center p-12 rounded-xl italic font-serif text-sm text-[#4e0e15]/60 flex flex-col items-center justify-center">
                 <Layers className="w-12 h-12 text-stone-300 mb-3" />
-                <span>Select a vineyard block from the sidebar registry to deploy the viticulture control station.</span>
+                <span>{lang === 'ka' ? 'აირჩიეთ ვენახის ნაკვეთი გვერდით რეესტრიდან მევენახეობის სამართავი პანელის გასახსნელად.' : 'Select a vineyard block from the sidebar registry to deploy the viticulture control station.'}</span>
                 <div className="mt-4 flex flex-col sm:flex-row gap-2 not-italic font-sans">
                   {blocks.length > 0 && (
                     <button
@@ -1742,7 +1768,7 @@ export default function VaziModule({
                       onClick={() => openVaziTab('blocks', blocks[0].id)}
                       className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
                     >
-                      <ArrowRight className="w-3.5 h-3.5" /> Select first block
+                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'პირველი ნაკვეთის არჩევა' : 'Select first block'}
                     </button>
                   )}
                   <button
@@ -1750,7 +1776,7 @@ export default function VaziModule({
                     onClick={() => setShowAddBlockModal(true)}
                     className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-50"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Add block
+                    <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
                   </button>
                 </div>
               </div>
@@ -1768,7 +1794,7 @@ export default function VaziModule({
           
           {/* Add Spray Record Form */}
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
-            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">Record Chemical Application</h4>
+            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">{lang === 'ka' ? 'ქიმიური დამუშავების ჩაწერა' : 'Record Chemical Application'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
               const form = e.currentTarget;
@@ -1801,28 +1827,30 @@ export default function VaziModule({
                   humidity: blockWeather?.humidity ?? 0,
                   preHarvestIntervalDays: phi,
                   reEntryIntervalHours: rei,
-                  notes: `Authorized chemical pesticide spraying campaign for ${targetProblem} prevention on Saperavi rows.`
+                  notes: lang === 'ka'
+                    ? `ავტორიზებული ქიმიური წამლობის კამპანია ${targetProblem}-ის პრევენციისთვის.`
+                    : `Authorized chemical pesticide spraying campaign for ${targetProblem} prevention on Saperavi rows.`
                 });
                 form.reset();
               }
             }} className="space-y-3">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Target Problem / Disease *</label>
-                <input 
-                  type="text" 
-                  name="targetProblem" 
-                  placeholder="e.g., Downy Mildew prevention" 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სამიზნე პრობლემა / დაავადება *' : 'Target Problem / Disease *'}</label>
+                <input
+                  type="text"
+                  name="targetProblem"
+                  placeholder={lang === 'ka' ? 'მაგ., ჭრაქის პრევენცია' : 'e.g., Downy Mildew prevention'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium text-stone-800"
                   required 
                 />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Chemical Product / Compound *</label>
-                <input 
-                  type="text" 
-                  name="productName" 
-                  placeholder="e.g., Valiant Cu-7 Copp" 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ქიმიური პროდუქტი / ნაერთი *' : 'Chemical Product / Compound *'}</label>
+                <input
+                  type="text"
+                  name="productName"
+                  placeholder={lang === 'ka' ? 'მაგ., Valiant Cu-7 Copp' : 'e.g., Valiant Cu-7 Copp'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium"
                   required 
                 />
@@ -1830,47 +1858,49 @@ export default function VaziModule({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Active Ingredient</label>
-                  <input type="text" name="activeIngredient" placeholder="Copper hydroxide" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'აქტიური ნივთიერება' : 'Active Ingredient'}</label>
+                  <input type="text" name="activeIngredient" placeholder={lang === 'ka' ? 'სპილენძის ჰიდროქსიდი' : 'Copper hydroxide'} className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Operator</label>
-                  <input type="text" name="operator" placeholder="Nugzar Jincharadze" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ოპერატორი' : 'Operator'}</label>
+                  <input type="text" name="operator" placeholder={lang === 'ka' ? 'ნუგზარ ჯინჭარაძე' : 'Nugzar Jincharadze'} className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Dose/ha (kg/L)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დოზა/ჰა (კგ/ლ)' : 'Dose/ha (kg/L)'}</label>
                   <input type="number" step="0.1" name="dosePerHa" defaultValue="2.0" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Water volume/ha (L)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'წყლის მოცულობა/ჰა (ლ)' : 'Water volume/ha (L)'}</label>
                   <input type="number" step="10" name="waterVolumePerHa" defaultValue="400" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">PHI (Pre-Harvest Days)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'PHI (რთველამდე დღეები)' : 'PHI (Pre-Harvest Days)'}</label>
                   <input type="number" name="phi" defaultValue="21" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">REI (Re-Entry Hours)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'REI (ხელახლა შესვლის საათები)' : 'REI (Re-Entry Hours)'}</label>
                   <input type="number" name="rei" defaultValue="24" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Tractor & Sprayer Unit</label>
-                <input type="text" name="machineryUsed" placeholder="Fendt 207V with Hardi Sprayer" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ტრაქტორი და შესხურებელი' : 'Tractor & Sprayer Unit'}</label>
+                <input type="text" name="machineryUsed" placeholder={lang === 'ka' ? 'Fendt 207V, Hardi შესხურებელით' : 'Fendt 207V with Hardi Sprayer'} className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
               </div>
 
               {/* Instant Safety Warnings block */}
               {blockWeather && blockWeather.wind > 12 && (
                 <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg font-mono text-[10px] space-y-1 block">
-                  <span className="font-extrabold uppercase text-[9px] block">⚠️ HIGH WIND HAZARD</span>
-                  Local wind speed is currently {blockWeather.wind} km/h. High drift risks. Delay application sequence to early morning!
+                  <span className="font-extrabold uppercase text-[9px] block">{lang === 'ka' ? '⚠️ ძლიერი ქარის საფრთხე' : '⚠️ HIGH WIND HAZARD'}</span>
+                  {lang === 'ka'
+                    ? `ქარის ამჟამინდელი სიჩქარეა ${blockWeather.wind} კმ/სთ. მაღალი გადატანის რისკი. გადადეთ დამუშავება დილის ადრეულ საათებზე!`
+                    : `Local wind speed is currently ${blockWeather.wind} km/h. High drift risks. Delay application sequence to early morning!`}
                 </div>
               )}
 
@@ -1878,37 +1908,39 @@ export default function VaziModule({
                 type="submit" 
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors"
               >
-                Launch Field Spray Campaign
+                {lang === 'ka' ? 'წამლობის კამპანიის დაწყება' : 'Launch Field Spray Campaign'}
               </button>
             </form>
           </div>
 
           {/* Spraying History list */}
           <div className="lg:col-span-2 bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
-            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">Pesticide and Spraying Logbook — {selectedBlock.name}</h4>
+            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">{lang === 'ka' ? 'წამლობის ჟურნალი' : 'Pesticide and Spraying Logbook'} — {selectedBlock.name}</h4>
             <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1" tabIndex={0}>
               {sprays.filter(s => s.blockId === selectedBlock.id).map(spray => (
                 <div key={spray.id} className="p-4 border border-stone-100 rounded-xl hover:bg-stone-50/50 transition-all font-sans space-y-2 relative">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[9px] bg-red-100 text-red-800 border border-red-200 px-2 py-0.5 rounded font-mono font-bold">
-                      🛡️ PHI: {spray.preHarvestIntervalDays} Days Safety
+                      🛡️ PHI: {spray.preHarvestIntervalDays} {lang === 'ka' ? 'დღე' : 'Days Safety'}
                     </span>
                     <span className="text-[9px] bg-sky-100 text-sky-850 px-2 py-0.5 rounded font-mono font-bold">
-                      REI: {spray.reEntryIntervalHours} hours
+                      REI: {spray.reEntryIntervalHours} {lang === 'ka' ? 'საათი' : 'hours'}
                     </span>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{spray.date} • Operator {spray.operator}</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{spray.date} • {lang === 'ka' ? 'ოპერატორი' : 'Operator'} {spray.operator}</span>
                   </div>
                   
-                  <h5 className="font-bold text-stone-900 text-sm leading-tight">Applied: {spray.productName} ({spray.activeIngredient})</h5>
+                  <h5 className="font-bold text-stone-900 text-sm leading-tight">{lang === 'ka' ? 'გამოყენებული' : 'Applied'}: {spray.productName} ({spray.activeIngredient})</h5>
                   <p className="text-xs text-stone-500 leading-relaxed bg-[#fbf9f6]/60 p-2 rounded border border-dashed border-[#e8dfd5]/60">
-                    <strong>Target:</strong> {spray.targetProblem} <br />
-                    <strong>Machinery Dosage:</strong> {spray.dosePerHa} kg/ha in {spray.waterVolumePerHa}L/ha water. Total quantity: <strong>{spray.totalProductUsed} kg</strong> pesticide in <strong>{spray.totalWaterUsed}L</strong> water.
+                    <strong>{lang === 'ka' ? 'სამიზნე:' : 'Target:'}</strong> {spray.targetProblem} <br />
+                    <strong>{lang === 'ka' ? 'დოზირება:' : 'Machinery Dosage:'}</strong> {lang === 'ka'
+                      ? <>{spray.dosePerHa} კგ/ჰა, {spray.waterVolumePerHa}ლ/ჰა წყალში. სულ: <strong>{spray.totalProductUsed} კგ</strong> პესტიციდი <strong>{spray.totalWaterUsed}ლ</strong> წყალში.</>
+                      : <>{spray.dosePerHa} kg/ha in {spray.waterVolumePerHa}L/ha water. Total quantity: <strong>{spray.totalProductUsed} kg</strong> pesticide in <strong>{spray.totalWaterUsed}L</strong> water.</>}
                   </p>
-                  
+
                   <div className="grid grid-cols-3 gap-2 text-[10px] font-mono text-stone-550 pt-1">
-                    <div>🌡️ Temp: {spray.temperature}°C</div>
-                    <div>🍃 Wind: {spray.windSpeed} km/h</div>
-                    <div>💧 Humidity: {spray.humidity}%</div>
+                    <div>🌡️ {lang === 'ka' ? 'ტემპ.' : 'Temp'}: {spray.temperature}°C</div>
+                    <div>🍃 {lang === 'ka' ? 'ქარი' : 'Wind'}: {spray.windSpeed} km/h</div>
+                    <div>💧 {lang === 'ka' ? 'ტენიანობა' : 'Humidity'}: {spray.humidity}%</div>
                   </div>
                 </div>
               ))}
@@ -1916,26 +1948,28 @@ export default function VaziModule({
               {sprays.filter(s => s.blockId === selectedBlock.id).length === 0 && (
                 <div className="text-center py-12 text-stone-400 italic font-mono text-xs">
                   <Wind className="w-10 h-10 text-stone-200 mx-auto mb-2" />
-                  No chemical treatments recorded for this block.
+                  {lang === 'ka' ? 'ამ ნაკვეთზე ქიმიური დამუშავება არ არის ჩაწერილი.' : 'No chemical treatments recorded for this block.'}
                   <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2 not-italic font-sans">
                     <button
                       type="button"
                       onClick={() => openVaziTab('scouting', selectedBlock.id)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
                     >
-                      <CheckSquare className="w-3.5 h-3.5" /> Scout first
+                      <CheckSquare className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ჯერ დაათვალიერეთ' : 'Scout first'}
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        setPrefilledTaskTitle?.(`Plan spray campaign for ${selectedBlock.name}`);
+                        setPrefilledTaskTitle?.(lang === 'ka' ? `წამლობის კამპანიის დაგეგმვა — ${selectedBlock.name}` : `Plan spray campaign for ${selectedBlock.name}`);
                         setPrefilledTaskPriority?.('medium');
-                        setPrefilledTaskDesc?.(`Review canopy conditions for ${selectedBlock.name} and schedule treatment if disease pressure warrants it.`);
+                        setPrefilledTaskDesc?.(lang === 'ka'
+                          ? `გადახედეთ ${selectedBlock.name}-ის მდგომარეობას და საჭიროების შემთხვევაში დაგეგმეთ დამუშავება.`
+                          : `Review canopy conditions for ${selectedBlock.name} and schedule treatment if disease pressure warrants it.`);
                         navigateTo({ module: 'gvino', tab: 'tasks' });
                       }}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
                     >
-                      <ArrowRight className="w-3.5 h-3.5" /> Create task
+                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
                     </button>
                   </div>
                 </div>
@@ -1954,7 +1988,7 @@ export default function VaziModule({
           
           {/* Add Scouting Record form */}
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
-            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">Log Pathogen Scouting</h4>
+            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">{lang === 'ka' ? 'პათოგენზე დაკვირვების ჩაწერა' : 'Log Pathogen Scouting'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
               const form = e.currentTarget;
@@ -1980,65 +2014,65 @@ export default function VaziModule({
               }
             }} className="space-y-3">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Pathogen / Problem Type *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'პათოგენი / პრობლემის ტიპი *' : 'Pathogen / Problem Type *'}</label>
                 <select name="problemType" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1.5 outline-none font-bold text-stone-800">
-                  <option value="Downy mildew">🌾 Downy Mildew</option>
-                  <option value="Powdery mildew">🌫️ Powdery Mildew</option>
-                  <option value="Botrytis">🍇 Botrytis Bunch Rot</option>
-                  <option value="Black rot">⚫ Black Rot</option>
-                  <option value="Esca">🪵 Esca Trunk Disease</option>
-                  <option value="Mites">🕷️ Red Spider Mites</option>
-                  <option value="Grape moth">🦋 European Grape Moth</option>
-                  <option value="Nutrient deficiency">🍂 Chlorosis / Nutrient Defic</option>
-                  <option value="Water stress">🏜️ Severe Water Stress</option>
-                  <option value="Hail damage">⛈️ Hail Injury</option>
-                  <option value="Sunburn">☀️ Cluster Sunburn</option>
+                  <option value="Downy mildew">🌾 {lang === 'ka' ? 'ჭრაქი' : 'Downy Mildew'}</option>
+                  <option value="Powdery mildew">🌫️ {lang === 'ka' ? 'ნაცარი (ოიდიუმი)' : 'Powdery Mildew'}</option>
+                  <option value="Botrytis">🍇 {lang === 'ka' ? 'ნაცრისფერი ლპობა (ბოტრიტისი)' : 'Botrytis Bunch Rot'}</option>
+                  <option value="Black rot">⚫ {lang === 'ka' ? 'შავი სიდამპლე' : 'Black Rot'}</option>
+                  <option value="Esca">🪵 {lang === 'ka' ? 'ესკა (ღეროს დაავადება)' : 'Esca Trunk Disease'}</option>
+                  <option value="Mites">🕷️ {lang === 'ka' ? 'წითელი ტკიპა' : 'Red Spider Mites'}</option>
+                  <option value="Grape moth">🦋 {lang === 'ka' ? 'ვაზის ჩრჩილი' : 'European Grape Moth'}</option>
+                  <option value="Nutrient deficiency">🍂 {lang === 'ka' ? 'ქლოროზი / ნიადაგის დეფიციტი' : 'Chlorosis / Nutrient Defic'}</option>
+                  <option value="Water stress">🏜️ {lang === 'ka' ? 'წყლის მწვავე დეფიციტი' : 'Severe Water Stress'}</option>
+                  <option value="Hail damage">⛈️ {lang === 'ka' ? 'სეტყვის დაზიანება' : 'Hail Injury'}</option>
+                  <option value="Sunburn">☀️ {lang === 'ka' ? 'მზის დამწვრობა' : 'Cluster Sunburn'}</option>
                 </select>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Field Row / Location detail *</label>
-                <input 
-                  type="text" 
-                  name="locationDetails" 
-                  placeholder="e.g. Rows 24 to 36, southern depression" 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'რიგი / ადგილმდებარეობა *' : 'Field Row / Location detail *'}</label>
+                <input
+                  type="text"
+                  name="locationDetails"
+                  placeholder={lang === 'ka' ? 'მაგ. 24-დან 36 რიგამდე, სამხრეთი დაქანება' : 'e.g. Rows 24 to 36, southern depression'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium"
                   required 
                 />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Observed Severity</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დაფიქსირებული სიმძიმე' : 'Observed Severity'}</label>
                 <div className="flex gap-2">
-                  {['low', 'medium', 'high'].map(s => (
+                  {(['low', 'medium', 'high'] as const).map(s => (
                     <label key={s} className="flex-1 text-center py-1.5 border border-stone-200 rounded-lg cursor-pointer hover:bg-stone-50 font-mono text-[10px] font-bold block uppercase">
-                      <input 
-                        type="radio" 
-                        name="severity" 
-                        value={s} 
+                      <input
+                        type="radio"
+                        name="severity"
+                        value={s}
                         defaultChecked={s === 'low'}
                         className="mr-1 accent-emerald-800"
                       />
-                      {s}
+                      {lang === 'ka' ? (s === 'low' ? 'დაბალი' : s === 'medium' ? 'საშუალო' : 'მაღალი') : s}
                     </label>
                   ))}
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Recommended Action Plan</label>
-                <textarea 
-                  name="recommendedAction" 
-                  placeholder="e.g. Schedule systemic protective spraying immediately..." 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'რეკომენდებული სამოქმედო გეგმა' : 'Recommended Action Plan'}</label>
+                <textarea
+                  name="recommendedAction"
+                  placeholder={lang === 'ka' ? 'მაგ. დაუყოვნებლივ დაგეგმეთ სისტემური დამცავი წამლობა...' : 'e.g. Schedule systemic protective spraying immediately...'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-16 outline-none text-xs"
                 />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Scouting Observations / Count</label>
-                <textarea 
-                  name="notes" 
-                  placeholder="e.g. Faint oil spots on lower leaf surface detected..." 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დაკვირვების შენიშვნები / რაოდენობა' : 'Scouting Observations / Count'}</label>
+                <textarea
+                  name="notes"
+                  placeholder={lang === 'ka' ? 'მაგ. ფოთლის ქვედა ზედაპირზე შესამჩნევია ზეთისებრი ლაქები...' : 'e.g. Faint oil spots on lower leaf surface detected...'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-16 outline-none text-xs"
                 />
               </div>
@@ -2047,14 +2081,14 @@ export default function VaziModule({
                 type="submit" 
                 className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors hover-lift"
               >
-                Save Scouting Record
+                {lang === 'ka' ? 'დაკვირვების ჩანაწერის შენახვა' : 'Save Scouting Record'}
               </button>
             </form>
           </div>
 
           {/* Scouting List */}
           <div className="lg:col-span-2 xl:col-span-3 bg-white dark:bg-stone-900 rounded-3xl border border-[#e8dfd5] dark:border-stone-800 p-8 shadow-sm space-y-5">
-            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">Continuous Field Pathology Records</h4>
+            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">{lang === 'ka' ? 'ველის პათოლოგიის უწყვეტი ჩანაწერები' : 'Continuous Field Pathology Records'}</h4>
             <div className="space-y-4">
               {scoutings.filter(sc => sc.blockId === selectedBlock.id).map(scout => (
                 <div key={scout.id} className="p-4 border border-stone-100 rounded-xl hover:bg-stone-50/50 transition-all font-sans relative flex justify-between gap-4">
@@ -2064,21 +2098,23 @@ export default function VaziModule({
                         scout.severity === 'high' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
                         scout.severity === 'medium' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
                       }`}>
-                        {scout.severity === 'high' ? '🔴 Severity: High' : scout.severity === 'medium' ? '🟡 Severity: Medium' : '⚪ Severity: Low'}
+                        {lang === 'ka'
+                          ? (scout.severity === 'high' ? '🔴 სიმძიმე: მაღალი' : scout.severity === 'medium' ? '🟡 სიმძიმე: საშუალო' : '⚪ სიმძიმე: დაბალი')
+                          : (scout.severity === 'high' ? '🔴 Severity: High' : scout.severity === 'medium' ? '🟡 Severity: Medium' : '⚪ Severity: Low')}
                       </span>
                       <span className="text-[10px] bg-slate-100 text-stone-600 font-mono px-1.5 py-0.2 rounded font-semibold">
-                        Location: {scout.locationDetails}
+                        {lang === 'ka' ? 'ადგილი' : 'Location'}: {scout.locationDetails}
                       </span>
                       <span className="text-[9px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{scout.date}</span>
                     </div>
 
-                    <h5 className="font-black text-stone-900 text-sm leading-tight">Detected Problem: <span className="text-[#801323]">{scout.problemType}</span></h5>
-                    <p className="text-xs text-stone-600 leading-relaxed"><strong className="text-slate-500">Observation Notes:</strong> {scout.notes}</p>
+                    <h5 className="font-black text-stone-900 text-sm leading-tight">{lang === 'ka' ? 'გამოვლენილი პრობლემა' : 'Detected Problem'}: <span className="text-[#801323]">{scout.problemType}</span></h5>
+                    <p className="text-xs text-stone-600 leading-relaxed"><strong className="text-slate-500">{lang === 'ka' ? 'დაკვირვების შენიშვნები:' : 'Observation Notes:'}</strong> {scout.notes}</p>
                     {scout.recommendedAction && (
                       <div className="text-xs text-emerald-800 bg-emerald-50/70 p-2.5 rounded border border-emerald-100 flex items-start gap-1.5">
                         <Info className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
                         <div>
-                          <strong>Farming Action Plan:</strong> {scout.recommendedAction}
+                          <strong>{lang === 'ka' ? 'სამოქმედო გეგმა:' : 'Farming Action Plan:'}</strong> {scout.recommendedAction}
                         </div>
                       </div>
                     )}
@@ -2089,26 +2125,28 @@ export default function VaziModule({
               {scoutings.filter(sc => sc.blockId === selectedBlock.id).length === 0 && (
                 <div className="text-center py-12 text-stone-400 italic font-mono text-xs">
                   <CheckSquare className="w-10 h-10 text-stone-200 mx-auto mb-2" />
-                  Your canopy scouting reports are perfectly clean. No pathogens spotted!
+                  {lang === 'ka' ? 'დაკვირვების ჩანაწერები სუფთაა — პათოგენები არ დაფიქსირებულა!' : 'Your canopy scouting reports are perfectly clean. No pathogens spotted!'}
                   <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2 not-italic font-sans">
                     <button
                       type="button"
                       onClick={() => openVaziTab('spraying', selectedBlock.id)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
                     >
-                      <Wind className="w-3.5 h-3.5" /> Open sprays
+                      <Wind className="w-3.5 h-3.5" /> {lang === 'ka' ? 'წამლობების გახსნა' : 'Open sprays'}
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        setPrefilledTaskTitle?.(`Scout ${selectedBlock.name}`);
+                        setPrefilledTaskTitle?.(lang === 'ka' ? `${selectedBlock.name}-ის დათვალიერება` : `Scout ${selectedBlock.name}`);
                         setPrefilledTaskPriority?.('low');
-                        setPrefilledTaskDesc?.(`Walk ${selectedBlock.name}, record disease pressure, and update the Vazi scouting log.`);
+                        setPrefilledTaskDesc?.(lang === 'ka'
+                          ? `შემოიარეთ ${selectedBlock.name}, ჩაიწერეთ დაავადებების წნეხი და განაახლეთ ვაზის დაკვირვების ჟურნალი.`
+                          : `Walk ${selectedBlock.name}, record disease pressure, and update the Vazi scouting log.`);
                         navigateTo({ module: 'gvino', tab: 'tasks' });
                       }}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
                     >
-                      <ArrowRight className="w-3.5 h-3.5" /> Create task
+                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
                     </button>
                   </div>
                 </div>
@@ -2127,7 +2165,7 @@ export default function VaziModule({
           
           {/* Top Form to Record new Analytical Grape Sample */}
           <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4">
-            <h4 className="font-serif font-black text-sm text-[#4e0e15] border-b border-stone-100 pb-2">Record Pre-Harvest Grape Mature Sampling</h4>
+            <h4 className="font-serif font-black text-sm text-[#4e0e15] border-b border-stone-100 pb-2">{lang === 'ka' ? 'რთველისწინა სიმწიფის ნიმუშის ჩაწერა' : 'Record Pre-Harvest Grape Mature Sampling'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
               const form = e.currentTarget;
@@ -2152,38 +2190,38 @@ export default function VaziModule({
                   tasteNotes: taste,
                   diseaseCondition: 'Healthy grapes',
                   estimatedHarvestDate: selectedBlock.estimatedHarvestDate,
-                  notes: `Manual grape cluster sampling recorded for vintage checkup.`
+                  notes: lang === 'ka' ? `ყურძნის მტევნის ხელით აღებული ნიმუში.` : `Manual grape cluster sampling recorded for vintage checkup.`
                 });
                 form.reset();
-                alert('Sugar accumulation sample logs saved successfully!');
+                alert(lang === 'ka' ? 'შაქრის დაგროვების ნიმუშის ჩანაწერი შენახულია!' : 'Sugar accumulation sample logs saved successfully!');
               }
             }} className="grid grid-cols-2 md:grid-cols-6 gap-4 text-xs">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Sugar Density (°Brix) *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'შაქრიანობა (°Brix) *' : 'Sugar Density (°Brix) *'}</label>
                 <input type="number" step="0.1" name="brix" defaultValue="19.5" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
               </div>
               
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Active pH *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'აქტიური pH *' : 'Active pH *'}</label>
                 <input type="number" step="0.01" name="ph" defaultValue="3.15" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Total Acidity (g/L Tartaric)</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საერთო მჟავიანობა (გ/ლ ღვინის მჟავა)' : 'Total Acidity (g/L Tartaric)'}</label>
                 <input type="number" step="0.1" name="ta" defaultValue="7.4" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Average Berry Wt (grams)</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მარცვლის საშ. წონა (გ)' : 'Average Berry Wt (grams)'}</label>
                 <input type="number" step="0.01" name="weight" defaultValue="1.20" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Seed Lignified Status</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'წიპწის სიმწიფე' : 'Seed Lignified Status'}</label>
                 <select name="seed" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none">
-                  <option value="Green">🟢 Hydrated Green</option>
-                  <option value="Yellow-brown">🟡 Semi-Brown</option>
-                  <option value="Dark brown">🟤 Lignified Dark Brown</option>
+                  <option value="Green">🟢 {lang === 'ka' ? 'მწვანე' : 'Hydrated Green'}</option>
+                  <option value="Yellow-brown">🟡 {lang === 'ka' ? 'ნახევრად ყავისფერი' : 'Semi-Brown'}</option>
+                  <option value="Dark brown">🟤 {lang === 'ka' ? 'მუქი ყავისფერი' : 'Lignified Dark Brown'}</option>
                 </select>
               </div>
 
@@ -2192,7 +2230,7 @@ export default function VaziModule({
                   type="submit"
                   className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 font-mono font-bold uppercase rounded cursor-pointer leading-tight"
                 >
-                  Save Sample
+                  {lang === 'ka' ? 'ნიმუშის შენახვა' : 'Save Sample'}
                 </button>
               </div>
             </form>
@@ -2203,7 +2241,7 @@ export default function VaziModule({
             
             {/* Recharts 1: Brix vs Berry Weight */}
             <div className="bg-white border border-[#e8dfd5] p-5 rounded-xl shadow-sm space-y-2">
-              <h5 className="font-serif font-bold text-stone-900 text-xs">Sugar Accumulation Rate (°Brix Trend)</h5>
+              <h5 className="font-serif font-bold text-stone-900 text-xs">{lang === 'ka' ? 'შაქრის დაგროვების ტემპი (°Brix ტრენდი)' : 'Sugar Accumulation Rate (°Brix Trend)'}</h5>
               <div className="h-64 mt-2">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={samplings.filter(s => s.blockId === selectedBlock.id).sort((a,b) => a.date.localeCompare(b.date))}>
@@ -2212,8 +2250,8 @@ export default function VaziModule({
                     <YAxis stroke="#888" domain={[10, 26]} fontSize={9} />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 10 }} />
-                    <Line type="monotone" dataKey="brix" name="Brix level" stroke="#801323" strokeWidth={2.5} activeDot={{ r: 6 }} />
-                    <Line type="monotone" dataKey="berryWeightG" name="Berry Weight (g)" stroke="#0ea5e9" strokeWidth={1.5} />
+                    <Line type="monotone" dataKey="brix" name={lang === 'ka' ? 'Brix დონე' : 'Brix level'} stroke="#801323" strokeWidth={2.5} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="berryWeightG" name={lang === 'ka' ? 'მარცვლის წონა (გ)' : 'Berry Weight (g)'} stroke="#0ea5e9" strokeWidth={1.5} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -2221,7 +2259,7 @@ export default function VaziModule({
 
             {/* Recharts 2: pH vs Acidity */}
             <div className="bg-white border border-[#e8dfd5] p-5 rounded-xl shadow-sm space-y-2">
-              <h5 className="font-serif font-bold text-stone-900 text-xs">pH Rise vs. Total Tartaric Acidity Decline</h5>
+              <h5 className="font-serif font-bold text-stone-900 text-xs">{lang === 'ka' ? 'pH-ის ზრდა vs. ღვინის მჟავის კლება' : 'pH Rise vs. Total Tartaric Acidity Decline'}</h5>
               <div className="h-64 mt-2">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={samplings.filter(s => s.blockId === selectedBlock.id).sort((a,b) => a.date.localeCompare(b.date))}>
@@ -2231,8 +2269,8 @@ export default function VaziModule({
                     <YAxis yAxisId="right" orientation="right" stroke="#888" domain={[4, 12]} fontSize={9} name="TA g/L" />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 10 }} />
-                    <Line yAxisId="left" type="monotone" dataKey="pH" name="pH level" stroke="#eab308" strokeWidth={2} />
-                    <Line yAxisId="right" type="monotone" dataKey="totalAcidityGL" name="Tartaric Acid (g/L)" stroke="#b45309" strokeWidth={2} />
+                    <Line yAxisId="left" type="monotone" dataKey="pH" name={lang === 'ka' ? 'pH დონე' : 'pH level'} stroke="#eab308" strokeWidth={2} />
+                    <Line yAxisId="right" type="monotone" dataKey="totalAcidityGL" name={lang === 'ka' ? 'ღვინის მჟავა (გ/ლ)' : 'Tartaric Acid (g/L)'} stroke="#b45309" strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -2254,27 +2292,27 @@ export default function VaziModule({
             <div>
               <h4 className="font-serif font-black text-sm text-[#4e0e15] flex items-center gap-1.5">
                 <BarChart3 className="w-4 h-4 text-[#801323]" />
-                Micro-Yield Calculator Estimates
+                {lang === 'ka' ? 'მოსავლიანობის კალკულატორი' : 'Micro-Yield Calculator Estimates'}
               </h4>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Predicted grape crop kilograms, tons per acre, and anticipated total juice volumes</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'ყურძნის სავარაუდო კილოგრამები, ტონა ჰექტარზე და მოსალოდნელი ტკბილის მოცულობა' : 'Predicted grape crop kilograms, tons per acre, and anticipated total juice volumes'}</p>
             </div>
 
             {/* Interactive sliders for robust yield estimation */}
             <div className="space-y-4 text-xs font-semibold text-stone-700">
               <div>
-                <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Total Vine Count on Block</label>
+                <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">{lang === 'ka' ? 'ვაზების საერთო რაოდენობა ნაკვეთზე' : 'Total Vine Count on Block'}</label>
                 <div className="bg-stone-50 border border-stone-200 p-2 text-[#4e0e15] text-sm font-black rounded font-mono">
-                  {selectedBlock.vinesCount.toLocaleString()} Vines
+                  {selectedBlock.vinesCount.toLocaleString()} {lang === 'ka' ? 'ვაზი' : 'Vines'}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Avg Grape Clusters per Vine</label>
+                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">{lang === 'ka' ? 'მტევნების საშ. რაოდენობა ვაზზე' : 'Avg Grape Clusters per Vine'}</label>
                   <input type="number" defaultValue="15" className="w-full bg-stone-50 border border-stone-200 px-2 py-1.5 font-mono" id="cluster-count" />
                 </div>
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Avg Bunch Weight (gr)</label>
+                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">{lang === 'ka' ? 'მტევნის საშ. წონა (გ)' : 'Avg Bunch Weight (gr)'}</label>
                   <input type="number" defaultValue="125" className="w-full bg-stone-50 border border-stone-200 px-2 py-1.5 font-mono" id="bunch-weight" />
                 </div>
               </div>
@@ -2299,7 +2337,7 @@ export default function VaziModule({
                 }}
                 className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 font-mono uppercase tracking-wider text-xs cursor-pointer font-extrabold rounded"
               >
-                Compute Crop Volume Projections
+                {lang === 'ka' ? 'მოსავლის მოცულობის გამოთვლა' : 'Compute Crop Volume Projections'}
               </button>
 
               <hr className="border-stone-100" />
@@ -2307,19 +2345,19 @@ export default function VaziModule({
               {/* Outputs grid */}
               <div className="grid grid-cols-2 gap-4 font-mono">
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Predicted Kg</span>
-                  <strong className="text-base text-stone-800 block mt-1" id="pred-kg">{(selectedBlock.vinesCount * 15 * 0.125).toLocaleString()} Kg</strong>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო კგ' : 'Predicted Kg'}</span>
+                  <strong className="text-base text-stone-800 block mt-1" id="pred-kg">{(selectedBlock.vinesCount * 15 * 0.125).toLocaleString()} {lang === 'ka' ? 'კგ' : 'Kg'}</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Predicted Tons</span>
-                  <strong className="text-base text-stone-800 block mt-1" id="pred-tons">{Math.round(((selectedBlock.vinesCount * 15 * 0.125) / 1000) * 10) / 10} Tons</strong>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო ტონა' : 'Predicted Tons'}</span>
+                  <strong className="text-base text-stone-800 block mt-1" id="pred-tons">{Math.round(((selectedBlock.vinesCount * 15 * 0.125) / 1000) * 10) / 10} {lang === 'ka' ? 'ტონა' : 'Tons'}</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Yield per Hectare</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'მოსავალი ჰექტარზე' : 'Yield per Hectare'}</span>
                   <strong className="text-base text-amber-700 block mt-1" id="pred-ha">{Math.round(((((selectedBlock.vinesCount * 15 * 0.125) / 1000)) / selectedBlock.area) * 10) / 10} t/ha</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Est. Wine Juice Recovery</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო ტკბილი' : 'Est. Wine Juice Recovery'}</span>
                   <strong className="text-base text-emerald-800 block mt-1" id="pred-juice">{Math.round(selectedBlock.vinesCount * 15 * 0.125 * 0.70).toLocaleString()} L</strong>
                 </div>
               </div>
@@ -2331,9 +2369,9 @@ export default function VaziModule({
             <div>
               <h4 className="font-serif font-black text-sm text-[#4e0e15] flex items-center gap-1.5">
                 <Calendar className="w-4 h-4 text-emerald-800" />
-                Active Crop Harvest & Traceability Links
+                {lang === 'ka' ? 'რთველი და მიკვლევადობის ბმულები' : 'Active Crop Harvest & Traceability Links'}
               </h4>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'დაგეგმეთ რთველი და მოსავალი პირდაპირ გადაამისამართეთ ღვინის მარნის დამუშავებაში' : 'Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing'}</p>
             </div>
 
             <div className="space-y-4">
@@ -2341,33 +2379,35 @@ export default function VaziModule({
                 <div key={harvest.id} className="p-4 border border-[#e8dfd5]/65 bg-[#FAF8F5]/50 rounded-xl space-y-3">
                   <div className="flex justify-between items-center flex-wrap gap-2">
                     <span className="text-[9px] bg-amber-100 text-amber-800 font-mono font-bold px-2 py-0.5 rounded">
-                      Planned Target Date: {harvest.estimatedHarvestDate}
+                      {lang === 'ka' ? 'დაგეგმილი თარიღი' : 'Planned Target Date'}: {harvest.estimatedHarvestDate}
                     </span>
                     <span className={`text-[9px] font-mono px-2 py-0.5 rounded font-extrabold ${harvest.sentToGvino ? 'bg-emerald-100 text-emerald-800' : 'bg-red-50 text-red-700 border border-red-200 animate-pulse'}`}>
-                      {harvest.sentToGvino ? '✅ Received in Gvino' : '⚠️ Pending Harvest Draft'}
+                      {harvest.sentToGvino
+                        ? (lang === 'ka' ? '✅ მიღებულია მარანში' : '✅ Received in Gvino')
+                        : (lang === 'ka' ? '⚠️ რთველი მოლოდინში' : '⚠️ Pending Harvest Draft')}
                     </span>
                   </div>
 
                   <div className="text-xs space-y-2">
                     <div>
-                      <strong>Variety Name:</strong> {harvest.variety} <br />
-                      <strong>Estimated Yield Weight:</strong> {harvest.estimatedTons} Tons anticipated <br />
-                      <strong>Special Harvesting Instructions:</strong> {harvest.notes}
+                      <strong>{lang === 'ka' ? 'ჯიშის სახელი:' : 'Variety Name:'}</strong> {harvest.variety} <br />
+                      <strong>{lang === 'ka' ? 'მოსავლის სავარაუდო წონა:' : 'Estimated Yield Weight:'}</strong> {harvest.estimatedTons} {lang === 'ka' ? 'ტონა (მოსალოდნელი)' : 'Tons anticipated'} <br />
+                      <strong>{lang === 'ka' ? 'რთველის სპეც. ინსტრუქციები:' : 'Special Harvesting Instructions:'}</strong> {harvest.notes}
                     </div>
 
                     {harvest.sentToGvino ? (
                       <div className="p-2.5 bg-emerald-50 border border-emerald-100 text-emerald-900 text-[11px] rounded font-mono space-y-1 block">
-                        <strong>Traceability Secured:</strong> Crop dispatch completed. <br />
-                        Corresponding Winery Lot ID: <strong className="text-stone-800 font-black">{harvest.associatedLotId}</strong>
+                        <strong>{lang === 'ka' ? 'მიკვლევადობა უზრუნველყოფილია:' : 'Traceability Secured:'}</strong> {lang === 'ka' ? 'მოსავლის გადაცემა დასრულდა.' : 'Crop dispatch completed.'} <br />
+                        {lang === 'ka' ? 'შესაბამისი მარნის პარტიის ID:' : 'Corresponding Winery Lot ID:'} <strong className="text-stone-800 font-black">{harvest.associatedLotId}</strong>
                       </div>
                     ) : (
                       <div className="pt-2">
-                        <label className="text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold">Input Actual Crop Harvest Weight (Kg)</label>
+                        <label className="text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold">{lang === 'ka' ? 'შეიყვანეთ მოსავლის ფაქტობრივი წონა (კგ)' : 'Input Actual Crop Harvest Weight (Kg)'}</label>
                         <div className="flex gap-2">
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             id={`qty-${harvest.id}`}
-                            placeholder="e.g. 12500" 
+                            placeholder={lang === 'ka' ? 'მაგ. 12500' : 'e.g. 12500'}
                             defaultValue="12000"
                             className="bg-white border border-stone-250 px-2 py-1 text-xs outline-none rounded font-mono w-28 text-stone-900"
                           />
@@ -2393,12 +2433,14 @@ export default function VaziModule({
                                 actualHarvestDate: new Date().toISOString().split('T')[0],
                                 associatedLotId: grapeLotId
                               });
-                              alert(`Traceability secured! Harvest of ${harvestedQty} Kg Ripe ${selectedBlock.grapeVariety} dispatched as Gvino Lot: ${grapeLotId}. Open Gvino to view the fermentation lot!`);
+                              alert(lang === 'ka'
+                                ? `მიკვლევადობა უზრუნველყოფილია! ${harvestedQty} კგ მომწიფებული ${selectedBlock.grapeVariety} გადაცემულია მარნის პარტიად: ${grapeLotId}. გახსენით მარანი დუღილის პარტიის სანახავად!`
+                                : `Traceability secured! Harvest of ${harvestedQty} Kg Ripe ${selectedBlock.grapeVariety} dispatched as Gvino Lot: ${grapeLotId}. Open Gvino to view the fermentation lot!`);
                               navigateTo({ module: 'gvino', tab: 'lots' });
                             }}
                             className="flex-1 bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold text-[10px] uppercase font-mono px-3.5 py-1.5 rounded cursor-pointer duration-100 flex items-center justify-center gap-1.5"
                           >
-                            <ArrowRight className="w-3.5 h-3.5" /> Dispatch Crop to Gvino Winery
+                            <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'მოსავლის გადაცემა მარანში' : 'Dispatch Crop to Gvino Winery'}
                           </button>
                         </div>
                       </div>
@@ -2409,22 +2451,22 @@ export default function VaziModule({
               {harvests.filter(h => h.blockId === selectedBlock.id).length === 0 && (
                 <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/50 p-8 text-center">
                   <Calendar className="w-10 h-10 text-amber-500/60 mx-auto mb-2" />
-                  <p className="text-xs font-bold text-amber-950">No harvest plans for this block yet</p>
-                  <p className="mt-1 text-[11px] text-amber-900/70">Use sampling to judge readiness, then send picked fruit to Gvino intake when harvest starts.</p>
+                  <p className="text-xs font-bold text-amber-950">{lang === 'ka' ? 'ამ ნაკვეთისთვის რთველის გეგმა ჯერ არ არის' : 'No harvest plans for this block yet'}</p>
+                  <p className="mt-1 text-[11px] text-amber-900/70">{lang === 'ka' ? 'გამოიყენეთ ნიმუშები მზადყოფნის შესაფასებლად, შემდეგ რთველის დაწყებისას გადაამისამართეთ ყურძენი მარნის მიღებაში.' : 'Use sampling to judge readiness, then send picked fruit to Gvino intake when harvest starts.'}</p>
                   <div className="mt-4 flex flex-col sm:flex-row justify-center gap-2">
                     <button
                       type="button"
                       onClick={() => openVaziTab('sampling', selectedBlock.id)}
                       className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-amber-900 transition-colors hover:bg-amber-100"
                     >
-                      <FlaskConical className="w-3.5 h-3.5" /> Open sampling
+                      <FlaskConical className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნიმუშების გახსნა' : 'Open sampling'}
                     </button>
                     <button
                       type="button"
                       onClick={() => navigateTo({ module: 'gvino', tab: 'intake' })}
                       className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
                     >
-                      <ArrowRight className="w-3.5 h-3.5" /> Open Gvino intake
+                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'მარნის მიღების გახსნა' : 'Open Gvino intake'}
                     </button>
                   </div>
                 </div>
@@ -2556,22 +2598,25 @@ export default function VaziModule({
             }} className="p-5 space-y-3 max-h-[80vh] overflow-y-auto pr-2">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Block Name*</label>
-                  <input type="text" name="name" placeholder="e.g. Mukuzani Sector A" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded text-stone-900" required />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნაკვეთის სახელი*' : 'Block Name*'}</label>
+                  <input type="text" name="name" placeholder={lang === 'ka' ? 'მაგ. მუკუზანი, სექტორი A' : 'e.g. Mukuzani Sector A'} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded text-stone-900" required />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Estate/Vineyard Name*</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მამულის/ვენახის სახელი*' : 'Estate/Vineyard Name*'}</label>
                   <input type="text" name="vineyardName" defaultValue="Anaklia Hills" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded" required />
                 </div>
               </div>
 
               {/* Location — search a real place (Open-Meteo geocoder) or fine-tune coordinates below */}
               <div className="bg-emerald-50/50 border border-emerald-200/70 p-3 rounded-lg space-y-2">
-                <span className="font-bold block text-emerald-900 font-mono text-[9px] uppercase tracking-wider">📍 Block Location</span>
+                <span className="font-bold block text-emerald-900 font-mono text-[9px] uppercase tracking-wider">📍 {lang === 'ka' ? 'ნაკვეთის მდებარეობა' : 'Block Location'}</span>
                 <p className="text-[10px] text-emerald-900/70 leading-relaxed">
-                  Search any place to set the block's coordinates — they drive the real-time weather station, satellite views, and disease-risk models. Fine-tune latitude/longitude manually below.
+                  {lang === 'ka'
+                    ? 'მოძებნეთ ნებისმიერი ადგილი კოორდინატების დასაყენებლად — მათზეა დამოკიდებული ამინდის სადგური, სატელიტური ხედები და დაავადების რისკის მოდელები. ქვემოთ ხელით დააზუსტეთ განედი/გრძედი.'
+                    : "Search any place to set the block's coordinates — they drive the real-time weather station, satellite views, and disease-risk models. Fine-tune latitude/longitude manually below."}
                 </p>
                 <LocationPicker
+                  lang={lang}
                   latitude={addBlockLat}
                   longitude={addBlockLng}
                   showManual={false}
@@ -2631,7 +2676,7 @@ export default function VaziModule({
                       isDrawingPolygon ? 'bg-emerald-800 text-white hover:bg-emerald-900' : 'bg-stone-200 text-stone-700 hover:bg-stone-300'
                     }`}
                   >
-                    {isDrawingPolygon ? '🛑 Stop Drawing' : '✏️ Draw Block Boundary'}
+                    {isDrawingPolygon ? (lang === 'ka' ? '🛑 დახაზვის შეჩერება' : '🛑 Stop Drawing') : (lang === 'ka' ? '✏️ ნაკვეთის საზღვრის დახაზვა' : '✏️ Draw Block Boundary')}
                   </button>
                   {isDrawingPolygon && drawnPoints.length > 0 && (
                     <button
@@ -2639,7 +2684,7 @@ export default function VaziModule({
                       onClick={() => setDrawnPoints([])}
                       className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-rose-100 hover:bg-rose-200 text-rose-800 rounded transition-colors cursor-pointer"
                     >
-                      🗑️ Clear Points ({drawnPoints.length})
+                      🗑️ {lang === 'ka' ? 'წერტილების წაშლა' : 'Clear Points'} ({drawnPoints.length})
                     </button>
                   )}
                 </div>
@@ -2647,7 +2692,7 @@ export default function VaziModule({
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Latitude</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'განედი' : 'Latitude'}</label>
                   <input 
                     type="number" 
                     step="0.0001" 
@@ -2658,7 +2703,7 @@ export default function VaziModule({
                   />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Longitude</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'გრძედი' : 'Longitude'}</label>
                   <input 
                     type="number" 
                     step="0.0001" 
@@ -2669,67 +2714,67 @@ export default function VaziModule({
                   />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Area (ha)*</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ფართობი (ჰა)*' : 'Area (ha)*'}</label>
                   <input type="number" step="0.1" name="area" defaultValue="2.5" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" required />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Elevation (Meters)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სიმაღლე (მ)' : 'Elevation (Meters)'}</label>
                   <input type="number" name="elevation" value={addBlockElev} onChange={(e) => setAddBlockElev(parseInt(e.target.value) || 0)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Location Name</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მდებარეობის სახელი' : 'Location Name'}</label>
                   <input type="text" name="locationName" value={addBlockLocName} onChange={(e) => setAddBlockLocName(e.target.value)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
               </div>
 
               <div className="bg-amber-50/60 border border-amber-200/70 p-3 rounded-lg space-y-3">
-                <span className="font-bold block text-amber-900 font-mono text-[9px] uppercase tracking-wider">Government Cadastre Mirror</span>
+                <span className="font-bold block text-amber-900 font-mono text-[9px] uppercase tracking-wider">{lang === 'ka' ? 'სახელმწიფო საკადასტრო მონაცემები' : 'Government Cadastre Mirror'}</span>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Cadastral Code</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საკადასტრო კოდი' : 'Cadastral Code'}</label>
                     <input type="text" name="cadastralCode" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Cadastre Document</label>
-                    <input type="text" name="officialCadastreDocumentName" placeholder="file or registry ref" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საკადასტრო დოკუმენტი' : 'Cadastre Document'}</label>
+                    <input type="text" name="officialCadastreDocumentName" placeholder={lang === 'ka' ? 'ფაილი ან რეესტრის ნომერი' : 'file or registry ref'} className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Parcel Name</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნაკვეთის დასახელება' : 'Parcel Name'}</label>
                     <input type="text" name="parcelName" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Municipality</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
                     <input type="text" name="municipality" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Community</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'თემი' : 'Community'}</label>
                     <input type="text" name="community" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Village</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სოფელი' : 'Village'}</label>
                     <input type="text" name="village" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Microzone / PDO</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მიკროზონა / PDO' : 'Microzone / PDO'}</label>
                     <input type="text" name="microzone" list="vazi-georgian-microzone-options" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Parcel Area (ha)</label>
-                    <input type="number" min="0" step="0.01" name="parcelArea" placeholder="defaults to area" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნაკვეთის ფართობი (ჰა)' : 'Parcel Area (ha)'}</label>
+                    <input type="number" min="0" step="0.01" name="parcelArea" placeholder={lang === 'ka' ? 'ავტომატურად ფართობიდან' : 'defaults to area'} className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Land Owner</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მიწის მესაკუთრე' : 'Land Owner'}</label>
                     <input type="text" name="landOwner" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Grower</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მევენახე' : 'Grower'}</label>
                     <input type="text" name="grower" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                 </div>
@@ -2737,49 +2782,49 @@ export default function VaziModule({
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Grape Variety *</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ყურძნის ჯიში *' : 'Grape Variety *'}</label>
                   <input type="text" name="variety" defaultValue="Saperavi" list="vazi-georgian-variety-options" className="w-full bg-stone-55 border border-slate-200 px-2 py-1 outline-none font-bold text-stone-800" required />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Year</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დარგვის წელი' : 'Planting Year'}</label>
                   <input type="number" name="plantYear" defaultValue="2008" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Rows count</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'რიგების რაოდენობა' : 'Rows count'}</label>
                   <input type="number" name="rows" defaultValue="60" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Spacing & Row density</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დარგვის სქემა და რიგების სიმჭიდროვე' : 'Planting Spacing & Row density'}</label>
                 <input type="text" name="spacing" defaultValue="2.5m x 1.0m" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Rootstock</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საძირე' : 'Rootstock'}</label>
                   <input type="text" name="rootstock" placeholder="5C, SO4" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Clone</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'კლონი' : 'Clone'}</label>
                   <input type="text" name="clone" placeholder="Saperavi 06" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Vineyard Condition</label>
-                  <input type="text" name="vineyardCondition" placeholder="productive" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ვენახის მდგომარეობა' : 'Vineyard Condition'}</label>
+                  <input type="text" name="vineyardCondition" placeholder={lang === 'ka' ? 'პროდუქტიული' : 'productive'} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Agronomist Remarks</label>
-                <textarea name="notes" placeholder="Old Saperavi clones on 5C rootstocks..." className="w-full bg-stone-50 border border-slate-200 p-2.5 h-16 outline-none" />
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'აგრონომის შენიშვნები' : 'Agronomist Remarks'}</label>
+                <textarea name="notes" placeholder={lang === 'ka' ? 'ძველი საფერავის კლონები 5C საძირეზე...' : 'Old Saperavi clones on 5C rootstocks...'} className="w-full bg-stone-50 border border-slate-200 p-2.5 h-16 outline-none" />
               </div>
 
               <button 
                 type="submit"
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-mono font-bold uppercase tracking-wider py-2.5 rounded-lg cursor-pointer"
               >
-                Register Block Sector
+                {lang === 'ka' ? 'ნაკვეთის რეგისტრაცია' : 'Register Block Sector'}
               </button>
             </form>
           </div>
