@@ -190,7 +190,7 @@ export default function TransfersTab({
             description: `Merged ${finalTransferArrival}L of ${sourceLot.name} (${pctSource}%) with ${prevDestAmount}L of ${destLot.name} (${pctDest}%). Predicted ABV: ${predictedBlend?.abv}%, pH: ${predictedBlend?.ph}.`,
             operator: operatorName || 'Cuviste master'
           },
-          ...destLot.history
+          ...(destLot.history || [])
         ]
       };
 
@@ -213,7 +213,7 @@ export default function TransfersTab({
                   description: `Pumped ${transferVol}L out of ${sourceVessel.id} to ${destVessel.id}. Logged loss: ${lossVol}L. Hoses sanitized.`,
                   operator: operatorName || 'Cuviste'
                 },
-                ...l.history
+                ...(l.history || [])
               ]
             };
           }

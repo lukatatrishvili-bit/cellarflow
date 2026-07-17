@@ -1675,7 +1675,7 @@ export function useWineryState() {
           return {
             ...l,
             history: [
-              ...l.history,
+              ...(l.history || []),
               {
                 date: new Date().toISOString().split('T')[0],
                 type: 'Lab Analysis Audit',

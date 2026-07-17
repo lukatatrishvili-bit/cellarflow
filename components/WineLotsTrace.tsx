@@ -877,7 +877,7 @@ export default function WineLotsTrace({
                                         description: transitionNotes,
                                         operator: transitionOperator
                                       },
-                                      ...l.history
+                                      ...(l.history || [])
                                     ]
                                   };
                                 }
@@ -908,7 +908,9 @@ export default function WineLotsTrace({
               </h4>
 
               <div className="relative pl-6 border-l border-[#f5efe9] space-y-5">
-                {selectedLot.history.map((hist, index) => (
+                {/* Guard: lots hydrated from imports/API can arrive without history —
+                    a missing array must not crash the whole app (root ErrorBoundary). */}
+                {(selectedLot.history || []).map((hist, index) => (
                   <div key={index} className="relative">
                     {/* Circle Node indicator */}
                     <div className="absolute -left-[30px] top-1 w-3 h-3 bg-[#4e0e15] ring-4 ring-[#FAF8F5] rounded-full flex items-center justify-center border border-white" />

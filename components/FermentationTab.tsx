@@ -154,7 +154,7 @@ export default function FermentationTab({
                 description: `Density: ${logDensity} SG, Sugar: ${logSugar} g/L, Temp: ${logTemp}°C. Cap: ${logCap}. Note: ${logNotes.trim() || 'No notes entered'}`,
                 operator: currentUser.fullName
               },
-              ...l.history
+              ...(l.history || [])
             ]
           };
         })),
@@ -217,7 +217,7 @@ export default function FermentationTab({
                 description: 'Primary yeast fermentation fully concluded. Dry status verified. Transferred or stabilized for MLF secondary inoculation.',
                 operator: currentUser.fullName
               },
-              ...l.history
+              ...(l.history || [])
             ]
           };
         }
