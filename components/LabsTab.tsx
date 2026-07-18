@@ -93,31 +93,31 @@ export default function LabsTab({
       {/* Lab Add entry */}
       {canCreateLabAnalysis && (
         <div className="md:col-span-1 p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm">
-          <h3 className="text-sm font-serif font-bold text-[#4e0e15] border-b border-slate-100 pb-2 mb-4">Add Lab Readings</h3>
+          <h3 className="text-sm font-serif font-bold text-[#4e0e15] border-b border-slate-100 pb-2 mb-4">{lang === 'ka' ? 'ლაბორატორიული ანალიზის დამატება' : 'Add Lab Readings'}</h3>
           <form onSubmit={handleAddLabLog} className="space-y-3">
           <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Wine Lot Code</label>
+            <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'ღვინის პარტიის კოდი' : 'Wine Lot Code'}</label>
             <select
               required
               value={labLotId}
               onChange={(e) => setLabLotId(e.target.value)}
               className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
             >
-              <option value="">-- Choose Lot --</option>
+              <option value="">{lang === 'ka' ? '-- აირჩიეთ პარტია --' : '-- Choose Lot --'}</option>
               {lots.map(l => (
                 <option key={l.id} value={l.id}>{l.name}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Vessel Tank</label>
+            <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'ჭურჭელი' : 'Vessel Tank'}</label>
             <select
               required
               value={labTankId}
               onChange={(e) => setLabTankId(e.target.value)}
               className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
             >
-              <option value="">-- Choose Vessel --</option>
+              <option value="">{lang === 'ka' ? '-- აირჩიეთ ჭურჭელი --' : '-- Choose Vessel --'}</option>
               {vessels.filter(v => v.currentVolume > 0).map(v => (
                 <option key={v.id} value={v.id}>{v.id}</option>
               ))}
@@ -133,7 +133,7 @@ export default function LabsTab({
               />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Volatile Acid (VA g/L)</label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'აქროლადი მჟავა (VA გ/ლ)' : 'Volatile Acid (VA g/L)'}</label>
               <input 
                 type="number" step="0.01" value={labVA}
                 onChange={(e) => setLabVA(parseFloat(e.target.value) || 0)}
@@ -143,7 +143,7 @@ export default function LabsTab({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Free SO₂ mg/L</label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'თავისუფალი SO₂ მგ/ლ' : 'Free SO₂ mg/L'}</label>
               <input 
                 type="number" value={labFSO2}
                 onChange={(e) => setLabFSO2(parseInt(e.target.value) || 0)}
@@ -151,7 +151,7 @@ export default function LabsTab({
               />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Total SO₂ mg/L</label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'საერთო SO₂ მგ/ლ' : 'Total SO₂ mg/L'}</label>
               <input 
                 type="number" value={labTSO2}
                 onChange={(e) => setLabTSO2(parseInt(e.target.value) || 0)}
@@ -161,7 +161,7 @@ export default function LabsTab({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Sugar residual (g/L)</label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'ნარჩენი შაქარი (გ/ლ)' : 'Sugar residual (g/L)'}</label>
               <input 
                 type="number" step="0.1" value={labResidualSugar}
                 onChange={(e) => setLabResidualSugar(parseFloat(e.target.value) || 0)}
@@ -169,7 +169,7 @@ export default function LabsTab({
               />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Lactic Acid (g/L)</label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'რძემჟავა (გ/ლ)' : 'Lactic Acid (g/L)'}</label>
               <input 
                 type="number" step="0.1" value={labLactic}
                 onChange={(e) => setLabLactic(parseFloat(e.target.value) || 0)}
@@ -179,7 +179,7 @@ export default function LabsTab({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Titratable Acidity (TA g/L)</label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'ტიტრული მჟავიანობა (TA გ/ლ)' : 'Titratable Acidity (TA g/L)'}</label>
               <input 
                 type="number" step="0.1" value={labTA}
                 onChange={(e) => setLabTA(parseFloat(e.target.value) || 0)}
@@ -187,7 +187,7 @@ export default function LabsTab({
               />
             </div>
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">Turbidity (NTU)</label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'სიმღვრივე (NTU)' : 'Turbidity (NTU)'}</label>
               <input 
                 type="number" value={labTurbidity}
                 onChange={(e) => setLabTurbidity(parseInt(e.target.value) || 0)}
@@ -199,7 +199,7 @@ export default function LabsTab({
             type="submit"
             className="w-full py-1.5 bg-[#4e0e15] hover:bg-[#6b151e] text-white text-xs font-semibold rounded cursor-pointer"
           >
-            Commit Lab Reads
+            {lang === 'ka' ? 'ანალიზის შენახვა' : 'Commit Lab Reads'}
           </button>
           </form>
         </div>
@@ -208,9 +208,9 @@ export default function LabsTab({
       {/* Lab reports database */}
       <div className={`${canCreateLabAnalysis ? 'md:col-span-2' : 'md:col-span-3'} p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm text-stone-800 space-y-4`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
-          <h3 className="text-sm font-serif font-bold text-[#4e0e15]">Lab Chemical History Log</h3>
+          <h3 className="text-sm font-serif font-bold text-[#4e0e15]">{lang === 'ka' ? 'ლაბორატორიული ქიმიის ისტორია' : 'Lab Chemical History Log'}</h3>
           <span className="text-xs text-slate-500 font-mono">
-            Total: {labLogs.length} records
+            {lang === 'ka' ? `სულ: ${labLogs.length} ჩანაწერი` : `Total: ${labLogs.length} records`}
           </span>
         </div>
 
@@ -218,37 +218,37 @@ export default function LabsTab({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-[#FAF8F5] p-3.5 border border-[#e8dfd5] rounded-xl">
           <div>
             <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1">
-              Filter Wine Type / Class
+              {lang === 'ka' ? 'ფილტრი: ღვინის ტიპი / კლასი' : 'Filter Wine Type / Class'}
             </label>
             <select
               value={labFilterType}
               onChange={(e) => setLabFilterType(e.target.value)}
               className="px-2 py-1 text-xs border border-stone-200 rounded-lg bg-white text-stone-705 outline-none w-full"
             >
-              <option value="all">🍷 All Wine Classes</option>
-              <option value="red">🔴 Red Wine</option>
-              <option value="white">🟡 White Wine</option>
-              <option value="rose">💗 Rosé Wine</option>
-              <option value="amber">🟠 Amber / Traditional</option>
-              <option value="sparkling">🫧 Sparkling</option>
-              <option value="fortified">🥃 Fortified / Base</option>
+              <option value="all">🍷 {lang === 'ka' ? 'ყველა კლასი' : 'All Wine Classes'}</option>
+              <option value="red">🔴 {lang === 'ka' ? 'წითელი ღვინო' : 'Red Wine'}</option>
+              <option value="white">🟡 {lang === 'ka' ? 'თეთრი ღვინო' : 'White Wine'}</option>
+              <option value="rose">💗 {lang === 'ka' ? 'ვარდისფერი ღვინო' : 'Rosé Wine'}</option>
+              <option value="amber">🟠 {lang === 'ka' ? 'ქარვისფერი / ტრადიციული' : 'Amber / Traditional'}</option>
+              <option value="sparkling">🫧 {lang === 'ka' ? 'ცქრიალა' : 'Sparkling'}</option>
+              <option value="fortified">🥃 {lang === 'ka' ? 'შემაგრებული' : 'Fortified / Base'}</option>
             </select>
           </div>
           <div>
             <label className="block text-[10px] font-mono uppercase text-slate-500 font-bold mb-1">
-              Filter Age / Vintage
+              {lang === 'ka' ? 'ფილტრი: ასაკი / მოსავალი' : 'Filter Age / Vintage'}
             </label>
             <select
               value={labFilterAge}
               onChange={(e) => setLabFilterAge(e.target.value)}
               className="px-2 py-1 text-xs border border-stone-200 rounded-lg bg-white text-stone-750 outline-none w-full"
             >
-              <option value="all">📅 All Vintages / Ages</option>
-              <option value="young">🌱 Young (&lt; 1 Year)</option>
-              <option value="aging">🍇 Aging (1-2 Years)</option>
-              <option value="aged">🪵 Barrel Reserve (3+ Years)</option>
-              <option value="2025">Vintage 2025</option>
-              <option value="2024">Vintage 2024</option>
+              <option value="all">📅 {lang === 'ka' ? 'ყველა მოსავალი / ასაკი' : 'All Vintages / Ages'}</option>
+              <option value="young">🌱 {lang === 'ka' ? 'ახალგაზრდა (< 1 წელი)' : 'Young (< 1 Year)'}</option>
+              <option value="aging">🍇 {lang === 'ka' ? 'დავარგებაში (1-2 წელი)' : 'Aging (1-2 Years)'}</option>
+              <option value="aged">🪵 {lang === 'ka' ? 'რეზერვი (3+ წელი)' : 'Barrel Reserve (3+ Years)'}</option>
+              <option value="2025">{lang === 'ka' ? 'მოსავალი 2025' : 'Vintage 2025'}</option>
+              <option value="2024">{lang === 'ka' ? 'მოსავალი 2024' : 'Vintage 2024'}</option>
             </select>
           </div>
         </div>
@@ -303,23 +303,23 @@ export default function LabsTab({
                       <span className="text-[#801323]">🍷</span>
                       <span>{lot ? lot.name : log.lotId} ({log.tankId})</span>
                       <span className="px-1.5 py-0.5 text-[9px] font-bold text-slate-400 bg-slate-200/55 rounded uppercase">
-                        {lot ? lot.wineClass : 'Unknown'}
+                        {lot ? lot.wineClass : (lang === 'ka' ? 'უცნობი' : 'Unknown')}
                       </span>
                       <span className="px-1.5 py-0.5 text-[9px] font-mono text-indigo-700 bg-indigo-50 rounded">
-                        {lot ? `${lot.vintage} Vintage` : ''}
+                        {lot ? (lang === 'ka' ? `მოსავალი ${lot.vintage}` : `${lot.vintage} Vintage`) : ''}
                       </span>
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">{log.date}</span>
                   </div>
                   <div className="grid grid-cols-4 gap-3 text-[10px] text-slate-500 font-mono mt-3">
                     <div>ABV%: <strong className="text-slate-800 font-bold block">{log.alcoholPct}% vol</strong></div>
-                    <div>Free SO₂: <strong className={`block ${lowSo2 ? 'text-red-600 font-black' : 'text-slate-800'}`}>{log.freeSo2} mg/L {lowSo2 && '⚠️ LOW!'}</strong></div>
-                    <div>Volatile Acid: <strong className={`block ${highVa ? 'text-red-600 font-black' : 'text-slate-800'}`}>{log.volatileAcid} g/L {highVa && '⚠️ HIGH!'}</strong></div>
-                    <div>Titratable Acid: <strong className="text-[#4e0e15] font-black block">{log.titratableAcidity !== undefined ? log.titratableAcidity : 6.0} g/L</strong></div>
-                    <div>Sugar raw: <strong className="text-slate-800 block">{log.residualSugar} g/L</strong></div>
-                    <div>Malic: <strong className="text-slate-800 block">{log.malicAcid} g/L</strong></div>
-                    <div>Lactic: <strong className="text-slate-800 block">{log.lacticAcid} g/L</strong></div>
-                    <div>Turbidity: <strong className="text-slate-800 block">{log.turbidity !== undefined ? log.turbidity : 20} NTU</strong></div>
+                    <div>{lang === 'ka' ? 'თავის. SO₂' : 'Free SO₂'}: <strong className={`block ${lowSo2 ? 'text-red-600 font-black' : 'text-slate-800'}`}>{log.freeSo2} mg/L {lowSo2 && (lang === 'ka' ? '⚠️ დაბალი!' : '⚠️ LOW!')}</strong></div>
+                    <div>{lang === 'ka' ? 'აქროლადი მჟავა' : 'Volatile Acid'}: <strong className={`block ${highVa ? 'text-red-600 font-black' : 'text-slate-800'}`}>{log.volatileAcid} g/L {highVa && (lang === 'ka' ? '⚠️ მაღალი!' : '⚠️ HIGH!')}</strong></div>
+                    <div>{lang === 'ka' ? 'ტიტრული მჟავა' : 'Titratable Acid'}: <strong className="text-[#4e0e15] font-black block">{log.titratableAcidity !== undefined ? log.titratableAcidity : 6.0} g/L</strong></div>
+                    <div>{lang === 'ka' ? 'ნარჩენი შაქარი' : 'Sugar raw'}: <strong className="text-slate-800 block">{log.residualSugar} g/L</strong></div>
+                    <div>{lang === 'ka' ? 'ვაშლმჟავა' : 'Malic'}: <strong className="text-slate-800 block">{log.malicAcid} g/L</strong></div>
+                    <div>{lang === 'ka' ? 'რძემჟავა' : 'Lactic'}: <strong className="text-slate-800 block">{log.lacticAcid} g/L</strong></div>
+                    <div>{lang === 'ka' ? 'სიმღვრივე' : 'Turbidity'}: <strong className="text-slate-800 block">{log.turbidity !== undefined ? log.turbidity : 20} NTU</strong></div>
                   </div>
                 </div>
               );
