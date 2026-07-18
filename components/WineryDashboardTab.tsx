@@ -411,7 +411,7 @@ export default function WineryDashboardTab({
           {chartableLotIds.length === 0 ? (
             <EmptyState icon={Activity} title={isKa ? 'დუღილის ჩანაწერები ჯერ არ არის' : 'No fermentation readings yet'} description={isKa ? 'ჩაწერეთ პირველი დღიური სიმკვრივე და ტემპერატურა მრუდის დასაწყებად.' : 'Log the first daily density and temperature reading to start the curve.'} />
           ) : (
-            <FermentationCurveChart logs={fermLogs} selectedLotId={selectedChartLotId} />
+            <FermentationCurveChart logs={fermLogs} selectedLotId={selectedChartLotId} lang={lang} />
           )}
         </SectionCard>
         )}

@@ -7,9 +7,12 @@ import type { DailyFermLog } from '../lib/wineryState';
 interface FermentationCurveChartProps {
   logs: DailyFermLog[];
   selectedLotId: string;
+  /** UI language; only 'ka' has translations. */
+  lang?: string;
 }
 
-export default function FermentationCurveChart({ logs, selectedLotId }: FermentationCurveChartProps) {
+export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en' }: FermentationCurveChartProps) {
+  const isKa = lang === 'ka';
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -350,7 +353,7 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
         .style('font-size', '8px')
         .style('fill', '#d97706')
         .style('font-weight', 'bold')
-        .text('Est. Dry');
+        .text(isKa ? 'სავარ. მშრალი' : 'Est. Dry');
     }
 
     // Draw Axes
@@ -451,14 +454,14 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
       });
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeLogsKey, dimensions]);
+  }, [activeLogsKey, dimensions, isKa]);
 
   return (
     <div className="w-full relative select-none">
       {activeLogs.length === 0 ? (
         <div className="h-48 border border-[#e8dfd5] border-dashed rounded-xl bg-[#FAF8F5] flex flex-col items-center justify-center text-slate-400 p-4">
-          <p className="text-xs font-semibold">No fermentation tracking records found on selected Wine Lot.</p>
-          <p className="text-[10px] mt-1">Select an active fermenting lot or post a Daily Log to trace curves.</p>
+          <p className="text-xs font-semibold">{isKa ? 'არჩეულ პარტიაზე დუღილის ჩანაწერები არ მოიძებნა.' : 'No fermentation tracking records found on selected Wine Lot.'}</p>
+          <p className="text-[10px] mt-1">{isKa ? 'აირჩიეთ აქტიური დუღილის პარტია ან ჩაწერეთ დღიური ჩანაწერი მრუდების სანახავად.' : 'Select an active fermenting lot or post a Daily Log to trace curves.'}</p>
         </div>
       ) : (
         <div ref={containerRef} className="w-full bg-[#FCFAF8] border border-[#f0e6da] rounded-xl p-3 relative pt-14">
@@ -468,17 +471,19 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
               {forecastInfo.latestDensity <= 0.990 ? (
                 <div className="bg-emerald-950/90 text-emerald-300 text-[10px] font-mono px-3 py-1.5 rounded-xl border border-emerald-800 shadow-md backdrop-blur-xs flex items-center gap-2 font-bold">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-                  <span>Lot is Dry (SG ≤ 0.990)</span>
+                  <span>{isKa ? 'პარტია მშრალია (SG ≤ 0.990)' : 'Lot is Dry (SG ≤ 0.990)'}</span>
                 </div>
               ) : forecastInfo.isStuck ? (
                 <div className="bg-rose-950/90 text-rose-300 text-[10px] font-mono px-3 py-1.5 rounded-xl border border-rose-800 shadow-md backdrop-blur-xs flex items-center gap-2 font-bold animate-pulse">
                   <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-                  <span>Fermentation Stuck / Flatline (Slope: {forecastInfo.slopeText} SG/day)</span>
+                  <span>{isKa ? `დუღილი გაჩერდა (ვარდნა: ${forecastInfo.slopeText} SG/დღე)` : `Fermentation Stuck / Flatline (Slope: ${forecastInfo.slopeText} SG/day)`}</span>
                 </div>
               ) : (
                 <div className="bg-[#1e2f23]/95 text-emerald-250 text-[10px] font-mono px-3 py-1.5 rounded-xl border border-emerald-900 shadow-md backdrop-blur-xs flex items-center gap-2 font-bold">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                  <span>Projected Dry: {forecastInfo.days} days ({forecastInfo.dateStr}) | Rate: {forecastInfo.slopeText} SG/day</span>
+                  <span>{isKa
+                    ? `სავარაუდო სიმშრალე: ${forecastInfo.days} დღეში (${forecastInfo.dateStr}) | ტემპი: ${forecastInfo.slopeText} SG/დღე`
+                    : `Projected Dry: ${forecastInfo.days} days (${forecastInfo.dateStr}) | Rate: ${forecastInfo.slopeText} SG/day`}</span>
                 </div>
               )}
             </div>
@@ -496,16 +501,16 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-0.5 bg-[#801323] inline-block"></span>
               <span className="w-2 h-2 rounded-full border border-[#801323] bg-white inline-block -ml-3 mr-1"></span>
-              <span className="text-[#801323]">Sugar Depletion (g/L)</span>
+              <span className="text-[#801323]">{isKa ? 'შაქრის კლება (გ/ლ)' : 'Sugar Depletion (g/L)'}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-0.5 bg-[#d97706] border-dashed border-t-2 border-spacing-2 inline-block"></span>
               <span className="w-2 h-2 rounded-full border border-[#d97706] bg-white inline-block -ml-3 mr-1"></span>
-              <span className="text-[#d97706]">Alcohol Density (SG Gravity)</span>
+              <span className="text-[#d97706]">{isKa ? 'სიმკვრივე (SG)' : 'Alcohol Density (SG Gravity)'}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-0.5 bg-[#94a3b8] border-dashed inline-block"></span>
-              <span className="text-[#94a3b8]">Target Kinetic Profile (SG)</span>
+              <span className="text-[#94a3b8]">{isKa ? 'სამიზნე კინეტიკური პროფილი (SG)' : 'Target Kinetic Profile (SG)'}</span>
             </div>
           </div>
         </div>
@@ -518,26 +523,26 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
           style={{ left: `${tooltipPos.x}px`, top: `${tooltipPos.y}px` }}
         >
           <div className="flex items-center justify-between border-b border-stone-800 pb-1 font-mono text-[10px] text-stone-400">
-            <span>Date: {hoveredPoint.date}</span>
-            <span>Tank: {hoveredPoint.tankId}</span>
+            <span>{isKa ? 'თარიღი' : 'Date'}: {hoveredPoint.date}</span>
+            <span>{isKa ? 'ჭურჭელი' : 'Tank'}: {hoveredPoint.tankId}</span>
           </div>
           <div className="grid grid-cols-2 gap-x-2 gap-y-1">
             <div>
-              <span className="text-stone-400 text-[10px] block">Sugar:</span>
+              <span className="text-stone-400 text-[10px] block">{isKa ? 'შაქარი:' : 'Sugar:'}</span>
               <strong className="text-rose-400 font-bold">{hoveredPoint.sugar} g/L</strong>
             </div>
             <div>
-              <span className="text-stone-400 text-[10px] block">Density:</span>
+              <span className="text-stone-400 text-[10px] block">{isKa ? 'სიმკვრივე:' : 'Density:'}</span>
               <strong className="text-amber-400 font-mono font-bold">
-                {hoveredPoint.density} SG <span className="text-stone-500 font-normal">({(hoveredPoint as any).targetDensity?.toFixed(3)} target)</span>
+                {hoveredPoint.density} SG <span className="text-stone-500 font-normal">({(hoveredPoint as any).targetDensity?.toFixed(3)} {isKa ? 'სამიზნე' : 'target'})</span>
               </strong>
             </div>
             <div>
-              <span className="text-stone-400 text-[10px] block">Temperature:</span>
+              <span className="text-stone-400 text-[10px] block">{isKa ? 'ტემპერატურა:' : 'Temperature:'}</span>
               <strong className="text-stone-200">{hoveredPoint.temperature} °C</strong>
             </div>
             <div>
-              <span className="text-stone-400 text-[10px] block">pH Level:</span>
+              <span className="text-stone-400 text-[10px] block">{isKa ? 'pH დონე:' : 'pH Level:'}</span>
               <strong className="text-stone-200">{hoveredPoint.ph} pH</strong>
             </div>
           </div>
@@ -547,9 +552,9 @@ export default function FermentationCurveChart({ logs, selectedLotId }: Fermenta
             </div>
           )}
           <div className="text-[10px] text-stone-400 flex flex-wrap gap-x-2 border-t border-stone-800 pt-1">
-            <span>Cap: {hoveredPoint.capManagement || 'None'}</span>
+            <span>{isKa ? 'ქუდი' : 'Cap'}: {hoveredPoint.capManagement || (isKa ? 'არაფერი' : 'None')}</span>
             {hoveredPoint.additives && hoveredPoint.additives !== 'None' && (
-              <span className="text-orange-400">Nutrients: {hoveredPoint.additives}</span>
+              <span className="text-orange-400">{isKa ? 'ნუტრიენტები' : 'Nutrients'}: {hoveredPoint.additives}</span>
             )}
           </div>
         </div>
