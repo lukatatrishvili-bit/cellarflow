@@ -25,7 +25,7 @@ import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import type { Language } from '../lib/i18n';
 import { isActiveReservation } from '../lib/sales';
-import { stageLabel as sharedStageLabel } from '../lib/enumLabels';
+import { stageLabel as sharedStageLabel, vesselTypeLabel } from '../lib/enumLabels';
 import { StatusBadge } from './ui/primitives';
 
 interface Props {
@@ -223,7 +223,7 @@ export default function WineLotCommandCenter({
                   >
                     <span>
                       <strong className="block text-xs text-stone-900 dark:text-amber-100">{vessel.id}</strong>
-                      <span className="text-[10px] text-stone-400">{vessel.type.replace(/_/g, ' ')} · {vessel.temperature}°C</span>
+                      <span className="text-[10px] text-stone-400">{vesselTypeLabel(vessel.type, lang)} · {vessel.temperature}°C</span>
                     </span>
                     <span className="text-[10px] font-mono font-bold text-stone-500">{vessel.currentVolume.toLocaleString()} L</span>
                   </button>

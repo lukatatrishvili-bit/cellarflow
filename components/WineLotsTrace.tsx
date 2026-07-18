@@ -6,7 +6,7 @@ import type { Language } from '../lib/i18n';
 import type { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
-import { stageLabel } from '../lib/enumLabels';
+import { stageLabel, vesselTypeLabel } from '../lib/enumLabels';
 import WineLotCommandCenter from './WineLotCommandCenter';
 import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
 
@@ -222,7 +222,9 @@ export default function WineLotsTrace({
                       : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  {cls}
+                  {lang === 'ka'
+                    ? ({all: 'ყველა', red: 'წითელი', white: 'თეთრი', amber: 'ქარვისფერი'} as Record<string, string>)[cls] || cls
+                    : cls}
                 </button>
               ))}
             </div>
@@ -406,8 +408,10 @@ export default function WineLotsTrace({
                     <span className="text-[9px] font-mono px-1 py-0.2 bg-slate-100 text-slate-500 border rounded font-bold shrink-0">{l.id}</span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[10px] text-slate-400 capitalize">{l.wineClass} Wine</span>
-                    <span className="text-[10px] text-slate-400 font-medium">Vol: {l.currentVolume}L</span>
+                    <span className="text-[10px] text-slate-400 capitalize">{lang === 'ka'
+                      ? ({red_dry: 'წითელი მშრალი', white_dry: 'თეთრი მშრალი', amber_dry: 'ქარვისფერი მშრალი', rose: 'ვარდისფერი', red_semi_sweet: 'წითელი ნახევრადტკბილი', white_semi_sweet: 'თეთრი ნახევრადტკბილი'} as Record<string, string>)[l.wineClass] || l.wineClass
+                      : `${l.wineClass} Wine`}</span>
+                    <span className="text-[10px] text-slate-400 font-medium">{lang === 'ka' ? 'მოც.' : 'Vol'}: {l.currentVolume}L</span>
                   </div>
                 </div>
                 <ChevronRight className={`w-4 h-4 shrink-0 transition-transform ${isSelected ? 'translate-x-1 text-[#4e0e15]' : 'text-slate-300'}`} />
@@ -606,7 +610,7 @@ export default function WineLotsTrace({
               </div>
               <div>
                 <span className="text-[9px] text-slate-400 font-mono block uppercase text-red-800/80">Active Balance</span>
-                <strong className="text-slate-700 font-bold text-xs">{selectedLot.currentVolume} Liters</strong>
+                <strong className="text-slate-700 font-bold text-xs">{selectedLot.currentVolume} {lang === 'ka' ? 'ლიტრი' : 'Liters'}</strong>
               </div>
             </div>
 
@@ -629,15 +633,15 @@ export default function WineLotsTrace({
                         {containingVessels.map(v => (
                           <div key={v.id} className="p-3 bg-white border border-stone-200 rounded-lg flex items-center justify-between shadow-3xs dark:bg-stone-950 dark:border-stone-850">
                             <div>
-                              <strong className="text-xs font-sans text-stone-900 block dark:text-amber-100">{v.id} ({v.type.replace('_', ' ')})</strong>
-                              <span className="text-[10px] text-slate-400 block font-mono">Temp: {v.temperature}°C • Vol: {v.currentVolume} L</span>
+                              <strong className="text-xs font-sans text-stone-900 block dark:text-amber-100">{v.id} ({vesselTypeLabel(v.type, lang)})</strong>
+                              <span className="text-[10px] text-slate-400 block font-mono">{lang === 'ka' ? 'ტემპ.' : 'Temp'}: {v.temperature}°C • {lang === 'ka' ? 'მოც.' : 'Vol'}: {v.currentVolume} L</span>
                             </div>
                             {setSelectedTankId && (
                               <button
                                 onClick={() => setSelectedTankId(v.id)}
                                 className="px-2 py-1 text-[9px] font-bold text-white bg-[#4e0e15] hover:bg-[#801323] rounded transition-colors cursor-pointer"
                               >
-                                View Drawer
+                                {lang === 'ka' ? 'დეტალების ნახვა' : 'View Drawer'}
                               </button>
                             )}
                           </div>
@@ -716,14 +720,14 @@ export default function WineLotsTrace({
                     ) : (
                       <div className="space-y-2 text-center py-2">
                         <p className="text-xs text-slate-455 italic font-mono">
-                          No lab measurements logged for this lot code.
+                          {lang === 'ka' ? 'ამ პარტიაზე ლაბორატორიული ანალიზები არ არის ჩაწერილი.' : 'No lab measurements logged for this lot code.'}
                         </p>
                         {setActiveTab && (
                           <button
                             onClick={() => setActiveTab('labs')}
                             className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-white bg-[#4e0e15] hover:bg-[#801323] rounded transition-colors cursor-pointer"
                           >
-                            ➕ Initialize Chemistry Panel
+                            ➕ {lang === 'ka' ? 'ქიმიური პანელის დაწყება' : 'Initialize Chemistry Panel'}
                           </button>
                         )}
                       </div>
@@ -765,7 +769,7 @@ export default function WineLotsTrace({
                       }}
                       className="px-2 py-1 text-[10px] font-bold text-white bg-[#801323] hover:bg-[#4e0e15] rounded transition-all cursor-pointer shadow-2xs"
                     >
-                      Advance / Modify Stage
+                      {lang === 'ka' ? 'ეტაპის შეცვლა' : 'Advance / Modify Stage'}
                     </button>}
                   </div>
 
@@ -810,12 +814,12 @@ export default function WineLotsTrace({
                   {canUpdateLot && showTransitionForm && (
                     <div className="bg-white border border-stone-200 p-4 rounded-xl space-y-3.5 shadow-2xs text-xs dark:bg-stone-950 dark:border-stone-800">
                       <h5 className="font-bold text-[#4e0e15] border-b border-stone-100 pb-1.5 uppercase text-[10px] tracking-wide dark:text-amber-100 dark:border-stone-850">
-                        Log Stage Transition
+                        {lang === 'ka' ? 'ეტაპის გადასვლის ჩაწერა' : 'Log Stage Transition'}
                       </h5>
                       
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">Target Stage</label>
+                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სამიზნე ეტაპი' : 'Target Stage'}</label>
                           <select
                             value={transitionTarget}
                             onChange={(e) => setTransitionTarget(e.target.value as WinemakingStage)}
@@ -829,20 +833,20 @@ export default function WineLotsTrace({
                           </select>
                         </div>
                         <div className="sm:col-span-2">
-                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">Operator / Cellarer</label>
+                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ოპერატორი / მემარნე' : 'Operator / Cellarer'}</label>
                           <input
                             type="text"
                             value={transitionOperator}
                             onChange={(e) => setTransitionOperator(e.target.value)}
                             className="w-full bg-[#FAF8F5] border border-stone-200 px-2 py-1.5 rounded outline-none text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
-                            placeholder="e.g. Sophia Rossi"
+                            placeholder={lang === 'ka' ? 'მაგ. ნინო გელაშვილი' : 'e.g. Sophia Rossi'}
                             required
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">Transition Operation Log notes</label>
+                        <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">{lang === 'ka' ? 'გადასვლის ოპერაციის შენიშვნები' : 'Transition Operation Log notes'}</label>
                         <textarea
                           value={transitionNotes}
                           onChange={(e) => setTransitionNotes(e.target.value)}
@@ -858,7 +862,7 @@ export default function WineLotsTrace({
                           onClick={() => setShowTransitionForm(false)}
                           className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded hover:bg-stone-200 cursor-pointer dark:bg-stone-900 dark:text-stone-400 dark:hover:bg-stone-850"
                         >
-                          Cancel
+                          {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
                         </button>
                         <button
                           type="button"
@@ -873,7 +877,7 @@ export default function WineLotsTrace({
                                     history: [
                                       {
                                         date: new Date().toISOString().split('T')[0],
-                                        type: `Stage Transition: to ${transitionTarget}`,
+                                        type: lang === 'ka' ? `ეტაპის გადასვლა: ${stageLabel(transitionTarget, lang)}` : `Stage Transition: to ${transitionTarget}`,
                                         description: transitionNotes,
                                         operator: transitionOperator
                                       },
@@ -886,12 +890,12 @@ export default function WineLotsTrace({
                               if (!commitWineLotMutationIfAllowed(canUpdateLot, updatedLots, onUpdateLots)) return;
                               setShowTransitionForm(false);
                             } else {
-                              alert('Please provide Operator name and Transition notes.');
+                              alert(lang === 'ka' ? 'გთხოვთ მიუთითოთ ოპერატორის სახელი და გადასვლის შენიშვნები.' : 'Please provide Operator name and Transition notes.');
                             }
                           }}
                           className="px-3 py-1.5 bg-emerald-705 text-white rounded hover:bg-emerald-800 cursor-pointer"
                         >
-                          Confirm Transition
+                          {lang === 'ka' ? 'გადასვლის დადასტურება' : 'Confirm Transition'}
                         </button>
                       </div>
                     </div>
@@ -904,7 +908,7 @@ export default function WineLotsTrace({
             <div className="space-y-4">
               <h4 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
                 <Compass className="w-4 h-4 text-[#4e0e15]" />
-                {t.traceability_timeline} Chronology
+                {t.traceability_timeline}{lang === 'ka' ? '' : ' Chronology'}
               </h4>
 
               <div className="relative pl-6 border-l border-[#f5efe9] space-y-5">
