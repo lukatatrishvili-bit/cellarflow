@@ -1,7 +1,7 @@
 # VinOS Improvement Plan — July 2026
 
 **Status date:** 2026-07-19  
-**Execution status:** Milestone 1 in progress; CI and verified-artifact deployment implemented
+**Execution status:** Milestone 1 in progress; release pipeline complete, account/team hardening next
 **Scope:** Product trust, data correctness, release safety, maintainability, and production scale  
 **Planning horizon:** Next 10–15 focused pull requests; milestones are dependency-based rather than calendar promises
 
@@ -36,15 +36,15 @@ This plan was produced from the current working tree, including the in-progress 
 
 | Area | Current evidence | Planning implication |
 |---|---|---|
-| Mechanical health | `npm run lint`, `npm test`, `npm run build`, the fresh bundle-budget assertion, and the live production boot smoke pass; 613 pre-build tests plus 4 build-dependent bundle assertions pass across 87 tracked test files | Preserve the green baseline, but add missing integration and browser coverage |
+| Mechanical health | dependency audit, `npm run lint`, `npm test`, `npm run build`, the fresh bundle-budget assertion, and the live production boot smoke pass; 619 pre-build tests plus 4 build-dependent bundle assertions pass across 88 tracked test files | Preserve the green baseline, but add missing integration and browser coverage |
 | Stabilized scope | The permission, storage, sales, sync-conflict, integrity, and startup-safety batch is partitioned into reviewable commits | Start Milestone 1 without reopening the stabilized Milestone 0 concerns |
-| Delivery | Pull requests and `main` pushes run mandatory release gates; manual deployment rebuilds those gates, smoke-tests one immutable image, and deploys its digest | Enable the required branch check and protected production reviewers in repository settings; then replace startup schema push with controlled migrations |
+| Delivery | Pull requests and `main` pushes run mandatory release gates; deployment verifies one immutable image, applies reviewed migrations in a fail-closed job, and deploys the same digest | Preserve branch/environment protection and move next to account/team hardening |
 | Testing | Vitest coverage is broad; no browser E2E runner or PostgreSQL integration job is configured | Add representative browser, database, offline, and concurrency tests |
 | Persistence | `OrganizationState.data` JSONB is authoritative; vessel/lot relational writes run in a fire-and-forget background task | Treat the normalized tables as non-authoritative until consistency is measurable |
 | Tenant model | Operational Prisma models use globally unique `id` primary keys, although application record IDs are reused across estates | Fix keys before expanding relational double-write or enabling relational reads |
 | Sync | Versioned JSONB writes, field merge, scoped tombstones, retry, validation, and conflict recovery are implemented or in flight | Consolidate them around explicit compound transactions and idempotency |
 | Maintainability | `src/App.tsx` is over 3,200 lines, `useWineryState.ts` over 2,400, `VaziModule.tsx` over 3,400, and the sync route over 1,700 | Extract by behavior and domain; avoid a big-bang rewrite |
-| Experience | UX-001 is complete and UX-002 is in progress; older UI plans still contain valuable but partially stale work | Continue from the current delivery log rather than restarting old phases |
+| Experience | UX-001, UX-002, and Milestone 0 are complete; older UI plans still contain valuable but partially stale work | Continue from the current delivery log rather than restarting old phases |
 | Documentation | `README.md` still describes an AI Studio starter and the repo uses CellarFlow, Vinea, MaraniOS, and VinOS identifiers | Establish one product/developer vocabulary and a trustworthy setup guide |
 
 ## 3. Priority rules
@@ -79,8 +79,8 @@ Do not begin P2 work while a related P0 invariant is unproved.
 - `npm run test:production-smoke` now boots the real production server against isolated temporary state and verifies liveness, SPA fallback, API 404 behavior, cache policy, and required-session-secret fail-fast behavior.
 - Configured PostgreSQL initialization and startup schema-command failures now stop production before it serves traffic; development retains its explicit JSON fallback.
 - The batch is partitioned into production-startup safety (`e36f18d`), permission and sync-integrity workflows (`971987d`), and primary-workspace test isolation (`bcf30c6`).
-- Vitest excludes nested assistant worktrees, so the reported baseline now reflects only the 87 tracked primary-workspace test files; the DNS failure path is dependency-injected and deterministic rather than relying on live resolver timing.
-- The clean-checkout gate passes in order: typecheck, 613 pre-build tests (with the 4 build-dependent checks skipped), production build, all 4 fresh bundle-budget assertions, and production-mode boot smoke.
+- Vitest excludes nested assistant worktrees, so the reported baseline now reflects only the 88 tracked primary-workspace test files; the DNS failure path is dependency-injected and deterministic rather than relying on live resolver timing.
+- The clean-checkout gate passes in order: dependency audit, typecheck, 619 pre-build tests (with the 4 build-dependent checks skipped), production build, all 4 fresh bundle-budget assertions, and production-mode boot smoke.
 
 ### Exit gate
 
@@ -101,16 +101,18 @@ Do not begin P2 work while a related P0 invariant is unproved.
 - Add a production-mode boot smoke test for `/api/health`, SPA fallback, and required-secret fail-fast behavior.
 - Build one immutable container/artifact, verify it, and deploy that artifact instead of rebuilding from source during the deployment job.
 - Add a protected production environment with deployment concurrency and an explicit revision summary.
-- Replace startup `prisma db push` with reviewed migrations and a controlled migration step. A schema failure must fail deployment rather than silently change persistence mode.
-- Add a non-deploying dependency/security scan and document how findings are triaged; do not auto-upgrade production dependencies without tests.
+- Replace startup `prisma db push` with reviewed migrations and a controlled migration step. A schema failure must fail deployment rather than silently change persistence mode. **Implemented.**
+- Add a non-deploying dependency/security scan and document how findings are triaged; do not auto-upgrade production dependencies without tests. **Implemented.**
 
 ### Current execution note — 2026-07-19
 
 - `.github/workflows/ci.yml` now runs locked installation, Prisma generation, typecheck, pre-build tests, production build, fresh bundle budgets, and production boot smoke for pull requests and `main` pushes; the deployment workflow reuses the same gate.
 - The deploy workflow builds one commit/run-tagged image, verifies secret fail-fast and the full HTTP contract inside that exact container, pushes it to an immutable-tag Artifact Registry repository, resolves its digest, and deploys with `--image` rather than `--source`.
 - The production job uses a non-cancelling concurrency key and the `production` GitHub environment, publishes a commit/revision/digest summary, and fails if Cloud Run's latest ready revision does not reference the verified digest.
-- Repository configuration remains operator-owned: require the CI status on `main` and configure reviewers/branch restrictions for the `production` environment.
-- Remaining release-safety implementation is controlled Prisma migrations plus a non-deploying dependency/security scan; account/team hardening remains unchanged below.
+- A reviewed baseline migration now covers the existing Prisma schema. The verified image runs it in a one-task, zero-retry Cloud Run job before service deployment; an existing `db push` database is baselined only after an exact schema-drift check, and every failure prevents the new revision from deploying.
+- CI blocks high and critical production dependency advisories. Non-breaking lockfile refreshes removed the current high findings; the remaining transitive moderate `uuid` advisories and their accepted temporary mitigation are recorded in `docs/dependency-security.md`.
+- Repository branch protection, the required CI status, production reviewers, and the first immutable-image deployment were confirmed configured/executed on 2026-07-19.
+- The release pipeline portion of Milestone 1 is complete; account/team hardening remains unchanged below.
 
 ### 5.2 Account and team hardening
 

@@ -137,7 +137,6 @@ async function assertHealthyProductionBoot(databasePath: string): Promise<void> 
     DATABASE_URL: '',
     DATABASE_PATH: databasePath,
     GCS_BUCKET: '',
-    PRISMA_DB_PUSH_ON_STARTUP: 'false',
     DEMO_LOGIN_ENABLED: 'false',
     VITEST: 'false',
   });

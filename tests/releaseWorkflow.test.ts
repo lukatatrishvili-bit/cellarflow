@@ -27,6 +27,7 @@ describe('release workflow contracts', () => {
     expect(workflow).toMatch(/push:\s*\n\s+branches: \[main\]/);
     expect(workflow).toContain('workflow_call:');
     expect(workflow).toContain('npm ci');
+    expect(workflow).toContain('npm audit --omit=dev --audit-level=high');
     expectInOrder(workflow, [
       'npm run lint',
       'npm test',
@@ -49,6 +50,10 @@ describe('release workflow contracts', () => {
       'docker push "$IMAGE_TAG"',
       "--format='value(image_summary.digest)'",
       'needs: build_image',
+      'Run controlled database migrations',
+      '--args "run,db:migrate:deploy"',
+      '--wait',
+      'Deploy the verified digest',
       '--image "$IMAGE_URI"',
       'Verify deployed digest and health',
     ]);
@@ -56,5 +61,23 @@ describe('release workflow contracts', () => {
     expect(workflow).toContain('[[ "$DEPLOYED_IMAGE" != *@"$IMAGE_DIGEST" ]]');
     expect(readRootFile('.dockerignore')).toContain('gha-creds-*.json');
     expect(readRootFile('.gitignore')).toContain('gha-creds-*.json');
+  });
+
+  it('never mutates the schema during service startup', () => {
+    const dockerfile = readRootFile('Dockerfile');
+    const workflow = readWorkflow('google-cloud-run.yml');
+
+    expect(dockerfile).not.toContain('prisma db push');
+    expect(dockerfile).toContain('CMD ["node", "--import", "tsx", "server.ts"]');
+    expect(workflow).toContain('--remove-env-vars "PRISMA_DB_PUSH_ON_STARTUP"');
+    expect(workflow).toContain('--max-retries 0');
+    expect(workflow).toContain('PRISMA_BASELINE_EXISTING_SCHEMA=true');
+    expect(fs.existsSync(path.join(
+      rootDir,
+      'prisma',
+      'migrations',
+      '20260719000000_baseline',
+      'migration.sql',
+    ))).toBe(true);
   });
 });

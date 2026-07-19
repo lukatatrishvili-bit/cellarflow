@@ -60,12 +60,21 @@ gcloud run deploy cellarflow-app --source . --region europe-west1 --allow-unauth
   --max-instances=1 \
   --add-cloudsql-instances cellarflow:europe-west1:cellarflow-postgres \
   --update-secrets DATABASE_URL=cellarflow-database-url:latest \
-  --update-env-vars NODE_ENV=production,PRISMA_DB_PUSH_ON_STARTUP=true,GCS_BUCKET=cellarflow-db,GCS_DB_OBJECT=db.json
+  --update-env-vars NODE_ENV=production,GCS_BUCKET=cellarflow-db,GCS_DB_OBJECT=db.json
 ```
 
-`PRISMA_DB_PUSH_ON_STARTUP=true` lets the container apply additive Prisma schema
-changes before serving. A schema-command or PostgreSQL initialization failure
-stops the revision instead of silently switching it to fallback storage. Start new production deployments with
+Do not use this manual service command when a schema migration is pending. The
+GitHub deployment workflow runs the verified image as a one-task Cloud Run
+migration job and waits for it to succeed before updating the service. The
+service container never mutates the schema during startup.
+
+The first migration-enabled rollout transitions the existing `db push` schema
+to the committed `20260719000000_baseline`. It marks that baseline as applied
+only after `prisma migrate diff --exit-code` proves the live database exactly
+matches `prisma/schema.prisma`; any drift or migration failure stops deployment
+before a new service revision is created.
+
+Start new production deployments with
 `--max-instances=1`, verify the Master Admin "Cloud Run Scaling Readiness"
 panel, then raise max instances gradually only after smoke/load testing. Cloud
 SQL deployments now use PostgreSQL-backed auth/org metadata, a shared login
@@ -116,7 +125,8 @@ The repository has two release workflows:
 
 `Continuous Integration` runs on every pull request to `main`, every push to
 `main`, manual dispatch, and as the first job of a production deployment. It
-runs locked dependency installation, Prisma generation, typecheck, the
+runs a high/critical production-dependency audit, locked dependency
+installation, Prisma generation, typecheck, the
 pre-build tests, a fresh production build, bundle budgets, and the production
 boot smoke in that order.
 
@@ -126,6 +136,7 @@ boot smoke in that order.
 * verifies required-secret fail-fast behavior inside that image;
 * boots that exact image and runs the HTTP production smoke against it;
 * pushes it to an immutable-tag Artifact Registry repository;
+* runs the image as a single-task, zero-retry Cloud Run migration job and waits for success;
 * resolves the image digest and deploys with `gcloud run deploy --image`;
 * verifies that Cloud Run's latest ready revision references the expected digest;
 * public unauthenticated access
@@ -135,7 +146,7 @@ boot smoke in that order.
 * `/api/health` verification and an explicit commit/revision/image summary
 
 There is no deployment-time source rebuild. The digest that passed the
-container smoke is the digest Cloud Run receives.
+container smoke is used by both the migration job and the Cloud Run service.
 
 In GitHub repository settings:
 

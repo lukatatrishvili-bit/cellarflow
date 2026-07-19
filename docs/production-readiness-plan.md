@@ -40,7 +40,7 @@ Follow-up session targeting the "full ERP" ceilings:
 
 - ✅ **Cross-tenant merge-history bug fixed.** The field-level merge baseline history in `server/sync.ts` was keyed by `collection:recordId` with no organization id — two estates sharing seeded ids (every demo starts with `T-101`, `Q-01`…) could silently merge against each other's baselines. History keys are now org-scoped (`mergeCollections(db, collections, historyScope)`); regression test proves the unscoped behavior produced a silent wrong merge.
 - ✅ **Server-side merge-retry on version conflict.** `/api/sync` no longer bounces a 409 on the first whole-document version race: the ~650-line payload validation moved to `validateSyncPayload()`, and reload→validate→merge→save now runs in a bounded retry loop (3 attempts, full re-validation each pass). 409 only after exhausting retries. Verified end-to-end (demo login → sync → read-back) on a prod-mode boot.
-- ✅ **Turnkey Postgres.** `google-cloud-run.yml` now passes `DATABASE_URL` (+ auto `PRISMA_DB_PUSH_ON_STARTUP`) and optional `CLOUDSQL_INSTANCE`; `.env.example` documents Neon/Supabase/Cloud SQL forms. Enabling the relational backend is now purely: create a free Postgres, add one repo secret, redeploy.
+- ✅ **Turnkey Postgres.** `google-cloud-run.yml` passes `DATABASE_URL` and optional `CLOUDSQL_INSTANCE`; `.env.example` documents Neon/Supabase/Cloud SQL forms. The former startup `PRISMA_DB_PUSH_ON_STARTUP` path was superseded on 2026-07-19 by a reviewed Prisma baseline and a fail-closed, pre-deploy Cloud Run migration job.
 
 Remaining "full ERP" roadmap (unchanged, in `improvement-plan.md`): relational-authoritative migration (double-write → shadow-read → cutover), multi-instance scale-out, delta sync payloads.
 

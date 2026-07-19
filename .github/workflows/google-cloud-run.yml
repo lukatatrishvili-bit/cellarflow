@@ -152,7 +152,6 @@ jobs:
             --env "SESSION_SECRET=cellarflow-container-smoke-secret-32-bytes" \
             --env "DATABASE_URL=" \
             --env "GCS_BUCKET=" \
-            --env "PRISMA_DB_PUSH_ON_STARTUP=false" \
             --env "DEMO_LOGIN_ENABLED=false" \
             "$IMAGE_TAG"
           trap 'docker logs "$HEALTHY_CONTAINER" || true; docker rm --force "$HEALTHY_CONTAINER" >/dev/null 2>&1 || true' EXIT
@@ -258,6 +257,33 @@ jobs:
 
           echo "RUNTIME_SERVICE_ACCOUNT=${RUNTIME_SERVICE_ACCOUNT}" >> "$GITHUB_ENV"
 
+      - name: Run controlled database migrations
+        run: |
+          set -euo pipefail
+          MIGRATION_JOB="${SERVICE}-migrate"
+          MIGRATION_ARGS=(
+            --image "$IMAGE_URI"
+            --project "$PROJECT_ID"
+            --region "$REGION"
+            --service-account "$RUNTIME_SERVICE_ACCOUNT"
+            --command npm
+            --args "run,db:migrate:deploy"
+            --set-secrets "DATABASE_URL=cellarflow-database-url:latest"
+            --set-env-vars "PRISMA_BASELINE_EXISTING_SCHEMA=true"
+            --labels "managed-by=github-actions,commit-sha=${GITHUB_SHA}"
+            --tasks 1
+            --max-retries 0
+            --task-timeout 10m
+            --wait
+          )
+
+          if [ -n "$CLOUDSQL_INSTANCE" ]; then
+            MIGRATION_ARGS+=(--set-cloudsql-instances "$CLOUDSQL_INSTANCE")
+          fi
+
+          gcloud run jobs deploy "$MIGRATION_JOB" "${MIGRATION_ARGS[@]}"
+          echo "MIGRATION_JOB=$MIGRATION_JOB" >> "$GITHUB_ENV"
+
       - name: Deploy the verified digest
         run: |
           set -euo pipefail
@@ -278,7 +304,7 @@ jobs:
             --update-secrets "ADMIN_USERNAME=cellarflow-admin-username:latest"
             --update-secrets "ADMIN_PASSCODE=cellarflow-admin-passcode:latest"
             --update-secrets "SMTP_PASS=cellarflow-smtp-pass:latest"
-            --update-env-vars "PRISMA_DB_PUSH_ON_STARTUP=true"
+            --remove-env-vars "PRISMA_DB_PUSH_ON_STARTUP"
             --update-env-vars "GOOGLE_CLOUD_REGION=$REGION"
             --update-env-vars "GCS_BUCKET=$GCS_BUCKET"
             --update-env-vars "GCS_DB_OBJECT=$GCS_DB_OBJECT"
@@ -342,5 +368,6 @@ jobs:
             echo "- Revision: \`$LATEST_REVISION\`"
             echo "- Commit: \`$GITHUB_SHA\`"
             echo "- Image: \`$IMAGE_URI\`"
+            echo "- Migration job: \`$MIGRATION_JOB\`"
             echo "- URL: $SERVICE_URL"
           } >> "$GITHUB_STEP_SUMMARY"
