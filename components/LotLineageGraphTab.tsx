@@ -314,11 +314,23 @@ function DetailPanel({ node, edges, ka }: { node: LineageNode | null; edges: Lin
         <div className="mt-3">
           <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">{ka ? 'მეტამონაცემები' : 'Metadata'}</span>
           <div className="mt-1 space-y-1.5 max-h-44 overflow-y-auto pr-1">
-            {metadata.slice(0, 8).map(([key, value]) => (
-              <div key={key} className="text-[10px] rounded-lg bg-stone-50 px-2 py-1.5 text-stone-600 dark:bg-stone-950/50 dark:text-stone-300">
-                <strong className="font-mono">{key}</strong>: {String(value)}
-              </div>
-            ))}
+            {metadata.slice(0, 8).map(([key, value]) => {
+              const keyKa: Record<string, string> = {
+                vintage: 'მოსავალი', variety: 'ჯიში', stage: 'ეტაპი', wineClass: 'ღვინის კლასი',
+                region: 'რეგიონი', block: 'ნაკვეთი', operator: 'ოპერატორი', supplier: 'მომწოდებელი',
+              };
+              const displayKey = ka ? (keyKa[key] || key) : key;
+              const displayValue = key === 'stage'
+                ? stageLabel(String(value), ka ? 'ka' : 'en')
+                : key === 'wineClass' && ka
+                  ? ({red_dry: 'წითელი მშრალი', white_dry: 'თეთრი მშრალი', amber_dry: 'ქარვისფერი მშრალი', rose: 'ვარდისფერი'} as Record<string, string>)[String(value)] || String(value)
+                  : String(value);
+              return (
+                <div key={key} className="text-[10px] rounded-lg bg-stone-50 px-2 py-1.5 text-stone-600 dark:bg-stone-950/50 dark:text-stone-300">
+                  <strong className="font-mono">{displayKey}</strong>: {displayValue}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -350,7 +362,7 @@ function MiniMap({
   const safeHeight = Math.max(height, 1);
 
   return (
-    <SectionCard title={ka ? 'მინი რუკა' : 'Mini map'} subtitle={`${Math.round(zoom * 100)}% zoom`}>
+    <SectionCard title={ka ? 'მინი რუკა' : 'Mini map'} subtitle={ka ? `${Math.round(zoom * 100)}% მასშტაბი` : `${Math.round(zoom * 100)}% zoom`}>
       <div className="relative h-20 overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-950/40">
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
           {edges.map(edge => {

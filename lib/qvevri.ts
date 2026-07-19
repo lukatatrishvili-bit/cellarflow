@@ -17,7 +17,9 @@ export interface QvevriPassportReadiness {
   score: number;
   status: 'ready' | 'needs_review' | 'missing_critical';
   missing: string[];
-  requirements: Array<{ key: string; label: string; complete: boolean }>;
+  /** Georgian label list for the same missing items, index-aligned with `missing`. */
+  missingKa: string[];
+  requirements: Array<{ key: string; label: string; labelKa: string; complete: boolean }>;
 }
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -45,25 +47,26 @@ function hasValue(value: unknown): boolean {
 
 export function evaluateQvevriPassport(vessel: Vessel, lot?: WineLot): QvevriPassportReadiness {
   const requirements = [
-    { key: 'qvevriNumber', label: 'Qvevri number', complete: hasValue(vessel.qvevriNumber || vessel.id) },
-    { key: 'maraniLocation', label: 'Marani location', complete: hasValue(vessel.maraniLocation || vessel.locationDetails) },
-    { key: 'capacity', label: 'Capacity', complete: vessel.capacity > 0 },
-    { key: 'lastWashingDate', label: 'Last washing date', complete: hasValue(vessel.lastWashingDate || vessel.lastCleaned) },
-    { key: 'limeWashStatus', label: 'Lime wash status', complete: vessel.limeWashStatus === 'done' },
-    { key: 'waxingStatus', label: 'Waxing status', complete: vessel.waxingStatus === 'done' },
-    { key: 'inspectionNotes', label: 'Inspection notes', complete: hasValue(vessel.inspectionNotes) },
-    { key: 'fillingDate', label: 'Filling date', complete: hasValue(vessel.fillingDate || lot?.createdAt) },
-    { key: 'grapeVariety', label: 'Grape variety', complete: hasValue(vessel.grapeVariety || lot?.variety) },
-    { key: 'sealingDate', label: 'Sealing date', complete: hasValue(vessel.sealingDate || vessel.lastSealedDate) },
-    { key: 'soilTemperature', label: 'Soil temperature', complete: Number.isFinite(vessel.soilTemperature) },
+    { key: 'qvevriNumber', label: 'Qvevri number', labelKa: 'ქვევრის ნომერი', complete: hasValue(vessel.qvevriNumber || vessel.id) },
+    { key: 'maraniLocation', label: 'Marani location', labelKa: 'მარანი / ადგილი', complete: hasValue(vessel.maraniLocation || vessel.locationDetails) },
+    { key: 'capacity', label: 'Capacity', labelKa: 'ტევადობა', complete: vessel.capacity > 0 },
+    { key: 'lastWashingDate', label: 'Last washing date', labelKa: 'ბოლო რეცხვის თარიღი', complete: hasValue(vessel.lastWashingDate || vessel.lastCleaned) },
+    { key: 'limeWashStatus', label: 'Lime wash status', labelKa: 'კირით დამუშავება', complete: vessel.limeWashStatus === 'done' },
+    { key: 'waxingStatus', label: 'Waxing status', labelKa: 'ცვილის სტატუსი', complete: vessel.waxingStatus === 'done' },
+    { key: 'inspectionNotes', label: 'Inspection notes', labelKa: 'ინსპექციის შენიშვნები', complete: hasValue(vessel.inspectionNotes) },
+    { key: 'fillingDate', label: 'Filling date', labelKa: 'შევსების თარიღი', complete: hasValue(vessel.fillingDate || lot?.createdAt) },
+    { key: 'grapeVariety', label: 'Grape variety', labelKa: 'ყურძნის ჯიში', complete: hasValue(vessel.grapeVariety || lot?.variety) },
+    { key: 'sealingDate', label: 'Sealing date', labelKa: 'დალუქვის თარიღი', complete: hasValue(vessel.sealingDate || vessel.lastSealedDate) },
+    { key: 'soilTemperature', label: 'Soil temperature', labelKa: 'ნიადაგის ტემპერატურა', complete: Number.isFinite(vessel.soilTemperature) },
   ];
   const completeCount = requirements.filter(item => item.complete).length;
   const score = Math.round((completeCount / requirements.length) * 100);
-  const missing = requirements.filter(item => !item.complete).map(item => item.label);
+  const incomplete = requirements.filter(item => !item.complete);
   return {
     score,
     status: score >= 90 ? 'ready' : score >= 65 ? 'needs_review' : 'missing_critical',
-    missing,
+    missing: incomplete.map(item => item.label),
+    missingKa: incomplete.map(item => item.labelKa),
     requirements,
   };
 }

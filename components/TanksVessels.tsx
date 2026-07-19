@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, VesselType, WineLot } from '../lib/wineryState';
+import { vesselTypeLabel } from '../lib/enumLabels';
 import { 
   ShieldAlert, CheckCircle, Flame, Snowflake, RotateCw, Plus, Trash2, Edit, 
   Search, LayoutGrid, List, Map, Sparkles, Database, Droplets, Thermometer, ShieldCheck
@@ -282,9 +283,9 @@ export default function TanksVessels({
               {vessels.length} {({ en: 'Vessels', ka: 'ჭურჭელი', it: 'Recipienti', fr: 'Cuves', de: 'Behälter' })[lang] || 'Vessels'}
             </h4>
             <div className="flex gap-2 text-[10px] text-slate-500 mt-1 font-mono">
-              <span className="text-emerald-700 font-bold">{vessels.filter(v => v.currentVolume === 0).length} empty</span>
+              <span className="text-emerald-700 font-bold">{vessels.filter(v => v.currentVolume === 0).length} {ka ? 'ცარიელი' : 'empty'}</span>
               <span>•</span>
-              <span className="text-[#801323] font-bold">{vessels.filter(v => v.currentVolume > 0).length} active</span>
+              <span className="text-[#801323] font-bold">{vessels.filter(v => v.currentVolume > 0).length} {ka ? 'აქტიური' : 'active'}</span>
             </div>
           </div>
           <div className="text-[10px] text-slate-400 mt-3 border-t border-slate-200/50 pt-1">
@@ -311,14 +312,14 @@ export default function TanksVessels({
               {coolingActiveCount} {({ en: 'Jackets', ka: 'პერანგი', it: 'Giacche', fr: 'Vestes', de: 'Mäntel' })[lang] || 'Jackets'}
             </h4>
             <div className="text-[10px] text-slate-500 mt-1 font-mono">
-              {coolingActiveCount > 0 
-                ? `${coolingActiveCount} active temperature controller runs` 
-                : 'Automated jackets standard idle'}
+              {coolingActiveCount > 0
+                ? (ka ? `${coolingActiveCount} აქტიური ტემპერატურის კონტროლერი` : `${coolingActiveCount} active temperature controller runs`)
+                : (ka ? 'ავტომატური პერანგები მოლოდინშია' : 'Automated jackets standard idle')}
             </div>
           </div>
           <div className={`text-[10px] font-semibold mt-3 border-t border-slate-200/50 pt-1 inline-flex items-center gap-1 ${coolingActiveCount > 0 ? 'text-[#0369a1]' : 'text-slate-400'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${coolingActiveCount > 0 ? 'bg-[#0369a1] animate-pulse' : 'bg-slate-300'}`} />
-            <span>{coolingActiveCount > 0 ? 'Active cold-plate holding' : 'Idle standby'}</span>
+            <span>{coolingActiveCount > 0 ? (ka ? 'აქტიური გაგრილება' : 'Active cold-plate holding') : (ka ? 'მოლოდინის რეჟიმი' : 'Idle standby')}</span>
           </div>
         </div>
 
@@ -342,19 +343,19 @@ export default function TanksVessels({
           </div>
           <div className="mt-2 text-stone-900">
             <h4 className="text-lg font-serif font-bold text-slate-800">
-              {dirtyCount > 0 
-                ? `${dirtyCount} pending wash` 
+              {dirtyCount > 0
+                ? (ka ? `${dirtyCount} გასარეცხი` : `${dirtyCount} pending wash`)
                 : ({ en: 'Pristine Clean', ka: 'იდეალურად სუფთა', it: 'Tutto Pulito', fr: 'Totalement Propre', de: 'Komplett Sauber' })[lang] || 'Pristine Clean'
               }
             </h4>
             <div className="text-[10px] text-slate-500 mt-1 font-mono">
-              {dirtyCount > 0 
-                ? 'Washing tasks recommended' 
-                : '100% of inactive units washed'}
+              {dirtyCount > 0
+                ? (ka ? 'რეკომენდებულია რეცხვის სამუშაოები' : 'Washing tasks recommended')
+                : (ka ? 'არააქტიური ჭურჭლის 100% გარეცხილია' : '100% of inactive units washed')}
             </div>
           </div>
           <div className="text-[10px] text-slate-400 mt-3 border-t border-slate-200/50 pt-1">
-            {dirtyCount > 0 ? '⚠️ High priority task logged' : '✓ Standard winery health high'}
+            {dirtyCount > 0 ? (ka ? '⚠️ მაღალი პრიორიტეტის დავალება' : '⚠️ High priority task logged') : (ka ? '✓ მარნის მდგომარეობა კარგია' : '✓ Standard winery health high')}
           </div>
         </div>
       </div>
@@ -725,7 +726,7 @@ export default function TanksVessels({
                         {isSelected && <span className="text-[9px] font-sans font-normal text-stone-400 italic">({({ en: 'selected', ka: 'არჩეული', it: 'selezionato', fr: 'sélectionné', de: 'ausgewählt' })[lang] || 'selected'})</span>}
                       </h4>
                       <p className="text-[10px] text-slate-400 font-mono capitalize">
-                        {v.type.replace('_', ' ')} • {v.locationDetails}
+                        {vesselTypeLabel(v.type, lang)} • {v.locationDetails}
                       </p>
                     </div>
                   </div>

@@ -394,14 +394,14 @@ export default function QvevriPassportTab({
         <MetricCard
           label={ka ? 'ნიადაგი' : 'Soil temp'}
           value={formatTemp(summary.soilTemperature)}
-          detail={summary.buried ? 'Buried qvevri' : 'Surface vessel'}
+          detail={summary.buried ? (ka ? 'ჩაფლული ქვევრი' : 'Buried qvevri') : (ka ? 'ზედაპირული ჭურჭელი' : 'Surface vessel')}
           icon={Thermometer}
           tone="neutral"
         />
         <MetricCard
           label={ka ? 'კანი' : 'Skin contact'}
           value={formatDays(summary.durations.skinContactDays)}
-          detail={`First racking ${formatDays(summary.durations.daysToFirstRacking)}`}
+          detail={ka ? `პირველი გადაღება ${formatDays(summary.durations.daysToFirstRacking)}` : `First racking ${formatDays(summary.durations.daysToFirstRacking)}`}
           icon={Wine}
           tone="brand"
         />
@@ -430,13 +430,13 @@ export default function QvevriPassportTab({
                     <div>
                       <div className="text-sm font-black">{vessel.qvevriNumber || vessel.id}</div>
                       <div className={cx('mt-0.5 text-[10px] font-semibold', active ? 'text-amber-100/80' : 'text-stone-500 dark:text-stone-400')}>
-                        {lot?.id || 'No lot'} · {fillPct(vessel)}%
+                        {lot?.id || (ka ? 'პარტიის გარეშე' : 'No lot')} · {fillPct(vessel)}%
                       </div>
                     </div>
                     <StatusBadge tone={readinessTone(vesselReadiness.status)}>{vesselReadiness.score}%</StatusBadge>
                   </div>
                   <div className={cx('mt-2 truncate text-[11px] font-semibold', active ? 'text-amber-100/80' : 'text-stone-500 dark:text-stone-400')}>
-                    {vessel.maraniLocation || vessel.locationDetails || 'No location'}
+                    {vessel.maraniLocation || vessel.locationDetails || (ka ? 'მდებარეობის გარეშე' : 'No location')}
                   </div>
                   <div className="mt-2">
                     <ProgressBar value={vesselReadiness.score} tone={vesselReadiness.status === 'ready' ? 'success' : vesselReadiness.status === 'needs_review' ? 'warning' : 'danger'} />
@@ -451,7 +451,7 @@ export default function QvevriPassportTab({
           {readiness.missing.length > 0 && (
             <InlineNotice tone={readiness.status === 'needs_review' ? 'warning' : 'danger'}>
               {ka ? 'აკლია: ' : 'Missing: '}
-              {readiness.missing.slice(0, 6).join(', ')}
+              {(ka ? readiness.missingKa : readiness.missing).slice(0, 6).join(', ')}
               {readiness.missing.length > 6 ? ` +${readiness.missing.length - 6}` : ''}
             </InlineNotice>
           )}
@@ -481,17 +481,17 @@ export default function QvevriPassportTab({
               <div>
                 <FieldLabel>{ka ? 'კირით დამუშავება' : 'Lime wash status'}</FieldLabel>
                 <select aria-label="Lime wash status" value={form.limeWashStatus} onChange={event => updateForm('limeWashStatus', event.target.value as QvevriStatus)} className={inputCls}>
-                  <option value="unknown">Unknown</option>
-                  <option value="needed">Needed</option>
-                  <option value="done">Done</option>
+                  <option value="unknown">{ka ? 'უცნობი' : 'Unknown'}</option>
+                  <option value="needed">{ka ? 'საჭიროა' : 'Needed'}</option>
+                  <option value="done">{ka ? 'შესრულებული' : 'Done'}</option>
                 </select>
               </div>
               <div>
                 <FieldLabel>{ka ? 'ცვილის სტატუსი' : 'Waxing status'}</FieldLabel>
                 <select aria-label="Waxing status" value={form.waxingStatus} onChange={event => updateForm('waxingStatus', event.target.value as QvevriStatus)} className={inputCls}>
-                  <option value="unknown">Unknown</option>
-                  <option value="needed">Needed</option>
-                  <option value="done">Done</option>
+                  <option value="unknown">{ka ? 'უცნობი' : 'Unknown'}</option>
+                  <option value="needed">{ka ? 'საჭიროა' : 'Needed'}</option>
+                  <option value="done">{ka ? 'შესრულებული' : 'Done'}</option>
                 </select>
               </div>
               <label className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300">
@@ -570,10 +570,10 @@ export default function QvevriPassportTab({
                 </div>
               </div>
               <div className="text-[11px] font-semibold leading-relaxed text-stone-500 dark:text-stone-400">
-                Latest fermentation: {latestFermLog ? `${latestFermLog.date} · ${latestFermLog.temperature} C · ${latestFermLog.density}` : 'No reading'}
+                {ka ? 'ბოლო დუღილი' : 'Latest fermentation'}: {latestFermLog ? `${latestFermLog.date} · ${latestFermLog.temperature} C · ${latestFermLog.density}` : (ka ? 'ჩანაწერი არ არის' : 'No reading')}
               </div>
               <div className="text-[11px] font-semibold leading-relaxed text-stone-500 dark:text-stone-400">
-                Official records: {officialRecords.length ? officialRecords.map(record => `${record.id} (${record.applicationStatus})`).join(', ') : 'None linked'}
+                {ka ? 'ოფიციალური ჩანაწერები' : 'Official records'}: {officialRecords.length ? officialRecords.map(record => `${record.id} (${record.applicationStatus})`).join(', ') : (ka ? 'მიბმული არ არის' : 'None linked')}
               </div>
             </div>
           </SectionCard>

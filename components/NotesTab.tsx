@@ -73,12 +73,12 @@ export default function NotesTab({
             <FileText className="h-5 w-5 text-[#801323]" />
             {t.notes}
           </h3>
-          <p className="text-xs text-slate-400 font-medium">Capture tasting observations, chemistry decisions, and cellar notes</p>
+          <p className="text-xs text-slate-400 font-medium">{lang === 'ka' ? 'დააფიქსირეთ დეგუსტაციის დაკვირვებები, ქიმიური გადაწყვეტილებები და მარნის შენიშვნები' : 'Capture tasting observations, chemistry decisions, and cellar notes'}</p>
         </div>
         
         <div className="flex items-center gap-3">
           <div className="px-3 py-1.5 bg-indigo-50/50 border border-[#e8dfd5] rounded-lg text-center">
-            <span className="text-[9px] text-[#4e0e15] font-mono uppercase font-bold block">Total Notes</span>
+            <span className="text-[9px] text-[#4e0e15] font-mono uppercase font-bold block">{lang === 'ka' ? 'სულ შენიშვნები' : 'Total Notes'}</span>
             <strong className="text-sm font-serif font-bold text-[#4e0e15] block">{notesList.length}</strong>
           </div>
         </div>
@@ -94,14 +94,14 @@ export default function NotesTab({
         {/* Add Note Form */}
         {canCreateNote && (
           <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4">
-          <h4 className="font-serif font-bold text-sm text-[#4e0e15] border-b border-stone-100 pb-2">Record Winery Note</h4>
+          <h4 className="font-serif font-bold text-sm text-[#4e0e15] border-b border-stone-100 pb-2">{lang === 'ka' ? 'მარნის შენიშვნის ჩაწერა' : 'Record Winery Note'}</h4>
           <form onSubmit={handleSubmit} className="space-y-3.5 text-xs text-stone-600 font-sans">
             <div>
-              <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Note Title *</label>
-              <input 
-                type="text" 
+              <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{lang === 'ka' ? 'სათაური *' : 'Note Title *'}</label>
+              <input
+                type="text"
                 name="title"
-                placeholder="e.g. Saperavi Organoleptic Tasting"
+                placeholder={lang === 'ka' ? 'მაგ. საფერავის ორგანოლეპტიკური დეგუსტაცია' : 'e.g. Saperavi Organoleptic Tasting'}
                 className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2.5 py-2 text-stone-800 focus:outline-[#801323] outline-none text-xs"
                 required
               />
@@ -109,26 +109,26 @@ export default function NotesTab({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Category</label>
+                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{lang === 'ka' ? 'კატეგორია' : 'Category'}</label>
                 <select 
                   name="category"
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2.5 py-2 text-stone-700 outline-none text-xs"
                   defaultValue="Enology"
                 >
-                  <option value="Enology">🧪 Chemistry Check</option>
-                  <option value="Tasting">🍷 Tasting Log</option>
-                  <option value="Sanitation">🧼 Sanitation</option>
-                  <option value="General">📝 General Note</option>
+                  <option value="Enology">🧪 {lang === 'ka' ? 'ქიმიური შემოწმება' : 'Chemistry Check'}</option>
+                  <option value="Tasting">🍷 {lang === 'ka' ? 'დეგუსტაციის ჩანაწერი' : 'Tasting Log'}</option>
+                  <option value="Sanitation">🧼 {lang === 'ka' ? 'სანიტარია' : 'Sanitation'}</option>
+                  <option value="General">📝 {lang === 'ka' ? 'ზოგადი შენიშვნა' : 'General Note'}</option>
                 </select>
               </div>
               <div>
-                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Related Lot</label>
+                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{lang === 'ka' ? 'დაკავშირებული პარტია' : 'Related Lot'}</label>
                 <select 
                   name="relatedLotId"
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2 py-1.5 text-stone-700 outline-none text-xs"
                   defaultValue=""
                 >
-                  <option value="">-- None --</option>
+                  <option value="">{lang === 'ka' ? '-- არცერთი --' : '-- None --'}</option>
                   {lots.map(l => (
                     <option key={l.id} value={l.id}>{l.name} ({l.vintage})</option>
                   ))}
@@ -137,7 +137,7 @@ export default function NotesTab({
             </div>
 
             <div>
-              <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">Note Content *</label>
+              <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{lang === 'ka' ? 'შინაარსი *' : 'Note Content *'}</label>
               <textarea 
                 name="content"
                 placeholder={lang === 'ka' ? 'აღწერეთ ენოლოგიური მაჩვენებლები, გემოს დახასიათება ან მარნის ცვლილებები...' : 'Detail enological readings, mouthfeel characters, or cellar changes...'}
@@ -150,7 +150,7 @@ export default function NotesTab({
               type="submit"
               className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 rounded-lg font-bold uppercase transition-all duration-200 cursor-pointer text-xs"
             >
-              Save Note Entry
+              {lang === 'ka' ? 'შენიშვნის შენახვა' : 'Save Note Entry'}
             </button>
           </form>
           </div>
@@ -160,8 +160,8 @@ export default function NotesTab({
         <div className={`${canCreateNote ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-4`}>
           <div className="bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
             <h4 className="font-serif font-bold text-sm text-[#4e0e15] flex items-center justify-between">
-              <span>Winery Journal Logs</span>
-              <span className="text-[10px] font-mono text-slate-400 font-normal">{notesList.length} entries recorded</span>
+              <span>{lang === 'ka' ? 'მარნის ჟურნალი' : 'Winery Journal Logs'}</span>
+              <span className="text-[10px] font-mono text-slate-400 font-normal">{notesList.length} {lang === 'ka' ? 'ჩანაწერი' : 'entries recorded'}</span>
             </h4>
 
             <div className="flex flex-col gap-2 rounded-xl border border-stone-200 bg-stone-50/70 p-3 sm:flex-row sm:items-end sm:justify-between dark:border-stone-800 dark:bg-stone-950/30">
@@ -209,13 +209,13 @@ export default function NotesTab({
                       note.category === 'Tasting' ? 'bg-rose-100 text-rose-800' :
                       note.category === 'Sanitation' ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-700'
                     }`}>
-                      {note.category === 'Enology' ? '🧪 Chemistry' : 
-                       note.category === 'Tasting' ? '🍷 Tasting' : 
-                       note.category === 'Sanitation' ? '🧼 Sanitation' : '📝 General'}
+                      {note.category === 'Enology' ? (lang === 'ka' ? '🧪 ქიმია' : '🧪 Chemistry') :
+                       note.category === 'Tasting' ? (lang === 'ka' ? '🍷 დეგუსტაცია' : '🍷 Tasting') :
+                       note.category === 'Sanitation' ? (lang === 'ka' ? '🧼 სანიტარია' : '🧼 Sanitation') : (lang === 'ka' ? '📝 ზოგადი' : '📝 General')}
                     </span>
                     {note.relatedLotId && (
                       <span className="text-[9px] bg-stone-100 text-stone-600 font-mono px-1.5 py-0.5 rounded">
-                        Lot: {note.relatedLotId}
+                        {lang === 'ka' ? 'პარტია' : 'Lot'}: {note.relatedLotId}
                       </span>
                     )}
                     <span className="text-[10px] font-mono text-slate-400 ml-auto mr-4">{note.date} • {note.author}</span>
