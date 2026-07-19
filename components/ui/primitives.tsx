@@ -19,24 +19,29 @@ export function PageHeader({
 }) {
   return (
     <div className="bg-white/90 border border-[#e8dfd5] p-5 lg:p-6 rounded-2xl shadow-sm dark:bg-stone-900/90 dark:border-stone-800">
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-        <div className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        {/* The title column must never be crushed by `actions`: several headers
+            put fixed-width search/select controls in there, and those refuse to
+            shrink. Without a floor the flex row squeezes the heading down to a
+            word-per-line sliver instead of wrapping the actions to their own
+            row. `min-w-0` still applies below sm, where actions stack full-width. */}
+        <div className="min-w-0 flex-[1_1_24rem] sm:min-w-[18rem]">
           {eyebrow && (
             <span className="inline-flex text-[9px] uppercase tracking-widest bg-stone-100 text-stone-600 px-2.5 py-0.5 rounded font-bold dark:bg-stone-800 dark:text-stone-300">
               {eyebrow}
             </span>
           )}
-          <h2 className="text-xl font-serif font-black text-stone-900 uppercase mt-1 flex items-center gap-2 dark:text-amber-100">
-            {Icon && <Icon className="w-5 h-5 text-[#4e0e15] dark:text-amber-300" />}
-            {title}
+          <h2 className="text-xl font-serif font-black leading-tight text-stone-900 uppercase mt-1 flex items-start gap-2 break-words dark:text-amber-100">
+            {Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-[#4e0e15] dark:text-amber-300" />}
+            <span className="min-w-0">{title}</span>
           </h2>
           {description && (
-            <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5 max-w-3xl">
+            <p className="text-xs leading-relaxed text-pretty text-stone-500 dark:text-stone-400 font-semibold mt-0.5 max-w-3xl">
               {description}
             </p>
           )}
         </div>
-        {actions && <div className="shrink-0">{actions}</div>}
+        {actions && <div className="w-full min-w-0 flex-[1_1_auto] lg:w-auto lg:flex-[0_1_auto]">{actions}</div>}
       </div>
     </div>
   );
