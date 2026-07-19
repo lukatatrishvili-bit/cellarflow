@@ -15,6 +15,9 @@ import { openIntegrationSecret } from './integrationSecrets';
 
 export const MAX_ODATA_RESPONSE_BYTES = 5_000_000;
 const OUTBOUND_TIMEOUT_MS = 12_000;
+type HostLookup = (hostname: string) => Promise<readonly { address: string; family: number }[]>;
+
+const lookupHost: HostLookup = (hostname) => dns.lookup(hostname, { all: true, verbatim: true });
 // 1C OData entity sets: Catalog_Номенклатура, Document_РеализацияТоваровУслуг…
 const ENTITY_SET_RE = /^[A-Za-z0-9_Ѐ-ӿ]{1,120}$/;
 
@@ -44,7 +47,10 @@ function isPrivateIPv6(ip: string): boolean {
 }
 
 /** Throws with a user-facing message when the URL must not be fetched. */
-export async function assertSafeOutboundUrl(rawUrl: string): Promise<URL> {
+export async function assertSafeOutboundUrl(
+  rawUrl: string,
+  resolveHost: HostLookup = lookupHost,
+): Promise<URL> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -72,7 +78,7 @@ export async function assertSafeOutboundUrl(rawUrl: string): Promise<URL> {
   }
   let addresses;
   try {
-    addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+    addresses = await resolveHost(hostname);
   } catch {
     throw new Error('Endpoint host could not be resolved.');
   }

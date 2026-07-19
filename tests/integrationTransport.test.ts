@@ -64,7 +64,17 @@ describe('SSRF guard (assertSafeOutboundUrl)', () => {
 
   it('rejects an unresolvable host', async () => {
     await expect(
-      assertSafeOutboundUrl('https://nonexistent-1c-host.invalid/odata'),
+      assertSafeOutboundUrl('https://1c.example.com/odata', async () => {
+        throw new Error('getaddrinfo ENOTFOUND');
+      }),
     ).rejects.toThrow(/resolved/i);
+  });
+
+  it('rejects a hostname that resolves to a private address', async () => {
+    await expect(
+      assertSafeOutboundUrl('https://1c.example.com/odata', async () => [
+        { address: '10.0.0.5', family: 4 },
+      ]),
+    ).rejects.toThrow(/private|reserved/i);
   });
 });

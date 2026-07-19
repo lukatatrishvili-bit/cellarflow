@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
@@ -44,6 +44,9 @@ export default defineConfig({
         },
       },
     },
+  },
+  test: {
+    exclude: [...configDefaults.exclude, '**/.claude/worktrees/**'],
   },
   server: {
     port: 3000,
