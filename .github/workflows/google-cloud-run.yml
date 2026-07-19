@@ -7,15 +7,23 @@ on:
         description: Google Cloud project ID
         required: true
       region:
-        description: Cloud Run region
+        description: Cloud Run and Artifact Registry region
         required: true
         default: europe-west1
       service:
         description: Cloud Run service name
         required: true
         default: cellarflow-app
+      artifact_repository:
+        description: Artifact Registry Docker repository
+        required: true
+        default: cellarflow
+      cloudsql_instance:
+        description: Optional Cloud SQL connection name
+        required: false
+        default: cellarflow:europe-west1:cellarflow-postgres
       gcs_bucket:
-        description: GCS bucket for durable db.json persistence, without gs://
+        description: GCS bucket for durable db.json backup, without gs://
         required: true
         default: cellarflow-db
       gcs_db_object:
@@ -35,46 +43,44 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: cloud-run-${{ inputs.project_id }}-${{ inputs.service }}
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  verify:
+    name: Verify source revision
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build_image:
+    name: Build and verify immutable image
+    needs: verify
     runs-on: ubuntu-latest
-    concurrency: google-cloud-run-deploy
+    timeout-minutes: 30
+    outputs:
+      image_uri: ${{ steps.image.outputs.image_uri }}
+      image_digest: ${{ steps.image.outputs.image_digest }}
     env:
       HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && secrets.GCP_SERVICE_ACCOUNT != '' }}
       HAS_SA_KEY: ${{ secrets.GCP_SA_KEY != '' }}
       PROJECT_ID: ${{ inputs.project_id }}
       REGION: ${{ inputs.region }}
       SERVICE: ${{ inputs.service }}
-      GCS_BUCKET: ${{ inputs.gcs_bucket }}
-      GCS_DB_OBJECT: ${{ inputs.gcs_db_object }}
-      DEMO_LOGIN_ENABLED: ${{ inputs.demo_login_enabled }}
-      RUNTIME_SERVICE_ACCOUNT_INPUT: ${{ inputs.runtime_service_account }}
-      # All sensitive values (SESSION_SECRET, DATABASE_URL, GEMINI_API_KEY,
-      # GOOGLE_CLIENT_ID/SECRET, ADMIN_USERNAME/PASSCODE, SMTP_PASS) are wired
-      # from GCP Secret Manager via --update-secrets in the deploy step — NOT
-      # from GitHub secrets. The live service stores them as secret references,
-      # and gcloud refuses to overwrite a secret-reference env var with a
-      # literal --update-env-vars value.
-      #
-      # Optional non-secret SMTP settings. Without SMTP the verification gate
-      # falls back to logging the link server-side (new email/password signups
-      # cannot verify in production; Google sign-in still works).
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      MAIL_FROM: ${{ secrets.MAIL_FROM }}
+      ARTIFACT_REPOSITORY: ${{ inputs.artifact_repository }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the verified revision
+        uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud with Workload Identity
+      - name: Authenticate with Workload Identity
         if: env.HAS_WIF == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - name: Authenticate to Google Cloud with service account JSON
+      - name: Authenticate with service account JSON
         if: env.HAS_WIF != 'true' && env.HAS_SA_KEY == 'true'
         uses: google-github-actions/auth@v2
         with:
@@ -83,24 +89,153 @@ jobs:
       - name: Require Google Cloud authentication
         if: env.HAS_WIF != 'true' && env.HAS_SA_KEY != 'true'
         run: |
-          echo "Configure either Workload Identity secrets (GCP_WORKLOAD_IDENTITY_PROVIDER + GCP_SERVICE_ACCOUNT) or GCP_SA_KEY."
+          echo "Configure Workload Identity secrets or GCP_SA_KEY."
           exit 1
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Enable required Google Cloud services
+      - name: Prepare Artifact Registry
         run: |
+          set -euo pipefail
+          gcloud services enable artifactregistry.googleapis.com --project "$PROJECT_ID"
+
+          if ! gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
+            --project "$PROJECT_ID" \
+            --location "$REGION" >/dev/null 2>&1; then
+            gcloud artifacts repositories create "$ARTIFACT_REPOSITORY" \
+              --project "$PROJECT_ID" \
+              --location "$REGION" \
+              --repository-format docker \
+              --immutable-tags \
+              --description "CI-verified CellarFlow release images"
+          fi
+
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build, boot-smoke, and push the image
+        id: image
+        run: |
+          set -euo pipefail
+          IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/${SERVICE}"
+          IMAGE_TAG="${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          MISSING_SECRET_CONTAINER="cellarflow-missing-secret-${GITHUB_RUN_ID}"
+          HEALTHY_CONTAINER="cellarflow-release-smoke-${GITHUB_RUN_ID}"
+
+          docker build --pull \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "$IMAGE_TAG" .
+
+          set +e
+          timeout 20s docker run --name "$MISSING_SECRET_CONTAINER" "$IMAGE_TAG" \
+            >missing-secret.log 2>&1
+          MISSING_SECRET_EXIT=$?
+          set -e
+          docker rm --force "$MISSING_SECRET_CONTAINER" >/dev/null 2>&1 || true
+
+          if [ "$MISSING_SECRET_EXIT" -eq 0 ] || [ "$MISSING_SECRET_EXIT" -eq 124 ]; then
+            cat missing-secret.log
+            echo "The release image did not fail fast without SESSION_SECRET."
+            exit 1
+          fi
+          if ! grep --fixed-strings --quiet "SESSION_SECRET must be set in production" missing-secret.log; then
+            cat missing-secret.log
+            echo "The release image failed for an unexpected reason without SESSION_SECRET."
+            exit 1
+          fi
+
+          docker run --detach \
+            --name "$HEALTHY_CONTAINER" \
+            --publish 127.0.0.1:3000:3000 \
+            --env "SESSION_SECRET=cellarflow-container-smoke-secret-32-bytes" \
+            --env "DATABASE_URL=" \
+            --env "GCS_BUCKET=" \
+            --env "PRISMA_DB_PUSH_ON_STARTUP=false" \
+            --env "DEMO_LOGIN_ENABLED=false" \
+            "$IMAGE_TAG"
+          trap 'docker logs "$HEALTHY_CONTAINER" || true; docker rm --force "$HEALTHY_CONTAINER" >/dev/null 2>&1 || true' EXIT
+
+          docker exec \
+            --env "PRODUCTION_SMOKE_BASE_URL=http://127.0.0.1:3000" \
+            "$HEALTHY_CONTAINER" npm run test:production-smoke
+
+          docker push "$IMAGE_TAG"
+          IMAGE_DIGEST="$(gcloud artifacts docker images describe "$IMAGE_TAG" \
+            --project "$PROJECT_ID" \
+            --format='value(image_summary.digest)')"
+          if [[ "$IMAGE_DIGEST" != sha256:* ]]; then
+            echo "Artifact Registry did not return a valid image digest: $IMAGE_DIGEST"
+            exit 1
+          fi
+
+          IMAGE_URI="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+          echo "image_digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Verified image: $IMAGE_URI"
+
+  deploy:
+    name: Deploy verified image digest
+    needs: build_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ steps.service.outputs.url }}
+    env:
+      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && secrets.GCP_SERVICE_ACCOUNT != '' }}
+      HAS_SA_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+      PROJECT_ID: ${{ inputs.project_id }}
+      REGION: ${{ inputs.region }}
+      SERVICE: ${{ inputs.service }}
+      CLOUDSQL_INSTANCE: ${{ inputs.cloudsql_instance }}
+      GCS_BUCKET: ${{ inputs.gcs_bucket }}
+      GCS_DB_OBJECT: ${{ inputs.gcs_db_object }}
+      DEMO_LOGIN_ENABLED: ${{ inputs.demo_login_enabled }}
+      RUNTIME_SERVICE_ACCOUNT_INPUT: ${{ inputs.runtime_service_account }}
+      IMAGE_URI: ${{ needs.build_image.outputs.image_uri }}
+      IMAGE_DIGEST: ${{ needs.build_image.outputs.image_digest }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      MAIL_FROM: ${{ secrets.MAIL_FROM }}
+    steps:
+      - name: Authenticate with Workload Identity
+        if: env.HAS_WIF == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate with service account JSON
+        if: env.HAS_WIF != 'true' && env.HAS_SA_KEY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Require Google Cloud authentication
+        if: env.HAS_WIF != 'true' && env.HAS_SA_KEY != 'true'
+        run: |
+          echo "Configure Workload Identity secrets or GCP_SA_KEY."
+          exit 1
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Prepare runtime infrastructure
+        run: |
+          set -euo pipefail
           gcloud services enable \
             run.googleapis.com \
-            cloudbuild.googleapis.com \
-            artifactregistry.googleapis.com \
             storage.googleapis.com \
+            secretmanager.googleapis.com \
+            sqladmin.googleapis.com \
             --project "$PROJECT_ID"
 
-      - name: Prepare durable db bucket and runtime service account
-        run: |
           if [ -n "$RUNTIME_SERVICE_ACCOUNT_INPUT" ]; then
             RUNTIME_SERVICE_ACCOUNT="$RUNTIME_SERVICE_ACCOUNT_INPUT"
           else
@@ -123,22 +258,18 @@ jobs:
 
           echo "RUNTIME_SERVICE_ACCOUNT=${RUNTIME_SERVICE_ACCOUNT}" >> "$GITHUB_ENV"
 
-      - name: Deploy to Cloud Run from source
+      - name: Deploy the verified digest
         run: |
-          # --update-env-vars (not --set-env-vars) so values set out-of-band
-          # (e.g. APP_URL) are preserved across deploys instead of wiped.
-          # Sensitive values come from GCP Secret Manager via --update-secrets;
-          # the secret names below must exist in the target project.
+          set -euo pipefail
           DEPLOY_ARGS=(
-            --source .
+            --image "$IMAGE_URI"
             --project "$PROJECT_ID"
             --region "$REGION"
             --allow-unauthenticated
             --max-instances 1
             --service-account "$RUNTIME_SERVICE_ACCOUNT"
+            --update-labels "managed-by=github-actions,commit-sha=${GITHUB_SHA}"
             --update-env-vars "NODE_ENV=production"
-            # SESSION_SECRET is required at boot; DATABASE_URL activates the
-            # PostgreSQL (Cloud SQL) backend.
             --update-secrets "SESSION_SECRET=cellarflow-session-secret:latest"
             --update-secrets "DATABASE_URL=cellarflow-database-url:latest"
             --update-secrets "GEMINI_API_KEY=cellarflow-gemini-api-key:latest"
@@ -147,17 +278,14 @@ jobs:
             --update-secrets "ADMIN_USERNAME=cellarflow-admin-username:latest"
             --update-secrets "ADMIN_PASSCODE=cellarflow-admin-passcode:latest"
             --update-secrets "SMTP_PASS=cellarflow-smtp-pass:latest"
-            # Run additive `prisma db push` before serving so the Cloud SQL
-            # schema exists/stays current. The container now exits before
-            # serving if this command or PostgreSQL initialization fails.
             --update-env-vars "PRISMA_DB_PUSH_ON_STARTUP=true"
-            --add-cloudsql-instances "cellarflow:europe-west1:cellarflow-postgres"
             --update-env-vars "GOOGLE_CLOUD_REGION=$REGION"
             --update-env-vars "GCS_BUCKET=$GCS_BUCKET"
             --update-env-vars "GCS_DB_OBJECT=$GCS_DB_OBJECT"
             --update-env-vars "DEMO_LOGIN_ENABLED=$DEMO_LOGIN_ENABLED"
           )
 
+          if [ -n "$CLOUDSQL_INSTANCE" ]; then DEPLOY_ARGS+=(--add-cloudsql-instances "$CLOUDSQL_INSTANCE"); fi
           if [ -n "$SMTP_HOST" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_HOST=$SMTP_HOST"); fi
           if [ -n "$SMTP_PORT" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_PORT=$SMTP_PORT"); fi
           if [ -n "$SMTP_SECURE" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_SECURE=$SMTP_SECURE"); fi
@@ -166,8 +294,10 @@ jobs:
 
           gcloud run deploy "$SERVICE" "${DEPLOY_ARGS[@]}"
 
-      - name: Set APP_URL to the deployed service URL
+      - name: Set the canonical service URL
+        id: service
         run: |
+          set -euo pipefail
           SERVICE_URL="$(gcloud run services describe "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
@@ -178,12 +308,39 @@ jobs:
             --region "$REGION" \
             --update-env-vars "APP_URL=$SERVICE_URL"
 
+          echo "url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
 
-      - name: Verify health endpoint
+      - name: Verify deployed digest and health
         run: |
-          curl --fail --silent --show-error "$SERVICE_URL/api/health"
+          set -euo pipefail
+          LATEST_REVISION="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.latestReadyRevisionName)')"
+          DEPLOYED_IMAGE="$(gcloud run revisions describe "$LATEST_REVISION" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(spec.containers[0].image)')"
+
+          if [[ "$DEPLOYED_IMAGE" != *@"$IMAGE_DIGEST" ]]; then
+            echo "Expected deployed digest: $IMAGE_DIGEST"
+            echo "Latest ready revision image: $DEPLOYED_IMAGE"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error --retry 10 --retry-all-errors \
+            --retry-delay 2 "$SERVICE_URL/api/health"
+          echo "LATEST_REVISION=$LATEST_REVISION" >> "$GITHUB_ENV"
 
       - name: Deployment summary
         run: |
-          echo "Deployed $SERVICE to $SERVICE_URL"
+          {
+            echo "## Production deployment"
+            echo ""
+            echo "- Service: \`$SERVICE\`"
+            echo "- Revision: \`$LATEST_REVISION\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Image: \`$IMAGE_URI\`"
+            echo "- URL: $SERVICE_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

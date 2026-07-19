@@ -1,7 +1,7 @@
 # VinOS Improvement Plan — July 2026
 
 **Status date:** 2026-07-19  
-**Execution status:** Milestone 0 complete; Milestone 1 release and account safety is next  
+**Execution status:** Milestone 1 in progress; CI and verified-artifact deployment implemented
 **Scope:** Product trust, data correctness, release safety, maintainability, and production scale  
 **Planning horizon:** Next 10–15 focused pull requests; milestones are dependency-based rather than calendar promises
 
@@ -36,9 +36,9 @@ This plan was produced from the current working tree, including the in-progress 
 
 | Area | Current evidence | Planning implication |
 |---|---|---|
-| Mechanical health | `npm run lint`, `npm test`, `npm run build`, the fresh bundle-budget assertion, and the live production boot smoke pass; 611 pre-build tests plus 4 build-dependent bundle assertions pass across 86 tracked test files | Preserve the green baseline, but add missing integration and browser coverage |
+| Mechanical health | `npm run lint`, `npm test`, `npm run build`, the fresh bundle-budget assertion, and the live production boot smoke pass; 613 pre-build tests plus 4 build-dependent bundle assertions pass across 87 tracked test files | Preserve the green baseline, but add missing integration and browser coverage |
 | Stabilized scope | The permission, storage, sales, sync-conflict, integrity, and startup-safety batch is partitioned into reviewable commits | Start Milestone 1 without reopening the stabilized Milestone 0 concerns |
-| Delivery | The only GitHub Actions workflow is a manually dispatched Cloud Run deployment | Add mandatory CI and make deployment depend on a verified artifact |
+| Delivery | Pull requests and `main` pushes run mandatory release gates; manual deployment rebuilds those gates, smoke-tests one immutable image, and deploys its digest | Enable the required branch check and protected production reviewers in repository settings; then replace startup schema push with controlled migrations |
 | Testing | Vitest coverage is broad; no browser E2E runner or PostgreSQL integration job is configured | Add representative browser, database, offline, and concurrency tests |
 | Persistence | `OrganizationState.data` JSONB is authoritative; vessel/lot relational writes run in a fire-and-forget background task | Treat the normalized tables as non-authoritative until consistency is measurable |
 | Tenant model | Operational Prisma models use globally unique `id` primary keys, although application record IDs are reused across estates | Fix keys before expanding relational double-write or enabling relational reads |
@@ -79,8 +79,8 @@ Do not begin P2 work while a related P0 invariant is unproved.
 - `npm run test:production-smoke` now boots the real production server against isolated temporary state and verifies liveness, SPA fallback, API 404 behavior, cache policy, and required-session-secret fail-fast behavior.
 - Configured PostgreSQL initialization and startup schema-command failures now stop production before it serves traffic; development retains its explicit JSON fallback.
 - The batch is partitioned into production-startup safety (`e36f18d`), permission and sync-integrity workflows (`971987d`), and primary-workspace test isolation (`bcf30c6`).
-- Vitest excludes nested assistant worktrees, so the reported baseline now reflects only the 86 tracked primary-workspace test files; the DNS failure path is dependency-injected and deterministic rather than relying on live resolver timing.
-- The clean-checkout gate passes in order: typecheck, 611 pre-build tests (with the 4 build-dependent checks skipped), production build, all 4 fresh bundle-budget assertions, and production-mode boot smoke.
+- Vitest excludes nested assistant worktrees, so the reported baseline now reflects only the 87 tracked primary-workspace test files; the DNS failure path is dependency-injected and deterministic rather than relying on live resolver timing.
+- The clean-checkout gate passes in order: typecheck, 613 pre-build tests (with the 4 build-dependent checks skipped), production build, all 4 fresh bundle-budget assertions, and production-mode boot smoke.
 
 ### Exit gate
 
@@ -103,6 +103,14 @@ Do not begin P2 work while a related P0 invariant is unproved.
 - Add a protected production environment with deployment concurrency and an explicit revision summary.
 - Replace startup `prisma db push` with reviewed migrations and a controlled migration step. A schema failure must fail deployment rather than silently change persistence mode.
 - Add a non-deploying dependency/security scan and document how findings are triaged; do not auto-upgrade production dependencies without tests.
+
+### Current execution note — 2026-07-19
+
+- `.github/workflows/ci.yml` now runs locked installation, Prisma generation, typecheck, pre-build tests, production build, fresh bundle budgets, and production boot smoke for pull requests and `main` pushes; the deployment workflow reuses the same gate.
+- The deploy workflow builds one commit/run-tagged image, verifies secret fail-fast and the full HTTP contract inside that exact container, pushes it to an immutable-tag Artifact Registry repository, resolves its digest, and deploys with `--image` rather than `--source`.
+- The production job uses a non-cancelling concurrency key and the `production` GitHub environment, publishes a commit/revision/digest summary, and fails if Cloud Run's latest ready revision does not reference the verified digest.
+- Repository configuration remains operator-owned: require the CI status on `main` and configure reviewers/branch restrictions for the `production` environment.
+- Remaining release-safety implementation is controlled Prisma migrations plus a non-deploying dependency/security scan; account/team hardening remains unchanged below.
 
 ### 5.2 Account and team hardening
 

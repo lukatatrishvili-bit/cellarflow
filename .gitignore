@@ -6,6 +6,9 @@ coverage/
 .env*
 !.env.example
 
+# Temporary credential file emitted by google-github-actions/auth.
+gha-creds-*.json
+
 # Local runtime database (seeded on first run, contains password hashes)
 db.json
 # Atomic-write temp files and stray DB snapshots (also contain hashes)

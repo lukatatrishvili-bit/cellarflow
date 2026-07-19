@@ -1,0 +1,52 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Release gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx --no-install prisma generate
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Run the pre-build test suite
+        run: npm test
+
+      - name: Build production assets
+        run: npm run build
+
+      - name: Enforce fresh bundle budgets
+        run: npm test -- tests/bundleBudget.test.ts
+
+      - name: Smoke-test production startup
+        run: npm run test:production-smoke

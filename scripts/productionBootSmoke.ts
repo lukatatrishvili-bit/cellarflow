@@ -72,11 +72,14 @@ async function stopServer(child: ChildProcess): Promise<void> {
   }
 }
 
-async function waitForHealth(baseUrl: string, child: ChildProcess, output: () => string): Promise<Response> {
+async function waitForHealth(
+  baseUrl: string,
+  processHandle?: ReturnType<typeof captureServer>,
+): Promise<Response> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`Production server exited before becoming healthy.\n${output()}`);
+    if (processHandle && processHandle.child.exitCode !== null) {
+      throw new Error(`Production server exited before becoming healthy.\n${processHandle.output()}`);
     }
     try {
       const response = await fetch(`${baseUrl}/api/health`);
@@ -86,7 +89,41 @@ async function waitForHealth(baseUrl: string, child: ChildProcess, output: () =>
     }
     await delay(100);
   }
-  throw new Error(`Production server did not become healthy within 20 seconds.\n${output()}`);
+  const output = processHandle ? `\n${processHandle.output()}` : '';
+  throw new Error(`Production server did not become healthy within 20 seconds.${output}`);
+}
+
+async function assertProductionHttpContract(baseUrl: string, healthResponse: Response): Promise<void> {
+  if (JSON.stringify(await healthResponse.json()) !== JSON.stringify({ ok: true })) {
+    throw new Error('Health endpoint returned an unexpected payload.');
+  }
+
+  const routeResponse = await fetch(`${baseUrl}/cellar/lots/lot-1`);
+  const routeHtml = await routeResponse.text();
+  if (!routeResponse.ok || !routeHtml.includes('<div id="root">')) {
+    throw new Error('SPA fallback did not return the production index for a deep route.');
+  }
+  if (!/no-store/i.test(routeResponse.headers.get('cache-control') || '')) {
+    throw new Error('SPA fallback must not be cached.');
+  }
+
+  const missingApi = await fetch(`${baseUrl}/api/this-route-must-not-exist`);
+  if (missingApi.status !== 404 || !/application\/json/i.test(missingApi.headers.get('content-type') || '')) {
+    throw new Error('Unknown API routes must return a JSON 404 instead of the SPA shell.');
+  }
+
+  const workerResponse = await fetch(`${baseUrl}/sw.js`);
+  const workerCache = workerResponse.headers.get('cache-control') || '';
+  if (!workerResponse.ok || !/no-cache/i.test(workerCache) || /immutable/i.test(workerCache)) {
+    throw new Error('The stable service-worker URL must revalidate on deployment.');
+  }
+
+  const assetMatch = routeHtml.match(/(?:src|href)="(\/assets\/[^"]+\.(?:js|css))"/i);
+  if (!assetMatch) throw new Error('Production index did not reference a hashed JS or CSS asset.');
+  const assetResponse = await fetch(new URL(assetMatch[1], baseUrl));
+  if (!assetResponse.ok || !/immutable/i.test(assetResponse.headers.get('cache-control') || '')) {
+    throw new Error('Hashed production assets must use immutable caching.');
+  }
 }
 
 async function assertHealthyProductionBoot(databasePath: string): Promise<void> {
@@ -106,37 +143,8 @@ async function assertHealthyProductionBoot(databasePath: string): Promise<void> 
   });
 
   try {
-    const healthResponse = await waitForHealth(baseUrl, processHandle.child, processHandle.output);
-    if (JSON.stringify(await healthResponse.json()) !== JSON.stringify({ ok: true })) {
-      throw new Error('Health endpoint returned an unexpected payload.');
-    }
-
-    const routeResponse = await fetch(`${baseUrl}/cellar/lots/lot-1`);
-    const routeHtml = await routeResponse.text();
-    if (!routeResponse.ok || !routeHtml.includes('<div id="root">')) {
-      throw new Error('SPA fallback did not return the production index for a deep route.');
-    }
-    if (!/no-store/i.test(routeResponse.headers.get('cache-control') || '')) {
-      throw new Error('SPA fallback must not be cached.');
-    }
-
-    const missingApi = await fetch(`${baseUrl}/api/this-route-must-not-exist`);
-    if (missingApi.status !== 404 || !/application\/json/i.test(missingApi.headers.get('content-type') || '')) {
-      throw new Error('Unknown API routes must return a JSON 404 instead of the SPA shell.');
-    }
-
-    const workerResponse = await fetch(`${baseUrl}/sw.js`);
-    const workerCache = workerResponse.headers.get('cache-control') || '';
-    if (!workerResponse.ok || !/no-cache/i.test(workerCache) || /immutable/i.test(workerCache)) {
-      throw new Error('The stable service-worker URL must revalidate on deployment.');
-    }
-
-    const assetMatch = routeHtml.match(/(?:src|href)="(\/assets\/[^\"]+\.(?:js|css))"/i);
-    if (!assetMatch) throw new Error('Production index did not reference a hashed JS or CSS asset.');
-    const assetResponse = await fetch(new URL(assetMatch[1], baseUrl));
-    if (!assetResponse.ok || !/immutable/i.test(assetResponse.headers.get('cache-control') || '')) {
-      throw new Error('Hashed production assets must use immutable caching.');
-    }
+    const healthResponse = await waitForHealth(baseUrl, processHandle);
+    await assertProductionHttpContract(baseUrl, healthResponse);
   } finally {
     await stopServer(processHandle.child);
   }
@@ -166,6 +174,14 @@ async function assertMissingSecretFailsClosed(databasePath: string): Promise<voi
 }
 
 async function main(): Promise<void> {
+  const externalBaseUrl = process.env.PRODUCTION_SMOKE_BASE_URL?.replace(/\/+$/, '');
+  if (externalBaseUrl) {
+    const healthResponse = await waitForHealth(externalBaseUrl);
+    await assertProductionHttpContract(externalBaseUrl, healthResponse);
+    console.log('Production HTTP smoke passed: health, SPA fallback, API 404, and cache policy.');
+    return;
+  }
+
   if (!fs.existsSync(distIndexPath)) {
     throw new Error('Production build is missing. Run `npm run build` before `npm run test:production-smoke`.');
   }

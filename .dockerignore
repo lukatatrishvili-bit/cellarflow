@@ -13,3 +13,7 @@ yarn-debug.log*
 yarn-error.log*
 .claude
 .gemini
+
+# Temporary credential file emitted by google-github-actions/auth. Authentication
+# happens before docker build, so this must never enter the image context.
+gha-creds-*.json

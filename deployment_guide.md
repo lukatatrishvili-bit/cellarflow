@@ -105,31 +105,62 @@ Auth uses the service account automatically (Application Default Credentials) â€
 no key files. On first boot the freshly-seeded DB is uploaded; thereafter every
 revision restores from the bucket, so data survives redeploys.
 
-### Step 0.4: Deploy from GitHub Actions
-This repository includes a manual workflow:
+### Step 0.4: Verify and deploy from GitHub Actions
+
+The repository has two release workflows:
 
 ```text
+.github/workflows/ci.yml
 .github/workflows/google-cloud-run.yml
 ```
 
-It deploys with:
+`Continuous Integration` runs on every pull request to `main`, every push to
+`main`, manual dispatch, and as the first job of a production deployment. It
+runs locked dependency installation, Prisma generation, typecheck, the
+pre-build tests, a fresh production build, bundle budgets, and the production
+boot smoke in that order.
 
-* Cloud Run source deploy (`gcloud run deploy --source .`)
+`Google Cloud Run Deploy` then:
+
+* builds one commit/run-tagged container image;
+* verifies required-secret fail-fast behavior inside that image;
+* boots that exact image and runs the HTTP production smoke against it;
+* pushes it to an immutable-tag Artifact Registry repository;
+* resolves the image digest and deploys with `gcloud run deploy --image`;
+* verifies that Cloud Run's latest ready revision references the expected digest;
 * public unauthenticated access
 * `--max-instances=1` by default for conservative rollout
-* GCS-backed `db.json` persistence when Cloud SQL is not configured
+* GCS-backed `db.json` backup
 * automatic bucket creation if missing
-* `/api/health` verification after deploy
+* `/api/health` verification and an explicit commit/revision/image summary
 
-Configure GitHub repository secrets:
+There is no deployment-time source rebuild. The digest that passed the
+container smoke is the digest Cloud Run receives.
+
+In GitHub repository settings:
+
+1. Protect `main` and require the **Continuous Integration / Release gates** status check before merge.
+2. Create a `production` environment, add required reviewers, prevent self-review where available, and restrict deployment branches to `main` or the release branches you explicitly support.
+3. Keep deployment concurrency enabled; a second production run queues instead of cancelling an active rollout.
+
+The named live application secrets are read from **Google Cloud Secret
+Manager**, not GitHub. Create these secret resources in the target project and
+grant the Cloud Run runtime service account access:
 
 ```text
-GEMINI_API_KEY                 optional but needed for AI features
-GOOGLE_CLIENT_ID               optional Google OAuth client ID
-GOOGLE_CLIENT_SECRET           optional Google OAuth secret
-ADMIN_USERNAME                 optional production admin username
-ADMIN_PASSCODE                 optional production admin passcode
+cellarflow-session-secret
+cellarflow-database-url
+cellarflow-gemini-api-key
+cellarflow-google-client-id
+cellarflow-google-client-secret
+cellarflow-admin-username
+cellarflow-admin-passcode
+cellarflow-smtp-pass
 ```
+
+Optional non-secret SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`,
+`SMTP_USER`, and `MAIL_FROM`) remain GitHub repository or `production`
+environment secrets.
 
 For Google Cloud authentication, use one of these options:
 
@@ -146,6 +177,12 @@ GCP_SERVICE_ACCOUNT
 GCP_SA_KEY
 ```
 
+The Google identity used by the workflow must be able to push/create the
+Artifact Registry repository, deploy and inspect Cloud Run revisions, enable
+the required services, manage the configured bucket IAM policy, and act as the
+runtime service account. Pre-provision the repository, bucket, and APIs if you
+want to grant a narrower day-to-day deployment role.
+
 Then open GitHub Actions, choose **Google Cloud Run Deploy**, run the workflow,
 and enter:
 
@@ -153,6 +190,8 @@ and enter:
 project_id: your-gcp-project-id
 region: europe-west1
 service: cellarflow-app
+artifact_repository: cellarflow
+cloudsql_instance: your-project:europe-west1:cellarflow-postgres
 gcs_bucket: cellarflow-db
 gcs_db_object: db.json
 demo_login_enabled: false
