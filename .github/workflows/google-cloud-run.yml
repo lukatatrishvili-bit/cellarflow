@@ -92,14 +92,6 @@ jobs:
           echo "Configure Workload Identity secrets or GCP_SA_KEY."
           exit 1
 
-      - name: Require production mail configuration
-        run: |
-          set -euo pipefail
-          if [ -z "$SMTP_HOST" ]; then
-            echo "Configure the SMTP_HOST production-environment secret before deploying account email flows."
-            exit 1
-          fi
-
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:

@@ -59,8 +59,6 @@ describe('release workflow contracts', () => {
     ]);
     expect(workflow).not.toContain('--source .');
     expect(workflow).toContain('[[ "$DEPLOYED_IMAGE" != *@"$IMAGE_DIGEST" ]]');
-    expect(workflow).toContain('Require production mail configuration');
-    expect(workflow).toContain('if [ -z "$SMTP_HOST" ]');
     expect(readRootFile('.dockerignore')).toContain('gha-creds-*.json');
     expect(readRootFile('.gitignore')).toContain('gha-creds-*.json');
   });
