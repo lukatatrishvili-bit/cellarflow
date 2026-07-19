@@ -56,17 +56,37 @@ app.get('/api/config', (_req, res) => {
   });
 });
 
+// Unknown API routes must stay API responses. Letting them fall through to the
+// SPA would turn a missing endpoint into a misleading 200 HTML response.
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'API endpoint not found' });
+});
+
 
 // Serve frontend
 const isProd = process.env.NODE_ENV === 'production';
 const server = http.createServer(app);
 
 if (isProd) {
+  const distPath = path.resolve(__dirname, 'dist');
+  const indexPath = path.resolve(distPath, 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    throw new Error('Production frontend build is missing. Run `npm run build` before starting the server.');
+  }
+
   // Serve production build static files
-  app.use(express.static(path.resolve(__dirname, 'dist'), {
-    maxAge: '1y',
-    immutable: true,
-    index: false // Do not serve index.html with aggressive caching
+  app.use(express.static(distPath, {
+    index: false, // Do not serve index.html with aggressive caching
+    setHeaders: (res, filePath) => {
+      const relative = path.relative(distPath, filePath).replace(/\\/g, '/');
+      if (relative.startsWith('assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        // Service workers, manifests, and root icons keep stable URLs and must
+        // revalidate so a new deployment can take control promptly.
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      }
+    },
   }));
   // SPA fallback. Express 5 (path-to-regexp v8) rejects the bare '*' string
   // pattern, so use a RegExp catch-all for all non-API GET requests.
@@ -92,11 +112,14 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 // Hydrate the database from durable storage (GCS) before accepting traffic.
 if (process.env.VITEST !== 'true') {
   initDB()
-    .catch((err) => console.error('[db] initialisation failed, continuing with local state:', err))
-    .finally(() => {
+    .then(() => {
       server.listen(PORT, '0.0.0.0', () => {
         console.log(`Server is running in ${isProd ? 'production' : 'development'} on http://0.0.0.0:${PORT}`);
       });
+    })
+    .catch((err) => {
+      console.error('[db] initialisation failed; server was not started:', err);
+      process.exitCode = 1;
     });
 
   // Cloud Run sends SIGTERM with a 10s grace period before reaping an idle

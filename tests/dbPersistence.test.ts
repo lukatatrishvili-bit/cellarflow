@@ -148,6 +148,23 @@ describe('database persistence', () => {
     }));
   });
 
+  it('fails closed in production when configured PostgreSQL cannot initialize', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
+    const dbPath = path.join(root, 'db.json');
+    const connectionError = new Error('PostgreSQL unavailable');
+    const prisma = {
+      user: { findMany: vi.fn(async () => { throw connectionError; }) },
+      $disconnect: vi.fn(async () => undefined),
+    };
+    const dbModule = await loadDbModuleWithMockPrisma(dbPath, prisma);
+    process.env.NODE_ENV = 'production';
+
+    await expect(dbModule.initDB()).rejects.toBe(connectionError);
+
+    expect(prisma.$disconnect).toHaveBeenCalledOnce();
+    expect(fs.existsSync(dbPath)).toBe(false);
+  });
+
   it('forceSaveDB waits for PostgreSQL JSONB persistence before reporting success', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
     const dbPath = path.join(root, 'db.json');

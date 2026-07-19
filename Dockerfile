@@ -36,4 +36,4 @@ ENV DATABASE_PATH=/app/data/db.json
 # Start the application using tsx to run the TypeScript server.
 # In Cloud Run/Cloud SQL, PRISMA_DB_PUSH_ON_STARTUP=true lets the container
 # create additive schema changes (not destructive migrations) before serving.
-CMD ["sh", "-c", "if [ -n \"$DATABASE_URL\" ] && [ \"$PRISMA_DB_PUSH_ON_STARTUP\" = \"true\" ]; then npx prisma db push --skip-generate; fi; npx tsx server.ts"]
+CMD ["sh", "-c", "set -eu; if [ -n \"${DATABASE_URL:-}\" ] && [ \"${PRISMA_DB_PUSH_ON_STARTUP:-false}\" = \"true\" ]; then npx prisma db push --skip-generate; fi; exec npx tsx server.ts"]

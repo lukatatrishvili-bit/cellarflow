@@ -64,7 +64,8 @@ gcloud run deploy cellarflow-app --source . --region europe-west1 --allow-unauth
 ```
 
 `PRISMA_DB_PUSH_ON_STARTUP=true` lets the container apply additive Prisma schema
-changes before serving. Start new production deployments with
+changes before serving. A schema-command or PostgreSQL initialization failure
+stops the revision instead of silently switching it to fallback storage. Start new production deployments with
 `--max-instances=1`, verify the Master Admin "Cloud Run Scaling Readiness"
 panel, then raise max instances gradually only after smoke/load testing. Cloud
 SQL deployments now use PostgreSQL-backed auth/org metadata, a shared login

@@ -143,10 +143,15 @@ export async function initDB(): Promise<void> {
     // that can race with user-initiated saves during cold starts.
     saveDB({ syncPostgres: false });
   } catch (err) {
-    console.warn('[db] PostgreSQL initialization failed. Falling back to GCS or local file:', err);
-    postgresDisabledAfterFailure = true;
     await prisma.$disconnect().catch(() => undefined);
     prismaInstance = null;
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[db] PostgreSQL initialization failed. Refusing fallback storage in production:', err);
+      throw err;
+    }
+
+    console.warn('[db] PostgreSQL initialization failed. Falling back to GCS or local file:', err);
+    postgresDisabledAfterFailure = true;
     await loadLocalOrGcsDB();
     dbData = normalizeDbState(dbData);
     cleanupDemoData();

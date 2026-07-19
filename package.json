@@ -9,7 +9,8 @@
     "start": "tsx server.ts",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:production-smoke": "tsx scripts/productionBootSmoke.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.6",

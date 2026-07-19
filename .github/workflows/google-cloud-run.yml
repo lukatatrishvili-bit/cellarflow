@@ -148,8 +148,8 @@ jobs:
             --update-secrets "ADMIN_PASSCODE=cellarflow-admin-passcode:latest"
             --update-secrets "SMTP_PASS=cellarflow-smtp-pass:latest"
             # Run additive `prisma db push` before serving so the Cloud SQL
-            # schema exists/stays current (a missing schema makes Prisma fail
-            # and the app silently fall back to the GCS json backend).
+            # schema exists/stays current. The container now exits before
+            # serving if this command or PostgreSQL initialization fails.
             --update-env-vars "PRISMA_DB_PUSH_ON_STARTUP=true"
             --add-cloudsql-instances "cellarflow:europe-west1:cellarflow-postgres"
             --update-env-vars "GOOGLE_CLOUD_REGION=$REGION"
