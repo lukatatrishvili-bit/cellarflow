@@ -230,7 +230,7 @@ export default function CellarOperationsTab({
         </div>
       )}
 
-      <div className={`grid grid-cols-1 ${canLogCellarOperation ? 'lg:grid-cols-[1.15fr_1fr]' : ''} gap-4`}>
+      <div className={`grid grid-cols-1 ${canLogCellarOperation ? '2xl:grid-cols-[1.15fr_1fr]' : ''} gap-4`}>
         {/* ── Operation form ────────────────────────────── */}
         {canLogCellarOperation && (
           <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
@@ -381,7 +381,7 @@ export default function CellarOperationsTab({
             </div>
           ) : (
             <div className="overflow-x-auto max-h-[560px]">
-              <table className="w-full text-left text-[11px]">
+              <table className="w-full min-w-[760px] text-left text-[11px]">
                 <thead>
                   <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-400 font-bold dark:bg-stone-950">
                     <th className="p-2.5">{ka ? 'თარიღი' : 'Date'}</th>

@@ -598,10 +598,10 @@ export default function TransfersTab({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div className="grid grid-cols-1 2xl:grid-cols-12 gap-6 items-start">
         
         {/* Left column: Visual Tank Selectors */}
-        <div className="lg:col-span-4 space-y-4">
+        <div className="2xl:col-span-4 space-y-4">
           
           {/* Source Vessel selector */}
           <div className="bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs space-y-3">
@@ -749,7 +749,7 @@ export default function TransfersTab({
         </div>
 
         {/* Right Columns: Racking Form, Safety Checklist & Predictions */}
-        <div className="lg:col-span-8 space-y-6">
+        <div className="2xl:col-span-8 space-y-6">
 
           {/* 🔮 SMART TRANSFER ADVISOR */}
           <div className="bg-[#FAF8F5] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-850 rounded-xl p-4 space-y-3.5 shadow-2xs relative overflow-hidden text-stone-850 dark:text-stone-100">
@@ -867,11 +867,11 @@ export default function TransfersTab({
             )}
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+          <div className="grid grid-cols-1 2xl:grid-cols-12 gap-6 items-start">
             
             {/* Controller main inputs */}
             {canExecuteTransfer && (
-              <div className="md:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+              <div className="2xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
               <h3 className="text-sm font-serif font-bold text-[#4e0e15] border-b pb-2 flex items-center gap-1.5">
                 <Compass className="w-4 h-4 text-[#801323]" /> {lang === 'ka' ? 'გადაღებისა და კუპაჟირების ფორმა' : 'Racking & Blending Form'}
               </h3>
@@ -979,7 +979,7 @@ export default function TransfersTab({
             )}
 
             {/* Safety parameters & Blending calculations panel */}
-            <div className={`${canExecuteTransfer ? 'md:col-span-5' : 'md:col-span-12'} space-y-4`}>
+            <div className={`${canExecuteTransfer ? '2xl:col-span-5' : '2xl:col-span-12'} space-y-4`}>
               
               <div className="bg-[#FAF8F5] p-4 border border-stone-200 rounded-xl space-y-4">
                 <h4 className="text-xs font-mono font-bold uppercase text-stone-700 tracking-wider">{lang === 'ka' ? 'უსაფრთხოებისა და თავსებადობის შემოწმება' : 'Safety & Compatibility Check'}</h4>

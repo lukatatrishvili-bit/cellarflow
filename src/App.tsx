@@ -111,7 +111,8 @@ import {
   PlugZap,
   BadgeCheck,
   Settings,
-  Menu
+  Menu,
+  LogOut
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -1134,10 +1135,12 @@ export default function App() {
                   state.handleAuthLogout();
                   state.setActiveModule('portal');
                 }}
-                className="bg-[#faf8f6] hover:bg-rose-50/50 border border-stone-200 text-[#801323] px-3 py-2 text-[10px] font-mono font-extrabold rounded-xl cursor-pointer transition-all duration-150 uppercase tracking-wider shadow-2xs dark:bg-stone-900 dark:border-stone-800 dark:text-rose-300"
+                aria-label={state.lang === 'ka' ? 'გამოსვლა' : 'Log Out'}
+                className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl border border-stone-200 bg-[#faf8f6] p-0 text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#801323] shadow-2xs transition-all duration-150 hover:bg-rose-50/50 sm:min-h-0 sm:min-w-0 sm:px-3 sm:py-2 dark:bg-stone-900 dark:border-stone-800 dark:text-rose-300"
                 title={state.lang === 'ka' ? 'გამოსვლა' : 'Log Out'}
               >
-                {t.nav_logout || 'Logout'}
+                <LogOut className="h-4 w-4 sm:hidden" aria-hidden="true" />
+                <span className="hidden sm:inline">{t.nav_logout || 'Logout'}</span>
               </motion.button>
             </div>
           )}

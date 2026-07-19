@@ -214,7 +214,7 @@ export default function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
         </div>
 
         <div className="rounded-2xl border border-stone-100 bg-[#FAF8F5]/60 p-3">
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_180px_180px_auto] gap-2">
+          <div className="grid grid-cols-1 xl:grid-cols-[1fr_180px_180px_auto] gap-2">
             <label className="relative block">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
               <input
@@ -262,7 +262,7 @@ export default function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
         </div>
 
         <div className="overflow-x-auto border border-stone-100 rounded-xl">
-          <table className="w-full text-left text-xs text-stone-600 border-collapse">
+          <table className="w-full min-w-[1100px] text-left text-xs text-stone-600 border-collapse">
             <thead>
               <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-slate-400 font-bold">
                 <th className="p-3">{t.audit_col_ts || 'Timestamp UTC'}</th>

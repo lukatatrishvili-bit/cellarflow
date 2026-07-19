@@ -370,7 +370,7 @@ export default function WineryDashboardTab({
       </div>
 
       {(canViewVessels || canViewFermentation) && (
-      <div className={`grid grid-cols-1 gap-5 ${canViewVessels && canViewFermentation ? 'lg:grid-cols-2' : ''}`}>
+      <div className={`grid grid-cols-1 gap-5 ${canViewVessels && canViewFermentation ? 'xl:grid-cols-2' : ''}`}>
         {canViewVessels && (
         <SectionCard
           title={isKa ? 'მარნის ჭურჭლის გამოყენება' : 'Cellar vessel utilization'}
@@ -419,7 +419,7 @@ export default function WineryDashboardTab({
       )}
 
       {(canViewTasks || canViewFermentation) && (
-      <div className={`grid grid-cols-1 gap-5 ${canViewTasks && canViewFermentation ? 'lg:grid-cols-2' : ''}`}>
+      <div className={`grid grid-cols-1 gap-5 ${canViewTasks && canViewFermentation ? 'xl:grid-cols-2' : ''}`}>
         {canViewTasks && (
         <SectionCard
           title={t.upcoming_tasks || 'Upcoming tasks'}

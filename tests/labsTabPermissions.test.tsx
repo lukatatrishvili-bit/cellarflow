@@ -78,7 +78,7 @@ describe('LabsTab action permissions', () => {
     expect(markup).toContain('Filter Age / Vintage');
     expect(markup).not.toContain('Add Lab Readings');
     expect(markup).not.toContain('Commit Lab Reads');
-    expect(markup).toContain('md:col-span-3');
+    expect(markup).toContain('xl:col-span-3');
   });
 
   it('localizes the read-only notice in Georgian', () => {

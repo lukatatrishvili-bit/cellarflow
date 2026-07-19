@@ -317,7 +317,7 @@ export default function GrapeReceivingTab({
         </div>
       )}
 
-      <div className={canReceiveGrapes ? 'grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-4' : 'grid grid-cols-1 gap-4'}>
+      <div className={canReceiveGrapes ? 'grid grid-cols-1 2xl:grid-cols-[1.1fr_1fr] gap-4' : 'grid grid-cols-1 gap-4'}>
         {/* ── Intake form ───────────────────────────────── */}
         {canReceiveGrapes && (
         <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
@@ -599,7 +599,7 @@ export default function GrapeReceivingTab({
             </>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-[11px]">
+              <table className="w-full min-w-[760px] text-left text-[11px]">
                 <thead>
                   <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-400 font-bold dark:bg-stone-950">
                     <th className="p-2.5">{ka ? 'თარიღი' : 'Date'}</th>

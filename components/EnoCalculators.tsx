@@ -588,9 +588,9 @@ export default function EnoCalculators({
 
       {/* --- TAB 1 DETAILED CONTENT: SO2 EQUILIBRIUM --- */}
       {activeSubTab === 'so2' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           {/* Controls */}
-          <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+          <div className="xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <FlaskConical className="w-4.5 h-4.5 text-[#801323]" />
               {lang === 'ka' ? 'SO₂-ისა და KMBS დოზის თერმოდინამიკური მოდელი' : 'Thermodynamic SO₂ & KMBS Dose Modeller'}
@@ -621,7 +621,7 @@ export default function EnoCalculators({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
                   {lang === 'ka' ? 'მიმდინარე თავისუფალი SO₂ (მგ/ლ)' : 'Current Free SO₂ (mg/L)'}
@@ -678,7 +678,7 @@ export default function EnoCalculators({
                 />
               </div>
 
-              <div className="col-span-2 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3">
+              <div className="grid grid-cols-1 gap-2 border-t border-slate-100 pt-3 sm:col-span-2 sm:grid-cols-3">
                 <button
                   type="button"
                   onClick={() => { setSo2TargetMolMode('white'); setSo2CustomTargetMol(0.8); }}
@@ -715,7 +715,7 @@ export default function EnoCalculators({
               </div>
 
               {so2TargetMolMode === 'custom' && (
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
                     {lang === 'ka' ? 'მორგებული სამიზნე მოლეკულური SO₂ (მგ/ლ ზღვარი)' : 'Custom Target Molecular SO₂ (mg/L limit)'}
                   </label>
@@ -729,7 +729,7 @@ export default function EnoCalculators({
                 </div>
               )}
 
-              <div className="col-span-2 grid grid-cols-2 gap-4 border-t border-slate-100 pt-3">
+              <div className="grid grid-cols-1 gap-4 border-t border-slate-100 pt-3 sm:col-span-2 sm:grid-cols-2">
                 <div>
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
                     {lang === 'ka' ? 'ღვინის პარტიის მოცულობა (ლ)' : 'Batch Volume of Wine (L)'}
@@ -758,7 +758,7 @@ export default function EnoCalculators({
 
           {/* Outputs / Gauges */}
           {molecularSO2Result && (
-            <div className="lg:col-span-5 flex flex-col gap-4">
+            <div className="xl:col-span-5 flex flex-col gap-4">
               {/* Core visual risk card */}
               <div className={`p-5 rounded-xl border text-stone-850 space-y-3.5 shadow-xs ${
                 molecularSO2Result.warningStyle === 'safe' 
@@ -914,9 +914,9 @@ export default function EnoCalculators({
       )}
         {/* --- TAB 2 DETAILED CONTENT: MULTI-LOT BLENDING SANDBOX & SENSORY RADAR --- */}
       {activeSubTab === 'blend' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           {/* Blend specifications */}
-          <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+          <div className="xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <Droplets className="w-4.5 h-4.5 text-[#801323]" />
               {lang === 'ka' ? 'მრავალ-ლოტიანი კუპაჟირების სიმულატორი' : 'Multi-Lot Blending Sandbox'}
@@ -1083,7 +1083,7 @@ export default function EnoCalculators({
           </div>
 
           {/* Predicted blend outputs and Radar sensory chart */}
-          <div className="lg:col-span-5 space-y-4">
+          <div className="xl:col-span-5 space-y-4">
             {multiBlendOutput ? (
               <>
                 {/* Predicted Chemistry Matrix */}
@@ -1202,15 +1202,15 @@ export default function EnoCalculators({
 
       {/* --- TAB 3 DETAILED CONTENT: ABV & HYDROMETER CONTROLS --- */}
       {activeSubTab === 'alcohol' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           {/* Controls */}
-          <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+          <div className="xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <Percent className="w-4.5 h-4.5 text-[#801323]" />
               {lang === 'ka' ? 'ალკოჰოლის პოტენციალი და არეომეტრის ტემპ. კორექცია' : 'Non-Linear Alcohol potential & Hydrometer Temp Correction'}
             </h3>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
                   {lang === 'ka' ? 'საწყისი სიმკვრივე (SG)' : 'Starting Specific Gravity (SG)'}
@@ -1267,7 +1267,7 @@ export default function EnoCalculators({
 
           {/* Output metrics */}
           {alcOutput && (
-            <div className="lg:col-span-5 bg-[#FCFAF8] p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
+            <div className="xl:col-span-5 bg-[#FCFAF8] p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
               <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2">
                 {lang === 'ka' ? 'დუღილის სტატისტიკა' : 'Oenology Attenuation Statistics'}
               </h4>
@@ -1312,9 +1312,9 @@ export default function EnoCalculators({
 
       {/* --- TAB 4 DETAILED CONTENT: VESSEL GEOMETRY & HEADSPACE --- */}
       {activeSubTab === 'vessel' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           {/* Controls */}
-          <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+          <div className="xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <RefreshCw className="w-4.5 h-4.5 text-[#801323]" />
               {lang === 'ka' ? 'ჭურჭლის გეომეტრია და თავისუფალი სივრცის რისკი' : 'Complex Container Geometry & Ullage Risk Advisor'}
@@ -1325,7 +1325,7 @@ export default function EnoCalculators({
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
                   {lang === 'ka' ? 'ჭურჭლის ფორმა' : 'Vessel Geometry Profile'}
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <button
                     type="button"
                     onClick={() => setTankShape('cylinder_cone')}
@@ -1357,7 +1357,7 @@ export default function EnoCalculators({
               </div>
 
               {tankShape !== 'oak_barrel' && (
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">{lang === 'ka' ? 'რადიუსი (მ)' : 'Radius (m)'}</label>
                     <input 
@@ -1413,7 +1413,7 @@ export default function EnoCalculators({
 
           {/* Outputs */}
           {vesselOutput && (
-            <div className="lg:col-span-5 flex flex-col gap-4">
+            <div className="xl:col-span-5 flex flex-col gap-4">
               {/* Headspace alarm card */}
               <div className={`p-5 rounded-xl border text-stone-850 space-y-3.5 shadow-xs ${
                 vesselOutput.riskStatus === 'minimal' 
@@ -1476,9 +1476,9 @@ export default function EnoCalculators({
 
       {/* --- TAB 5 DETAILED CONTENT: ACID MODELLER --- */}
       {activeSubTab === 'acid' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           {/* Controls */}
-          <div className="lg:col-span-12 xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+          <div className="xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <Sliders className="w-4.5 h-4.5 text-[#801323]" />
               {lang === 'ka' ? 'მჟავიანობის მოდელი და ქიმიური დანამატის სამიზნე' : 'Oenological Buffer Modeller & Chemical Addition Target'}
@@ -1580,7 +1580,7 @@ export default function EnoCalculators({
 
           {/* Result */}
           {acidOutput && (
-            <div className="lg:col-span-12 xl:col-span-5 bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
+            <div className="xl:col-span-5 bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
               <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2 flex items-center gap-1.5">
                 <Scale className="w-4 h-4 text-[#801323]" />
                 {lang === 'ka' ? 'ტიტრაციის შედეგები' : 'Interactive titration outcomes'}

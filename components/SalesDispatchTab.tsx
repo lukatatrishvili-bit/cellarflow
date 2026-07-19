@@ -617,7 +617,7 @@ export default function SalesDispatchTab({
         </div>
       )}
 
-      <div className={`grid grid-cols-2 ${canViewCosts ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-3`}>
+      <div className={`grid grid-cols-2 ${canViewCosts ? 'xl:grid-cols-5' : 'xl:grid-cols-4'} gap-3`}>
         {[
           { label: ka ? 'აქტიური ჯავშნები' : 'Active reservations', value: orderTotals.count, accent: 'text-blue-700 dark:text-blue-300', money: false },
           { label: ka ? 'დაჯავშნილი ბოთლები' : 'Reserved bottles', value: orderTotals.bottles, accent: 'text-[#4e0e15] dark:text-amber-300', money: false },
@@ -634,7 +634,7 @@ export default function SalesDispatchTab({
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[410px_1fr] gap-5">
+      <div className="grid grid-cols-1 2xl:grid-cols-[410px_1fr] gap-5">
         <div className="space-y-4">
           {canCreateOrder && <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-3 dark:bg-stone-900 dark:border-stone-800">
             <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
@@ -923,7 +923,7 @@ export default function SalesDispatchTab({
                 ))}
               </div>
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left text-[11px]">
+                <table className="w-full min-w-[760px] text-left text-[11px]">
                   <thead>
                     <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-500 dark:text-stone-400 font-bold dark:bg-stone-950">
                       <th className="p-2.5">{ka ? 'შეკვეთა / მომხმარებელი' : 'Order / Customer'}</th>
@@ -1035,7 +1035,7 @@ export default function SalesDispatchTab({
                 ))}
               </div>
               <div className="hidden md:block overflow-x-auto">
-                <table className="w-full text-left text-[11px]">
+                <table className="w-full min-w-[760px] text-left text-[11px]">
                   <thead>
                     <tr className="bg-[#FAF8F5] border-b border-[#e8dfd5] text-[9px] font-mono uppercase text-stone-500 dark:text-stone-400 font-bold dark:bg-stone-950">
                       <th className="p-2.5">{ka ? 'თარიღი / მომხმარებელი' : 'Date / Customer'}</th>

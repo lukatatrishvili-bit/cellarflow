@@ -92,3 +92,34 @@ We have successfully verified and deployed the latest comprehensive updates to G
 - Deployed a new revision **`cellarflow-app-00099-tlm`** to Google Cloud Run in `europe-west1`.
 - Verified the live service health endpoint at [https://cellarflow-app-445298255193.europe-west1.run.app/api/health](https://cellarflow-app-445298255193.europe-west1.run.app/api/health), which responded successfully with `{"ok":true}` (HTTP 200).
 - The updated application is now serving 100% of traffic.
+
+---
+
+## Workspace Deployment & Verification (July 15, 2026)
+
+We have successfully verified and deployed the latest updates (feat/georgian-localization) to Google Cloud Run, including Georgian localization and updated enum display labels.
+
+### 1. Verification & Build
+- Checked the local production build via `npm run build`, which compiled all frontend assets with **0 errors/warnings**.
+- Ran the full test suite (`npm run test`), and all **466 unit and integration tests passed** successfully.
+
+### 2. Service Redeployment
+- Deployed a new revision **`cellarflow-app-00100-ktb`** to Google Cloud Run in `europe-west1`.
+- Verified the live service health endpoint at [https://cellarflow-app-445298255193.europe-west1.run.app/api/health](https://cellarflow-app-445298255193.europe-west1.run.app/api/health), which responded successfully with `{"ok":true}` (HTTP 200).
+- The updated application is now serving 100% of traffic.
+
+---
+
+## Workspace Deployment & Verification (July 18, 2026)
+
+We have successfully verified and deployed the latest updates to Google Cloud Run, covering the localized permission states, grape receiving/intake workflows, and the Georgian localization tab updates.
+
+### 1. Verification & Build
+- Checked TypeScript compiler compatibility via `npm run lint`, which completed successfully with **0 compile-time errors**.
+- Ran the full test suite (`npm run test`), and all **870 unit and integration tests passed** successfully.
+- Verified the production build via `npm run build`, which compiled all frontend assets with **0 errors/warnings**.
+
+### 2. Service Redeployment
+- Deployed a new revision **`cellarflow-app-00101-z8v`** to Google Cloud Run in `europe-west1`.
+- Verified the live service health endpoint at [https://cellarflow-app-445298255193.europe-west1.run.app/api/health](https://cellarflow-app-445298255193.europe-west1.run.app/api/health), which responded successfully with `{"ok":true}` (HTTP 200).
+- The updated application is now serving 100% of traffic.

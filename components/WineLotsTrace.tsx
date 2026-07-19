@@ -161,9 +161,9 @@ export default function WineLotsTrace({
       };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+    <div className="grid grid-cols-1 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
       {isReadOnly && (
-        <div role="status" className="lg:col-span-3 xl:col-span-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+        <div role="status" className="xl:col-span-3 2xl:col-span-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
           <strong className="block text-xs font-bold">{readOnlyNotice.title}</strong>
           <span className="mt-0.5 block text-[11px] leading-relaxed">
             {readOnlyNotice.body}
@@ -171,7 +171,7 @@ export default function WineLotsTrace({
         </div>
       )}
       {/* List Panel */}
-      <div className="lg:col-span-1 space-y-4">
+      <div className="xl:col-span-1 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold font-serif text-[#4e0e15] flex items-center gap-1">
             <ListFilter className="w-4 h-4" /> 
@@ -422,7 +422,7 @@ export default function WineLotsTrace({
       </div>
 
       {/* Details/Timeline Trace Panel */}
-      <div className="lg:col-span-2 xl:col-span-3 space-y-6">
+      <div className="xl:col-span-2 2xl:col-span-3 space-y-6">
         {selectedLot ? (
           <div className="p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-xs text-stone-900 dark:text-stone-200 space-y-8">
             <WineLotCommandCenter

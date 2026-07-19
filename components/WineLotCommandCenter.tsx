@@ -173,7 +173,7 @@ export default function WineLotCommandCenter({
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
           <MetricCard label={ka ? 'მიმდინარე მოცულობა' : 'Current volume'} value={`${lot.currentVolume.toLocaleString()} L`} hint={`${lot.initialVolume.toLocaleString()} L ${ka ? 'საწყისი' : 'initial'}`} />
           <MetricCard label={ka ? 'ჩამოსხმული' : 'Bottled'} value={`${bottled.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={bottled > 0 ? (ka ? 'მზა პროდუქცია' : 'finished goods') : (ka ? 'ჯერ არ ჩამოსხმულა' : 'not bottled yet')} />
           <MetricCard label={ka ? 'მარაგი ახლა' : 'Stock now'} value={`${stockOnHand.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={reserved > 0 ? `${reserved.toLocaleString()} ${ka ? 'დაჯავშნილი' : 'reserved'}` : (ka ? 'დაუჯავშნავი' : 'unreserved')} />

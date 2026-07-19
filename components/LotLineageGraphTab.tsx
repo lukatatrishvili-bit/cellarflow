@@ -511,8 +511,8 @@ export default function LotLineageGraphTab({
           : 'A horizontal visual lineage for each wine code: grape intake, lot creation, blends, operations, bottling, storage, reservations, and dispatch.'}
         icon={GitMerge}
         actions={(
-          <div className="flex flex-col sm:flex-row gap-2 min-w-0">
-            <div className="relative min-w-[240px]">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <div className="relative w-full sm:w-[240px] sm:min-w-[240px]">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
               <input
                 value={query}
@@ -527,13 +527,13 @@ export default function LotLineageGraphTab({
                 setSelectedLotId(e.target.value);
                 setSelectedNodeId(null);
               }}
-              className="min-w-[260px] bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
+              className="w-full bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold sm:w-[260px] sm:min-w-[260px] dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
             >
               {lotOptions.map(lot => (
                 <option key={lot.id} value={lot.id}>{lot.id} · {lot.name}</option>
               ))}
             </select>
-            <div className="flex items-center gap-1 rounded-xl border border-stone-200 bg-stone-50 p-1 dark:border-stone-800 dark:bg-stone-950">
+            <div className="flex shrink-0 items-center gap-1 rounded-xl border border-stone-200 bg-stone-50 p-1 dark:border-stone-800 dark:bg-stone-950">
               <button
                 type="button"
                 onClick={() => setZoom(value => Math.max(0.7, Math.round((value - 0.1) * 10) / 10))}
@@ -562,7 +562,7 @@ export default function LotLineageGraphTab({
             <button
               type="button"
               onClick={() => setFocusPathOnly(value => !value)}
-              className={`rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wide transition-colors ${
+              className={`shrink-0 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wide transition-colors ${
                 focusPathOnly
                   ? 'border-[#4e0e15] bg-[#4e0e15] text-amber-50'
                   : 'border-stone-200 bg-stone-50 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300'

@@ -280,10 +280,10 @@ export default function InventoryTab({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
 
         {/* Left column: Categories Navigation and Creation */}
-        <div className="lg:col-span-3 space-y-4">
+        <div className="xl:col-span-3 space-y-4">
 
           <div className="bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-xs font-mono font-bold uppercase text-slate-400 tracking-wider flex items-center justify-between border-b border-stone-100 pb-2">
@@ -390,7 +390,7 @@ export default function InventoryTab({
         </div>
 
         {/* Right column: Items List, Form, & Item management */}
-        <div className="lg:col-span-9 space-y-4">
+        <div className="xl:col-span-9 space-y-4">
 
           {/* Add Item form */}
           {canCreateInventory && showItemForm && (
