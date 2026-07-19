@@ -127,19 +127,28 @@ export default function EnoCalculators({
     let warningStyle: 'danger' | 'marginal' | 'safe' = 'danger';
     let warningMessage = '';
 
+    const ka = lang === 'ka';
     if (currentMolecular >= targetMolecular - 0.05) {
       warningStyle = 'safe';
-      warningMessage = `Vastly Protected. Active molecular of ${currentMolecular.toFixed(2)} mg/L meets target thresholds against yeast, Brettanomyces, and acetic acid bacteria.`;
+      warningMessage = ka
+        ? `სრულად დაცული. აქტიური მოლეკულური ${currentMolecular.toFixed(2)} მგ/ლ აღწევს სამიზნეს საფუარის, Brettanomyces-ისა და ძმარმჟავა ბაქტერიების წინააღმდეგ.`
+        : `Vastly Protected. Active molecular of ${currentMolecular.toFixed(2)} mg/L meets target thresholds against yeast, Brettanomyces, and acetic acid bacteria.`;
     } else if (currentMolecular >= 0.4) {
       warningStyle = 'marginal';
-      warningMessage = `Marginally Protected. Low bio-protection overhead. At higher pH states or storage temperatures, spoilage organisms can slowly proliferate.`;
+      warningMessage = ka
+        ? `ნაწილობრივ დაცული. ბიო-დაცვის მარაგი დაბალია. მაღალ pH-ზე ან შენახვის ტემპერატურაზე გამფუჭებელი ორგანიზმები ნელა შეიძლება გამრავლდნენ.`
+        : `Marginally Protected. Low bio-protection overhead. At higher pH states or storage temperatures, spoilage organisms can slowly proliferate.`;
     } else {
       warningStyle = 'danger';
-      warningMessage = `CRITICAL BIOLOGICAL RISK. Under-sulfited. Below 0.4 mg/L molecular, Saccharomyces and wild flora can revive. Increase Free SO2.`;
+      warningMessage = ka
+        ? `კრიტიკული ბიოლოგიური რისკი. არასაკმარისი გოგირდი. 0.4 მგ/ლ მოლეკულურის ქვემოთ Saccharomyces და ველური ფლორა შეიძლება გამოცოცხლდნენ. გაზარდეთ თავისუფალი SO2.`
+        : `CRITICAL BIOLOGICAL RISK. Under-sulfited. Below 0.4 mg/L molecular, Saccharomyces and wild flora can revive. Increase Free SO2.`;
     }
 
     if (so2PH >= 3.8) {
-      warningMessage += ` WARNING: Exceptionally high pH (${so2PH}) renders SO2 nearly inactive (Fraction: ${(fraction * 100).toFixed(2)}%). Consider tartaric acidification first to drop pH, else sulfur additions will bleach color and trigger off-flavors.`;
+      warningMessage += ka
+        ? ` გაფრთხილება: ძალიან მაღალი pH (${so2PH}) SO2-ს თითქმის უმოქმედოს ხდის (ფრაქცია: ${(fraction * 100).toFixed(2)}%). ჯერ განიხილეთ ღვინის მჟავით pH-ის შემცირება, თორემ გოგირდი გააფერმკრთალებს ფერს და გამოიწვევს უცხო არომატებს.`
+        : ` WARNING: Exceptionally high pH (${so2PH}) renders SO2 nearly inactive (Fraction: ${(fraction * 100).toFixed(2)}%). Consider tartaric acidification first to drop pH, else sulfur additions will bleach color and trigger off-flavors.`;
     }
 
     setMolecularSO2Result({
@@ -152,7 +161,7 @@ export default function EnoCalculators({
       warningStyle,
       warningMessage
     });
-  }, [so2CurrentFree, so2PH, so2Temp, so2ABV, so2Volume, so2TargetMolMode, so2CustomTargetMol, kmbsPurity]);
+  }, [so2CurrentFree, so2PH, so2Temp, so2ABV, so2Volume, so2TargetMolMode, so2CustomTargetMol, kmbsPurity, lang]);
 
 
   // --- CALCULATOR 2: MULTI-LOT BLENDING SIMULATOR ---
@@ -406,15 +415,22 @@ export default function EnoCalculators({
     let riskStatus: 'minimal' | 'warning' | 'critical' = 'minimal';
     let oxidativeAdvice = '';
 
+    const ka = lang === 'ka';
     if (ullagePercentage < 1.5) {
       riskStatus = 'minimal';
-      oxidativeAdvice = 'Excellent volume optimization. Extremely low pocket of oxygen prevents film yeasts (Mycoderma aceti) and Acetobacter colonies.';
+      oxidativeAdvice = ka
+        ? 'მოცულობის შესანიშნავი ოპტიმიზაცია. ჟანგბადის ძალიან მცირე ჯიბე ხელს უშლის აპკიან საფუარსა (Mycoderma aceti) და Acetobacter კოლონიებს.'
+        : 'Excellent volume optimization. Extremely low pocket of oxygen prevents film yeasts (Mycoderma aceti) and Acetobacter colonies.';
     } else if (ullagePercentage <= 8.0) {
       riskStatus = 'warning';
-      oxidativeAdvice = 'Moderate headspace warning. Gaseous volume allows oxygen circulation. Inert gas blanketing (CO₂/Argon) required daily to prevent ethanol converting to volatile acetaldehyde.';
+      oxidativeAdvice = ka
+        ? 'ზომიერი თავისუფალი სივრცის გაფრთხილება. აირის მოცულობა ჟანგბადის ცირკულაციას იძლევა. საჭიროა ინერტული აირით (CO₂/არგონი) ყოველდღიური დაფარვა, რომ ეთანოლი არ გადაიქცეს აქროლად აცეტალდეჰიდად.'
+        : 'Moderate headspace warning. Gaseous volume allows oxygen circulation. Inert gas blanketing (CO₂/Argon) required daily to prevent ethanol converting to volatile acetaldehyde.';
     } else {
       riskStatus = 'critical';
-      oxidativeAdvice = 'CRITICAL OXIDATIVE RISK. High headspace. Acetone-like ethyl acetate or vinegar-like acetic acid will quickly spoil sensory profile. Spill into smaller vessels or insert immediate dry ice dry blocks.';
+      oxidativeAdvice = ka
+        ? 'კრიტიკული დაჟანგვის რისკი. მაღალი თავისუფალი სივრცე. აცეტონისებრი ეთილაცეტატი ან ძმარმჟავა სწრაფად გააფუჭებს გემოს. გადაასხით პატარა ჭურჭელში ან დაუყოვნებლივ ჩააგდეთ მშრალი ყინულის ბლოკები.'
+        : 'CRITICAL OXIDATIVE RISK. High headspace. Acetone-like ethyl acetate or vinegar-like acetic acid will quickly spoil sensory profile. Spill into smaller vessels or insert immediate dry ice dry blocks.';
     }
 
     setVesselOutput({
@@ -425,7 +441,7 @@ export default function EnoCalculators({
       riskStatus,
       oxidativeAdvice
     });
-  }, [tankShape, vesselRadius, vesselHeight, coneHeight, measuredLiquidHeight]);
+  }, [tankShape, vesselRadius, vesselHeight, coneHeight, measuredLiquidHeight, lang]);
 
 
   // --- CALCULATOR 5: ADVANCED ACID DE-ACIDIFIER MODELER ---
@@ -447,23 +463,30 @@ export default function EnoCalculators({
     let acidChemistryComment = '';
 
     const deltaReq = targetTA - currTA;
+    const ka = lang === 'ka';
 
     if (acidAdditiveType === 'tartaric') {
       // 1 g/L addition of Tartaric acid increases Titratable Acidity exactly by 1 g/L
       if (deltaReq > 0) {
         dosageGrams = deltaReq * wineAcidVol;
-        acidChemistryComment = 'Direct tartaric acid addition. Standard organic acidification. Expect a strong drop in pH (approx 0.1 - 0.25 units depends on buffer state) and vibrant crisp mouthfeel. Also promotes color shift towards rubies.';
+        acidChemistryComment = ka
+          ? 'ღვინის მჟავის პირდაპირი დამატება. სტანდარტული ორგანული მჟავიანობის მატება. მოსალოდნელია pH-ის ძლიერი ვარდნა (დაახლ. 0.1-0.25 ერთეული, ბუფერზეა დამოკიდებული) და ცოცხალი, მკვეთრი გემო. ასევე ხელს უწყობს ფერის გამუქებას.'
+          : 'Direct tartaric acid addition. Standard organic acidification. Expect a strong drop in pH (approx 0.1 - 0.25 units depends on buffer state) and vibrant crisp mouthfeel. Also promotes color shift towards rubies.';
       }
     } else if (acidAdditiveType === 'malic') {
       if (deltaReq > 0) {
         // Malic acts cooler, gives apple-like acidity. Neutralizing offset represents roughly 0.9 g/L TA per 1g/L
         dosageGrams = (deltaReq / 0.9) * wineAcidVol;
-        acidChemistryComment = 'Malic Acid addition. Highly microbial unstable if the wine is slated to undergo Malolactic Fermentation (MLF). High risk of lactic spoilage if not sulfited well.';
+        acidChemistryComment = ka
+          ? 'ვაშლმჟავის დამატება. მიკრობიოლოგიურად ძალიან არასტაბილურია, თუ ღვინო ვაშლ-რძემჟავა დუღილს (MLF) გაივლის. რძემჟავა გაფუჭების მაღალი რისკი, თუ კარგად არ არის დასულფიტებული.'
+          : 'Malic Acid addition. Highly microbial unstable if the wine is slated to undergo Malolactic Fermentation (MLF). High risk of lactic spoilage if not sulfited well.';
       }
     } else if (acidAdditiveType === 'citric') {
       if (deltaReq > 0) {
         dosageGrams = (deltaReq / 0.8) * wineAcidVol;
-        acidChemistryComment = 'Citric Acid addition. Fresh citrus lift. Must only be added post-fermentation, as Saccharomyces yeasts can metabolize citric acid into acetic acid (volatile acidity spiker). Limit to 0.5g/L max by EU law.';
+        acidChemistryComment = ka
+          ? 'ლიმონმჟავის დამატება. სუფთა ციტრუსის ტონი. უნდა დაემატოს მხოლოდ დუღილის შემდეგ, რადგან Saccharomyces საფუარს ლიმონმჟავის ძმარმჟავად გადაქცევა შეუძლია. EU კანონით მაქს. 0.5გ/ლ.'
+          : 'Citric Acid addition. Fresh citrus lift. Must only be added post-fermentation, as Saccharomyces yeasts can metabolize citric acid into acetic acid (volatile acidity spiker). Limit to 0.5g/L max by EU law.';
       }
     } else if (acidAdditiveType === 'carbonate_deacid') {
       // Calcium Carbonate CaCO3 deacidification.
@@ -471,7 +494,9 @@ export default function EnoCalculators({
       if (deltaReq < 0) {
         const dropAmt = Math.abs(deltaReq);
         dosageGrams = dropAmt * 0.67 * wineAcidVol;
-        acidChemistryComment = 'Calcium Carbonate deacidification. Promotes double-salt precipitation of calcium tartro-malate. Requires 2-4 weeks sediment rest. Softens over-acidic vintages but can bleach delicate aromatics.';
+        acidChemistryComment = ka
+          ? 'კალციუმის კარბონატით მჟავიანობის შემცირება. ხელს უწყობს კალციუმის ტარტრო-მალატის ორმაგი მარილის დალექვას. საჭიროებს 2-4 კვირის დაწყნარებას. არბილებს ზედმეტად მჟავე ღვინოებს, მაგრამ შეიძლება გააფერმკრთალოს ნაზი არომატები.'
+          : 'Calcium Carbonate deacidification. Promotes double-salt precipitation of calcium tartro-malate. Requires 2-4 weeks sediment rest. Softens over-acidic vintages but can bleach delicate aromatics.';
       }
     } else {
       // Potassium Bicarbonate KHCO3 deacidification.
@@ -479,7 +504,9 @@ export default function EnoCalculators({
       if (deltaReq < 0) {
         const dropAmt = Math.abs(deltaReq);
         dosageGrams = dropAmt * 0.67 * wineAcidVol;
-        acidChemistryComment = 'Potassium Bicarbonate double precipitation. Triggers rapid precipitation of potassium bitartrate. Demands immediate cold stabilization (thermo-chilling at -4°C) to drop crystals before racking.';
+        acidChemistryComment = ka
+          ? 'კალიუმის ბიკარბონატით ორმაგი დალექვა. იწვევს კალიუმის ბიტარტრატის სწრაფ დალექვას. მოითხოვს დაუყოვნებლივ ცივ სტაბილიზაციას (-4°C) კრისტალების დასალექად გადაღებამდე.'
+          : 'Potassium Bicarbonate double precipitation. Triggers rapid precipitation of potassium bitartrate. Demands immediate cold stabilization (thermo-chilling at -4°C) to drop crystals before racking.';
       }
     }
 
@@ -491,7 +518,7 @@ export default function EnoCalculators({
       taExpectedDelta,
       acidChemistryComment
     });
-  }, [wineAcidVol, currTA, targetTA, acidAdditiveType]);
+  }, [wineAcidVol, currTA, targetTA, acidAdditiveType, lang]);
 
   return (
     <div className="space-y-6">
@@ -507,7 +534,7 @@ export default function EnoCalculators({
           }`}
         >
           <FlaskConical className="w-3.5 h-3.5" />
-          <span>SO₂ Equilibrium</span>
+          <span>{lang === 'ka' ? 'SO₂ წონასწორობა' : 'SO₂ Equilibrium'}</span>
         </button>
 
         <button 
@@ -519,7 +546,7 @@ export default function EnoCalculators({
           }`}
         >
           <Droplets className="w-3.5 h-3.5" />
-          <span>Blend & Pearson′s Square</span>
+          <span>{lang === 'ka' ? 'კუპაჟი და პირსონის კვადრატი' : 'Blend & Pearson′s Square'}</span>
         </button>
 
         <button 
@@ -531,7 +558,7 @@ export default function EnoCalculators({
           }`}
         >
           <Percent className="w-3.5 h-3.5" />
-          <span>ABV & Hydrometer</span>
+          <span>{lang === 'ka' ? 'ალკოჰოლი და არეომეტრი' : 'ABV & Hydrometer'}</span>
         </button>
 
         <button 
@@ -543,7 +570,7 @@ export default function EnoCalculators({
           }`}
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          <span>Geometry & Headspace</span>
+          <span>{lang === 'ka' ? 'გეომეტრია და თავისუფალი სივრცე' : 'Geometry & Headspace'}</span>
         </button>
 
         <button 
@@ -566,23 +593,25 @@ export default function EnoCalculators({
           <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <FlaskConical className="w-4.5 h-4.5 text-[#801323]" />
-              Thermodynamic SO₂ & KMBS Dose Modeller
+              {lang === 'ka' ? 'SO₂-ისა და KMBS დოზის თერმოდინამიკური მოდელი' : 'Thermodynamic SO₂ & KMBS Dose Modeller'}
             </h3>
             <p className="text-xs text-slate-500">
-              Only molecular (non-dissociated) SO₂ gas penetrates microbe walls to inhibit spoilage. This calculator calculates ionic equilibrium based on temperature, ABV%, and pH.
+              {lang === 'ka'
+                ? 'მიკრობებს მხოლოდ მოლეკულური (არადისოცირებული) SO₂ აირი აღწევს და აჩერებს. კალკულატორი ითვლის იონურ წონასწორობას ტემპერატურის, ABV%-ისა და pH-ის მიხედვით.'
+                : 'Only molecular (non-dissociated) SO₂ gas penetrates microbe walls to inhibit spoilage. This calculator calculates ionic equilibrium based on temperature, ABV%, and pH.'}
             </p>
 
             {lots && lots.length > 0 && (
               <div className="bg-[#FAF8F5] p-3 border border-[#e8dfd5] rounded-xl space-y-1">
                 <label className="block text-[9px] font-mono font-bold uppercase text-[#4e0e15] tracking-wider">
-                  🍇 Sync Cellar State: Select Active Lot
+                  🍇 {lang === 'ka' ? 'მარნის მონაცემები: აირჩიეთ აქტიური პარტია' : 'Sync Cellar State: Select Active Lot'}
                 </label>
                 <select
                   value={calculatorLotId}
                   onChange={(e) => setCalculatorLotId(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded-lg bg-white text-stone-850 font-semibold outline-none cursor-pointer hover:border-slate-350"
                 >
-                  <option value="">-- Manual Input / Select Lot --</option>
+                  <option value="">{lang === 'ka' ? '-- ხელით შეყვანა / აირჩიეთ პარტია --' : '-- Manual Input / Select Lot --'}</option>
                   {lots.map(l => (
                     <option key={l.id} value={l.id}>
                       {l.name} [{l.id}]
@@ -595,7 +624,7 @@ export default function EnoCalculators({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Current Free SO₂ (mg/L)
+                  {lang === 'ka' ? 'მიმდინარე თავისუფალი SO₂ (მგ/ლ)' : 'Current Free SO₂ (mg/L)'}
                 </label>
                 <input 
                   type="number" 
@@ -607,7 +636,7 @@ export default function EnoCalculators({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Wine Acidity (pH Value)
+                  {lang === 'ka' ? 'ღვინის მჟავიანობა (pH)' : 'Wine Acidity (pH Value)'}
                 </label>
                 <div className="flex items-center gap-2">
                   <input 
@@ -627,7 +656,7 @@ export default function EnoCalculators({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Cellar Temperature (°C)
+                  {lang === 'ka' ? 'მარნის ტემპერატურა (°C)' : 'Cellar Temperature (°C)'}
                 </label>
                 <input 
                   type="number" 
@@ -639,7 +668,7 @@ export default function EnoCalculators({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Wine Alcohol (% vol ABV)
+                  {lang === 'ka' ? 'ღვინის ალკოჰოლი (% მოც. ABV)' : 'Wine Alcohol (% vol ABV)'}
                 </label>
                 <input 
                   type="number" 
@@ -659,7 +688,7 @@ export default function EnoCalculators({
                       : 'bg-white border-stone-200 text-slate-600'
                   }`}
                 >
-                  White style (0.8 mg/L Mol)
+                  {lang === 'ka' ? 'თეთრი სტილი (0.8 მგ/ლ მოლ.)' : 'White style (0.8 mg/L Mol)'}
                 </button>
                 <button
                   type="button"
@@ -670,7 +699,7 @@ export default function EnoCalculators({
                       : 'bg-white border-stone-200 text-slate-600'
                   }`}
                 >
-                  Red style (0.5 mg/L Mol)
+                  {lang === 'ka' ? 'წითელი სტილი (0.5 მგ/ლ მოლ.)' : 'Red style (0.5 mg/L Mol)'}
                 </button>
                 <button
                   type="button"
@@ -681,14 +710,14 @@ export default function EnoCalculators({
                       : 'bg-white border-stone-200 text-slate-600'
                   }`}
                 >
-                  Custom Molecular Limit
+                  {lang === 'ka' ? 'მორგებული მოლეკულური ზღვარი' : 'Custom Molecular Limit'}
                 </button>
               </div>
 
               {so2TargetMolMode === 'custom' && (
                 <div className="col-span-2">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Custom Target Molecular SO₂ (mg/L limit)
+                    {lang === 'ka' ? 'მორგებული სამიზნე მოლეკულური SO₂ (მგ/ლ ზღვარი)' : 'Custom Target Molecular SO₂ (mg/L limit)'}
                   </label>
                   <input 
                     type="number" 
@@ -703,7 +732,7 @@ export default function EnoCalculators({
               <div className="col-span-2 grid grid-cols-2 gap-4 border-t border-slate-100 pt-3">
                 <div>
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Batch Volume of Wine (L)
+                    {lang === 'ka' ? 'ღვინის პარტიის მოცულობა (ლ)' : 'Batch Volume of Wine (L)'}
                   </label>
                   <input 
                     type="number" 
@@ -714,7 +743,7 @@ export default function EnoCalculators({
                 </div>
                 <div>
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    KMBS active SO₂ Yield (%)
+                    {lang === 'ka' ? 'KMBS აქტიური SO₂ გამოსავლიანობა (%)' : 'KMBS active SO₂ Yield (%)'}
                   </label>
                   <input 
                     type="number" 
@@ -741,13 +770,13 @@ export default function EnoCalculators({
                 <div className="flex items-center gap-2">
                   <Gauge className="w-5 h-5 text-current" />
                   <h4 className="text-xs font-mono font-bold uppercase tracking-wider">
-                    Bio-Protection Diagnostics
+                    {lang === 'ka' ? 'ბიო-დაცვის დიაგნოსტიკა' : 'Bio-Protection Diagnostics'}
                   </h4>
                 </div>
 
                 <div className="space-y-1">
                   <span className="text-[10px] uppercase font-mono tracking-wider opacity-70 block">
-                    Active Molecular SO₂ Level
+                    {lang === 'ka' ? 'აქტიური მოლეკულური SO₂ დონე' : 'Active Molecular SO₂ Level'}
                   </span>
                   <div className="flex items-baseline gap-1.5">
                     <strong className="text-2xl font-sans font-black">
@@ -756,7 +785,7 @@ export default function EnoCalculators({
                     <span className="text-xs font-mono font-semibold">mg/L</span>
                   </div>
                   <span className="text-[10px] block font-mono opacity-80 pt-0.5">
-                    Target requested: {so2TargetMolMode === 'white' ? '0.80' : (so2TargetMolMode === 'red' ? '0.50' : so2CustomTargetMol.toFixed(2))} mg/L
+                    {lang === 'ka' ? 'მოთხოვნილი სამიზნე' : 'Target requested'}: {so2TargetMolMode === 'white' ? '0.80' : (so2TargetMolMode === 'red' ? '0.50' : so2CustomTargetMol.toFixed(2))} mg/L
                   </span>
                 </div>
 
@@ -783,37 +812,37 @@ export default function EnoCalculators({
               <div className="bg-[#FCFAF8] p-5 border border-[#e8dfd5] rounded-xl space-y-3 shadow-xs">
                 <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider flex items-center gap-1.5">
                   <Info className="w-4 h-4 text-[#801323]" />
-                  Cellar Adjustment Order
+                  {lang === 'ka' ? 'მარნის კორექციის ინსტრუქცია' : 'Cellar Adjustment Order'}
                 </h4>
 
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center justify-between border-b border-stone-200/50 pb-1.5 font-mono">
-                    <span className="text-slate-500">Thermodynamic pKa:</span>
+                    <span className="text-slate-500">{lang === 'ka' ? 'თერმოდინამიკური pKa:' : 'Thermodynamic pKa:'}</span>
                     <span className="font-bold text-stone-750">{molecularSO2Result.pKa.toFixed(3)}</span>
                   </div>
                   <div className="flex items-center justify-between border-b border-stone-200/50 pb-1.5 font-mono">
-                    <span className="text-slate-500">Molecular Fraction:</span>
+                    <span className="text-slate-500">{lang === 'ka' ? 'მოლეკულური ფრაქცია:' : 'Molecular Fraction:'}</span>
                     <span className="font-bold text-[#801323]">{(molecularSO2Result.fraction * 100).toFixed(3)}%</span>
                   </div>
                   <div className="flex items-center justify-between border-b border-stone-200/50 pb-1.5 font-mono border-dashed">
-                    <span className="text-slate-500">Required Free SO₂:</span>
+                    <span className="text-slate-500">{lang === 'ka' ? 'საჭირო თავისუფალი SO₂:' : 'Required Free SO₂:'}</span>
                     <span className="font-bold text-stone-800">{molecularSO2Result.targetFreeNeeded.toFixed(1)} mg/L</span>
                   </div>
                   <div className="flex items-center justify-between border-b border-stone-200/50 pb-1.5 font-mono">
-                    <span className="text-slate-500">Required Free Increase:</span>
+                    <span className="text-slate-500">{lang === 'ka' ? 'საჭირო მატება:' : 'Required Free Increase:'}</span>
                     <span className="font-bold text-stone-800">+{molecularSO2Result.freeSO2ToIncrease.toFixed(1)} mg/L</span>
                   </div>
                   
                   {/* Grams recommendation */}
                   <div className="p-3 bg-white border border-[#f0e6da] rounded-lg mt-2 flex flex-col justify-center items-center text-center">
                     <span className="text-[9px] uppercase font-mono font-bold text-slate-400 block mb-0.5">
-                      Dry KMBS Addition Target
+                      {lang === 'ka' ? 'მშრალი KMBS-ის დასამატებელი რაოდენობა' : 'Dry KMBS Addition Target'}
                     </span>
                     <strong className="text-lg font-serif font-bold text-[#801323]">
-                      {molecularSO2Result.kmbsGramsNeeded.toFixed(1)} Grams
+                      {molecularSO2Result.kmbsGramsNeeded.toFixed(1)} {lang === 'ka' ? 'გრამი' : 'Grams'}
                     </strong>
                     <span className="text-[9px] text-[#801323] mt-1 font-semibold italic bg-rose-50 px-2 py-0.5 rounded">
-                      ({(molecularSO2Result.kmbsGramsNeeded / 100).toFixed(2)} g/hL dosage)
+                      ({(molecularSO2Result.kmbsGramsNeeded / 100).toFixed(2)} {lang === 'ka' ? 'გ/ჰლ დოზა' : 'g/hL dosage'})
                     </span>
                   </div>
                 </div>
@@ -823,15 +852,19 @@ export default function EnoCalculators({
               <div className="bg-amber-50/50 p-4 border border-amber-200/60 rounded-xl space-y-3 shadow-xs">
                 <h5 className="text-[11px] font-mono font-bold text-amber-900 uppercase tracking-widest flex items-center gap-1">
                   <Sliders className="w-3.5 h-3.5 text-amber-800" />
-                  pH & Alcohol Stability Correlator
+                  {lang === 'ka' ? 'pH-ისა და ალკოჰოლის სტაბილურობის კორელატორი' : 'pH & Alcohol Stability Correlator'}
                 </h5>
                 <p className="text-[11px] text-stone-605 leading-relaxed">
-                  Thermodynamic pKa shifts based on temperature and alcohol density. Standard <strong>pKa is {molecularSO2Result.pKa.toFixed(3)}</strong> at {so2Temp}°C with {so2ABV}% ABV.
+                  {lang === 'ka'
+                    ? <>თერმოდინამიკური pKa იცვლება ტემპერატურისა და ალკოჰოლის მიხედვით. სტანდარტული <strong>pKa არის {molecularSO2Result.pKa.toFixed(3)}</strong> {so2Temp}°C-ზე {so2ABV}% ABV-ით.</>
+                    : <>Thermodynamic pKa shifts based on temperature and alcohol density. Standard <strong>pKa is {molecularSO2Result.pKa.toFixed(3)}</strong> at {so2Temp}°C with {so2ABV}% ABV.</>}
                 </p>
 
                 <div className="space-y-2 border-t border-amber-200/30 pt-2.5">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-amber-800 block">
-                    Free SO₂ required to hit target molecular ({so2TargetMolMode === 'white' ? '0.80' : (so2TargetMolMode === 'red' ? '0.50' : so2CustomTargetMol.toFixed(2))} mg/L) across pH spectrum:
+                    {lang === 'ka'
+                      ? `საჭირო თავისუფალი SO₂ სამიზნე მოლეკულურისთვის (${so2TargetMolMode === 'white' ? '0.80' : (so2TargetMolMode === 'red' ? '0.50' : so2CustomTargetMol.toFixed(2))} მგ/ლ) pH სპექტრზე:`
+                      : `Free SO₂ required to hit target molecular (${so2TargetMolMode === 'white' ? '0.80' : (so2TargetMolMode === 'red' ? '0.50' : so2CustomTargetMol.toFixed(2))} mg/L) across pH spectrum:`}
                   </span>
                   
                   <div className="grid grid-cols-4 gap-1.5 text-center">
@@ -858,14 +891,18 @@ export default function EnoCalculators({
                   </div>
 
                   <div className="text-[11px] leading-relaxed text-amber-950 bg-amber-100/40 p-2.5 rounded-lg border border-amber-200/40 mt-1 space-y-1">
-                    <span className="font-bold block text-[11px]">💡 Winery Suggestion:</span>
+                    <span className="font-bold block text-[11px]">💡 {lang === 'ka' ? 'მარნის რჩევა:' : 'Winery Suggestion:'}</span>
                     {so2PH > 3.6 ? (
                       <div>
-                        Your pH of <span className="underline font-bold">{so2PH.toFixed(2)}</span> is high. Free SO₂ loses molecular potency exponentially above pH 3.6. We strongly recommend adding <strong>Tartaric Acid first</strong> to decrease pH. This reduces the wine's sulfur demand, avoids color bleaching, keeps the nose clean, and guarantees biological defense.
+                        {lang === 'ka'
+                          ? <>თქვენი pH <span className="underline font-bold">{so2PH.toFixed(2)}</span> მაღალია. pH 3.6-ის ზემოთ თავისუფალი SO₂ ექსპონენციალურად კარგავს მოლეკულურ ეფექტს. გირჩევთ ჯერ <strong>ღვინის მჟავის დამატებას</strong> pH-ის შესამცირებლად — ეს ამცირებს გოგირდის მოთხოვნას, იცავს ფერს, ინარჩუნებს სუფთა არომატს და უზრუნველყოფს ბიოლოგიურ დაცვას.</>
+                          : <>Your pH of <span className="underline font-bold">{so2PH.toFixed(2)}</span> is high. Free SO₂ loses molecular potency exponentially above pH 3.6. We strongly recommend adding <strong>Tartaric Acid first</strong> to decrease pH. This reduces the wine's sulfur demand, avoids color bleaching, keeps the nose clean, and guarantees biological defense.</>}
                       </div>
                     ) : (
                       <div>
-                        Your pH is in the safe zone (<span className="underline font-bold">{so2PH.toFixed(2)}</span>). Maintain cellar sanitation and monitor free SO₂ regularly. With alcohol at <span className="underline font-bold">{so2ABV}%</span> and cellar temps at <span className="underline font-bold">{so2Temp}°C</span>, your molecular stability fraction is <strong>{(molecularSO2Result.fraction * 100).toFixed(2)}%</strong>. Keep barrels sealed.
+                        {lang === 'ka'
+                          ? <>თქვენი pH უსაფრთხო ზონაშია (<span className="underline font-bold">{so2PH.toFixed(2)}</span>). შეინარჩუნეთ მარნის სანიტარია და რეგულარულად აკონტროლეთ თავისუფალი SO₂. ალკოჰოლით <span className="underline font-bold">{so2ABV}%</span> და ტემპერატურით <span className="underline font-bold">{so2Temp}°C</span>, მოლეკულური სტაბილურობის ფრაქციაა <strong>{(molecularSO2Result.fraction * 100).toFixed(2)}%</strong>. შეინახეთ კასრები დალუქული.</>
+                          : <>Your pH is in the safe zone (<span className="underline font-bold">{so2PH.toFixed(2)}</span>). Maintain cellar sanitation and monitor free SO₂ regularly. With alcohol at <span className="underline font-bold">{so2ABV}%</span> and cellar temps at <span className="underline font-bold">{so2Temp}°C</span>, your molecular stability fraction is <strong>{(molecularSO2Result.fraction * 100).toFixed(2)}%</strong>. Keep barrels sealed.</>}
                       </div>
                     )}
                   </div>
@@ -1082,7 +1119,7 @@ export default function EnoCalculators({
                       <div className="flex justify-between font-mono text-xs items-center">
                         <span className="text-slate-500 flex items-center gap-1">
                           {lang === 'ka' ? 'აქტიური pH (ლოგარითმული):' : 'Blended pH (Logarithmic):'}
-                          <span className="text-[8px] uppercase px-1.5 bg-rose-50 border border-stone-200 text-stone-605 rounded">Ion Model</span>
+                          <span className="text-[8px] uppercase px-1.5 bg-rose-50 border border-stone-200 text-stone-605 rounded">{lang === 'ka' ? 'იონური მოდელი' : 'Ion Model'}</span>
                         </span>
                         <strong className="text-[#801323] text-sm font-black">{multiBlendOutput.finalPH.toFixed(2)}</strong>
                       </div>
@@ -1120,7 +1157,7 @@ export default function EnoCalculators({
                       >
                         <PolarGrid stroke="#e8dfd5" />
                         <PolarAngleAxis dataKey="subject" tick={{ fill: '#4e0e15', fontSize: 10, fontWeight: 'semibold' }} />
-                        <Radar name="Predicted" dataKey="A" stroke="#801323" fill="#801323" fillOpacity={0.4} />
+                        <Radar name={lang === 'ka' ? 'პროგნოზი' : 'Predicted'} dataKey="A" stroke="#801323" fill="#801323" fillOpacity={0.4} />
                       </RadarChart>
                     </ResponsiveContainer>
                   </div>
@@ -1170,13 +1207,13 @@ export default function EnoCalculators({
           <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <Percent className="w-4.5 h-4.5 text-[#801323]" />
-              Non-Linear Alcohol potential & Hydrometer Temp Correction
+              {lang === 'ka' ? 'ალკოჰოლის პოტენციალი და არეომეტრის ტემპ. კორექცია' : 'Non-Linear Alcohol potential & Hydrometer Temp Correction'}
             </h3>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Starting Specific Gravity (SG)
+                  {lang === 'ka' ? 'საწყისი სიმკვრივე (SG)' : 'Starting Specific Gravity (SG)'}
                 </label>
                 <input 
                   type="number"
@@ -1189,7 +1226,7 @@ export default function EnoCalculators({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Finished SG
+                  {lang === 'ka' ? 'საბოლოო SG' : 'Finished SG'}
                 </label>
                 <input 
                   type="number"
@@ -1202,7 +1239,7 @@ export default function EnoCalculators({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Sample Liquid Temp (°C)
+                  {lang === 'ka' ? 'ნიმუშის ტემპერატურა (°C)' : 'Sample Liquid Temp (°C)'}
                 </label>
                 <input 
                   type="number"
@@ -1210,12 +1247,12 @@ export default function EnoCalculators({
                   onChange={(e) => setSampleTemp(parseFloat(e.target.value) || 20.0)}
                   className="w-full px-3 py-1.5 bg-stone-50 border border-stone-200 text-xs rounded font-medium outline-none text-slate-805"
                 />
-                <span className="text-[9px] text-slate-400 block mt-1">Calibrated for 20C glass hydrometers.</span>
+                <span className="text-[9px] text-slate-400 block mt-1">{lang === 'ka' ? 'დაკალიბრებულია 20C შუშის არეომეტრებზე.' : 'Calibrated for 20C glass hydrometers.'}</span>
               </div>
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Yeast Yield Factor
+                  {lang === 'ka' ? 'საფუარის გამოსავლიანობის ფაქტორი' : 'Yeast Yield Factor'}
                 </label>
                 <input 
                   type="text"
@@ -1223,7 +1260,7 @@ export default function EnoCalculators({
                   onChange={(e) => setYeastYield(parseFloat(e.target.value) || 0.59)}
                   className="w-full px-3 py-1.5 bg-stone-50 border border-stone-200 text-xs rounded font-medium outline-none text-slate-805"
                 />
-                <span className="text-[9px] text-slate-400 block mt-1">Saccharomyces yield: 0.57-0.62.</span>
+                <span className="text-[9px] text-slate-400 block mt-1">{lang === 'ka' ? 'Saccharomyces გამოსავალი: 0.57-0.62.' : 'Saccharomyces yield: 0.57-0.62.'}</span>
               </div>
             </div>
           </div>
@@ -1232,39 +1269,39 @@ export default function EnoCalculators({
           {alcOutput && (
             <div className="lg:col-span-5 bg-[#FCFAF8] p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
               <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2">
-                Oenology Attenuation Statistics
+                {lang === 'ka' ? 'დუღილის სტატისტიკა' : 'Oenology Attenuation Statistics'}
               </h4>
 
               <div className="space-y-3.5 text-xs font-mono text-slate-705">
                 <div className="flex justify-between items-center border-b pb-1.5 border-stone-200/50">
-                  <span className="text-slate-500">Brix Equivalents (Start):</span>
+                  <span className="text-slate-500">{lang === 'ka' ? 'Brix ეკვივალენტი (საწყისი):' : 'Brix Equivalents (Start):'}</span>
                   <strong className="text-stone-800 text-[13px] font-black">{alcOutput.startingBrix.toFixed(2)} °Brix</strong>
                 </div>
 
                 <div className="flex justify-between items-center border-b pb-1.5 border-stone-200/50">
-                  <span className="text-slate-500">Brix Equivalents (End):</span>
+                  <span className="text-slate-500">{lang === 'ka' ? 'Brix ეკვივალენტი (საბოლოო):' : 'Brix Equivalents (End):'}</span>
                   <strong className="text-stone-850">{alcOutput.currentBrix.toFixed(2)} °Brix</strong>
                 </div>
 
                 <div className="flex justify-between items-center border-b pb-1.5 border-stone-200/50">
-                  <span className="text-slate-500">Yeast Attenuation:</span>
-                  <strong className="text-emerald-700 font-bold">{alcOutput.attenuation.toFixed(2)} % attenuation</strong>
+                  <span className="text-slate-500">{lang === 'ka' ? 'დუღილის ხარისხი:' : 'Yeast Attenuation:'}</span>
+                  <strong className="text-emerald-700 font-bold">{alcOutput.attenuation.toFixed(2)} %</strong>
                 </div>
 
                 <div className="bg-white p-3 border border-stone-205 rounded space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-[10px] text-slate-450 uppercase font-mono">Simple ABV Formula:</span>
+                    <span className="text-[10px] text-slate-450 uppercase font-mono">{lang === 'ka' ? 'მარტივი ABV ფორმულა:' : 'Simple ABV Formula:'}</span>
                     <strong className="text-stone-600 text-xs">{alcOutput.apparentABV.toFixed(2)}% vol</strong>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] text-indigo-900 uppercase font-mono font-bold flex items-center gap-0.5">
                       <Zap className="w-3 h-3 text-amber-500" />
-                      Yeast Weight-loss Eq:
+                      {lang === 'ka' ? 'მასის დაკარგვის ფორმულა:' : 'Yeast Weight-loss Eq:'}
                     </span>
                     <strong className="text-indigo-950 font-black text-sm">{alcOutput.advancedABV.toFixed(2)}% vol</strong>
                   </div>
                   <span className="text-[9px] block text-slate-400 font-serif whitespace-normal leading-tight italic pt-1 border-t border-slate-100">
-                    * The advanced method accounts for mass lost during CO₂ venting and ethanol solution contraction factors.
+                    {lang === 'ka' ? '* გაუმჯობესებული მეთოდი ითვალისწინებს CO₂-ის გამოყოფისას დაკარგულ მასას და ეთანოლის ხსნარის შეკუმშვის ფაქტორებს.' : '* The advanced method accounts for mass lost during CO₂ venting and ethanol solution contraction factors.'}
                   </span>
                 </div>
               </div>
@@ -1280,13 +1317,13 @@ export default function EnoCalculators({
           <div className="lg:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <RefreshCw className="w-4.5 h-4.5 text-[#801323]" />
-              Complex Container Geometry & Ullage Risk Advisor
+              {lang === 'ka' ? 'ჭურჭლის გეომეტრია და თავისუფალი სივრცის რისკი' : 'Complex Container Geometry & Ullage Risk Advisor'}
             </h3>
 
             <div className="space-y-3.5">
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Vessel Geometry Profile
+                  {lang === 'ka' ? 'ჭურჭლის ფორმა' : 'Vessel Geometry Profile'}
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -1296,7 +1333,7 @@ export default function EnoCalculators({
                       tankShape === 'cylinder_cone' ? 'bg-[#4e0e15] border-[#4e0e15] text-white font-bold' : 'bg-white border-stone-200 text-stone-605'
                     }`}
                   >
-                    Cylinder + Cone底
+                    {lang === 'ka' ? 'ცილინდრი + კონუსი' : 'Cylinder + Cone'}
                   </button>
                   <button
                     type="button"
@@ -1305,7 +1342,7 @@ export default function EnoCalculators({
                       tankShape === 'cylinder_flat' ? 'bg-[#4e0e15] border-[#4e0e15] text-white font-bold' : 'bg-white border-stone-200 text-stone-605'
                     }`}
                   >
-                    Flat Bottom Cyl
+                    {lang === 'ka' ? 'ბრტყელფსკერიანი' : 'Flat Bottom Cyl'}
                   </button>
                   <button
                     type="button"
@@ -1314,7 +1351,7 @@ export default function EnoCalculators({
                       tankShape === 'oak_barrel' ? 'bg-[#4e0e15] border-[#4e0e15] text-white font-bold' : 'bg-white border-stone-200 text-stone-605'
                     }`}
                   >
-                    Barrique (225L)
+                    {lang === 'ka' ? 'ბარიკი (225ლ)' : 'Barrique (225L)'}
                   </button>
                 </div>
               </div>
@@ -1322,7 +1359,7 @@ export default function EnoCalculators({
               {tankShape !== 'oak_barrel' && (
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Radius (m)</label>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">{lang === 'ka' ? 'რადიუსი (მ)' : 'Radius (m)'}</label>
                     <input 
                       type="number"
                       step="0.05"
@@ -1332,7 +1369,7 @@ export default function EnoCalculators({
                     />
                   </div>
                   <div>
-                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Cyl height (m)</label>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">{lang === 'ka' ? 'ცილინდრის სიმაღლე (მ)' : 'Cyl height (m)'}</label>
                     <input 
                       type="number"
                       step="0.1"
@@ -1343,7 +1380,7 @@ export default function EnoCalculators({
                   </div>
                   {tankShape === 'cylinder_cone' && (
                     <div>
-                      <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">Cone high (m)</label>
+                      <label className="block text-[9px] font-bold text-slate-500 uppercase mb-0.5">{lang === 'ka' ? 'კონუსის სიმაღლე (მ)' : 'Cone high (m)'}</label>
                       <input 
                         type="number"
                         step="0.1"
@@ -1359,7 +1396,7 @@ export default function EnoCalculators({
               <div className="border-t border-slate-100 pt-3">
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1.5 flex justify-between">
                   <span>{lang === 'ka' ? 'გაზომილი სითხის სიღრმე' : 'Measured Liquid Depth Level'}</span>
-                  <span className="text-[#801323]">{measuredLiquidHeight} meters</span>
+                  <span className="text-[#801323]">{measuredLiquidHeight} {lang === 'ka' ? 'მ' : 'meters'}</span>
                 </label>
                 <input 
                   type="range"
@@ -1388,19 +1425,19 @@ export default function EnoCalculators({
                 <div className="flex items-center gap-2">
                   <TriangleAlert className="w-5 h-5" />
                   <h4 className="text-xs font-mono font-bold uppercase tracking-wider">
-                    Oxygen Spoilage Exposure Risk
+                    {lang === 'ka' ? 'ჟანგბადით დაჟანგვის რისკი' : 'Oxygen Spoilage Exposure Risk'}
                   </h4>
                 </div>
 
                 <div className="space-y-1">
                   <span className="text-[10px] uppercase font-mono tracking-wider opacity-70 block">
-                    Headspace (Ullage Ratio)
+                    {lang === 'ka' ? 'თავისუფალი სივრცე (%)' : 'Headspace (Ullage Ratio)'}
                   </span>
                   <div className="flex items-baseline gap-1.5">
                     <strong className="text-2xl font-sans font-black">
                       {vesselOutput.ullagePercentage.toFixed(1)} %
                     </strong>
-                    <span className="text-xs font-semibold">Ullage Volume</span>
+                    <span className="text-xs font-semibold">{lang === 'ka' ? 'თავისუფალი მოცულობა' : 'Ullage Volume'}</span>
                   </div>
                 </div>
 
@@ -1412,23 +1449,23 @@ export default function EnoCalculators({
               {/* Exact numbers card */}
               <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-3.5 shadow-xs">
                 <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-slate-100 pb-2">
-                  Vessel capacity results
+                  {lang === 'ka' ? 'ჭურჭლის ტევადობის შედეგები' : 'Vessel capacity results'}
                 </h4>
 
                 <div className="space-y-2 text-xs font-mono">
                   <div className="flex justify-between border-b pb-1.5 border-stone-105">
-                    <span className="text-slate-500">Total volume limit:</span>
-                    <strong className="text-stone-800">{vesselOutput.totalCapacityL.toLocaleString()} Liters</strong>
+                    <span className="text-slate-500">{lang === 'ka' ? 'მაქს. მოცულობა:' : 'Total volume limit:'}</span>
+                    <strong className="text-stone-800">{vesselOutput.totalCapacityL.toLocaleString()} {lang === 'ka' ? 'ლიტრი' : 'Liters'}</strong>
                   </div>
                   <div className="flex justify-between border-b pb-1.5 border-stone-105">
-                    <span className="text-slate-500">Current liquid volume:</span>
+                    <span className="text-slate-500">{lang === 'ka' ? 'მიმდინარე სითხის მოცულობა:' : 'Current liquid volume:'}</span>
                     <strong className="text-stone-800">{vesselOutput.liquidVolumeL.toLocaleString()} L</strong>
                   </div>
                   <div className="flex justify-between border-b pb-1.5 border-stone-105">
                     <span className="text-slate-500 flex items-center gap-1 text-slate-550 font-bold">
-                      Headspace (Ullage Air):
+                      {lang === 'ka' ? 'თავისუფალი სივრცე (ჰაერი):' : 'Headspace (Ullage Air):'}
                     </span>
-                    <span className="text-red-800 font-bold">{vesselOutput.ullageL.toLocaleString()} Liters</span>
+                    <span className="text-red-800 font-bold">{vesselOutput.ullageL.toLocaleString()} {lang === 'ka' ? 'ლიტრი' : 'Liters'}</span>
                   </div>
                 </div>
               </div>
@@ -1444,13 +1481,13 @@ export default function EnoCalculators({
           <div className="lg:col-span-12 xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
               <Sliders className="w-4.5 h-4.5 text-[#801323]" />
-              Oenological Buffer Modeller & Chemical Addition Target
+              {lang === 'ka' ? 'მჟავიანობის მოდელი და ქიმიური დანამატის სამიზნე' : 'Oenological Buffer Modeller & Chemical Addition Target'}
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Batch volume (Liters)
+                  {lang === 'ka' ? 'პარტიის მოცულობა (ლიტრი)' : 'Batch volume (Liters)'}
                 </label>
                 <input 
                   type="number"
@@ -1462,7 +1499,7 @@ export default function EnoCalculators({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Current Titratable Acidity (g/L)
+                  {lang === 'ka' ? 'მიმდინარე ტიტრული მჟავიანობა (გ/ლ)' : 'Current Titratable Acidity (g/L)'}
                 </label>
                 <input 
                   type="number"
@@ -1475,7 +1512,7 @@ export default function EnoCalculators({
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                  Target Titratable Acidity (g/L)
+                  {lang === 'ka' ? 'სამიზნე ტიტრული მჟავიანობა (გ/ლ)' : 'Target Titratable Acidity (g/L)'}
                 </label>
                 <input 
                   type="number"
@@ -1488,7 +1525,7 @@ export default function EnoCalculators({
 
               <div className="col-span-1 sm:col-span-2 lg:col-span-3 border-t border-slate-100 pt-3">
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-2">
-                  Add Acidifying or De-Acidifying Chemical Treatment Agent
+                  {lang === 'ka' ? 'დაამატეთ მჟავიანობის მომმატებელი ან შემამცირებელი აგენტი' : 'Add Acidifying or De-Acidifying Chemical Treatment Agent'}
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-5 gap-2">
                   <button
@@ -1498,7 +1535,7 @@ export default function EnoCalculators({
                       acidAdditiveType === 'tartaric' ? 'bg-[#4e0e15] border-[#4e0e15] text-white font-bold' : 'bg-white border-stone-200 text-stone-605'
                     }`}
                   >
-                    Tartaric (Standard)
+                    {lang === 'ka' ? 'ღვინის მჟავა (სტანდარტი)' : 'Tartaric (Standard)'}
                   </button>
                   <button
                     type="button"
@@ -1507,7 +1544,7 @@ export default function EnoCalculators({
                       acidAdditiveType === 'malic' ? 'bg-[#4e0e15] border-[#4e0e15] text-white font-bold' : 'bg-white border-stone-200 text-stone-605'
                     }`}
                   >
-                    Malic Acid
+                    {lang === 'ka' ? 'ვაშლმჟავა' : 'Malic Acid'}
                   </button>
                   <button
                     type="button"
@@ -1516,7 +1553,7 @@ export default function EnoCalculators({
                       acidAdditiveType === 'citric' ? 'bg-[#4e0e15] border-[#4e0e15] text-white font-bold' : 'bg-white border-stone-200 text-stone-605'
                     }`}
                   >
-                    Citric Acid (Post-ferm)
+                    {lang === 'ka' ? 'ლიმონმჟავა (დუღილის შემდეგ)' : 'Citric Acid (Post-ferm)'}
                   </button>
                   <button
                     type="button"
@@ -1525,7 +1562,7 @@ export default function EnoCalculators({
                       acidAdditiveType === 'carbonate_deacid' ? 'bg-indigo-900 border-indigo-900 text-white font-bold' : 'bg-white border-stone-200 text-indigo-805'
                     }`}
                   >
-                    CaCO₃ (De-acid)
+                    {lang === 'ka' ? 'CaCO₃ (მჟავის შემცირება)' : 'CaCO₃ (De-acid)'}
                   </button>
                   <button
                     type="button"
@@ -1534,7 +1571,7 @@ export default function EnoCalculators({
                       acidAdditiveType === 'bicarbonate_deacid' ? 'bg-indigo-900 border-indigo-900 text-white font-bold' : 'bg-white border-stone-200 text-indigo-805'
                     }`}
                   >
-                    KHCO₃ (De-acid)
+                    {lang === 'ka' ? 'KHCO₃ (მჟავის შემცირება)' : 'KHCO₃ (De-acid)'}
                   </button>
                 </div>
               </div>
@@ -1546,29 +1583,29 @@ export default function EnoCalculators({
             <div className="lg:col-span-12 xl:col-span-5 bg-white p-5 border border-[#e8dfd5] rounded-xl space-y-4 shadow-xs">
               <h4 className="text-xs font-serif font-bold text-[#4e0e15] uppercase tracking-wider border-b border-stone-100 pb-2 flex items-center gap-1.5">
                 <Scale className="w-4 h-4 text-[#801323]" />
-                Interactive titration outcomes
+                {lang === 'ka' ? 'ტიტრაციის შედეგები' : 'Interactive titration outcomes'}
               </h4>
 
               <div className="space-y-3.5 text-xs">
                 <div className="flex justify-between items-center font-mono border-b pb-1 border-stone-105">
-                  <span className="text-slate-500">Requested Adjustment Direction:</span>
+                  <span className="text-slate-500">{lang === 'ka' ? 'კორექციის მიმართულება:' : 'Requested Adjustment Direction:'}</span>
                   <strong className={acidOutput.taExpectedDelta > 0 ? 'text-rose-800' : 'text-[#801323]'}>
-                    {acidOutput.taExpectedDelta > 0 ? 'Acidification' : 'De-acidification'} ({acidOutput.taExpectedDelta.toFixed(1)} g/L)
+                    {acidOutput.taExpectedDelta > 0 ? (lang === 'ka' ? 'მჟავიანობის მატება' : 'Acidification') : (lang === 'ka' ? 'მჟავიანობის შემცირება' : 'De-acidification')} ({acidOutput.taExpectedDelta.toFixed(1)} g/L)
                   </strong>
                 </div>
 
                 <div className="p-3 bg-stone-50 border border-stone-200 rounded-lg flex flex-col items-center justify-center text-center">
                   <span className="text-[10px] uppercase font-mono tracking-wider text-slate-400 block mb-0.5">
-                    Recommended Chemical Additive Dosage
+                    {lang === 'ka' ? 'რეკომენდებული დანამატის დოზა' : 'Recommended Chemical Additive Dosage'}
                   </span>
                   
                   {/* Highlighted grams weight */}
                   <strong className="text-lg font-serif font-black text-[#801323]">
-                    {Math.abs(acidOutput.dosageGrams).toLocaleString()} Grams
+                    {Math.abs(acidOutput.dosageGrams).toLocaleString()} {lang === 'ka' ? 'გრამი' : 'Grams'}
                   </strong>
-                  
+
                   <span className="text-[9.5px] font-mono text-stone-600 block mt-1.5">
-                    Equals approx <strong className="font-extrabold">{Math.abs(acidOutput.dosagPerHL)} g/hL</strong> ({(Math.abs(acidOutput.dosageGrams) / 1000).toFixed(2)} kg net weight)
+                    {lang === 'ka' ? 'დაახლ.' : 'Equals approx'} <strong className="font-extrabold">{Math.abs(acidOutput.dosagPerHL)} g/hL</strong> ({(Math.abs(acidOutput.dosageGrams) / 1000).toFixed(2)} {lang === 'ka' ? 'კგ სულ' : 'kg net weight'})
                   </span>
                 </div>
 
@@ -1576,7 +1613,7 @@ export default function EnoCalculators({
                 <div className="bg-[#FCFAF8] p-3 rounded-lg border border-[#f0e6da] space-y-1">
                   <strong className="text-[10.5px] font-mono font-bold text-stone-800 flex items-center gap-1">
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                    Enology Chemical Feedback
+                    {lang === 'ka' ? 'ენოლოგიური რჩევა' : 'Enology Chemical Feedback'}
                   </strong>
                   <p className="text-[10.5px] text-slate-500 leading-relaxed font-serif pt-1">
                     {acidOutput.acidChemistryComment}
