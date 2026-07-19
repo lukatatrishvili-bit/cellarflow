@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BASELINE_MIGRATION,
+  BASELINE_SCHEMA,
   deployMigrations,
   type PrismaCommandResult,
   type PrismaRunner,
@@ -76,8 +77,8 @@ describe('controlled Prisma migration deployment', () => {
         'diff',
         '--from-schema-datasource',
         'prisma/schema.prisma',
-        '--to-schema-datamodel',
-        'prisma/schema.prisma',
+      '--to-schema-datamodel',
+      BASELINE_SCHEMA,
         '--exit-code',
       ],
       ['migrate', 'resolve', '--applied', BASELINE_MIGRATION],

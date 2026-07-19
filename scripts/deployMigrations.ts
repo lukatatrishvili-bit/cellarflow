@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const BASELINE_MIGRATION = '20260719000000_baseline';
+export const BASELINE_SCHEMA = 'prisma/baseline.prisma';
 
 export interface PrismaCommandResult {
   status: number | null;
@@ -25,7 +26,8 @@ function requireSuccess(result: PrismaCommandResult, operation: string): void {
 
 /**
  * Apply committed migrations. For the one-time transition from `prisma db push`,
- * a P3005 database may be baselined only when Prisma reports zero schema drift.
+ * a P3005 database may be baselined only when Prisma reports zero drift from
+ * the reviewed schema snapshot represented by the baseline migration.
  */
 export function deployMigrations(
   runPrisma: PrismaRunner,
@@ -51,12 +53,12 @@ export function deployMigrations(
     '--from-schema-datasource',
     'prisma/schema.prisma',
     '--to-schema-datamodel',
-    'prisma/schema.prisma',
+    BASELINE_SCHEMA,
     '--exit-code',
   ]);
   if (driftCheck.status === 2) {
     throw new Error(
-      `The live database differs from the committed Prisma schema; refusing to baseline.\n${commandOutput(driftCheck)}`,
+      `The live database differs from the reviewed baseline schema; refusing to baseline.\n${commandOutput(driftCheck)}`,
     );
   }
   requireSuccess(driftCheck, 'Prisma baseline drift check');
