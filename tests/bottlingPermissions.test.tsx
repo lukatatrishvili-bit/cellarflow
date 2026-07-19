@@ -61,6 +61,7 @@ function props(overrides: Partial<ComponentProps<typeof BottlingTab>> = {}): Com
     onUpdateLots: vi.fn(),
     history: [run],
     onUpdateHistory: vi.fn(),
+    onDeleteRun: vi.fn(),
     inventory: [packaging],
     onUpdateInventory: vi.fn(),
     costEntries: [],

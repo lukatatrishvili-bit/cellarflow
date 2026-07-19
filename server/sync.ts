@@ -41,6 +41,46 @@ export function isValidId(id: any): boolean {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[\p{L}\p{N}_\- ]+$/u.test(id);
 }
 
+export interface DeletedRecordRef {
+  id: string;
+  collection: string;
+}
+
+export interface DeletionMatcher {
+  hasDeletions: boolean;
+  isDeleted: (collection: string, id: unknown) => boolean;
+}
+
+/**
+ * Collection-aware tombstones prevent a record ID reused by another
+ * collection from being deleted accidentally. Legacy deletedIds remain
+ * wildcard tombstones for backwards compatibility with older clients.
+ */
+export function createDeletionMatcher(
+  deletedIds: unknown,
+  deletedRecords?: unknown,
+): DeletionMatcher {
+  const wildcardIds = new Set<string>(Array.isArray(deletedIds) ? deletedIds.filter(isValidId) : []);
+  const scoped = new Map<string, Set<string>>();
+  if (Array.isArray(deletedRecords)) {
+    for (const record of deletedRecords) {
+      if (!record || typeof record !== 'object') continue;
+      const { collection, id } = record as any;
+      if (typeof collection !== 'string' || !isValidId(id)) continue;
+      const ids = scoped.get(collection) || new Set<string>();
+      ids.add(id);
+      scoped.set(collection, ids);
+    }
+  }
+  return {
+    hasDeletions: wildcardIds.size > 0 || scoped.size > 0,
+    isDeleted: (collection, id) => (
+      typeof id === 'string'
+      && (wildcardIds.has(id) || Boolean(scoped.get(collection)?.has(id)))
+    ),
+  };
+}
+
 /** Compare item content ignoring sync metadata. */
 function sameContent(a: any, b: any): boolean {
   const { lastModified: _a, baselineTimestamp: _ba, ...restA } = a || {};
@@ -48,12 +88,16 @@ function sameContent(a: any, b: any): boolean {
   return JSON.stringify(restA) === JSON.stringify(restB);
 }
 
-export function applyDeletions(db: any, deletedIds: string[] | undefined): void {
-  if (!Array.isArray(deletedIds) || deletedIds.length === 0) return;
-  const toDelete = new Set(deletedIds);
+export function applyDeletions(
+  db: any,
+  deletedIds: string[] | undefined,
+  deletedRecords?: DeletedRecordRef[] | undefined,
+): void {
+  const matcher = createDeletionMatcher(deletedIds, deletedRecords);
+  if (!matcher.hasDeletions) return;
   for (const key of Object.keys(db)) {
     if (Array.isArray(db[key])) {
-      db[key] = db[key].filter((item: any) => !item || !item.id || !toDelete.has(item.id));
+      db[key] = db[key].filter((item: any) => !item || !item.id || !matcher.isDeleted(key, item.id));
     }
   }
 }
@@ -113,6 +157,7 @@ export function mergeCollections(db: any, collections: Record<string, any>, hist
 
       if (!existing) {
         existingList.push(incoming);
+        existingMap.set(clientItem.id, incoming);
         continue;
       }
       if (sameContent(incoming, existing)) {

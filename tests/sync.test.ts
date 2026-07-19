@@ -53,6 +53,19 @@ describe('applyDeletions', () => {
     applyDeletions(db, []);
     expect(db.lots).toHaveLength(1);
   });
+
+  it('scopes typed tombstones to one collection while legacy IDs remain wildcard deletions', () => {
+    const scopedDb: any = {
+      lots: [item('shared-id'), item('lot-only')],
+      tasks: [item('shared-id'), item('task-only')],
+    };
+    applyDeletions(scopedDb, undefined, [{ collection: 'lots', id: 'shared-id' }]);
+    expect(scopedDb.lots.map((entry: any) => entry.id)).toEqual(['lot-only']);
+    expect(scopedDb.tasks.map((entry: any) => entry.id)).toEqual(['shared-id', 'task-only']);
+
+    applyDeletions(scopedDb, ['task-only']);
+    expect(scopedDb.tasks).toEqual([item('shared-id')]);
+  });
 });
 
 describe('mergeCollections', () => {
@@ -61,6 +74,19 @@ describe('mergeCollections', () => {
     const conflicts = mergeCollections(db, { tasks: [item('t1', { title: 'Punch down' })] });
     expect(conflicts).toEqual([]);
     expect(db.tasks).toHaveLength(1);
+  });
+
+  it('defensively keeps one record when duplicate new IDs bypass payload validation', () => {
+    const db: any = { tasks: [] };
+    mergeCollections(db, {
+      tasks: [
+        item('task-1', { title: 'First', lastModified: '2026-01-01T00:00:00.000Z' }),
+        item('task-1', { title: 'Second', lastModified: '2026-01-02T00:00:00.000Z' }),
+      ],
+    });
+
+    expect(db.tasks).toHaveLength(1);
+    expect(db.tasks[0].title).toBe('Second');
   });
 
   it('keeps identical content conflict-free but adopts the newer sync stamp', () => {

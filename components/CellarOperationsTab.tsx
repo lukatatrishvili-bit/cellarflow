@@ -8,6 +8,34 @@ import type { Language } from '../lib/i18n';
 import type { WineLot, Vessel, InventoryItem, CellarOperation, CellarOperationType } from '../lib/wineryState';
 import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
 
+export type CellarOperationInput = Omit<CellarOperation, 'id' | 'lotName' | 'volumeBeforeL' | 'materialName' | 'unit'>;
+
+export interface CellarOperationMutationAccess {
+  canLogCellarOperation: boolean;
+  canUseOperationVessels: boolean;
+  canConsumeOperationMaterials: boolean;
+}
+
+/**
+ * Keep the callback contract safe even if stale form state survives a role
+ * change. A core operation always writes both cellarOps and the lot timeline;
+ * vessel and material references opt into their additional collection writes.
+ */
+export function permittedCellarOperationInput(
+  input: CellarOperationInput,
+  access: CellarOperationMutationAccess,
+): CellarOperationInput | null {
+  if (!access.canLogCellarOperation) return null;
+
+  return {
+    ...input,
+    vesselId: access.canUseOperationVessels ? input.vesselId : null,
+    vesselToId: access.canUseOperationVessels ? input.vesselToId : null,
+    materialId: access.canConsumeOperationMaterials ? input.materialId : undefined,
+    dose: access.canConsumeOperationMaterials ? input.dose : undefined,
+  };
+}
+
 interface Props {
   lang: Language;
   lots: WineLot[];
@@ -15,8 +43,14 @@ interface Props {
   inventory: InventoryItem[];
   ops: CellarOperation[];
   currentUserName: string;
-  onAddOperation: (input: Omit<CellarOperation, 'id' | 'lotName' | 'volumeBeforeL' | 'materialName' | 'unit'>) => string;
+  onAddOperation: (input: CellarOperationInput) => string;
   setToastMessage?: (m: string) => void;
+  /** Requires operations:create + lots:update because every log updates both collections. */
+  canLogCellarOperation?: boolean;
+  /** Enables optional vessel context, which also updates the referenced vessel. */
+  canUseOperationVessels?: boolean;
+  /** Enables material consumption, which also updates inventory and may create a cost entry. */
+  canConsumeOperationMaterials?: boolean;
   /** Vessel to preselect (QR scan / vessel-drawer quick action). Applied once. */
   prefillVesselId?: string;
   clearPrefill?: () => void;
@@ -34,6 +68,9 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 export default function CellarOperationsTab({
   lang, lots, vessels, inventory, ops, currentUserName, onAddOperation, setToastMessage,
   prefillVesselId, clearPrefill,
+  canLogCellarOperation = true,
+  canUseOperationVessels = true,
+  canConsumeOperationMaterials = true,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
@@ -54,7 +91,9 @@ export default function CellarOperationsTab({
 
   const meta = CELLAR_OPERATIONS.find(o => o.key === type)!;
   const lot = lots.find(l => l.id === lotId) || null;
-  const material = inventory.find(i => i.id === materialId) || null;
+  const material = canConsumeOperationMaterials
+    ? inventory.find(i => i.id === materialId) || null
+    : null;
 
   // Default the batch to the first active lot.
   useEffect(() => {
@@ -102,16 +141,16 @@ export default function CellarOperationsTab({
   const overfill = meta.affectsVolume && lot != null && volNum != null && volNum > lot.currentVolume + 0.001
     && (type === 'pressing' || type === 'racking' || type === 'filtration' || type === 'bottling');
   const doseNum = parseFloat(dose) || 0;
-  const overDraw = !!material && doseNum > material.stock + 0.0001;
+  const overDraw = canConsumeOperationMaterials && !!material && doseNum > material.stock + 0.0001;
 
   const customOk = type !== 'custom' || customLabel.trim().length > 0;
-  const canSubmit = !!lot && customOk && !overfill;
+  const canSubmit = canLogCellarOperation && !!lot && customOk && !overfill;
 
   const resetSoft = () => { setDose(''); setNotes(''); setCustomLabel(''); };
 
   const handleSubmit = () => {
     if (!canSubmit || !lot) return;
-    onAddOperation({
+    const input = permittedCellarOperationInput({
       date,
       type,
       customLabel: type === 'custom' ? customLabel.trim() : undefined,
@@ -123,7 +162,13 @@ export default function CellarOperationsTab({
       dose: meta.needsMaterial && doseNum > 0 ? doseNum : undefined,
       operator: operator.trim() || currentUserName,
       notes: notes.trim(),
+    }, {
+      canLogCellarOperation,
+      canUseOperationVessels,
+      canConsumeOperationMaterials,
     });
+    if (!input) return;
+    onAddOperation(input);
     const label = type === 'custom' ? customLabel.trim() : (ka ? meta.ka : meta.en);
     setToastMessage?.(ka ? `ოპერაცია აღირიცხა: ${label} — ${lot.name}` : `Operation logged: ${label} — ${lot.name}`);
     resetSoft();
@@ -150,15 +195,45 @@ export default function CellarOperationsTab({
           {ka ? 'სწრაფი ოპერაცია' : 'Quick Operation'}
         </h3>
         <p className="text-xs text-stone-400 font-semibold mt-0.5">
-          {ka
-            ? 'აირჩიეთ ოპერაცია → პარტია → შეინახეთ. დანამატები ავტომატურად აკლდება მარაგს.'
-            : 'Pick an operation → batch → save. Additives are deducted from inventory automatically.'}
+          {!canLogCellarOperation
+            ? (ka ? 'გადახედეთ ამ სამუშაო სივრცეში აღრიცხული ოპერაციების ისტორიას.' : 'Review the operation history recorded in this workspace.')
+            : (ka
+              ? 'აირჩიეთ ოპერაცია → პარტია → შეინახეთ. ხელმისაწვდომი დაკავშირებული ჩანაწერები ავტომატურად განახლდება.'
+              : 'Pick an operation → batch → save. Available linked records update automatically.')}
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_1fr] gap-4">
+      {!canLogCellarOperation && (
+        <div role="status" className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-600 dark:border-stone-700 dark:bg-stone-900/70 dark:text-stone-300">
+          <p className="text-xs font-bold">{ka ? 'ოპერაციებზე მხოლოდ ნახვის წვდომა' : 'Read-only operation access'}</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-stone-500 dark:text-stone-400">
+            {ka
+              ? 'შეგიძლიათ გადახედოთ ოპერაციების ისტორიას, მაგრამ თქვენი როლი ვერ აღრიცხავს ახალ ოპერაციას.'
+              : 'You can review operation history, but your workspace role cannot log a new operation.'}
+          </p>
+        </div>
+      )}
+
+      {canLogCellarOperation && (!canUseOperationVessels || !canConsumeOperationMaterials) && (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
+          <p className="text-xs font-bold">{ka ? 'ოპერაციის შეზღუდული ხელსაწყოები' : 'Limited operation tools'}</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-amber-800/80 dark:text-amber-200/80">
+            {[
+              !canUseOperationVessels
+                ? (ka ? 'ჭურჭელთან დაკავშირებული ცვლილებები მიუწვდომელია.' : 'Vessel-linked changes are unavailable.')
+                : '',
+              !canConsumeOperationMaterials
+                ? (ka ? 'მასალის ჩამოწერა და ხარჯის აღრიცხვა მიუწვდომელია.' : 'Material deductions and cost posting are unavailable.')
+                : '',
+            ].filter(Boolean).join(' ')}
+          </p>
+        </div>
+      )}
+
+      <div className={`grid grid-cols-1 ${canLogCellarOperation ? 'lg:grid-cols-[1.15fr_1fr]' : ''} gap-4`}>
         {/* ── Operation form ────────────────────────────── */}
-        <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
+        {canLogCellarOperation && (
+          <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
           {/* Operation type picker */}
           <div>
             <label className={labelCls}>{ka ? 'ოპერაციის ტიპი' : 'Operation type'}</label>
@@ -192,23 +267,25 @@ export default function CellarOperationsTab({
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-2">
+              <div className={`grid ${canUseOperationVessels ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
                 <div>
                   <label className={labelCls}>{ka ? 'პარტია' : 'Batch'}</label>
                   <select value={lotId} onChange={e => setLotId(e.target.value)} className={inputCls}>
                     {activeLots.map(l => <option key={l.id} value={l.id}>{l.name} — {round1(l.currentVolume)} L</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className={labelCls}>{meta.needsVesselTo ? (ka ? 'ჭურჭელი (-დან)' : 'Vessel (from)') : (ka ? 'ჭურჭელი' : 'Vessel')}</label>
-                  <select value={vesselId} onChange={e => setVesselId(e.target.value)} className={inputCls}>
-                    <option value="">{ka ? '— არცერთი —' : '— none —'}</option>
-                    {vessels.map(v => <option key={v.id} value={v.id}>{v.id}</option>)}
-                  </select>
-                </div>
+                {canUseOperationVessels && (
+                  <div>
+                    <label className={labelCls}>{meta.needsVesselTo ? (ka ? 'ჭურჭელი (-დან)' : 'Vessel (from)') : (ka ? 'ჭურჭელი' : 'Vessel')}</label>
+                    <select value={vesselId} onChange={e => setVesselId(e.target.value)} className={inputCls}>
+                      <option value="">{ka ? '— არცერთი —' : '— none —'}</option>
+                      {vessels.map(v => <option key={v.id} value={v.id}>{v.id}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
 
-              {meta.needsVesselTo && (
+              {canUseOperationVessels && meta.needsVesselTo && (
                 <div>
                   <label className={labelCls}>{ka ? 'ჭურჭელი (-ში)' : 'Vessel (to)'}</label>
                   <select value={vesselToId} onChange={e => setVesselToId(e.target.value)} className={inputCls}>
@@ -218,7 +295,7 @@ export default function CellarOperationsTab({
                 </div>
               )}
 
-              {meta.needsMaterial && (
+              {canConsumeOperationMaterials && meta.needsMaterial && (
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className={labelCls}>{ka ? 'მასალა / დანამატი' : 'Material / additive'}</label>
@@ -284,7 +361,8 @@ export default function CellarOperationsTab({
               </button>
             </>
           )}
-        </div>
+          </div>
+        )}
 
         {/* ── Recent operations ─────────────────────────── */}
         <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
@@ -297,7 +375,9 @@ export default function CellarOperationsTab({
           {ops.length === 0 ? (
             <div className="text-center py-12 text-stone-400 text-xs font-semibold px-6">
               <ClipboardList className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              {ka ? 'ჯერ არ არის ოპერაცია. აირჩიეთ ტიპი და შეინახეთ.' : 'No operations yet. Pick a type and log your first.'}
+              {canLogCellarOperation
+                ? (ka ? 'ჯერ არ არის ოპერაცია. აირჩიეთ ტიპი და შეინახეთ.' : 'No operations yet. Pick a type and log your first.')
+                : (ka ? 'აღრიცხული ოპერაციები აქ გამოჩნდება.' : 'Recorded operations will appear here.')}
             </div>
           ) : (
             <div className="overflow-x-auto max-h-[560px]">

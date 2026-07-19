@@ -18,6 +18,10 @@ interface Props {
   pricing: WinePricing;
   onUpdatePricing: (pricing: WinePricing) => void;
   onNavigate?: (target: { module: string; tab?: string }) => void;
+  canCreateCost?: boolean;
+  canDeleteCost?: boolean;
+  canUpdatePricing?: boolean;
+  canExportCosts?: boolean;
 }
 
 const CATEGORIES: Array<{ id: CostCategory; ka: string; en: string }> = [
@@ -56,6 +60,10 @@ export default function CostsTab({
   pricing,
   onUpdatePricing,
   onNavigate,
+  canCreateCost = true,
+  canDeleteCost = true,
+  canUpdatePricing = true,
+  canExportCosts = true,
 }: Props) {
   const ka = lang === 'ka';
   const currency = company.currency || 'GEL';
@@ -92,6 +100,7 @@ export default function CostsTab({
   };
 
   const savePrice = (lotId: string) => {
+    if (!canUpdatePricing) return;
     const pricePerBottle = parsePriceDraft(draftPricing[lotId]);
     const current = pricing[lotId] || 0;
     if (pricePerBottle === current) {
@@ -117,11 +126,13 @@ export default function CostsTab({
     URL.revokeObjectURL(url);
   };
   const exportCSV = () => {
+    if (!canExportCosts) return;
     const csv = costRowsToCSV(reportRows, currency);
     download(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `cost_margin_report.csv`);
   };
   const [xlsxBusy, setXlsxBusy] = useState(false);
   const exportXLSX = async () => {
+    if (!canExportCosts) return;
     setXlsxBusy(true);
     try {
       const { renderCostReportXlsx } = await import('../lib/costing/reportXlsx');
@@ -148,12 +159,12 @@ export default function CostsTab({
 
   const invItem = inventory.find(i => i.id === invId);
   const computedAmount = fromInventory && invItem ? (parseFloat(qty) || 0) * (invItem.costPerUnit || 0) : parseFloat(amount) || 0;
-  const canAdd = !!lotId && computedAmount > 0;
+  const canAdd = canCreateCost && !!lotId && computedAmount > 0;
 
   const fmt = (n: number) => `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 
   const submit = () => {
-    if (!canAdd) return;
+    if (!canCreateCost || !canAdd) return;
     const entry: CostEntry = {
       id: `cost-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       date, lotId, category,
@@ -166,7 +177,10 @@ export default function CostsTab({
     setAmount(''); setQty(''); setDescription('');
   };
 
-  const remove = (id: string) => onUpdateCostEntries(costEntries.filter(e => e.id !== id));
+  const remove = (id: string) => {
+    if (!canDeleteCost) return;
+    onUpdateCostEntries(costEntries.filter(e => e.id !== id));
+  };
 
   const lotName = (id: string) => lots.find(l => l.id === id)?.name || id;
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
@@ -187,6 +201,21 @@ export default function CostsTab({
           {ka ? 'ხარჯის აღრიცხვა ლოტებზე — თვითღირებულება ლიტრზე და ბოთლზე' : 'Track costs against lots — cost per litre and per bottle'}
         </p>
       </div>
+
+      {(!canCreateCost || !canDeleteCost || !canUpdatePricing) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+          <p className="text-xs font-bold">
+            {!canCreateCost && !canDeleteCost && !canUpdatePricing
+              ? (ka ? 'მხოლოდ ნახვის წვდომა' : 'Read-only cost access')
+              : (ka ? 'შეზღუდული ფინანსური წვდომა' : 'Limited finance access')}
+          </p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200/80">
+            {!canCreateCost && !canDeleteCost && !canUpdatePricing
+              ? (ka ? 'შეგიძლიათ ხარჯების, მარჟის და ღირებულების ნახვა, თუმცა არა შეცვლა.' : 'You can review costs, margins, and inventory value without changing financial records.')
+              : (ka ? 'შესაძლებელი მოქმედებები შეზღუდულია თქვენი როლის შესაბამისად.' : 'Available actions are limited by your role; reports and history remain visible.')}
+          </p>
+        </div>
+      )}
 
       {/* Summary */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -214,8 +243,9 @@ export default function CostsTab({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
+      <div className={`grid grid-cols-1 gap-5 ${canCreateCost ? 'lg:grid-cols-[360px_1fr]' : ''}`}>
         {/* Add entry */}
+        {canCreateCost && (
         <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-3 dark:bg-stone-900 dark:border-stone-800 self-start">
           <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><Plus className="w-4 h-4" /> {ka ? 'ხარჯის დამატება' : 'Add cost'}</h4>
 
@@ -279,20 +309,21 @@ export default function CostsTab({
             </>
           )}
         </div>
+        )}
 
         {/* Per-lot rollup + entries */}
         <div className="space-y-4">
           <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
             <div className="px-4 py-3 border-b border-[#e8dfd5] dark:border-stone-800 flex items-center justify-between gap-2">
               <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><Wine className="w-4 h-4" /> {ka ? 'თვითღირებულება და მოგება' : 'Cost & margin per lot'}</span>
-              <div className="flex items-center gap-1.5">
+              {canExportCosts && <div className="flex items-center gap-1.5">
                 <button onClick={exportCSV} className="flex items-center gap-1 px-2.5 py-1 border border-stone-200 dark:border-stone-700 rounded-lg text-[10px] font-bold uppercase tracking-wide text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 cursor-pointer">
                   <FileDown className="w-3 h-3" /> CSV
                 </button>
                 <button onClick={exportXLSX} disabled={xlsxBusy} className="flex items-center gap-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white rounded-lg text-[10px] font-bold uppercase tracking-wide cursor-pointer">
                   <FileSpreadsheet className="w-3 h-3" /> {xlsxBusy ? '…' : 'XLSX'}
                 </button>
-              </div>
+              </div>}
             </div>
             {lots.length === 0 ? (
               <div className="md:hidden p-6 text-center text-stone-400 italic text-xs">{ka ? 'მონაცემები არ არის' : 'No data'}</div>
@@ -316,8 +347,12 @@ export default function CostsTab({
                       <div className="rounded-lg bg-stone-50 p-2 dark:bg-stone-950/50"><span className="block text-[9px] uppercase text-stone-400">Profit</span><strong>{r.pricePerBottle != null ? fmt(r.grossProfit) : '—'}</strong></div>
                     </div>
                     <label className="block text-[9px] uppercase font-mono font-bold text-stone-400">Price / bottle</label>
-                    <input type="number" min={0} step="0.01" value={draftPricing[r.lotId] ?? ''} onChange={e => updatePriceDraft(r.lotId, e.target.value)} onBlur={() => savePrice(r.lotId)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') resetPriceDraft(r.lotId); }}
-                      placeholder="—" className="w-full bg-stone-50 border border-stone-200 dark:bg-stone-800 dark:border-stone-700 rounded-lg px-2.5 py-2 text-right text-xs font-mono outline-none focus:border-[#4e0e15]" />
+                    {canUpdatePricing ? (
+                      <input type="number" min={0} step="0.01" value={draftPricing[r.lotId] ?? ''} onChange={e => updatePriceDraft(r.lotId, e.target.value)} onBlur={() => savePrice(r.lotId)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') resetPriceDraft(r.lotId); }}
+                        aria-label={`Price per bottle for ${r.lotName}`} placeholder="—" className="w-full bg-stone-50 border border-stone-200 dark:bg-stone-800 dark:border-stone-700 rounded-lg px-2.5 py-2 text-right text-xs font-mono outline-none focus:border-[#4e0e15]" />
+                    ) : (
+                      <p className="rounded-lg bg-stone-50 px-2.5 py-2 text-right text-xs font-mono text-stone-700 dark:bg-stone-800 dark:text-stone-200">{r.pricePerBottle != null ? fmt(r.pricePerBottle) : '—'}</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -348,8 +383,12 @@ export default function CostsTab({
                       <td className="p-2.5 text-right font-mono">{r.perBottle != null ? fmt(r.perBottle) : '—'}</td>
                       <td className="p-2.5 text-right font-mono text-stone-500">{r.bottles || '—'}</td>
                       <td className="p-2.5 text-right">
-                        <input type="number" min={0} step="0.01" value={draftPricing[r.lotId] ?? ''} onChange={e => updatePriceDraft(r.lotId, e.target.value)} onBlur={() => savePrice(r.lotId)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') resetPriceDraft(r.lotId); }}
-                          placeholder="—" className="w-16 bg-stone-50 border border-stone-200 dark:bg-stone-800 dark:border-stone-700 rounded px-1.5 py-1 text-right text-[11px] font-mono outline-none focus:border-[#4e0e15]" />
+                        {canUpdatePricing ? (
+                          <input type="number" min={0} step="0.01" value={draftPricing[r.lotId] ?? ''} onChange={e => updatePriceDraft(r.lotId, e.target.value)} onBlur={() => savePrice(r.lotId)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') resetPriceDraft(r.lotId); }}
+                            aria-label={`Price per bottle for ${r.lotName}`} placeholder="—" className="w-16 bg-stone-50 border border-stone-200 dark:bg-stone-800 dark:border-stone-700 rounded px-1.5 py-1 text-right text-[11px] font-mono outline-none focus:border-[#4e0e15]" />
+                        ) : (
+                          <span className="font-mono text-stone-600 dark:text-stone-300">{r.pricePerBottle != null ? fmt(r.pricePerBottle) : '—'}</span>
+                        )}
                       </td>
                       <td className={`p-2.5 text-right font-mono font-bold ${r.marginPct == null ? 'text-stone-300' : r.marginPct >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600'}`}>{r.marginPct != null ? `${r.marginPct}%` : '—'}</td>
                       <td className={`p-2.5 text-right font-mono ${r.grossProfit < 0 ? 'text-rose-600' : 'text-stone-700 dark:text-stone-300'}`}>{r.pricePerBottle != null ? fmt(r.grossProfit) : '—'}</td>
@@ -397,9 +436,9 @@ export default function CostsTab({
                         <p className="text-[10px] font-mono text-stone-400">{e.date}</p>
                         <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{lotName(e.lotId)}</h4>
                       </div>
-                      <button onClick={() => remove(e.id)} className="shrink-0 text-stone-300 hover:text-rose-600 cursor-pointer" title="Delete cost">
+                      {canDeleteCost && <button onClick={() => remove(e.id)} className="shrink-0 text-stone-300 hover:text-rose-600 cursor-pointer" title={ka ? 'ხარჯის წაშლა' : 'Delete cost'} aria-label={ka ? `ხარჯის წაშლა — ${lotName(e.lotId)}` : `Delete cost for ${lotName(e.lotId)}`}>
                         <Trash2 className="w-4 h-4" />
-                      </button>
+                      </button>}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="px-2 py-0.5 bg-stone-100 dark:bg-stone-800 rounded-full text-[9px] font-bold uppercase">{catLabel(e.category, ka)}</span>
@@ -418,7 +457,7 @@ export default function CostsTab({
                       <th className="p-2.5">{ka ? 'კატეგ.' : 'Category'}</th>
                       <th className="p-2.5">{ka ? 'აღწერა' : 'Description'}</th>
                       <th className="p-2.5 text-right">{ka ? 'თანხა' : 'Amount'}</th>
-                      <th className="p-2.5"></th>
+                      {canDeleteCost && <th className="p-2.5"></th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
@@ -429,7 +468,7 @@ export default function CostsTab({
                         <td className="p-2.5"><span className="px-1.5 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[9px] font-bold uppercase">{catLabel(e.category, ka)}</span></td>
                         <td className="p-2.5 text-stone-600 dark:text-stone-300">{e.description}</td>
                         <td className={`p-2.5 text-right font-mono font-bold ${e.amount < 0 ? 'text-rose-600' : 'text-stone-800 dark:text-amber-200'}`}>{fmt(e.amount)}</td>
-                        <td className="p-2.5 text-right"><button onClick={() => remove(e.id)} className="text-stone-300 hover:text-rose-600 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button></td>
+                        {canDeleteCost && <td className="p-2.5 text-right"><button onClick={() => remove(e.id)} className="text-stone-300 hover:text-rose-600 cursor-pointer" aria-label={`Delete cost for ${lotName(e.lotId)}`}><Trash2 className="w-3.5 h-3.5" /></button></td>}
                       </tr>
                     ))}
                   </tbody>

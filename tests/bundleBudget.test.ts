@@ -50,7 +50,14 @@ describe.skipIf(!hasBuild)('initial bundle budget', () => {
 
   it('keeps heavy lazy libraries out of the critical path', () => {
     // These must always stay behind dynamic import().
-    for (const banned of ['exceljs', 'storage-dexie', 'VaziModule', 'generateCategoricalChart']) {
+    for (const banned of [
+      'exceljs',
+      'storage-dexie',
+      'VaziModule',
+      'generateCategoricalChart',
+      'AuthAccountFlows',
+      'SyncConflictResolutionModal',
+    ]) {
       expect(assetRefs.some((ref) => ref.includes(banned))).toBe(false);
     }
   });

@@ -133,6 +133,307 @@ interface VaziModuleProps {
   setPrefilledTaskTitle?: (title: string) => void;
   setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
   setPrefilledTaskDesc?: (desc: string) => void;
+  canCreateVineyardRecord?: boolean;
+  canUpdateVineyardRecord?: boolean;
+  canDeleteVineyardRecord?: boolean;
+  canCreateVineyardProject?: boolean;
+  canUpdateVineyardProject?: boolean;
+  canDispatchHarvestToGvino?: boolean;
+  canCreateTask?: boolean;
+}
+
+export function runVaziMutationIfAllowed<T>(
+  allowed: boolean,
+  mutation: () => T,
+): T | undefined {
+  if (!allowed) return undefined;
+  return mutation();
+}
+
+export type HarvestDispatchParseResult =
+  | {
+      ok: true;
+      harvestedKg: number;
+      actualHarvestDate: string;
+      vintage: number;
+    }
+  | {
+      ok: false;
+      reason: 'weight_required' | 'weight_invalid' | 'date_invalid';
+    };
+
+type HarvestDispatchErrorReason = Extract<HarvestDispatchParseResult, { ok: false }>['reason'];
+
+export type HarvestPlanParseResult =
+  | {
+      ok: true;
+      estimatedHarvestDate: string;
+      estimatedTons: number;
+    }
+  | {
+      ok: false;
+      errors: {
+        estimatedHarvestDate?: 'date_required' | 'date_invalid';
+        estimatedTons?: 'tons_required' | 'tons_invalid';
+      };
+    };
+
+const isValidISODate = (value: string) => {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!dateMatch) return false;
+
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return Number.isInteger(year)
+    && date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+};
+
+/** Validates the two quantitative fields required before a harvest plan can be saved. */
+export function parseHarvestPlanInput(
+  rawTargetDate: string,
+  rawEstimatedTons: string,
+): HarvestPlanParseResult {
+  const targetDate = rawTargetDate.trim();
+  const rawTons = rawEstimatedTons.trim();
+  const errors: Extract<HarvestPlanParseResult, { ok: false }>['errors'] = {};
+
+  if (!targetDate) errors.estimatedHarvestDate = 'date_required';
+  else if (!isValidISODate(targetDate)) errors.estimatedHarvestDate = 'date_invalid';
+
+  if (!rawTons) errors.estimatedTons = 'tons_required';
+  else {
+    const estimatedTons = Number(rawTons);
+    if (!Number.isFinite(estimatedTons) || estimatedTons <= 0) {
+      errors.estimatedTons = 'tons_invalid';
+    }
+  }
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    estimatedHarvestDate: targetDate,
+    estimatedTons: Number(rawTons),
+  };
+}
+
+interface HarvestPlanFormProps {
+  lang: Language;
+  block: VineyardBlock;
+  onCreate: (record: Omit<HarvestRecord, 'id'>) => void;
+  onCancel: () => void;
+}
+
+/** Inline harvest-plan editor kept separate so its labels and validation contract remain testable. */
+export function HarvestPlanForm({ lang, block, onCreate, onCancel }: HarvestPlanFormProps) {
+  const initialTargetDate = isValidISODate(block.estimatedHarvestDate)
+    ? block.estimatedHarvestDate
+    : '';
+  const [targetDate, setTargetDate] = useState(initialTargetDate);
+  const [estimatedTons, setEstimatedTons] = useState('');
+  const [pickingMethod, setPickingMethod] = useState<HarvestRecord['pickingMethod']>('hand');
+  const [grapeCondition, setGrapeCondition] = useState<HarvestRecord['grapeCondition']>('good');
+  const [notes, setNotes] = useState('');
+  const [errors, setErrors] = useState<Extract<HarvestPlanParseResult, { ok: false }>['errors']>({});
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
+  const fieldIdPrefix = `harvest-plan-${block.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+
+  useEffect(() => {
+    dateInputRef.current?.focus();
+  }, []);
+
+  const resetFields = () => {
+    setTargetDate(initialTargetDate);
+    setEstimatedTons('');
+    setPickingMethod('hand');
+    setGrapeCondition('good');
+    setNotes('');
+    setErrors({});
+  };
+
+  return (
+    <form
+      aria-labelledby={`${fieldIdPrefix}-title`}
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        const parsed = parseHarvestPlanInput(targetDate, estimatedTons);
+        if (!parsed.ok) {
+          setErrors(parsed.errors);
+          return;
+        }
+
+        onCreate({
+          blockId: block.id,
+          variety: block.grapeVariety,
+          estimatedHarvestDate: parsed.estimatedHarvestDate,
+          estimatedTons: parsed.estimatedTons,
+          pickingMethod,
+          grapeCondition,
+          sentToGvino: false,
+          notes: notes.trim(),
+        });
+      }}
+      className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4"
+    >
+      <div className="mb-4">
+        <h5 id={`${fieldIdPrefix}-title`} className="font-serif text-sm font-black text-emerald-950">
+          {lang === 'ka' ? 'რთველის ახალი გეგმა' : 'New harvest plan'}
+        </h5>
+        <p id={`${fieldIdPrefix}-guidance`} className="mt-1 text-[11px] leading-relaxed text-emerald-900/75">
+          {lang === 'ka'
+            ? `${block.name}-ისთვის მიუთითეთ სამიზნე თარიღი და მოსალოდნელი მოსავალი. ფაქტობრივ წონას მარანში გადაცემისას შეიყვანთ.`
+            : `Set a target date and expected yield for ${block.name}. You will record the actual weight when the fruit is dispatched.`}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-date`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'სამიზნე თარიღი' : 'Target harvest date'}
+          </label>
+          <input
+            ref={dateInputRef}
+            id={`${fieldIdPrefix}-date`}
+            type="date"
+            value={targetDate}
+            required
+            aria-invalid={Boolean(errors.estimatedHarvestDate)}
+            aria-describedby={errors.estimatedHarvestDate ? `${fieldIdPrefix}-date-error` : `${fieldIdPrefix}-guidance`}
+            onChange={(event) => {
+              setTargetDate(event.target.value);
+              setErrors(current => ({ ...current, estimatedHarvestDate: undefined }));
+            }}
+            className={`h-10 w-full rounded-lg border bg-white px-3 text-xs font-mono text-stone-900 outline-none focus:ring-2 focus:ring-emerald-200 ${errors.estimatedHarvestDate ? 'border-red-500' : 'border-emerald-200 focus:border-emerald-700'}`}
+          />
+          {errors.estimatedHarvestDate && (
+            <p id={`${fieldIdPrefix}-date-error`} role="alert" className="mt-1 text-[10px] font-semibold text-red-700">
+              {errors.estimatedHarvestDate === 'date_required'
+                ? (lang === 'ka' ? 'აირჩიეთ რთველის სამიზნე თარიღი.' : 'Choose a target harvest date.')
+                : (lang === 'ka' ? 'შეიყვანეთ სწორი კალენდარული თარიღი.' : 'Enter a valid calendar date.')}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-tons`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'სავარაუდო მოსავალი (ტონა)' : 'Estimated yield (tons)'}
+          </label>
+          <input
+            id={`${fieldIdPrefix}-tons`}
+            type="number"
+            inputMode="decimal"
+            min="0.001"
+            step="any"
+            value={estimatedTons}
+            required
+            placeholder={lang === 'ka' ? 'მაგ. 8.5' : 'e.g. 8.5'}
+            aria-invalid={Boolean(errors.estimatedTons)}
+            aria-describedby={errors.estimatedTons ? `${fieldIdPrefix}-tons-error` : undefined}
+            onChange={(event) => {
+              setEstimatedTons(event.target.value);
+              setErrors(current => ({ ...current, estimatedTons: undefined }));
+            }}
+            className={`h-10 w-full rounded-lg border bg-white px-3 text-xs font-mono text-stone-900 outline-none focus:ring-2 focus:ring-emerald-200 ${errors.estimatedTons ? 'border-red-500' : 'border-emerald-200 focus:border-emerald-700'}`}
+          />
+          {errors.estimatedTons && (
+            <p id={`${fieldIdPrefix}-tons-error`} role="alert" className="mt-1 text-[10px] font-semibold text-red-700">
+              {errors.estimatedTons === 'tons_required'
+                ? (lang === 'ka' ? 'შეიყვანეთ სავარაუდო მოსავალი.' : 'Enter the estimated yield.')
+                : (lang === 'ka' ? 'მოსავალი უნდა იყოს 0 ტონაზე მეტი.' : 'Estimated yield must be greater than 0 tons.')}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-method`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'კრეფის მეთოდი' : 'Picking method'}
+          </label>
+          <select
+            id={`${fieldIdPrefix}-method`}
+            value={pickingMethod}
+            onChange={(event) => setPickingMethod(event.target.value as HarvestRecord['pickingMethod'])}
+            className="h-10 w-full rounded-lg border border-emerald-200 bg-white px-3 text-xs text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-200"
+          >
+            <option value="hand">{lang === 'ka' ? 'ხელით' : 'Hand-picked'}</option>
+            <option value="machine">{lang === 'ka' ? 'მექანიკურად' : 'Machine-picked'}</option>
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-condition`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'ყურძნის მოსალოდნელი მდგომარეობა' : 'Expected grape condition'}
+          </label>
+          <select
+            id={`${fieldIdPrefix}-condition`}
+            value={grapeCondition}
+            onChange={(event) => setGrapeCondition(event.target.value as HarvestRecord['grapeCondition'])}
+            className="h-10 w-full rounded-lg border border-emerald-200 bg-white px-3 text-xs text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-200"
+          >
+            <option value="excellent">{lang === 'ka' ? 'შესანიშნავი' : 'Excellent'}</option>
+            <option value="good">{lang === 'ka' ? 'კარგი' : 'Good'}</option>
+            <option value=" fair">{lang === 'ka' ? 'დამაკმაყოფილებელი' : 'Fair'}</option>
+            <option value="damaged">{lang === 'ka' ? 'დაზიანებული' : 'Damaged'}</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <label htmlFor={`${fieldIdPrefix}-notes`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+          {lang === 'ka' ? 'ინსტრუქციები და შენიშვნები' : 'Picking instructions and notes'}
+        </label>
+        <textarea
+          id={`${fieldIdPrefix}-notes`}
+          value={notes}
+          rows={3}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder={lang === 'ka' ? 'მაგ. კრეფა დილით, მცირე ყუთებში' : 'e.g. Pick in the morning and use small crates'}
+          className="w-full resize-y rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-200"
+        />
+      </div>
+
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            resetFields();
+            onCancel();
+          }}
+          className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-950 hover:bg-emerald-100"
+        >
+          {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
+        </button>
+        <button
+          type="submit"
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-800 px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white hover:bg-emerald-950"
+        >
+          <Check className="h-3.5 w-3.5" /> {lang === 'ka' ? 'გეგმის შენახვა' : 'Save harvest plan'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Converts the explicit handoff fields into the values shared by Vazi and Gvino. */
+export function parseHarvestDispatchInput(
+  rawWeight: string,
+  actualHarvestDate: string,
+): HarvestDispatchParseResult {
+  const trimmedWeight = rawWeight.trim();
+  if (!trimmedWeight) return { ok: false, reason: 'weight_required' };
+
+  const harvestedKg = Number(trimmedWeight);
+  if (!Number.isFinite(harvestedKg) || harvestedKg <= 0) {
+    return { ok: false, reason: 'weight_invalid' };
+  }
+
+  if (!isValidISODate(actualHarvestDate)) return { ok: false, reason: 'date_invalid' };
+  const vintage = Number(actualHarvestDate.slice(0, 4));
+
+  return { ok: true, harvestedKg, actualHarvestDate, vintage };
 }
 
 const optionalText = (value: string) => {
@@ -212,10 +513,31 @@ export default function VaziModule({
   onNavigate,
   setPrefilledTaskTitle,
   setPrefilledTaskPriority,
-  setPrefilledTaskDesc
+  setPrefilledTaskDesc,
+  canCreateVineyardRecord = true,
+  canUpdateVineyardRecord = true,
+  canDeleteVineyardRecord = true,
+  canCreateVineyardProject = true,
+  canUpdateVineyardProject = true,
+  canDispatchHarvestToGvino = true,
+  canCreateTask = true,
 }: VaziModuleProps) {
   const [vaziTab, setVaziTab] = useState<'dashboard' | 'blocks' | 'projects' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather' | 'ipm_pheno'>('dashboard');
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [harvestDispatchWeights, setHarvestDispatchWeights] = useState<Record<string, string>>({});
+  const [harvestDispatchDates, setHarvestDispatchDates] = useState<Record<string, string>>({});
+  const [harvestDispatchErrors, setHarvestDispatchErrors] = useState<Record<string, HarvestDispatchErrorReason>>({});
+  const [showHarvestPlanForm, setShowHarvestPlanForm] = useState(false);
+  const [harvestPlanStatus, setHarvestPlanStatus] = useState<{
+    blockName: string;
+    targetDate: string;
+  } | null>(null);
+  const [harvestDispatchStatus, setHarvestDispatchStatus] = useState<{
+    harvestedKg: number;
+    variety: string;
+    lotId: string;
+  } | null>(null);
+  const dispatchNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const [mapOverlay, setMapOverlay] = useState<'mildew' | 'moisture' | 'phenology'>('mildew');
   const [mapHoveredBlock, setMapHoveredBlock] = useState<string | null>(null);
@@ -263,6 +585,17 @@ export default function VaziModule({
   const [drawnPoints, setDrawnPoints] = useState<{ lat: number; lng: number }[]>([]);
   // Legacy block-detail "satellite simulation": pixel-space sketch only (visual).
   const [drawnPixels, setDrawnPixels] = useState<{ x: number; y: number }[]>([]);
+
+  useEffect(() => {
+    if (!canCreateVineyardRecord) {
+      setShowAddBlockModal(false);
+      setShowHarvestPlanForm(false);
+    }
+  }, [canCreateVineyardRecord]);
+
+  useEffect(() => () => {
+    if (dispatchNavigationTimerRef.current) clearTimeout(dispatchNavigationTimerRef.current);
+  }, []);
 
   const defaultCenter = useMemo(() => {
     if (blocks && blocks.length > 0) {
@@ -410,6 +743,12 @@ export default function VaziModule({
   const selectedBlock = useMemo(() => {
     return blocks.find(b => b.id === selectedBlockId) || null;
   }, [blocks, selectedBlockId]);
+
+  useEffect(() => {
+    setShowHarvestPlanForm(false);
+    setHarvestPlanStatus(null);
+    setHarvestDispatchStatus(null);
+  }, [selectedBlock?.id]);
   const selectedCadastre = useMemo(() => {
     return selectedBlock ? calculateCadastreCompleteness(selectedBlock) : null;
   }, [selectedBlock]);
@@ -499,8 +838,8 @@ export default function VaziModule({
 
   const handleSaveBlock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedBlock) return;
-    onUpdateBlock(selectedBlock.id, {
+    if (!selectedBlock || !canUpdateVineyardRecord) return;
+    runVaziMutationIfAllowed(canUpdateVineyardRecord, () => onUpdateBlock(selectedBlock.id, {
       name: editBlockName,
       vineyardName: editVineyardName,
       locationName: editLocationName,
@@ -531,9 +870,13 @@ export default function VaziModule({
       rootstock: optionalText(editRootstock),
       clone: optionalText(editClone),
       vineyardCondition: optionalText(editVineyardCondition)
-    });
+    }));
     setIsEditingBlock(false);
   };
+
+  useEffect(() => {
+    if (!canUpdateVineyardRecord) setIsEditingBlock(false);
+  }, [canUpdateVineyardRecord]);
 
   // Compute stats
   const totalArea = useMemo(() => blocks.reduce((acc, b) => acc + b.area, 0), [blocks]);
@@ -647,6 +990,40 @@ export default function VaziModule({
           </div>
         </div>
       </div>
+
+      {(!canCreateVineyardRecord || !canUpdateVineyardRecord || !canDeleteVineyardRecord
+        || !canCreateVineyardProject || !canUpdateVineyardProject || !canDispatchHarvestToGvino || !canCreateTask) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+          <strong className="block font-black">
+            {!canCreateVineyardRecord && !canUpdateVineyardRecord && !canCreateVineyardProject && !canUpdateVineyardProject
+              ? (lang === 'ka' ? 'ვენახზე მხოლოდ ნახვის წვდომა' : 'Read-only vineyard access')
+              : (lang === 'ka' ? 'ვენახის შეზღუდული მოქმედებები' : 'Limited vineyard actions')}
+          </strong>
+          <span className="mt-0.5 block leading-relaxed">
+            {!canCreateVineyardRecord && !canUpdateVineyardRecord && !canCreateVineyardProject && !canUpdateVineyardProject
+              ? (lang === 'ka'
+                ? 'შეგიძლიათ დაათვალიეროთ ნაკვეთები, რუკები, რისკები, პროექტები და საველე ისტორია; ცვლილებები თქვენი როლისთვის მიუწვდომელია.'
+                : 'You can review blocks, maps, risks, projects, and field history; changes are unavailable for your role.')
+              : (lang === 'ka'
+                ? 'ხელმისაწვდომია მხოლოდ თქვენი როლისთვის ნებადართული ვენახის მოქმედებები. დამალული მართვის ელემენტები დამატებით უფლებებს მოითხოვს.'
+                : 'Only vineyard actions allowed for your role are available. Hidden controls require additional permissions.')}
+          </span>
+          {!canDispatchHarvestToGvino && (
+            <span className="mt-1 block text-[11px] text-amber-800 dark:text-amber-200">
+              {lang === 'ka'
+                ? 'მოსავლის მარანში გადაცემა საჭიროებს მოსავლის, ღვინის პარტიისა და დუღილის ჩანაწერების ერთობლივ უფლებებს.'
+                : 'Dispatching harvest to the winery requires combined harvest, wine-lot, and fermentation permissions.'}
+            </span>
+          )}
+          {!canCreateTask && (
+            <span className="mt-1 block text-[11px] text-amber-800 dark:text-amber-200">
+              {lang === 'ka'
+                ? 'საველე ჩანაწერებიდან დავალების მონახაზის შექმნა თქვენი როლისთვის მიუწვდომელია.'
+                : 'Creating task drafts from field records is unavailable for your role.'}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Mini Vazi Sub-Navigation bar */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-[#e8dfd5] pb-2 text-xs">
@@ -793,13 +1170,15 @@ export default function VaziModule({
             >
               <ArrowRight className="w-3.5 h-3.5" /> Open blocks
             </button>
-            <button
-              type="button"
-              onClick={() => setShowAddBlockModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
-            >
-              <Plus className="w-3.5 h-3.5" /> Add block
-            </button>
+            {canCreateVineyardRecord && (
+              <button
+                type="button"
+                onClick={() => setShowAddBlockModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add block
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -810,10 +1189,13 @@ export default function VaziModule({
           projects={vineyardProjects}
           onAddProject={onAddVineyardProject}
           onUpdateProject={onUpdateVineyardProject}
+          canCreateProject={canCreateVineyardProject}
+          canUpdateProject={canUpdateVineyardProject}
+          canCreateTask={canCreateTask}
           setPrefilledTaskTitle={setPrefilledTaskTitle}
           setPrefilledTaskPriority={setPrefilledTaskPriority}
           setPrefilledTaskDesc={setPrefilledTaskDesc}
-          setActiveModule={setActiveModule}
+          onNavigate={navigateTo}
         />
       )}
 
@@ -857,14 +1239,20 @@ export default function VaziModule({
                   <div className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 p-5 text-center">
                     <Layers className="w-9 h-9 text-emerald-700/40 mx-auto mb-2" />
                     <p className="text-xs font-bold text-emerald-950">{lang === 'ka' ? 'ვენახის ნაკვეთები ჯერ არ არის' : 'No vineyard blocks yet'}</p>
-                    <p className="mt-1 text-[11px] text-stone-500">{lang === 'ka' ? 'შექმენით პირველი ნაკვეთი მონიტორინგის, ნიმუშების აღების, წამლობის ან რთველის დაგეგმვამდე.' : 'Create the first block before scouting, sampling, sprays, or harvest planning.'}</p>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddBlockModal(true)}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-900"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
-                    </button>
+                    <p className="mt-1 text-[11px] text-stone-500">
+                      {canCreateVineyardRecord
+                        ? (lang === 'ka' ? 'შექმენით პირველი ნაკვეთი მონიტორინგის, ნიმუშების აღების, წამლობის ან რთველის დაგეგმვამდე.' : 'Create the first block before scouting, sampling, sprays, or harvest planning.')
+                        : (lang === 'ka' ? 'არსებული ვენახის ნაკვეთები აქ გამოჩნდება, როცა უფლებამოსილი თანამშრომელი დაამატებს.' : 'Existing vineyard blocks will appear here after an authorized teammate adds one.')}
+                    </p>
+                    {canCreateVineyardRecord && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddBlockModal(true)}
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-900"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1124,13 +1512,15 @@ export default function VaziModule({
           <div className="lg:col-span-1 space-y-4">
             <div className="flex items-center justify-between border-b border-[#e8dfd5] pb-2">
               <h3 className="font-serif font-black text-sm text-emerald-950">{label.allBlocks}</h3>
-              <button
-                onClick={() => setShowAddBlockModal(true)}
-                className="bg-emerald-800 hover:bg-emerald-900 text-white px-2.5 py-1 text-[10px] uppercase font-mono tracking-wider font-extrabold rounded-md cursor-pointer flex items-center gap-1 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                {lang === 'ka' ? 'ახალი ნაკვეთი' : 'New Block'}
-              </button>
+              {canCreateVineyardRecord && (
+                <button
+                  onClick={() => setShowAddBlockModal(true)}
+                  className="bg-emerald-800 hover:bg-emerald-900 text-white px-2.5 py-1 text-[10px] uppercase font-mono tracking-wider font-extrabold rounded-md cursor-pointer flex items-center gap-1 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {lang === 'ka' ? 'ახალი ნაკვეთი' : 'New Block'}
+                </button>
+              )}
             </div>
 
             <div className="space-y-3.5">
@@ -1167,6 +1557,13 @@ export default function VaziModule({
                   </div>
                 );
               })}
+              {blocks.length === 0 && (
+                <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4 text-center text-[11px] text-stone-500">
+                  {canCreateVineyardRecord
+                    ? (lang === 'ka' ? 'დაამატეთ პირველი ნაკვეთი ვენახის რეესტრის დასაწყებად.' : 'Add the first block to start the vineyard registry.')
+                    : (lang === 'ka' ? 'ნაკვეთის ჩანაწერები ჯერ არ არის. მათი შექმნა მხოლოდ უფლებამოსილ როლს შეუძლია.' : 'No block records are available yet. Only an authorized role can create them.')}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1181,14 +1578,16 @@ export default function VaziModule({
                     <span className="text-[10px] uppercase font-mono text-slate-450 tracking-widest">{selectedBlock.vineyardName} • {selectedBlock.locationName}</span>
                     <div className="flex items-center gap-2 mt-1">
                       <h3 className="text-xl font-serif font-black text-[#4e0e15]">{selectedBlock.name}</h3>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingBlock(!isEditingBlock)}
-                        className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
-                        title={lang === 'ka' ? 'ბლოკის თვისებების რედაქტირება' : 'Edit Block Properties'}
-                      >
-                        ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
-                      </button>
+                      {canUpdateVineyardRecord && (
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingBlock(!isEditingBlock)}
+                          className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
+                          title={lang === 'ka' ? 'ბლოკის თვისებების რედაქტირება' : 'Edit Block Properties'}
+                        >
+                          ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-stone-500 font-medium font-sans leading-relaxed mt-1">{selectedBlock.notes}</p>
                   </div>
@@ -1710,17 +2109,26 @@ export default function VaziModule({
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono flex flex-col justify-between items-center">
                       <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო ფენოლოგიური ფაზა' : 'Estimated Canopy Stage'}</span>
-                      <select
-                        value={selectedBlock.currentPhenology}
-                        onChange={(e) => onUpdateBlock(selectedBlock.id, { currentPhenology: e.target.value })}
-                        className="text-xs font-serif font-bold text-amber-700 text-center bg-transparent border border-amber-200/50 rounded-lg px-2.5 py-1 outline-none cursor-pointer mt-1.5 hover:text-amber-950 hover:border-amber-400 transition-all font-semibold max-w-full"
-                      >
-                        {PHENOLOGY_STAGES.map((stage) => (
-                          <option key={stage} value={stage} className="text-stone-800 bg-white">
-                            {phenologyLabel(stage, lang)}
-                          </option>
-                        ))}
-                      </select>
+                      {canUpdateVineyardRecord ? (
+                        <select
+                          aria-label={lang === 'ka' ? 'ფენოლოგიური ფაზის განახლება' : 'Update phenology stage'}
+                          value={selectedBlock.currentPhenology}
+                          onChange={(e) => runVaziMutationIfAllowed(canUpdateVineyardRecord, () => (
+                            onUpdateBlock(selectedBlock.id, { currentPhenology: e.target.value })
+                          ))}
+                          className="text-xs font-serif font-bold text-amber-700 text-center bg-transparent border border-amber-200/50 rounded-lg px-2.5 py-1 outline-none cursor-pointer mt-1.5 hover:text-amber-950 hover:border-amber-400 transition-all font-semibold max-w-full"
+                        >
+                          {PHENOLOGY_STAGES.map((stage) => (
+                            <option key={stage} value={stage} className="text-stone-800 bg-white">
+                              {phenologyLabel(stage, lang)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <strong className="mt-1.5 block text-xs font-serif text-amber-700">
+                          {phenologyLabel(selectedBlock.currentPhenology, lang)}
+                        </strong>
+                      )}
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
                       <span className="text-[9px] text-slate-450 uppercase block font-sans">{lang === 'ka' ? 'სანდოობის ინდექსი' : 'Confidence Index'}</span>
@@ -1728,10 +2136,12 @@ export default function VaziModule({
                     </div>
                   </div>
 
+                  {canCreateVineyardRecord && (
                   <div className="flex gap-2 text-[10px] font-mono justify-end pt-1">
                     <button 
                       onClick={() => {
-                        onAddPhenologyLog({
+                        if (!canCreateVineyardRecord) return;
+                        runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddPhenologyLog({
                           blockId: selectedBlock.id,
                           stage: selectedBlock.currentPhenology,
                           date: new Date().toISOString().split('T')[0],
@@ -1742,7 +2152,7 @@ export default function VaziModule({
                             ? `ფენოლოგიური სტატუსი დადასტურდა. GDD მონიტორინგი შეესაბამება ფაზის მოლოდინს.`
                             : `Confirmed physiological status on late spring checkup. GDD tracking matches stage expectation.`,
                           observer: currentUser.fullName
-                        });
+                        }));
                         alert(lang === 'ka'
                           ? `ფენოლოგიის დადასტურება: ნაკვეთი ${selectedBlock.name} რეგისტრირდა ფაზაზე „${phenologyLabel(selectedBlock.currentPhenology, lang)}“!`
                           : `Broadcasting canopy confirmation: Block ${selectedBlock.name} successfully registered at ${selectedBlock.currentPhenology}!`);
@@ -1752,6 +2162,7 @@ export default function VaziModule({
                       <Check className="w-3 h-3" /> {lang === 'ka' ? 'სტატუსის დადასტურება' : 'Confirm Viticulturist Status'}
                     </button>
                   </div>
+                  )}
                 </div>
 
               </>
@@ -1771,13 +2182,15 @@ export default function VaziModule({
                       <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'პირველი ნაკვეთის არჩევა' : 'Select first block'}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setShowAddBlockModal(true)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-50"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
-                  </button>
+                  {canCreateVineyardRecord && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAddBlockModal(true)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-50"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1793,10 +2206,12 @@ export default function VaziModule({
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
           
           {/* Add Spray Record Form */}
+          {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
             <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">{lang === 'ka' ? 'ქიმიური დამუშავების ჩაწერა' : 'Record Chemical Application'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               const targetProblem = fd.get('targetProblem') as string;
@@ -1810,7 +2225,7 @@ export default function VaziModule({
               const rei = parseInt(fd.get('rei') as string) || 24;
 
               if (targetProblem && productName) {
-                onAddSprayRecord({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddSprayRecord({
                   blockId: selectedBlock.id,
                   date: new Date().toISOString().split('T')[0],
                   targetProblem,
@@ -1830,7 +2245,7 @@ export default function VaziModule({
                   notes: lang === 'ka'
                     ? `ავტორიზებული ქიმიური წამლობის კამპანია ${targetProblem}-ის პრევენციისთვის.`
                     : `Authorized chemical pesticide spraying campaign for ${targetProblem} prevention on Saperavi rows.`
-                });
+                }));
                 form.reset();
               }
             }} className="space-y-3">
@@ -1912,9 +2327,10 @@ export default function VaziModule({
               </button>
             </form>
           </div>
+          )}
 
           {/* Spraying History list */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
+          <div className={`${canCreateVineyardRecord ? 'lg:col-span-2 xl:col-span-3' : 'lg:col-span-3 xl:col-span-4'} bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4`}>
             <h4 className="font-serif font-bold text-sm text-[#4e0e15]">{lang === 'ka' ? 'წამლობის ჟურნალი' : 'Pesticide and Spraying Logbook'} — {selectedBlock.name}</h4>
             <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1" tabIndex={0}>
               {sprays.filter(s => s.blockId === selectedBlock.id).map(spray => (
@@ -1957,20 +2373,23 @@ export default function VaziModule({
                     >
                       <CheckSquare className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ჯერ დაათვალიერეთ' : 'Scout first'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPrefilledTaskTitle?.(lang === 'ka' ? `წამლობის კამპანიის დაგეგმვა — ${selectedBlock.name}` : `Plan spray campaign for ${selectedBlock.name}`);
-                        setPrefilledTaskPriority?.('medium');
-                        setPrefilledTaskDesc?.(lang === 'ka'
-                          ? `გადახედეთ ${selectedBlock.name}-ის მდგომარეობას და საჭიროების შემთხვევაში დაგეგმეთ დამუშავება.`
-                          : `Review canopy conditions for ${selectedBlock.name} and schedule treatment if disease pressure warrants it.`);
-                        navigateTo({ module: 'gvino', tab: 'tasks' });
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
-                    </button>
+                    {canCreateTask && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canCreateTask) return;
+                          setPrefilledTaskTitle?.(lang === 'ka' ? `წამლობის კამპანიის დაგეგმვა — ${selectedBlock.name}` : `Plan spray campaign for ${selectedBlock.name}`);
+                          setPrefilledTaskPriority?.('medium');
+                          setPrefilledTaskDesc?.(lang === 'ka'
+                            ? `გადახედეთ ${selectedBlock.name}-ის მდგომარეობას და საჭიროების შემთხვევაში დაგეგმეთ დამუშავება.`
+                            : `Review canopy conditions for ${selectedBlock.name} and schedule treatment if disease pressure warrants it.`);
+                          navigateTo({ module: 'gvino', tab: 'tasks' });
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -1987,10 +2406,12 @@ export default function VaziModule({
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
           
           {/* Add Scouting Record form */}
+          {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
             <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">{lang === 'ka' ? 'პათოგენზე დაკვირვების ჩაწერა' : 'Log Pathogen Scouting'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               const path = fd.get('problemType') as any;
@@ -2000,7 +2421,7 @@ export default function VaziModule({
               const note = fd.get('notes') as string;
 
               if (path && loc) {
-                onAddScoutingRecord({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddScoutingRecord({
                   blockId: selectedBlock.id,
                   date: new Date().toISOString().split('T')[0],
                   locationDetails: loc,
@@ -2009,7 +2430,7 @@ export default function VaziModule({
                   notes: note,
                   recommendedAction: rec,
                   followUpTaskId: `scout-task-${Date.now()}`
-                });
+                }));
                 form.reset();
               }
             }} className="space-y-3">
@@ -2085,9 +2506,10 @@ export default function VaziModule({
               </button>
             </form>
           </div>
+          )}
 
           {/* Scouting List */}
-          <div className="lg:col-span-2 xl:col-span-3 bg-white dark:bg-stone-900 rounded-3xl border border-[#e8dfd5] dark:border-stone-800 p-8 shadow-sm space-y-5">
+          <div className={`${canCreateVineyardRecord ? 'lg:col-span-2 xl:col-span-3' : 'lg:col-span-3 xl:col-span-4'} bg-white dark:bg-stone-900 rounded-3xl border border-[#e8dfd5] dark:border-stone-800 p-8 shadow-sm space-y-5`}>
             <h4 className="font-serif font-bold text-sm text-[#4e0e15]">{lang === 'ka' ? 'ველის პათოლოგიის უწყვეტი ჩანაწერები' : 'Continuous Field Pathology Records'}</h4>
             <div className="space-y-4">
               {scoutings.filter(sc => sc.blockId === selectedBlock.id).map(scout => (
@@ -2134,20 +2556,23 @@ export default function VaziModule({
                     >
                       <Wind className="w-3.5 h-3.5" /> {lang === 'ka' ? 'წამლობების გახსნა' : 'Open sprays'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPrefilledTaskTitle?.(lang === 'ka' ? `${selectedBlock.name}-ის დათვალიერება` : `Scout ${selectedBlock.name}`);
-                        setPrefilledTaskPriority?.('low');
-                        setPrefilledTaskDesc?.(lang === 'ka'
-                          ? `შემოიარეთ ${selectedBlock.name}, ჩაიწერეთ დაავადებების წნეხი და განაახლეთ ვაზის დაკვირვების ჟურნალი.`
-                          : `Walk ${selectedBlock.name}, record disease pressure, and update the Vazi scouting log.`);
-                        navigateTo({ module: 'gvino', tab: 'tasks' });
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
-                    </button>
+                    {canCreateTask && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canCreateTask) return;
+                          setPrefilledTaskTitle?.(lang === 'ka' ? `${selectedBlock.name}-ის დათვალიერება` : `Scout ${selectedBlock.name}`);
+                          setPrefilledTaskPriority?.('low');
+                          setPrefilledTaskDesc?.(lang === 'ka'
+                            ? `შემოიარეთ ${selectedBlock.name}, ჩაიწერეთ დაავადებების წნეხი და განაახლეთ ვაზის დაკვირვების ჟურნალი.`
+                            : `Walk ${selectedBlock.name}, record disease pressure, and update the Vazi scouting log.`);
+                          navigateTo({ module: 'gvino', tab: 'tasks' });
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -2164,10 +2589,12 @@ export default function VaziModule({
         <div className="space-y-6 font-sans">
           
           {/* Top Form to Record new Analytical Grape Sample */}
+          {canCreateVineyardRecord && (
           <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4">
             <h4 className="font-serif font-black text-sm text-[#4e0e15] border-b border-stone-100 pb-2">{lang === 'ka' ? 'რთველისწინა სიმწიფის ნიმუშის ჩაწერა' : 'Record Pre-Harvest Grape Mature Sampling'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               const brix = parseFloat(fd.get('brix') as string);
@@ -2178,7 +2605,7 @@ export default function VaziModule({
               const seed = fd.get('seed') as any;
 
               if (brix && ph) {
-                onAddSamplings({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddSamplings({
                   blockId: selectedBlock.id,
                   date: new Date().toISOString().split('T')[0],
                   brix,
@@ -2191,7 +2618,7 @@ export default function VaziModule({
                   diseaseCondition: 'Healthy grapes',
                   estimatedHarvestDate: selectedBlock.estimatedHarvestDate,
                   notes: lang === 'ka' ? `ყურძნის მტევნის ხელით აღებული ნიმუში.` : `Manual grape cluster sampling recorded for vintage checkup.`
-                });
+                }));
                 form.reset();
                 alert(lang === 'ka' ? 'შაქრის დაგროვების ნიმუშის ჩანაწერი შენახულია!' : 'Sugar accumulation sample logs saved successfully!');
               }
@@ -2235,6 +2662,7 @@ export default function VaziModule({
               </div>
             </form>
           </div>
+          )}
 
           {/* Interactive Recharts Graphics showing maturity curves */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2366,13 +2794,73 @@ export default function VaziModule({
 
           {/* Harvest Planning Page with Winery Direct Connection */}
           <div className="bg-white border border-[#e8dfd5] p-6 rounded-2xl shadow-sm space-y-4">
-            <div>
-              <h4 className="font-serif font-black text-sm text-[#4e0e15] flex items-center gap-1.5">
-                <Calendar className="w-4 h-4 text-emerald-800" />
-                {lang === 'ka' ? 'რთველი და მიკვლევადობის ბმულები' : 'Active Crop Harvest & Traceability Links'}
-              </h4>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'დაგეგმეთ რთველი და მოსავალი პირდაპირ გადაამისამართეთ ღვინის მარნის დამუშავებაში' : 'Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing'}</p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h4 className="font-serif font-black text-sm text-[#4e0e15] flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-emerald-800" />
+                  {lang === 'ka' ? 'რთველი და მიკვლევადობის ბმულები' : 'Active Crop Harvest & Traceability Links'}
+                </h4>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'დაგეგმეთ რთველი და მოსავალი პირდაპირ გადაამისამართეთ ღვინის მარნის დამუშავებაში' : 'Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing'}</p>
+              </div>
+              {canCreateVineyardRecord && (
+                <button
+                  type="button"
+                  aria-expanded={showHarvestPlanForm}
+                  aria-controls="harvest-plan-editor"
+                  onClick={() => {
+                    setHarvestPlanStatus(null);
+                    setShowHarvestPlanForm(current => !current);
+                  }}
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-950"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {showHarvestPlanForm
+                    ? (lang === 'ka' ? 'ფორმის დახურვა' : 'Close form')
+                    : (lang === 'ka' ? 'რთველის გეგმის შექმნა' : 'Create harvest plan')}
+                </button>
+              )}
             </div>
+
+            {harvestPlanStatus && (
+              <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] font-semibold text-emerald-900">
+                <Check className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
+                {lang === 'ka'
+                  ? `${harvestPlanStatus.blockName}-ის რთველის გეგმა შენახულია ${harvestPlanStatus.targetDate}-ისთვის.`
+                  : `Harvest plan for ${harvestPlanStatus.blockName} was saved for ${harvestPlanStatus.targetDate}.`}
+              </div>
+            )}
+
+            {harvestDispatchStatus && (
+              <div role="status" aria-live="assertive" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] font-semibold leading-relaxed text-emerald-900">
+                <Check className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
+                {lang === 'ka'
+                  ? `${harvestDispatchStatus.harvestedKg} კგ ${harvestDispatchStatus.variety} გადაცემულია მარნის პარტიად ${harvestDispatchStatus.lotId}. იხსნება Gvino…`
+                  : `${harvestDispatchStatus.harvestedKg} kg of ${harvestDispatchStatus.variety} was dispatched as Gvino lot ${harvestDispatchStatus.lotId}. Opening Gvino…`}
+              </div>
+            )}
+
+            {showHarvestPlanForm && canCreateVineyardRecord && (
+              <div id="harvest-plan-editor">
+                <HarvestPlanForm
+                  key={selectedBlock.id}
+                  lang={lang}
+                  block={selectedBlock}
+                  onCancel={() => setShowHarvestPlanForm(false)}
+                  onCreate={(record) => {
+                    const created = runVaziMutationIfAllowed(canCreateVineyardRecord, () => {
+                      onAddHarvestRecord(record);
+                      return true;
+                    });
+                    if (!created) return;
+                    setHarvestPlanStatus({
+                      blockName: selectedBlock.name,
+                      targetDate: record.estimatedHarvestDate,
+                    });
+                    setShowHarvestPlanForm(false);
+                  }}
+                />
+              </div>
+            )}
 
             <div className="space-y-4">
               {harvests.filter(h => h.blockId === selectedBlock.id).map(harvest => (
@@ -2400,49 +2888,133 @@ export default function VaziModule({
                         <strong>{lang === 'ka' ? 'მიკვლევადობა უზრუნველყოფილია:' : 'Traceability Secured:'}</strong> {lang === 'ka' ? 'მოსავლის გადაცემა დასრულდა.' : 'Crop dispatch completed.'} <br />
                         {lang === 'ka' ? 'შესაბამისი მარნის პარტიის ID:' : 'Corresponding Winery Lot ID:'} <strong className="text-stone-800 font-black">{harvest.associatedLotId}</strong>
                       </div>
-                    ) : (
+                    ) : canDispatchHarvestToGvino ? (
                       <div className="pt-2">
-                        <label className="text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold">{lang === 'ka' ? 'შეიყვანეთ მოსავლის ფაქტობრივი წონა (კგ)' : 'Input Actual Crop Harvest Weight (Kg)'}</label>
-                        <div className="flex gap-2">
+                        <label
+                          htmlFor={`qty-${harvest.id}`}
+                          className="text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold"
+                        >
+                          {lang === 'ka' ? 'მოსავლის ფაქტობრივი წონა (კგ)' : 'Actual harvested weight (kg)'}
+                        </label>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                           <input
                             type="number"
                             id={`qty-${harvest.id}`}
                             placeholder={lang === 'ka' ? 'მაგ. 12500' : 'e.g. 12500'}
-                            defaultValue="12000"
-                            className="bg-white border border-stone-250 px-2 py-1 text-xs outline-none rounded font-mono w-28 text-stone-900"
+                            value={harvestDispatchWeights[harvest.id] || ''}
+                            min="0.001"
+                            step="any"
+                            required
+                            inputMode="decimal"
+                            aria-invalid={Boolean(harvestDispatchErrors[harvest.id])}
+                            aria-describedby={harvestDispatchErrors[harvest.id] ? `qty-error-${harvest.id}` : undefined}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setHarvestDispatchWeights(current => ({ ...current, [harvest.id]: value }));
+                              setHarvestDispatchErrors(current => {
+                                if (!current[harvest.id]) return current;
+                                const next = { ...current };
+                                delete next[harvest.id];
+                                return next;
+                              });
+                            }}
+                            className={`h-9 bg-white border px-2 py-1 text-xs outline-none rounded font-mono w-full sm:w-28 text-stone-900 ${harvestDispatchErrors[harvest.id] ? 'border-red-500 focus:ring-2 focus:ring-red-200' : 'border-stone-250 focus:border-emerald-700'}`}
                           />
+                          <div className="min-w-0 sm:w-36">
+                            <label
+                              htmlFor={`harvest-date-${harvest.id}`}
+                              className="mb-1 block text-[9px] font-bold uppercase text-slate-500"
+                            >
+                              {lang === 'ka' ? 'ფაქტობრივი თარიღი' : 'Actual harvest date'}
+                            </label>
+                            <input
+                              id={`harvest-date-${harvest.id}`}
+                              type="date"
+                              value={harvestDispatchDates[harvest.id] || localISODate()}
+                              onChange={(event) => setHarvestDispatchDates(current => ({
+                                ...current,
+                                [harvest.id]: event.target.value,
+                              }))}
+                              className="h-9 w-full rounded border border-stone-250 bg-white px-2 text-xs font-mono text-stone-900 outline-none focus:border-emerald-700"
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={() => {
-                              const input = document.getElementById(`qty-${harvest.id}`) as HTMLInputElement;
-                              const harvestedQty = parseFloat(input.value) || 12000;
-                              
-                              // Send to Gvino callback
-                              const grapeLotId = onSendHarvestToGvino(
-                                selectedBlock.id, 
-                                harvestedQty, 
-                                selectedBlock.grapeVariety, 
-                                2026, 
-                                new Date().toISOString().split('T')[0]
+                              if (!canDispatchHarvestToGvino) return;
+                              const dispatch = parseHarvestDispatchInput(
+                                harvestDispatchWeights[harvest.id] || '',
+                                harvestDispatchDates[harvest.id] || localISODate(),
                               );
-                              
-                              // Update local harvest state
-                              onUpdateHarvestRecord(harvest.id, {
-                                sentToGvino: true,
-                                actualHarvestedKg: harvestedQty,
-                                actualHarvestDate: new Date().toISOString().split('T')[0],
-                                associatedLotId: grapeLotId
+                              if (!dispatch.ok) {
+                                setHarvestDispatchStatus(null);
+                                setHarvestDispatchErrors(current => ({ ...current, [harvest.id]: dispatch.reason }));
+                                return;
+                              }
+
+                              const { harvestedKg, actualHarvestDate, vintage } = dispatch;
+                              const grapeLotId = runVaziMutationIfAllowed(canDispatchHarvestToGvino, () => {
+                                const lotId = onSendHarvestToGvino(
+                                  selectedBlock.id,
+                                  harvestedKg,
+                                  harvest.variety,
+                                  vintage,
+                                  actualHarvestDate,
+                                );
+                                if (!lotId) return undefined;
+
+                                onUpdateHarvestRecord(harvest.id, {
+                                  sentToGvino: true,
+                                  actualHarvestedKg: harvestedKg,
+                                  actualHarvestDate,
+                                  associatedLotId: lotId
+                                });
+                                return lotId;
                               });
-                              alert(lang === 'ka'
-                                ? `მიკვლევადობა უზრუნველყოფილია! ${harvestedQty} კგ მომწიფებული ${selectedBlock.grapeVariety} გადაცემულია მარნის პარტიად: ${grapeLotId}. გახსენით მარანი დუღილის პარტიის სანახავად!`
-                                : `Traceability secured! Harvest of ${harvestedQty} Kg Ripe ${selectedBlock.grapeVariety} dispatched as Gvino Lot: ${grapeLotId}. Open Gvino to view the fermentation lot!`);
-                              navigateTo({ module: 'gvino', tab: 'lots' });
+                              if (!grapeLotId) return;
+                              setHarvestDispatchErrors(current => {
+                                if (!current[harvest.id]) return current;
+                                const next = { ...current };
+                                delete next[harvest.id];
+                                return next;
+                              });
+                              setHarvestDispatchStatus({
+                                harvestedKg,
+                                variety: harvest.variety,
+                                lotId: grapeLotId,
+                              });
+                              if (dispatchNavigationTimerRef.current) {
+                                clearTimeout(dispatchNavigationTimerRef.current);
+                              }
+                              dispatchNavigationTimerRef.current = setTimeout(() => {
+                                navigateTo({ module: 'gvino', tab: 'lots' });
+                                dispatchNavigationTimerRef.current = null;
+                              }, 900);
                             }}
                             className="flex-1 bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold text-[10px] uppercase font-mono px-3.5 py-1.5 rounded cursor-pointer duration-100 flex items-center justify-center gap-1.5"
                           >
                             <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'მოსავლის გადაცემა მარანში' : 'Dispatch Crop to Gvino Winery'}
                           </button>
                         </div>
+                        {harvestDispatchErrors[harvest.id] && (
+                          <p
+                            id={`qty-error-${harvest.id}`}
+                            role="alert"
+                            className="mt-1.5 text-[10px] font-semibold text-red-700"
+                          >
+                            {harvestDispatchErrors[harvest.id] === 'weight_required'
+                              ? (lang === 'ka' ? 'შეიყვანეთ მოსავლის ფაქტობრივი წონა.' : 'Enter the actual harvested weight.')
+                              : harvestDispatchErrors[harvest.id] === 'weight_invalid'
+                                ? (lang === 'ka' ? 'წონა უნდა იყოს 0 კგ-ზე მეტი.' : 'Weight must be greater than 0 kg.')
+                                : (lang === 'ka' ? 'რთველის თარიღი არასწორია. განაახლეთ გვერდი და სცადეთ ხელახლა.' : 'The harvest date is invalid. Refresh and try again.')}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+                        {lang === 'ka'
+                          ? 'ამ მოსავლის ისტორიის ნახვა შეგიძლიათ, თუმცა მარანში გადაცემა თქვენი როლისთვის მიუწვდომელია.'
+                          : 'You can review this harvest, but dispatching it to the winery is unavailable for your role.'}
                       </div>
                     )}
                   </div>
@@ -2486,6 +3058,8 @@ export default function VaziModule({
           selectedBlock={selectedBlock}
           sprays={sprays}
           onAddSprayRecord={onAddSprayRecord}
+          canCreateVineyardRecord={canCreateVineyardRecord}
+          canDeleteVineyardRecord={canDeleteVineyardRecord}
           currentUser={currentUser}
           blockWeather={blockWeather}
         />
@@ -2503,13 +3077,14 @@ export default function VaziModule({
           setPrefilledTaskTitle={setPrefilledTaskTitle}
           setPrefilledTaskPriority={setPrefilledTaskPriority}
           setPrefilledTaskDesc={setPrefilledTaskDesc}
+          canCreateTask={canCreateTask}
         />
       )}
 
       {/* ==========================================
           ADD BLOCK MODAL
           ========================================== */}
-      {showAddBlockModal && (
+      {showAddBlockModal && canCreateVineyardRecord && (
         <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-55 animate-fade-in font-sans">
           <div
             ref={addBlockDialogRef}
@@ -2526,6 +3101,7 @@ export default function VaziModule({
 
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               
@@ -2552,7 +3128,7 @@ export default function VaziModule({
               const vineyardCondition = optionalText(String(fd.get('vineyardCondition') || ''));
 
               if (name && variety) {
-                onAddBlock({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddBlock({
                   name,
                   vineyardName: vineyard,
                   locationName: addBlockLocName,
@@ -2589,7 +3165,7 @@ export default function VaziModule({
                   notes: note,
                   vineyardCondition,
                   boundary: drawnPoints.length > 2 ? drawnPoints : undefined
-                });
+                }));
                 form.reset();
                 setDrawnPoints([]);
                 setIsDrawingPolygon(false);

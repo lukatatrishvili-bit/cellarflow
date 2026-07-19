@@ -11,6 +11,11 @@ import {
   type CostEntry,
 } from '../lib/costing';
 import { stockMovementFromBottlingRun, type StockMovement, type StorageLocation } from '../lib/storage';
+import {
+  bottlingPackagingShortfalls,
+  compareBottlingRunsNewestFirst,
+} from '../lib/bottlingIntegrity';
+import { createUniqueRecordId } from '../lib/recordIds';
 
 interface Props {
   lang: Language;
@@ -22,6 +27,7 @@ interface Props {
   onUpdateLots: (lots: WineLot[]) => void;
   history: BottlingRunRecord[];
   onUpdateHistory: (runs: BottlingRunRecord[]) => void;
+  onDeleteRun: (runId: string) => boolean | void;
   inventory: InventoryItem[];
   onUpdateInventory: (inventory: InventoryItem[]) => void;
   costEntries: CostEntry[];
@@ -62,7 +68,6 @@ function saveBottlingHistory(runs: BottlingRun[]) {
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
-const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 const PACKAGING_COMPONENTS: Array<{ key: BottlingPackagingComponent; en: string; ka: string }> = [
   { key: 'bottle', en: 'Bottle / ceramic', ka: 'ბოთლი / კერამიკა' },
@@ -82,6 +87,7 @@ export default function BottlingTab({
   onUpdateLots,
   history,
   onUpdateHistory,
+  onDeleteRun,
   inventory,
   onUpdateInventory,
   costEntries,
@@ -122,7 +128,6 @@ export default function BottlingTab({
 
   const overfill = volumeBottledL > availableL + 0.001;
   const noBottles = totalBottles + totalCeramic === 0;
-  const canSubmit = !!lot && !overfill && !noBottles;
   const totalUnits = totalBottles + totalCeramic;
   const effectivePackagingSelections = useMemo<BottlingPackagingSelections>(
     () => canUseBottlingCosting ? packagingSelections : {},
@@ -149,9 +154,16 @@ export default function BottlingTab({
     createdBy: operator || currentUserName,
   }), [bottlesPerBox, currency, currentUserName, date, effectiveBottlingServiceCost, effectivePackagingSelections, inventory, lot?.id, operator, totalUnits]);
 
-  const overdrawnPackaging = useMemo(() => Object.entries(costPreview.deductions)
-    .map(([itemId, qty]) => ({ item: inventory.find(i => i.id === itemId), qty }))
-    .filter(x => x.item && x.qty > (x.item.stock || 0)), [costPreview.deductions, inventory]);
+  const overdrawnPackaging = useMemo(
+    () => bottlingPackagingShortfalls(costPreview.deductions, inventory),
+    [costPreview.deductions, inventory],
+  );
+  const hasPackagingShortfall = overdrawnPackaging.length > 0;
+  const canSubmit = !!lot && !overfill && !noBottles && !hasPackagingShortfall;
+  const orderedHistory = useMemo(
+    () => [...history].sort(compareBottlingRunsNewestFirst),
+    [history],
+  );
   const selectedStorageLocation = storageLocations.find(l => l.id === effectiveStorageLocationId) || null;
 
   const setCount = (key: string, val: string) => {
@@ -179,19 +191,19 @@ export default function BottlingTab({
       .filter(f => (counts[f.key] || 0) > 0)
       .map(f => `${counts[f.key]}×${f.labelKa}`)
       .join(', ');
+    const runId = createUniqueRecordId('bot', history.map(item => item.id));
 
     const updatedLots = lots.map(l => l.id !== lot.id ? l : {
       ...l,
       currentVolume: Math.max(0, remaining),
       stage: fullyBottled ? 'bottled' as const : l.stage,
       history: [
-        { date, type: 'bottling', description: `${ka ? 'ჩამოსხმა' : 'Bottling'}: ${breakdown}${lotNumber ? ` (ლოტი ${lotNumber})` : ''}`, operator: operator || (ka ? 'უცნობი' : 'Unknown') },
+        { date, type: 'bottling', description: `${ka ? 'ჩამოსხმა' : 'Bottling'}: ${breakdown}${lotNumber ? ` (ლოტი ${lotNumber})` : ''}`, operator: operator || (ka ? 'უცნობი' : 'Unknown'), sourceRef: runId },
         ...(l.history || []),
       ],
     });
     onUpdateLots(updatedLots);
 
-    const runId = `bot-${Date.now()}`;
     const storageMovement = stockMovementFromBottlingRun({
       runId,
       date,
@@ -215,6 +227,7 @@ export default function BottlingTab({
 
     const run: BottlingRunRecord = {
       id: runId,
+      createdAt: new Date().toISOString(),
       lotId: lot.id,
       lotName: lot.name,
       date,
@@ -264,27 +277,7 @@ export default function BottlingTab({
 
   const deleteRun = (id: string) => {
     if (!canDeleteBottling) return;
-    const run = history.find(r => r.id === id);
-    const next = history.filter(r => r.id !== id);
-    onUpdateHistory(next);
-    saveBottlingHistory(next);
-    onUpdateCostEntries(costEntries.filter(e => e.sourceRef !== id));
-    if (run?.storageMovementId) {
-      onUpdateStockMovements(stockMovements.filter(m => m.id !== run.storageMovementId));
-    }
-    if (run?.packagingDeductions) {
-      onUpdateInventory(inventory.map(item => {
-        const restored = run.packagingDeductions?.[item.id] || 0;
-        return restored > 0 ? { ...item, stock: round3((item.stock || 0) + restored) } : item;
-      }));
-    }
-    if (run?.previousLotVolumeL !== undefined || run?.previousLotStage !== undefined) {
-      onUpdateLots(lots.map(l => l.id !== run.lotId ? l : {
-        ...l,
-        ...(run.previousLotVolumeL !== undefined ? { currentVolume: run.previousLotVolumeL } : {}),
-        ...(run.previousLotStage !== undefined ? { stage: run.previousLotStage } : {}),
-      }));
-    }
+    onDeleteRun(id);
   };
 
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
@@ -429,12 +422,12 @@ export default function BottlingTab({
                     {costPreview.entries.length > 0 && <span className="text-stone-500"> · {costPreview.entries.length} {ka ? 'ჩანაწერი' : 'entry(s)'}</span>}
                   </div>
                 )}
-                {overdrawnPackaging.length > 0 && (
-                  <div className="flex items-start gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 dark:bg-amber-950/30">
+                {hasPackagingShortfall && (
+                  <div id="bottling-packaging-shortfall" role="alert" className="flex items-start gap-2 text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <span>
-                      {ka ? 'მასალა აღემატება მარაგს — ნაშთი ნულამდე დაიყვანება:' : 'Some packaging exceeds stock; inventory will be clamped at zero:'}{' '}
-                      {overdrawnPackaging.map(x => `${x.item?.name} (${round1(x.qty)} > ${round1(x.item?.stock || 0)})`).join(', ')}
+                      {ka ? 'ჩამოსხმა დაბლოკილია — შეფუთვის მასალა მარაგში საკმარისი არ არის:' : 'Bottling is blocked until packaging stock is replenished:'}{' '}
+                      {overdrawnPackaging.map(x => `${x.item.name} (${round1(x.required)} required, ${round1(x.available)} available)`).join(', ')}
                     </span>
                   </div>
                 )}
@@ -480,7 +473,7 @@ export default function BottlingTab({
                 </div>
               )}
 
-              <button onClick={handleBottle} disabled={!canSubmit}
+              <button onClick={handleBottle} disabled={!canSubmit} aria-describedby={hasPackagingShortfall ? 'bottling-packaging-shortfall' : undefined}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#4e0e15] hover:bg-[#34070a] disabled:opacity-50 disabled:cursor-not-allowed text-amber-50 rounded-xl text-xs font-bold uppercase tracking-wide cursor-pointer transition-colors">
                 <CheckCircle2 className="w-4 h-4" /> {ka ? 'ჩამოსხმის აღრიცხვა' : 'Record bottling'}
               </button>
@@ -516,7 +509,7 @@ export default function BottlingTab({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
-                  {history.map(r => (
+                  {orderedHistory.map(r => (
                     <tr key={r.id} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
                       <td className="p-2.5 font-mono text-stone-500">{r.date}</td>
                       <td className="p-2.5 font-bold text-stone-800 dark:text-amber-50">{r.lotName}<span className="block text-[9px] font-mono text-stone-400">{r.lotNumber || r.lotId}</span></td>

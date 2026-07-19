@@ -19,7 +19,11 @@ import {
   firstVisibleWineryTab,
   permissionModuleFor,
 } from '../lib/navigationPermissions';
-import { cellarWorkflowPermissions } from '../lib/workflowPermissions';
+import {
+  cellarWorkflowPermissions,
+  salesWorkflowPermissions,
+  vineyardWorkflowPermissions,
+} from '../lib/workflowPermissions';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -53,15 +57,17 @@ const YearComparisonTab = lazyRetry(() => import('../components/YearComparisonTa
 const VesselDrawer = lazyRetry(() => import('../components/VesselDrawer'));
 const LocationPicker = lazyRetry(() => import('../components/LocationPicker'));
 const GlobalCommandPalette = lazyRetry(() => import('../components/GlobalCommandPalette'));
+const SyncConflictResolutionModal = lazyRetry(() => import('../components/SyncConflictResolutionModal'));
+const AuthAccountFlows = lazyRetry(() => import('../components/AuthAccountFlows'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
 import SyncStatus from '../components/SyncStatus';
 import InstallButton from '../components/InstallButton';
-import AuthAccountFlows, {
-  type AuthAccountFlow,
-  type AuthenticatedStateNotice,
-  type ReturnToSignInContext,
+import type {
+  AuthAccountFlow,
+  AuthenticatedStateNotice,
+  ReturnToSignInContext,
 } from '../components/AuthAccountFlows';
 
 // Core Lucide Icons mapping
@@ -308,6 +314,14 @@ export default function App() {
 
   // Conflict resolution choice state
   const [resolutions, setResolutions] = useState<Record<string, 'local' | 'server'>>({});
+  const [isConflictResolutionOpen, setIsConflictResolutionOpen] = useState(true);
+
+  useEffect(() => {
+    setResolutions({});
+    if (state.syncConflicts?.length) {
+      setIsConflictResolutionOpen(true);
+    }
+  }, [state.syncConflicts]);
 
   // Nav bar: which dropdown is open — a module-group id, 'settings', 'mobile', or null.
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -532,6 +546,14 @@ export default function App() {
     .filter((group) => group.tabs.length > 0);
   const cellarPermissions = useMemo(
     () => cellarWorkflowPermissions(state.currentUser.role),
+    [state.currentUser.role],
+  );
+  const vineyardPermissions = useMemo(
+    () => vineyardWorkflowPermissions(state.currentUser.role),
+    [state.currentUser.role],
+  );
+  const salesPermissions = useMemo(
+    () => salesWorkflowPermissions(state.currentUser.role),
     [state.currentUser.role],
   );
   const activePermissionModule = permissionModuleFor(state.activeModule, state.activeTab);
@@ -1131,16 +1153,18 @@ export default function App() {
       {/* 2. Main Shell Layout */}
       {authAccountFlow ? (
         <div className="flex-1 flex items-center justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
-          <AuthAccountFlows
-            lang={state.lang === 'ka' ? 'ka' : 'en'}
-            flow={authAccountFlow}
-            resetToken={initialAuthLinkContext.resetToken}
-            username={initialAuthLinkContext.username}
-            invitationToken={pendingInvitationToken}
-            isAuthenticated={state.isLoggedIn}
-            onReturnToSignIn={handleAuthFlowReturn}
-            onAuthenticatedStateChange={handleAuthFlowStateChange}
-          />
+          <Suspense fallback={<ModuleLoader />}>
+            <AuthAccountFlows
+              lang={state.lang === 'ka' ? 'ka' : 'en'}
+              flow={authAccountFlow}
+              resetToken={initialAuthLinkContext.resetToken}
+              username={initialAuthLinkContext.username}
+              invitationToken={pendingInvitationToken}
+              isAuthenticated={state.isLoggedIn}
+              onReturnToSignIn={handleAuthFlowReturn}
+              onAuthenticatedStateChange={handleAuthFlowStateChange}
+            />
+          </Suspense>
         </div>
       ) : !state.isLoggedIn ? (
         <div className="flex-1 flex items-stretch justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
@@ -1776,6 +1800,13 @@ export default function App() {
               setPrefilledTaskTitle={state.setPrefilledTaskTitle}
               setPrefilledTaskPriority={state.setPrefilledTaskPriority}
               setPrefilledTaskDesc={state.setPrefilledTaskDesc}
+              canCreateVineyardRecord={vineyardPermissions.canCreateVineyardRecord}
+              canUpdateVineyardRecord={vineyardPermissions.canUpdateVineyardRecord}
+              canDeleteVineyardRecord={vineyardPermissions.canDeleteVineyardRecord}
+              canCreateVineyardProject={vineyardPermissions.canCreateVineyardProject}
+              canUpdateVineyardProject={vineyardPermissions.canUpdateVineyardProject}
+              canDispatchHarvestToGvino={vineyardPermissions.canDispatchHarvestToGvino}
+              canCreateTask={vineyardPermissions.canCreateTask}
             />
           </Suspense>
         </main>
@@ -1887,8 +1918,11 @@ export default function App() {
             locations={state.storageLocations}
             movements={state.stockMovements}
             orders={state.salesOrders}
+            dispatches={state.salesDispatches}
             onUpdateLocations={state.setStorageLocations}
             onUpdateMovements={state.setStockMovements}
+            onDeleteLocation={state.handleDeleteStorageLocation}
+            onDeleteMovement={state.handleDeleteStockMovement}
             setToastMessage={state.setToastMessage}
             onNavigate={handleNavigate}
             canCreateLocation={canAccess(state.currentUser.role, 'storage', 'create')}
@@ -1916,6 +1950,15 @@ export default function App() {
             currentUserName={state.currentUser.fullName}
             setToastMessage={state.setToastMessage}
             onNavigate={handleNavigate}
+            canCreateOrder={salesPermissions.canCreateOrder}
+            canUpdateOrder={salesPermissions.canUpdateOrder}
+            canCreateDispatch={salesPermissions.canCreateDispatch}
+            canDeleteDispatch={salesPermissions.canDeleteDispatch}
+            canCreateStockMovement={salesPermissions.canCreateStockMovement}
+            canDeleteStockMovement={salesPermissions.canDeleteStockMovement}
+            canViewCosts={salesPermissions.canViewCosts}
+            canViewStorage={salesPermissions.canViewStorage}
+            canViewBottling={salesPermissions.canViewBottling}
           />
         </Suspense>
       ) : state.activeModule === 'analytics' ? (
@@ -2314,6 +2357,7 @@ export default function App() {
                 onUpdateLots={state.setLots}
                 history={state.bottlingRuns}
                 onUpdateHistory={state.setBottlingRuns}
+                onDeleteRun={state.handleDeleteBottlingRun}
                 inventory={state.inventory}
                 onUpdateInventory={state.setInventory}
                 costEntries={state.costEntries}
@@ -2445,111 +2489,58 @@ export default function App() {
         />
       )}
 
+      {state.isLoggedIn && (state.isSwitchingOrganization || state.workspaceHydrationError) && (
+        <WorkspaceTransitionOverlay
+          lang={state.lang}
+          error={state.workspaceHydrationError}
+          onReload={() => window.location.reload()}
+          onLogout={state.handleAuthLogout}
+        />
+      )}
+
       {/* 2. CONFLICT RESOLUTION MODAL */}
-      {state.syncConflicts && state.syncConflicts.length > 0 && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white max-w-3xl w-full max-h-[85vh] rounded-2xl border border-stone-200 shadow-2xl flex flex-col overflow-hidden animate-scale-up">
-            <div className="px-6 py-4 border-b border-stone-200 bg-stone-50">
-              <h3 className="text-base font-serif font-black text-[#4e0e15]">
-                {state.lang === 'ka' ? 'სინქრონიზაციის კონფლიქტების მოგვარება' : 'Sync Conflict Resolution'}
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                {state.lang === 'ka'
-                  ? 'შემდეგი ჩანაწერები შეიცვალა როგორც ოფლაინ რეჟიმში, ასევე სერვერზე. გთხოვთ აირჩიოთ სასურველი ვერსია თითოეულისთვის:'
-                  : 'The following items were modified concurrently both offline and on the server. Select which version to preserve:'
-                }
-              </p>
-            </div>
-
-            <div className="p-6 overflow-y-auto space-y-4 flex-1 font-sans">
-              {state.syncConflicts.map((conflict, idx) => {
-                const key = `${conflict.collection}-${conflict.recordId}`;
-                const currentChoice = resolutions[key] || 'server';
-                const diffKeys = (() => {
-                  const local = conflict.local || {};
-                  const server = conflict.server || {};
-                  const allKeys = new Set([...Object.keys(local), ...Object.keys(server)]);
-                  return Array.from(allKeys).filter(k => {
-                    if (k === 'lastModified' || k === 'history' || k === 'notesList') return false;
-                    return JSON.stringify(local[k]) !== JSON.stringify(server[k]);
-                  });
-                })();
-
-                return (
-                  <div key={idx} className="border border-stone-200 rounded-xl overflow-hidden shadow-xs bg-white text-stone-850">
-                    <div className="bg-stone-50 px-4 py-2 border-b border-stone-200 flex justify-between items-center text-xs font-mono font-bold text-stone-700">
-                      <span>{state.lang === 'ka' ? 'კოლექცია:' : 'Collection:'} {conflict.collection}</span>
-                      <span>ID: {conflict.recordId}</span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-stone-200">
-                      {/* Local/Offline */}
-                      <div 
-                        onClick={() => setResolutions(prev => ({ ...prev, [key]: 'local' }))}
-                        className={`p-4 cursor-pointer transition-all ${
-                          currentChoice === 'local' ? 'bg-emerald-50/50 ring-2 ring-emerald-600 ring-inset' : 'hover:bg-stone-50/50'
-                        }`}
-                      >
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-xs uppercase tracking-wider font-bold text-slate-500">
-                            {state.lang === 'ka' ? 'ლოკალური ვერსია (ოფლაინ)' : 'Local Version (Offline)'}
-                          </span>
-                          {currentChoice === 'local' && <span className="text-emerald-700 text-xs font-black">✓ Selected</span>}
-                        </div>
-                        
-                        <div className="space-y-1.5 text-xs font-mono">
-                          {diffKeys.map(k => (
-                            <div key={k} className="flex justify-between border-b pb-0.5 border-stone-100">
-                              <span className="text-slate-450">{k}:</span>
-                              <span className="font-semibold text-stone-800">{JSON.stringify(conflict.local?.[k])}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Server/Online */}
-                      <div 
-                        onClick={() => setResolutions(prev => ({ ...prev, [key]: 'server' }))}
-                        className={`p-4 cursor-pointer transition-all ${
-                          currentChoice === 'server' ? 'bg-emerald-50/50 ring-2 ring-emerald-600 ring-inset' : 'hover:bg-stone-50/50'
-                        }`}
-                      >
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-xs uppercase tracking-wider font-bold text-slate-500">
-                            {state.lang === 'ka' ? 'სერვერის ვერსია (ახალი)' : 'Server Version (Remote)'}
-                          </span>
-                          {currentChoice === 'server' && <span className="text-emerald-700 text-xs font-black">✓ Selected</span>}
-                        </div>
-
-                        <div className="space-y-1.5 text-xs font-mono">
-                          {diffKeys.map(k => (
-                            <div key={k} className="flex justify-between border-b pb-0.5 border-stone-100">
-                              <span className="text-slate-450">{k}:</span>
-                              <span className="font-semibold text-stone-800">{JSON.stringify(conflict.server?.[k])}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="px-6 py-4 border-t border-stone-200 bg-stone-50 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  state.resolveConflict(resolutions);
-                  setResolutions({});
-                }}
-                className="px-4 py-2 bg-[#4e0e15] hover:bg-[#801323] text-white text-xs font-bold rounded-lg transition-all cursor-pointer shadow-xs"
-              >
-                {state.lang === 'ka' ? 'შენახვა და შერწყმა' : 'Apply and Resolve Merge'}
-              </button>
+      {state.isLoggedIn
+        && !state.isSwitchingOrganization
+        && !state.workspaceHydrationError
+        && state.syncConflicts
+        && state.syncConflicts.length > 0
+        && isConflictResolutionOpen && (
+        <Suspense fallback={(
+          <div
+            role="status"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 p-4 backdrop-blur-xs"
+          >
+            <div className="flex items-center gap-2 rounded-xl bg-white px-5 py-4 text-xs font-bold text-stone-700 shadow-2xl">
+              <Loader2 className="h-4 w-4 animate-spin text-[#4e0e15]" aria-hidden="true" />
+              {state.lang === 'ka' ? 'კონფლიქტების მიმოხილვა იტვირთება…' : 'Loading conflict review…'}
             </div>
           </div>
-        </div>
+        )}>
+          <SyncConflictResolutionModal
+            lang={state.lang}
+            conflicts={state.syncConflicts}
+            resolutions={resolutions}
+            onChoose={(key, choice) => setResolutions(prev => ({ ...prev, [key]: choice }))}
+            onClose={() => setIsConflictResolutionOpen(false)}
+            onResolve={() => { state.resolveConflict(resolutions); }}
+          />
+        </Suspense>
+      )}
+      {state.isLoggedIn
+        && !state.isSwitchingOrganization
+        && !state.workspaceHydrationError
+        && state.syncConflicts
+        && state.syncConflicts.length > 0
+        && !isConflictResolutionOpen && (
+        <button
+          type="button"
+          onClick={() => setIsConflictResolutionOpen(true)}
+          className="fixed bottom-5 right-5 z-40 rounded-full border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-950 shadow-lg hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700"
+        >
+          {state.lang === 'ka'
+            ? `სინქრონიზაციის ${state.syncConflicts.length} კონფლიქტის მოგვარება`
+            : `Review ${state.syncConflicts.length} sync conflict${state.syncConflicts.length === 1 ? '' : 's'}`}
+        </button>
       )}
 
       {/* ONBOARDING CUSTOMIZATION WIZARD */}
@@ -3050,6 +3041,69 @@ function BrainCircuitIcon(props: any) {
       <path d="M12 5V3M12 21v-2M5 12H3M21 12h-2M12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0 -6 0" />
       <path d="M18.4 5.6l-1.4 1.4M7 17l-1.4 1.4M18.4 18.4l-1.4-1.4M7 7L5.6 5.6" />
     </svg>
+  );
+}
+
+function WorkspaceTransitionOverlay({
+  lang,
+  error,
+  onReload,
+  onLogout,
+}: {
+  lang: Language;
+  error: string | null;
+  onReload: () => void;
+  onLogout: () => void | Promise<void>;
+}) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(dialogRef, { active: true });
+  const ka = lang === 'ka';
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-stone-950/70 p-4 backdrop-blur-md">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="workspace-transition-title"
+        aria-describedby="workspace-transition-description"
+        aria-busy={!error}
+        tabIndex={-1}
+        className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 text-center text-stone-850 shadow-2xl"
+      >
+        {error
+          ? <ShieldAlert className="mx-auto h-8 w-8 text-amber-700" aria-hidden="true" />
+          : <RefreshCw className="mx-auto h-8 w-8 animate-spin text-[#801323]" aria-hidden="true" />}
+        <h2 id="workspace-transition-title" className="mt-4 font-serif text-lg font-black text-[#4e0e15]">
+          {error
+            ? (ka ? 'უსაფრთხო განახლებაა საჭირო' : 'Safe reload required')
+            : (ka ? 'სამუშაო სივრცე იცვლება' : 'Switching workspace')}
+        </h2>
+        <p id="workspace-transition-description" role="status" aria-live="polite" className="mt-2 text-sm leading-relaxed text-slate-600">
+          {error || (ka
+            ? 'იტვირთება ახალი როლი და მეღვინეობის მონაცემები. გთხოვთ, მოიცადოთ.'
+            : 'Loading the new role and winery data. Please wait.')}
+        </p>
+        {error && (
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <button
+              type="button"
+              onClick={onReload}
+              className="rounded-lg bg-[#4e0e15] px-4 py-2 text-xs font-bold text-white hover:bg-[#801323] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#801323]"
+            >
+              {ka ? 'გვერდის განახლება' : 'Reload workspace'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void onLogout()}
+              className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#801323]"
+            >
+              {ka ? 'გასვლა' : 'Sign out'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

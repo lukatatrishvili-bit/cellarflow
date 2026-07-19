@@ -9,8 +9,16 @@ import {
   reloadUserOrganizationDataFromPostgres,
   OrganizationStateVersionConflictError,
 } from '../db';
-import { applyDeletions, mergeCollections, isValidId } from '../sync';
+import {
+  applyDeletions,
+  createDeletionMatcher,
+  mergeCollections,
+  isValidId,
+  type DeletedRecordRef,
+} from '../sync';
 import { prepareAuditLogsForServerMerge } from '../../lib/auditHash';
+import { compareBottlingRunsNewestFirst } from '../../lib/bottlingIntegrity';
+import { reservedBottlesFor } from '../../lib/sales';
 import {
   attachmentMimeTypeMatchesInlineDataUrl,
   checksumAttachmentDataUrl,
@@ -27,7 +35,15 @@ import {
   normalizeExternalAttachmentUrl,
   sumInlineAttachmentBytes,
 } from '../../lib/attachments';
-import { can, canAccess, canSyncCollection, moduleForAttachmentKind, moduleForSyncCollection, type PermissionAction } from '../permissions';
+import {
+  can,
+  canAccess,
+  canSyncCollection,
+  moduleForAttachmentKind,
+  moduleForSyncCollection,
+  type PermissionAction,
+  type PermissionModule,
+} from '../permissions';
 
 const router = express.Router();
 
@@ -48,9 +64,15 @@ function pruneTestUserSeedDuplicates(userDb: any): void {
  * on violation). Extracted from the route handler so the merge/save retry loop
  * can re-validate against freshly reloaded state after a version conflict.
  */
-export function validateSyncPayload(userDb: any, collections: Record<string, any>, deletedIds: any): void {
+export function validateSyncPayload(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords?: any,
+): void {
   {
-    // 1. Validate deletedIds syntax & block deletions of bottled lots or audit logs
+    // 1. Validate legacy wildcard and collection-scoped tombstones, then block
+    // deletions of bottled lots or immutable audit logs.
     if (deletedIds !== undefined) {
       if (!Array.isArray(deletedIds)) {
         throw new Error('deletedIds must be an array');
@@ -59,15 +81,196 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
         if (!isValidId(id)) {
           throw new Error(`Invalid deleted ID syntax: ${id}`);
         }
-        // Volatile Content Lock
-        const existingLot = userDb.lots.find((l: any) => l.id === id);
-        if (existingLot && existingLot.stage === 'bottled') {
-          throw new Error(`Volatile Content Lock: Bottled wine lot ${id} cannot be deleted.`);
+      }
+    }
+    if (deletedRecords !== undefined) {
+      if (!Array.isArray(deletedRecords)) {
+        throw new Error('deletedRecords must be an array');
+      }
+      for (const record of deletedRecords) {
+        if (!record || typeof record !== 'object' || !isValidId(record.id)) {
+          throw new Error(`Invalid deleted record syntax: ${record?.id}`);
         }
-        // Audit Immutability
-        const existingAudit = userDb.auditLogs.find((l: any) => l.id === id);
-        if (existingAudit) {
-          throw new Error(`Audit Immutability: Deletion of audit log ${id} is forbidden.`);
+        if (typeof record.collection !== 'string'
+          || !moduleForSyncCollection(record.collection)
+          || !Array.isArray(userDb?.[record.collection])) {
+          throw new Error(`Invalid deleted record collection: ${record.collection}`);
+        }
+      }
+    }
+
+    const deletionMatcher = createDeletionMatcher(deletedIds, deletedRecords);
+    const isDeleted = deletionMatcher.isDeleted;
+    for (const lot of Array.isArray(userDb?.lots) ? userDb.lots : []) {
+      if (lot?.id && isDeleted('lots', lot.id) && lot.stage === 'bottled') {
+        throw new Error(`Volatile Content Lock: Bottled wine lot ${lot.id} cannot be deleted.`);
+      }
+    }
+    for (const audit of Array.isArray(userDb?.auditLogs) ? userDb.auditLogs : []) {
+      if (audit?.id && isDeleted('auditLogs', audit.id)) {
+        throw new Error(`Audit Immutability: Deletion of audit log ${audit.id} is forbidden.`);
+      }
+    }
+    const mergedCollection = (key: string): any[] => {
+      const byId = new Map<string, any>();
+      const stored = Array.isArray(userDb?.[key]) ? userDb[key] : [];
+      const incoming = Array.isArray(collections?.[key]) ? collections[key] : [];
+      for (const item of stored) {
+        if (item?.id) byId.set(item.id, item);
+      }
+      for (const item of incoming) {
+        if (item?.id) byId.set(item.id, { ...(byId.get(item.id) || {}), ...item });
+      }
+      return [...byId.values()];
+    };
+    const effectiveCollection = (key: string): any[] => (
+      mergedCollection(key).filter(item => !isDeleted(key, item.id))
+    );
+    const effectiveRecord = (key: string, id: unknown): any | undefined => (
+      typeof id === 'string'
+        ? effectiveCollection(key).find(item => item?.id === id)
+        : undefined
+    );
+    const validateMovementParity = (
+      kind: 'bottling' | 'sale',
+      parent: any,
+      movement: any,
+    ): void => {
+      const label = kind === 'bottling' ? 'Bottling' : 'Sales';
+      const expectedDirection = kind === 'bottling' ? 'in' : 'out';
+      if (movement.direction !== expectedDirection) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must have direction '${expectedDirection}'.`);
+      }
+      if (movement.reason !== kind) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must have reason '${kind}'.`);
+      }
+      if (movement.sourceRef !== parent.id) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must link back to ${parent.id}.`);
+      }
+      if (movement.lotId !== parent.lotId) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must use lot ${parent.lotId}.`);
+      }
+      const expectedLocationId = kind === 'bottling' ? parent.storageLocationId : parent.locationId;
+      if (expectedLocationId && movement.locationId !== expectedLocationId) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must use location ${expectedLocationId}.`);
+      }
+      const expectedBottles = kind === 'bottling' ? parent.placedInStorageBottles : parent.bottles;
+      if (typeof expectedBottles === 'number' && movement.bottles !== expectedBottles) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must contain ${expectedBottles} bottles.`);
+      }
+    };
+
+    if (deletionMatcher.hasDeletions) {
+      const survivingMovements = effectiveCollection('stockMovements');
+      const survivingDispatches = effectiveCollection('salesDispatches');
+      const survivingOrders = effectiveCollection('salesOrders');
+      const survivingBottlingRuns = effectiveCollection('bottlingRuns');
+      const survivingCosts = effectiveCollection('costEntries');
+      const allBottlingRuns = mergedCollection('bottlingRuns');
+
+      for (const location of mergedCollection('storageLocations')) {
+        if (!location?.id || !isDeleted('storageLocations', location.id)) continue;
+        const movement = survivingMovements.find(item => item.locationId === location.id);
+        if (movement) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by stock movement ${movement.id}.`);
+        }
+        const dispatch = survivingDispatches.find(item => item.locationId === location.id);
+        if (dispatch) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by sales dispatch ${dispatch.id}.`);
+        }
+        const order = survivingOrders.find(item => item.locationId === location.id);
+        if (order) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by sales order ${order.id}.`);
+        }
+        const bottlingRun = survivingBottlingRuns.find(item => item.storageLocationId === location.id);
+        if (bottlingRun) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by bottling run ${bottlingRun.id}.`);
+        }
+      }
+
+      for (const movement of mergedCollection('stockMovements')) {
+        if (!movement?.id || !isDeleted('stockMovements', movement.id)) continue;
+        const bottlingRun = survivingBottlingRuns.find(item => (
+          item.storageMovementId === movement.id || movement.sourceRef === item.id
+        ));
+        if (bottlingRun) {
+          throw new Error(`Referenced Stock Movement: ${movement.id} is still used by bottling run ${bottlingRun.id}.`);
+        }
+        const dispatch = survivingDispatches.find(item => (
+          item.stockMovementId === movement.id || movement.sourceRef === item.id
+        ));
+        if (dispatch) {
+          throw new Error(`Referenced Stock Movement: ${movement.id} is still used by sales dispatch ${dispatch.id}.`);
+        }
+
+        const remainingOnHand = survivingMovements.reduce((total, item) => {
+          if (item.locationId !== movement.locationId || item.lotId !== movement.lotId) return total;
+          return total + (item.direction === 'in' ? item.bottles : -item.bottles);
+        }, 0);
+        if (remainingOnHand < 0) {
+          throw new Error(`Invalid Stock Deletion: removing ${movement.id} would make stock negative for ${movement.lotId} at ${movement.locationId}.`);
+        }
+        const reserved = reservedBottlesFor(
+          survivingOrders,
+          movement.locationId,
+          movement.lotId,
+        );
+        if (remainingOnHand < reserved) {
+          throw new Error(`Reserved Stock Deletion: removing ${movement.id} would leave ${reserved} reserved bottles without enough stock.`);
+        }
+      }
+
+      for (const dispatch of mergedCollection('salesDispatches')) {
+        if (!dispatch?.id || !isDeleted('salesDispatches', dispatch.id)) continue;
+        const movement = survivingMovements.find(item => (
+          item.id === dispatch.stockMovementId || item.sourceRef === dispatch.id
+        ));
+        if (movement) {
+          throw new Error(`Referenced Sales Dispatch: ${dispatch.id} is still used by stock movement ${movement.id}.`);
+        }
+        const order = survivingOrders.find(item => item.dispatchId === dispatch.id);
+        if (order) {
+          throw new Error(`Referenced Sales Dispatch: ${dispatch.id} is still used by sales order ${order.id}.`);
+        }
+      }
+
+      for (const order of mergedCollection('salesOrders')) {
+        if (!order?.id || !isDeleted('salesOrders', order.id)) continue;
+        const dispatch = survivingDispatches.find(item => item.salesOrderId === order.id);
+        if (dispatch) {
+          throw new Error(`Referenced Sales Order: ${order.id} is still used by sales dispatch ${dispatch.id}.`);
+        }
+      }
+
+      for (const run of allBottlingRuns) {
+        if (!run?.id || !isDeleted('bottlingRuns', run.id)) continue;
+        const sameLotRuns = allBottlingRuns
+          .map((candidate, index) => ({ candidate, index }))
+          .filter(({ candidate }) => candidate?.lotId && candidate.lotId === run.lotId)
+          .sort((left, right) => (
+            compareBottlingRunsNewestFirst(left.candidate, right.candidate)
+            || left.index - right.index
+          ));
+        const latest = sameLotRuns[0];
+        if (latest && latest.candidate.id !== run.id) {
+          throw new Error(`Bottling Rollback Order: ${run.id} is not the latest bottling run for lot ${run.lotId}. Roll back ${latest.candidate.id} first.`);
+        }
+        const restoredLot = mergedCollection('lots').find(item => item?.id === run.lotId);
+        if (run.previousLotStage !== undefined && restoredLot?.stage !== run.previousLotStage) {
+          throw new Error(`Bottling Rollback Mismatch: lot ${run.lotId} must restore stage ${run.previousLotStage} when deleting ${run.id}.`);
+        }
+        if (run.previousLotVolumeL !== undefined && restoredLot?.currentVolume !== run.previousLotVolumeL) {
+          throw new Error(`Bottling Rollback Mismatch: lot ${run.lotId} must restore volume ${run.previousLotVolumeL} when deleting ${run.id}.`);
+        }
+        const movement = survivingMovements.find(item => (
+          item.id === run.storageMovementId || item.sourceRef === run.id
+        ));
+        if (movement) {
+          throw new Error(`Referenced Bottling Run: ${run.id} is still used by stock movement ${movement.id}.`);
+        }
+        const cost = survivingCosts.find(item => item.sourceRef === run.id);
+        if (cost) {
+          throw new Error(`Referenced Bottling Run: ${run.id} is still used by cost entry ${cost.id}.`);
         }
       }
     }
@@ -110,12 +313,20 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
         if (!Array.isArray(clientList)) {
           throw new Error(`Collection ${key} must be an array of objects`);
         }
+        const incomingIds = new Set<string>();
         for (const item of clientList) {
           if (!item || typeof item !== 'object') {
             throw new Error(`Items in ${key} must be valid objects`);
           }
           if (!isValidId(item.id)) {
             throw new Error(`Item in ${key} has invalid or missing ID: ${item.id}`);
+          }
+          if (incomingIds.has(item.id)) {
+            throw new Error(`Duplicate ID in ${key}: ${item.id}.`);
+          }
+          incomingIds.add(item.id);
+          if (isDeleted(key, item.id)) {
+            throw new Error(`Deleted item ${item.id} cannot be resubmitted in ${key}.`);
           }
 
           // General Time Invariance / Immutable properties check
@@ -136,7 +347,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Item in ${key} has invalid referenced blockId.`);
             }
             const blockExists = userDb.blocks.some((b: any) => b.id === item.blockId) || (collections.blocks && collections.blocks.some((b: any) => b.id === item.blockId));
-            const blockDeleted = deletedIds && deletedIds.includes(item.blockId);
+            const blockDeleted = isDeleted('blocks', item.blockId);
             if (!blockExists || blockDeleted) {
               throw new Error(`Orphaned Reference: Item in ${key} references non-existent or deleted Block (${item.blockId}).`);
             }
@@ -169,7 +380,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Vessel ${item.id} has invalid referenced assignedLotId.`);
               }
               const lotExists = userDb.lots.some((l: any) => l.id === assignedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === assignedLotId));
-              const lotDeleted = deletedIds && deletedIds.includes(assignedLotId);
+              const lotDeleted = isDeleted('lots', assignedLotId);
               if (!lotExists || lotDeleted) {
                 throw new Error(`Orphaned Reference: Vessel ${item.id} references non-existent or deleted Lot (${assignedLotId}).`);
               }
@@ -187,6 +398,20 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             const existingLot = existingItem;
             const currentVolume = item.currentVolume !== undefined ? item.currentVolume : (existingLot ? existingLot.currentVolume : undefined);
             const initialVolume = item.initialVolume !== undefined ? item.initialVolume : (existingLot ? existingLot.initialVolume : undefined);
+            const rollbackRun = existingLot?.stage === 'bottled'
+              && item.stage !== undefined
+              && item.currentVolume !== undefined
+              ? mergedCollection('bottlingRuns').find((run: any) => (
+                run?.id
+                && isDeleted('bottlingRuns', run.id)
+                && run.lotId === item.id
+                && run.previousLotStage !== undefined
+                && run.previousLotVolumeL !== undefined
+                && item.stage === run.previousLotStage
+                && item.currentVolume === run.previousLotVolumeL
+              ))
+              : undefined;
+            const isExactBottlingRollback = Boolean(rollbackRun);
 
             if (initialVolume !== undefined && (typeof initialVolume !== 'number' || initialVolume < 0)) {
               throw new Error(`Lot ${item.id} initial volume cannot be negative.`);
@@ -196,12 +421,13 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             }
 
             if (existingLot && existingLot.stage === 'bottled') {
-              if (currentVolume !== undefined && currentVolume < existingLot.currentVolume) {
+              if (currentVolume !== undefined && currentVolume < existingLot.currentVolume && !isExactBottlingRollback) {
                 throw new Error(`Volatile Content Lock: Bottled wine lot ${item.id} volume cannot decrease.`);
               }
               const frozenFields = ['name', 'vintage', 'variety', 'vineyardBlock', 'region', 'wineClass', 'stage'];
               for (const field of frozenFields) {
                 if (item[field] !== undefined && item[field] !== existingLot[field]) {
+                  if (field === 'stage' && isExactBottlingRollback) continue;
                   throw new Error(`Volatile Content Lock: Bottled wine lot ${item.id} parameter '${field}' is frozen.`);
                 }
               }
@@ -229,9 +455,9 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Fermentation log ${item.id} has invalid referenced tankId.`);
             }
             const lotExists = (userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
-                              !(deletedIds && deletedIds.includes(item.lotId));
+                              !isDeleted('lots', item.lotId);
             const tankExists = !hasTankRef || ((userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
-                               !(deletedIds && deletedIds.includes(item.tankId)));
+                               !isDeleted('vessels', item.tankId));
             if (!lotExists || !tankExists) {
               throw new Error(`Orphaned Fermentation: Fermentation log ${item.id} references non-existent or deleted Lot (${item.lotId}) or Vessel (${item.tankId}).`);
             }
@@ -254,9 +480,9 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Lab analysis ${item.id} has invalid referenced IDs.`);
             }
             const lotExists = (userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
-                              !(deletedIds && deletedIds.includes(item.lotId));
+                              !isDeleted('lots', item.lotId);
             const tankExists = (userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
-                               !(deletedIds && deletedIds.includes(item.tankId));
+                               !isDeleted('vessels', item.tankId);
             if (!lotExists || !tankExists) {
               throw new Error(`Orphaned Lab Log: Lab analysis ${item.id} references non-existent or deleted Lot (${item.lotId}) or Vessel (${item.tankId}).`);
             }
@@ -281,11 +507,12 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
           }
 
           else if (key === 'bottlingRuns') {
+            const runRecord = { ...(existingItem || {}), ...item };
             if (!isValidId(item.lotId)) {
               throw new Error(`Bottling run ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
@@ -315,7 +542,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                     throw new Error(`Bottling run ${item.id} has invalid packaging material for ${component}.`);
                   }
                   const materialExists = userDb.inventory.some((i: any) => i.id === materialId) || (collections.inventory && collections.inventory.some((i: any) => i.id === materialId));
-                  const materialDeleted = deletedIds && deletedIds.includes(materialId as string);
+                  const materialDeleted = isDeleted('inventory', materialId);
                   if (!materialExists || materialDeleted) {
                     throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted packaging material (${materialId}).`);
                   }
@@ -340,12 +567,23 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Bottling run ${item.id} has invalid storageLocationId.`);
               }
               const locExists = userDb.storageLocations?.some((l: any) => l.id === item.storageLocationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.storageLocationId));
-              if (!locExists) {
-                throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent Storage Location (${item.storageLocationId}).`);
+              const locDeleted = isDeleted('storageLocations', item.storageLocationId);
+              if (!locExists || locDeleted) {
+                throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Storage Location (${item.storageLocationId}).`);
               }
             }
-            if (item.storageMovementId && !isValidId(item.storageMovementId)) {
-              throw new Error(`Bottling run ${item.id} has invalid storageMovementId.`);
+            const storageMovementId = item.storageMovementId !== undefined
+              ? item.storageMovementId
+              : existingItem?.storageMovementId;
+            if (storageMovementId) {
+              if (!isValidId(storageMovementId)) {
+                throw new Error(`Bottling run ${item.id} has invalid storageMovementId.`);
+              }
+              const movement = effectiveRecord('stockMovements', storageMovementId);
+              if (!movement) {
+                throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Stock Movement (${storageMovementId}).`);
+              }
+              validateMovementParity('bottling', runRecord, movement);
             }
           }
 
@@ -369,7 +607,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Grape intake ${item.id} has invalid referenced createdLotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.createdLotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.createdLotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.createdLotId);
+            const lotDeleted = isDeleted('lots', item.createdLotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Lot (${item.createdLotId}).`);
             }
@@ -400,7 +638,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Grape intake ${item.id} has invalid destinationVesselId.`);
               }
               const vesselExists = userDb.vessels.some((v: any) => v.id === item.destinationVesselId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.destinationVesselId));
-              const vesselDeleted = deletedIds && deletedIds.includes(item.destinationVesselId);
+              const vesselDeleted = isDeleted('vessels', item.destinationVesselId);
               if (!vesselExists || vesselDeleted) {
                 throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Vessel (${item.destinationVesselId}).`);
               }
@@ -410,7 +648,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Grape intake ${item.id} has invalid harvestRecordId.`);
               }
               const harvestExists = userDb.harvests.some((h: any) => h.id === item.harvestRecordId) || (collections.harvests && collections.harvests.some((h: any) => h.id === item.harvestRecordId));
-              const harvestDeleted = deletedIds && deletedIds.includes(item.harvestRecordId);
+              const harvestDeleted = isDeleted('harvests', item.harvestRecordId);
               if (!harvestExists || harvestDeleted) {
                 throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Harvest (${item.harvestRecordId}).`);
               }
@@ -422,7 +660,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Cellar operation ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
@@ -433,7 +671,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                   throw new Error(`Cellar operation ${item.id} has invalid ${vesselField}.`);
                 }
                 const vesselExists = userDb.vessels.some((v: any) => v.id === item[vesselField]) || (collections.vessels && collections.vessels.some((v: any) => v.id === item[vesselField]));
-                const vesselDeleted = deletedIds && deletedIds.includes(item[vesselField]);
+                const vesselDeleted = isDeleted('vessels', item[vesselField]);
                 if (!vesselExists || vesselDeleted) {
                   throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted Vessel (${item[vesselField]}).`);
                 }
@@ -445,7 +683,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Cellar operation ${item.id} has invalid materialId.`);
               }
               const materialExists = userDb.inventory.some((i: any) => i.id === item.materialId) || (collections.inventory && collections.inventory.some((i: any) => i.id === item.materialId));
-              const materialDeleted = deletedIds && deletedIds.includes(item.materialId);
+              const materialDeleted = isDeleted('inventory', item.materialId);
               if (!materialExists || materialDeleted) {
                 throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted inventory material (${item.materialId}).`);
               }
@@ -464,7 +702,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Cost entry ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Cost Entry: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
@@ -498,13 +736,13 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (!isValidId(item.locationId)) {
               throw new Error(`Stock movement ${item.id} has invalid referenced locationId.`);
             }
-            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            const lotExists = effectiveRecord('lots', item.lotId);
+            const locExists = effectiveRecord('storageLocations', item.locationId);
             if (!lotExists) {
-              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent Lot (${item.lotId}).`);
+              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
             if (!locExists) {
-              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Storage Location (${item.locationId}).`);
             }
             if (!['in', 'out'].includes(item.direction)) {
               throw new Error(`Stock movement ${item.id} has invalid direction.`);
@@ -512,8 +750,46 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (typeof item.bottles !== 'number' || item.bottles < 0) {
               throw new Error(`Stock movement ${item.id} bottles must be non-negative.`);
             }
+            const hasStoredBottlingProvenance = (Array.isArray(userDb?.bottlingRuns) ? userDb.bottlingRuns : [])
+              .some((run: any) => run?.lotId === item.lotId && !isDeleted('bottlingRuns', run.id));
+            const linkedRun = item.reason === 'bottling'
+              ? effectiveRecord('bottlingRuns', item.sourceRef)
+              : undefined;
+            const hasLinkedSamePayloadProvenance = linkedRun?.lotId === item.lotId;
+            if (!['bottled', 'sold'].includes(lotExists.stage)
+              && !hasStoredBottlingProvenance
+              && !hasLinkedSamePayloadProvenance) {
+              throw new Error(`Ineligible Stock Movement: lot ${item.lotId} is not bottled and has no bottling provenance.`);
+            }
             if (item.sourceRef !== undefined && item.sourceRef !== null && item.sourceRef !== '' && !isValidId(item.sourceRef)) {
               throw new Error(`Stock movement ${item.id} has invalid sourceRef.`);
+            }
+            const movementRecord = { ...(existingItem || {}), ...item };
+            if (movementRecord.sourceRef && movementRecord.reason === 'bottling') {
+              const run = effectiveRecord('bottlingRuns', movementRecord.sourceRef);
+              if (!run) {
+                throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Bottling Run (${movementRecord.sourceRef}).`);
+              }
+              if (run.storageMovementId && run.storageMovementId !== item.id) {
+                throw new Error(`Mismatched Bottling Link: Bottling run ${run.id} points to a different stock movement.`);
+              }
+              validateMovementParity('bottling', run, movementRecord);
+            }
+            if (movementRecord.sourceRef && movementRecord.reason === 'sale') {
+              const dispatch = effectiveRecord('salesDispatches', movementRecord.sourceRef);
+              if (!dispatch) {
+                throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Sales Dispatch (${movementRecord.sourceRef}).`);
+              }
+              if (dispatch.stockMovementId && dispatch.stockMovementId !== item.id) {
+                throw new Error(`Mismatched Sales Link: Sales dispatch ${dispatch.id} points to a different stock movement.`);
+              }
+              validateMovementParity('sale', dispatch, movementRecord);
+            }
+            if (movementRecord.sourceRef
+              && !['bottling', 'sale'].includes(movementRecord.reason)
+              && (effectiveRecord('bottlingRuns', movementRecord.sourceRef)
+                || effectiveRecord('salesDispatches', movementRecord.sourceRef))) {
+              throw new Error(`Mismatched Stock Movement Link: ${item.id} has an invalid reason for linked source ${movementRecord.sourceRef}.`);
             }
           }
 
@@ -524,13 +800,13 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (!isValidId(item.locationId)) {
               throw new Error(`Sales dispatch ${item.id} has invalid referenced locationId.`);
             }
-            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            const lotExists = effectiveRecord('lots', item.lotId);
+            const locExists = effectiveRecord('storageLocations', item.locationId);
             if (!lotExists) {
-              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent Lot (${item.lotId}).`);
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
             if (!locExists) {
-              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Storage Location (${item.locationId}).`);
             }
             const numericFields = ['bottles', 'pricePerBottle', 'revenue', 'cogs'];
             for (const field of numericFields) {
@@ -547,11 +823,31 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (item.marginPct !== undefined && item.marginPct !== null && typeof item.marginPct !== 'number') {
               throw new Error(`Sales dispatch ${item.id} marginPct must be a number.`);
             }
-            if (item.stockMovementId !== undefined && !isValidId(item.stockMovementId)) {
-              throw new Error(`Sales dispatch ${item.id} has invalid stockMovementId.`);
+            const dispatchRecord = { ...(existingItem || {}), ...item };
+            if (!isValidId(dispatchRecord.stockMovementId)) {
+              throw new Error(`Sales dispatch ${item.id} has invalid or missing stockMovementId.`);
             }
+            const movement = effectiveRecord('stockMovements', dispatchRecord.stockMovementId);
+            if (!movement) {
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Stock Movement (${dispatchRecord.stockMovementId}).`);
+            }
+            validateMovementParity('sale', dispatchRecord, movement);
             if (item.salesOrderId !== undefined && item.salesOrderId !== null && item.salesOrderId !== '' && !isValidId(item.salesOrderId)) {
               throw new Error(`Sales dispatch ${item.id} has invalid salesOrderId.`);
+            }
+            if (dispatchRecord.salesOrderId) {
+              const order = effectiveRecord('salesOrders', dispatchRecord.salesOrderId);
+              if (!order) {
+                throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Sales Order (${dispatchRecord.salesOrderId}).`);
+              }
+              if (order.dispatchId !== item.id || order.status !== 'fulfilled') {
+                throw new Error(`Mismatched Sales Link: Sales order ${order.id} must be fulfilled by dispatch ${item.id}.`);
+              }
+              if (order.lotId !== dispatchRecord.lotId
+                || order.locationId !== dispatchRecord.locationId
+                || order.bottles !== dispatchRecord.bottles) {
+                throw new Error(`Mismatched Sales Link: Sales order ${order.id} does not match dispatch ${item.id} lot, location, and bottle count.`);
+              }
             }
           }
 
@@ -562,13 +858,13 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (!isValidId(item.locationId)) {
               throw new Error(`Sales order ${item.id} has invalid referenced locationId.`);
             }
-            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            const lotExists = effectiveRecord('lots', item.lotId);
+            const locExists = effectiveRecord('storageLocations', item.locationId);
             if (!lotExists) {
-              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent Lot (${item.lotId}).`);
+              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
             if (!locExists) {
-              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent or deleted Storage Location (${item.locationId}).`);
             }
             if (!['reserved', 'fulfilled', 'cancelled'].includes(item.status)) {
               throw new Error(`Sales order ${item.id} has invalid status.`);
@@ -591,6 +887,21 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (item.dispatchId !== undefined && item.dispatchId !== null && item.dispatchId !== '' && !isValidId(item.dispatchId)) {
               throw new Error(`Sales order ${item.id} has invalid dispatchId.`);
             }
+            const orderRecord = { ...(existingItem || {}), ...item };
+            if (orderRecord.dispatchId) {
+              const dispatch = effectiveRecord('salesDispatches', orderRecord.dispatchId);
+              if (!dispatch) {
+                throw new Error(`Orphaned Sales Order: ${item.id} references non-existent or deleted Sales Dispatch (${orderRecord.dispatchId}).`);
+              }
+              if (orderRecord.status !== 'fulfilled' || dispatch.salesOrderId !== item.id) {
+                throw new Error(`Mismatched Sales Link: Sales order ${item.id} must be fulfilled by dispatch ${dispatch.id}.`);
+              }
+              if (dispatch.lotId !== orderRecord.lotId
+                || dispatch.locationId !== orderRecord.locationId
+                || dispatch.bottles !== orderRecord.bottles) {
+                throw new Error(`Mismatched Sales Link: Sales order ${item.id} does not match dispatch ${dispatch.id} lot, location, and bottle count.`);
+              }
+            }
           }
 
           else if (key === 'supplierPayments') {
@@ -610,7 +921,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Certification record ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Certification Record: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
@@ -619,7 +930,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Certification record ${item.id} has invalid bottlingRunId.`);
               }
               const runExists = userDb.bottlingRuns.some((r: any) => r.id === item.bottlingRunId) || (collections.bottlingRuns && collections.bottlingRuns.some((r: any) => r.id === item.bottlingRunId));
-              const runDeleted = deletedIds && deletedIds.includes(item.bottlingRunId);
+              const runDeleted = isDeleted('bottlingRuns', item.bottlingRunId);
               if (!runExists || runDeleted) {
                 throw new Error(`Orphaned Certification Record: ${item.id} references non-existent or deleted Bottling Run (${item.bottlingRunId}).`);
               }
@@ -845,7 +1156,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Note ${item.id} has invalid referenced relatedLotId.`);
               }
               const lotExists = userDb.lots.some((l: any) => l.id === item.relatedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.relatedLotId));
-              const lotDeleted = deletedIds && deletedIds.includes(item.relatedLotId);
+              const lotDeleted = isDeleted('lots', item.relatedLotId);
               if (!lotExists || lotDeleted) {
                 throw new Error(`Orphaned Reference: Note ${item.id} references non-existent or deleted Lot (${item.relatedLotId}).`);
               }
@@ -861,6 +1172,300 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
         }
       }
     }
+
+    const aggregateMovements = effectiveCollection('stockMovements')
+      .filter(item => item && ['in', 'out'].includes(item.direction) && typeof item.bottles === 'number' && Number.isFinite(item.bottles));
+    const aggregateOrders = effectiveCollection('salesOrders');
+    const stockPairs = new Map<string, { locationId: string; lotId: string; onHand: number }>();
+    for (const movement of aggregateMovements) {
+      const key = `${movement.locationId}\u0000${movement.lotId}`;
+      const pair = stockPairs.get(key) || { locationId: movement.locationId, lotId: movement.lotId, onHand: 0 };
+      pair.onHand += movement.direction === 'in' ? movement.bottles : -movement.bottles;
+      stockPairs.set(key, pair);
+    }
+    for (const order of aggregateOrders) {
+      if (order?.status !== 'reserved' || !order.locationId || !order.lotId) continue;
+      const key = `${order.locationId}\u0000${order.lotId}`;
+      if (!stockPairs.has(key)) {
+        stockPairs.set(key, { locationId: order.locationId, lotId: order.lotId, onHand: 0 });
+      }
+    }
+    for (const pair of stockPairs.values()) {
+      if (pair.onHand < 0) {
+        throw new Error(`Invalid Stock Balance: outbound movements exceed inbound stock for ${pair.lotId} at ${pair.locationId}.`);
+      }
+      const reserved = reservedBottlesFor(aggregateOrders, pair.locationId, pair.lotId);
+      if (reserved > pair.onHand) {
+        throw new Error(`Invalid Stock Reservation: ${reserved} reserved bottles exceed ${pair.onHand} on hand for ${pair.lotId} at ${pair.locationId}.`);
+      }
+    }
+  }
+}
+
+const RESPONSE_COLLECTION_DEPENDENCIES: Partial<Record<string, PermissionModule[]>> = {
+  // Lab entry needs active vessel IDs even though technicians do not manage the
+  // vessel module itself.
+  vessels: ['lab'],
+  // Certification review is an evidence-aggregation workflow spanning origin,
+  // receiving, lab, and bottling records. These collections remain read-only
+  // unless their own module permission grants writes.
+  lots: ['certification'],
+  blocks: ['certification'],
+  grapeIntakes: ['certification'],
+  lablogs: ['certification'],
+  bottlingRuns: ['certification'],
+};
+
+function mayViewResponseCollection(role: string, collection: string): boolean {
+  const directModule = collection === 'integrationHub'
+    ? 'company_profile'
+    : moduleForSyncCollection(collection);
+  if (directModule && canAccess(role, directModule, 'view')) return true;
+  return (RESPONSE_COLLECTION_DEPENDENCIES[collection] || [])
+    .some(module => canAccess(role, module, 'view'));
+}
+
+function omitRecordFields(record: any, fields: string[]): any {
+  if (!record || typeof record !== 'object') return record;
+  const copy = { ...record };
+  for (const field of fields) delete copy[field];
+  return copy;
+}
+
+/**
+ * Return a schema-complete, role-filtered DB snapshot. Unauthorized collections
+ * stay present as []/{} so hydration clears stale data from an earlier role or
+ * organization instead of retaining it client-side.
+ */
+export function redactWineryDatabaseForRole(role: string, userDb: any): any {
+  const empty = createEmptyUserData() as any;
+  const response: any = {};
+  const canViewCosts = canAccess(role, 'costs', 'view');
+  const canViewStorage = canAccess(role, 'storage', 'view');
+
+  for (const [collection, emptyValue] of Object.entries(empty)) {
+    const storedValue = userDb?.[collection];
+    if (collection === 'attachments') {
+      response.attachments = (Array.isArray(storedValue) ? storedValue : [])
+        .filter((attachment: any) => {
+          const module = moduleForAttachmentKind(attachment?.module);
+          return module && canAccess(role, module, 'view');
+        });
+      continue;
+    }
+    if (!mayViewResponseCollection(role, collection)) {
+      response[collection] = Array.isArray(emptyValue) ? [] : {};
+      continue;
+    }
+
+    if (!Array.isArray(emptyValue)) {
+      response[collection] = storedValue && typeof storedValue === 'object' && !Array.isArray(storedValue)
+        ? { ...storedValue }
+        : {};
+      continue;
+    }
+
+    let records = Array.isArray(storedValue) ? storedValue : [];
+    if (!canViewCosts) {
+      if (collection === 'inventory') {
+        records = records.map((record: any) => omitRecordFields(record, ['costPerUnit']));
+      } else if (collection === 'grapeIntakes') {
+        records = records.map((record: any) => omitRecordFields(record, [
+          'costPerKg', 'totalCost', 'currency', 'grapePrice', 'paymentStatus',
+        ]));
+      } else if (collection === 'bottlingRuns') {
+        records = records.map((record: any) => omitRecordFields(record, [
+          'packagingCostTotal', 'bottlingServiceCost',
+        ]));
+      } else if (collection === 'salesDispatches' || collection === 'salesOrders') {
+        records = records.map((record: any) => omitRecordFields(record, [
+          'costPerBottle', 'cogs', 'grossProfit', 'marginPct',
+        ]));
+      }
+    }
+    if (!canViewStorage && collection === 'bottlingRuns') {
+      records = records.map((record: any) => omitRecordFields(record, [
+        'storageLocationId', 'storageMovementId', 'placedInStorageBottles',
+      ]));
+    }
+    response[collection] = records;
+  }
+
+  return response;
+}
+
+export interface SyncCandidateResult {
+  candidateDb: any;
+  conflicts: ReturnType<typeof mergeCollections>;
+  deletionConflict: boolean;
+  deletionRejected?: boolean;
+  deletionError?: string;
+  recoverableCollections?: Record<string, any>;
+}
+
+/**
+ * Remove the compensating mutations that only make sense when their paired
+ * deletion succeeds. The remainder can be merged safely when the server has
+ * to reject or defer that deletion (for example after another session added a
+ * reference).
+ */
+export function prepareCollectionsForRejectedDeletion(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords?: any,
+): Record<string, any> {
+  const deletionMatcher = createDeletionMatcher(deletedIds, deletedRecords);
+  if (!deletionMatcher.hasDeletions) return collections;
+
+  const safeCollections: Record<string, any> = { ...collections };
+  const deletedRuns = (Array.isArray(userDb?.bottlingRuns) ? userDb.bottlingRuns : [])
+    .filter((run: any) => run?.id && deletionMatcher.isDeleted('bottlingRuns', run.id));
+  const deletedDispatches = (Array.isArray(userDb?.salesDispatches) ? userDb.salesDispatches : [])
+    .filter((dispatch: any) => dispatch?.id && deletionMatcher.isDeleted('salesDispatches', dispatch.id));
+
+  if (deletedRuns.length > 0 && Array.isArray(collections.lots)) {
+    const runByLotId = new Map(deletedRuns.map((run: any) => [run.lotId, run]));
+    safeCollections.lots = collections.lots.map((lot: any) => {
+      const run: any = runByLotId.get(lot?.id);
+      const existing = Array.isArray(userDb?.lots)
+        ? userDb.lots.find((candidate: any) => candidate?.id === lot?.id)
+        : undefined;
+      if (!run || !existing) return lot;
+      const isRollbackMutation = lot.stage === run.previousLotStage
+        && lot.currentVolume === run.previousLotVolumeL;
+      if (!isRollbackMutation) return lot;
+
+      const incomingHistory = Array.isArray(lot.history) ? [...lot.history] : undefined;
+      const serverHistory = Array.isArray(existing.history) ? existing.history : [];
+      const sourceEvents = serverHistory
+        .map((event: any, index: number) => ({ event, index }))
+        .filter(({ event }: { event: any; index: number }) => event?.sourceRef === run.id);
+      if (incomingHistory) {
+        for (const { event, index } of sourceEvents) {
+          if (incomingHistory.some((candidate: any) => JSON.stringify(candidate) === JSON.stringify(event))) continue;
+          incomingHistory.splice(Math.min(index, incomingHistory.length), 0, event);
+        }
+      }
+
+      return {
+        ...lot,
+        stage: existing.stage,
+        currentVolume: existing.currentVolume,
+        ...(incomingHistory ? { history: incomingHistory } : {}),
+      };
+    });
+  }
+
+  if (deletedRuns.length > 0 && Array.isArray(collections.inventory)) {
+    const restoredByMaterialId = new Map<string, number>();
+    for (const run of deletedRuns) {
+      for (const [materialId, quantity] of Object.entries(run?.packagingDeductions || {})) {
+        if (typeof quantity !== 'number' || quantity <= 0) continue;
+        restoredByMaterialId.set(materialId, (restoredByMaterialId.get(materialId) || 0) + quantity);
+      }
+    }
+    safeCollections.inventory = collections.inventory.map((item: any) => {
+      const restored = restoredByMaterialId.get(item?.id);
+      const existing = Array.isArray(userDb?.inventory)
+        ? userDb.inventory.find((candidate: any) => candidate?.id === item?.id)
+        : undefined;
+      if (!restored || !existing || typeof item.stock !== 'number' || typeof existing.stock !== 'number') return item;
+      const expectedRollbackStock = Math.round((existing.stock + restored) * 1000) / 1000;
+      return item.stock === expectedRollbackStock ? { ...item, stock: existing.stock } : item;
+    });
+  }
+
+  if (deletedDispatches.length > 0 && Array.isArray(collections.salesOrders)) {
+    const deletedDispatchIds = new Set(deletedDispatches.map((dispatch: any) => dispatch.id));
+    safeCollections.salesOrders = collections.salesOrders.map((order: any) => {
+      const existing = Array.isArray(userDb?.salesOrders)
+        ? userDb.salesOrders.find((candidate: any) => candidate?.id === order?.id)
+        : undefined;
+      if (!existing?.dispatchId || !deletedDispatchIds.has(existing.dispatchId) || order.dispatchId) return order;
+      return {
+        ...order,
+        dispatchId: existing.dispatchId,
+        status: existing.status,
+        fulfilledAt: existing.fulfilledAt,
+      };
+    });
+  }
+
+  return safeCollections;
+}
+
+/**
+ * Build the state that would actually be saved without mutating the current
+ * server snapshot. Deletions are applied only after every incoming update has
+ * merged cleanly and the resulting references have been revalidated.
+ */
+export function buildSyncCandidate(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  historyScope = '',
+  deletedRecords?: DeletedRecordRef[],
+): SyncCandidateResult {
+  const originalDb = JSON.parse(JSON.stringify(userDb));
+  const candidateDb = JSON.parse(JSON.stringify(userDb));
+  const conflicts = mergeCollections(candidateDb, collections, historyScope);
+  const hasDeletions = createDeletionMatcher(deletedIds, deletedRecords).hasDeletions;
+
+  // A multi-collection payload represents one client transaction (dispatch +
+  // stock movement + order update, bottling + lot rollback, etc.). Persisting
+  // clean siblings while an anchor record conflicts creates orphan workflows,
+  // so conservatively defer the entire payload.
+  if (conflicts.length > 0) {
+    return { candidateDb: originalDb, conflicts, deletionConflict: hasDeletions };
+  }
+
+  if (hasDeletions) {
+    validateSyncPayload(candidateDb, {}, deletedIds, deletedRecords);
+    applyDeletions(candidateDb, deletedIds, deletedRecords);
+  }
+
+  return { candidateDb, conflicts, deletionConflict: false };
+}
+
+/**
+ * Build a sync result that never leaves deletion tombstones permanently stuck.
+ * A rejected/deferred deletion restores its server records while preserving
+ * unrelated clean updates from the same payload.
+ */
+export function buildRecoverableSyncCandidate(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  preflightDeletionError: string | null = null,
+  historyScope = '',
+  deletedRecords?: DeletedRecordRef[],
+): SyncCandidateResult {
+  const safeCollections = prepareCollectionsForRejectedDeletion(userDb, collections, deletedIds, deletedRecords);
+  const recover = (error: string): SyncCandidateResult => {
+    const safeCandidate = buildSyncCandidate(userDb, safeCollections, undefined, historyScope);
+    return {
+      ...safeCandidate,
+      deletionRejected: true,
+      deletionError: error,
+      recoverableCollections: safeCollections,
+    };
+  };
+
+  if (preflightDeletionError) return recover(preflightDeletionError);
+
+  try {
+    const candidate = buildSyncCandidate(userDb, collections, deletedIds, historyScope, deletedRecords);
+    if (!candidate.deletionConflict) return candidate;
+
+    const safeCandidate = buildSyncCandidate(userDb, safeCollections, undefined, historyScope);
+    return {
+      ...safeCandidate,
+      conflicts: candidate.conflicts,
+      deletionConflict: true,
+    };
+  } catch (err: any) {
+    return recover(err?.message || 'Deletion integrity validation failed');
   }
 }
 
@@ -938,13 +1543,21 @@ function deletionTargetsForId(userDb: any, id: string): Array<{ collection: stri
   return targets;
 }
 
-function authorizeDeletedIds(role: string, userDb: any, deletedIds: any): string | null {
-  if (!Array.isArray(deletedIds) || deletedIds.length === 0) return null;
+function authorizeDeletions(role: string, userDb: any, deletedIds: any, deletedRecords?: any): string | null {
+  const hasLegacyDeletions = Array.isArray(deletedIds) && deletedIds.length > 0;
+  const hasScopedDeletions = Array.isArray(deletedRecords) && deletedRecords.length > 0;
+  if (!hasLegacyDeletions && !hasScopedDeletions) return null;
   if (can(role, 'admin')) return null;
 
-  for (const id of deletedIds) {
+  const requested = [
+    ...(hasLegacyDeletions ? deletedIds.map((id: any) => ({ id, collection: null })) : []),
+    ...(hasScopedDeletions ? deletedRecords : []),
+  ];
+  for (const record of requested) {
+    const { id, collection } = record || {};
     if (!isValidId(id)) continue;
-    const targets = deletionTargetsForId(userDb, id);
+    const targets = deletionTargetsForId(userDb, id)
+      .filter(target => !collection || target.collection === collection);
     for (const target of targets) {
       if (!target.module) {
         return `Forbidden: deleting ${id} from ${target.collection} is not authorized.`;
@@ -957,8 +1570,14 @@ function authorizeDeletedIds(role: string, userDb: any, deletedIds: any): string
   return null;
 }
 
-export function authorizeSyncPayload(role: string, userDb: any, collections: Record<string, any>, deletedIds: any): string | null {
-  const deletionError = authorizeDeletedIds(role, userDb, deletedIds);
+export function authorizeSyncPayload(
+  role: string,
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords?: any,
+): string | null {
+  const deletionError = authorizeDeletions(role, userDb, deletedIds, deletedRecords);
   if (deletionError) return deletionError;
 
   for (const [collection, incoming] of Object.entries(collections)) {
@@ -1004,7 +1623,7 @@ export function authorizeSyncPayload(role: string, userDb: any, collections: Rec
 // POST /api/sync
 router.post('/sync', checkWineryScope('write'), async (req, res) => {
   const session = (req as any).wineryContext;
-  const { deletedIds, ...collections } = req.body;
+  const { deletedIds, deletedRecords, ...collections } = req.body;
 
   // Optimistic-concurrency retry: a version conflict means another sync landed
   // between our reload and save. Per-item baselines make the merge idempotent,
@@ -1020,15 +1639,35 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     // the budget guard below can allow shrinking syncs even when already at cap.
     const inlineBytesBefore = sumInlineAttachmentBytes(userDb.attachments);
 
-    const permissionError = authorizeSyncPayload(session.role, userDb, collections, deletedIds);
+    const permissionError = authorizeSyncPayload(session.role, userDb, collections, undefined);
     if (permissionError) {
       return res.status(403).json({ error: permissionError });
     }
 
+    const safeCollections = prepareCollectionsForRejectedDeletion(userDb, collections, deletedIds, deletedRecords);
     try {
-      validateSyncPayload(userDb, collections, deletedIds);
+      validateSyncPayload(userDb, safeCollections, undefined);
     } catch (err: any) {
       return res.status(400).json({ error: err.message || 'Validation error' });
+    }
+
+    const deletionRequested = (
+      deletedIds !== undefined
+      && (!Array.isArray(deletedIds) || deletedIds.length > 0)
+    ) || (
+      deletedRecords !== undefined
+      && (!Array.isArray(deletedRecords) || deletedRecords.length > 0)
+    );
+    let deletionError: string | null = null;
+    if (deletionRequested) {
+      deletionError = authorizeSyncPayload(session.role, userDb, {}, deletedIds, deletedRecords);
+      if (!deletionError) {
+        try {
+          validateSyncPayload(userDb, collections, deletedIds, deletedRecords);
+        } catch (err: any) {
+          deletionError = err?.message || 'Deletion validation failed';
+        }
+      }
     }
 
     // Never mutate the client payload: a retry must re-prepare from the
@@ -1048,18 +1687,47 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
       return res.status(400).json({ error: err.message || 'Audit validation error' });
     }
 
-    // Apply deletions, then merge with optimistic-concurrency conflict detection.
-    applyDeletions(userDb, deletedIds);
-    const conflicts = mergeCollections(userDb, merging, session.organizationId);
+    const candidate = buildRecoverableSyncCandidate(
+      userDb,
+      merging,
+      deletedIds,
+      deletionError,
+      session.organizationId,
+      deletedRecords,
+    );
+    const { candidateDb, conflicts } = candidate;
+    const deletionDeferred = candidate.deletionConflict;
+    if (conflicts.length > 0) {
+      await setOrganizationStateHeaders(res, session.username);
+      return res.json({
+        hasConflicts: true,
+        conflicts,
+        serverDb: redactWineryDatabaseForRole(session.role, candidateDb),
+        ...(deletionDeferred ? { deletionDeferred: true } : {}),
+        ...(candidate.deletionRejected ? {
+          deletionRejected: true,
+          deletionError: candidate.deletionError,
+          recoverableCollections: Object.fromEntries(
+            Object.keys(candidate.recoverableCollections || {}).map(collection => {
+              const redacted = redactWineryDatabaseForRole(
+                session.role,
+                candidate.recoverableCollections,
+              );
+              return [collection, redacted[collection]];
+            }),
+          ),
+        } : {}),
+      });
+    }
     if (session.username === 'testuser1') {
-      pruneTestUserSeedDuplicates(userDb);
+      pruneTestUserSeedDuplicates(candidateDb);
     }
 
     // Org-wide inline-attachment budget. Inline blobs accumulate in the JSONB
     // state, so block syncs that GROW the footprint past the cap — but always
     // allow syncs that keep it flat or shrink it, so a user who is already at
     // the limit can still delete/externalize attachments to recover.
-    const inlineBytesAfter = sumInlineAttachmentBytes(userDb.attachments);
+    const inlineBytesAfter = sumInlineAttachmentBytes(candidateDb.attachments);
     if (inlineBytesAfter > MAX_TOTAL_INLINE_ATTACHMENT_BYTES && inlineBytesAfter > inlineBytesBefore) {
       const capMb = (MAX_TOTAL_INLINE_ATTACHMENT_BYTES / 1_000_000).toFixed(0);
       return res.status(413).json({
@@ -1069,7 +1737,7 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     }
 
     try {
-      await saveUserData(session.username, userDb, {
+      await saveUserData(session.username, candidateDb, {
         expectedVersion: expectedOrgStateVersion,
         updatedBy: `api-sync:${session.username}`,
       });
@@ -1084,18 +1752,21 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
         return res.status(409).json({
           code: 'org_state_conflict',
           error: 'Organization data changed while saving. Please sync again before retrying.',
-          serverDb: latest?.data || userDb,
+          serverDb: redactWineryDatabaseForRole(session.role, latest?.data || candidateDb),
         });
       }
       throw err;
     }
 
     await setOrganizationStateHeaders(res, session.username);
-
-    if (conflicts.length > 0) {
-      return res.json({ hasConflicts: true, conflicts, serverDb: userDb });
-    }
-    return res.json(userDb);
+    const responseDb = redactWineryDatabaseForRole(session.role, candidateDb);
+    return res.json({
+      ...responseDb,
+      ...(candidate.deletionRejected ? {
+        deletionRejected: true,
+        deletionError: candidate.deletionError,
+      } : {}),
+    });
   }
 });
 
@@ -1110,7 +1781,7 @@ router.get('/db', checkWineryScope('read'), async (req, res) => {
     await saveUserData(session.username, userDb);
   }
   await setOrganizationStateHeaders(res, session.username);
-  res.json(userDb);
+  res.json(redactWineryDatabaseForRole(session.role, userDb));
 });
 
 export default router;

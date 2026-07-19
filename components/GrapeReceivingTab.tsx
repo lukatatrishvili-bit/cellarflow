@@ -18,8 +18,44 @@ interface Props {
   currentUserName: string;
   currency: string;
   onReceiveGrapes: (input: Omit<GrapeIntakeRecord, 'id' | 'createdLotId' | 'netWeightKg' | 'estimatedVolumeL'>) => string;
+  /** Compound permission for the intake, lot, and audit writes. */
+  canReceiveGrapes?: boolean;
+  /** Optional vineyard update performed when a planned harvest is linked. */
+  canLinkHarvest?: boolean;
+  /** Optional vessel update performed when must is assigned on receipt. */
+  canFillDestinationVessel?: boolean;
+  /** Optional cost-ledger create performed when fruit pricing is entered. */
+  canPostIntakeCost?: boolean;
   setActiveTab?: (t: string) => void;
   setToastMessage?: (m: string) => void;
+}
+
+type ReceiveGrapesInput = Parameters<Props['onReceiveGrapes']>[0];
+
+interface OptionalIntakeWritePermissions {
+  canLinkHarvest: boolean;
+  canFillDestinationVessel: boolean;
+  canPostIntakeCost: boolean;
+}
+
+/**
+ * Strip optional compound writes from a prepared intake before it reaches the
+ * state mutation. The UI also hides these fields, but this keeps the callback
+ * safe if permissions change while the form is open.
+ */
+export function restrictOptionalIntakeWrites(
+  input: ReceiveGrapesInput,
+  permissions: OptionalIntakeWritePermissions,
+): ReceiveGrapesInput {
+  return {
+    ...input,
+    destinationVesselId: permissions.canFillDestinationVessel ? input.destinationVesselId : null,
+    harvestRecordId: permissions.canLinkHarvest ? input.harvestRecordId : undefined,
+    costPerKg: permissions.canPostIntakeCost ? input.costPerKg : undefined,
+    totalCost: permissions.canPostIntakeCost ? input.totalCost : undefined,
+    grapePrice: permissions.canPostIntakeCost ? input.grapePrice : undefined,
+    paymentStatus: permissions.canPostIntakeCost ? input.paymentStatus : 'not_applicable',
+  };
 }
 
 const WINE_CLASSES: Array<{ key: WineClass; en: string; ka: string }> = [
@@ -46,6 +82,10 @@ export default function GrapeReceivingTab({
   lang, vessels, blocks, harvests, intakes, currentUserName,
   currency,
   onReceiveGrapes, setActiveTab, setToastMessage,
+  canReceiveGrapes = true,
+  canLinkHarvest = true,
+  canFillDestinationVessel = true,
+  canPostIntakeCost = true,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
@@ -95,17 +135,24 @@ export default function GrapeReceivingTab({
   const yieldPct = parseFloat(juiceYieldPct) || 0;
   const estVolumeL = estimateMustVolumeL(net, yieldPct);
   const potentialAbv = brixToPotentialAlcohol(parseFloat(brix) || 0);
-  const costPerKgNum = parseFloat(costPerKg) || 0;
-  const explicitTotalCost = parseFloat(totalCost) || 0;
+  const costPerKgNum = canPostIntakeCost ? parseFloat(costPerKg) || 0 : 0;
+  const explicitTotalCost = canPostIntakeCost ? parseFloat(totalCost) || 0 : 0;
   const computedFruitCost = Math.round((explicitTotalCost || (net * costPerKgNum)) * 100) / 100;
 
-  const destVessel = vessels.find(v => v.id === destinationVesselId) || null;
+  const permittedDestinationVesselId = canFillDestinationVessel ? destinationVesselId : '';
+  const destVessel = vessels.find(v => v.id === permittedDestinationVesselId) || null;
   const freeCapacity = destVessel ? round1(destVessel.capacity - destVessel.currentVolume) : 0;
   const overfill = !!destVessel && estVolumeL > freeCapacity + 0.001;
 
   const varietyOk = variety.trim().length > 0;
   const sourceOk = source === 'own' ? !!blockId : supplierName.trim().length > 0;
-  const canSubmit = varietyOk && sourceOk && net > 0 && yieldPct > 0 && !overfill;
+  const canSubmit = canReceiveGrapes && varietyOk && sourceOk && net > 0 && yieldPct > 0 && !overfill;
+
+  const restrictedOptionalActions = [
+    !canLinkHarvest ? (ka ? 'დაგეგმილი მოსავლის მიბმა' : 'planned-harvest linking') : null,
+    !canFillDestinationVessel ? (ka ? 'ჭურჭლის შევსება' : 'destination-vessel filling') : null,
+    !canPostIntakeCost ? (ka ? 'ხარჯების წიგნში გატარება' : 'cost-ledger posting') : null,
+  ].filter((label): label is string => !!label);
 
   const applyBlock = (id: string) => {
     setBlockId(id);
@@ -124,6 +171,7 @@ export default function GrapeReceivingTab({
   };
 
   const applyHarvest = (id: string) => {
+    if (!canLinkHarvest) return;
     setHarvestRecordId(id);
     const h = harvests.find(x => x.id === id);
     if (!h) return;
@@ -153,9 +201,9 @@ export default function GrapeReceivingTab({
   };
 
   const handleSubmit = () => {
-    if (!canSubmit) return;
+    if (!canReceiveGrapes || !canSubmit) return;
     const block = blocks.find(b => b.id === blockId);
-    const lotId = onReceiveGrapes({
+    const preparedInput: ReceiveGrapesInput = {
       date,
       source,
       supplierName: source === 'supplier' ? supplierName.trim() : undefined,
@@ -188,11 +236,16 @@ export default function GrapeReceivingTab({
       currency,
       grapePrice: costPerKgNum > 0 ? costPerKgNum : undefined,
       paymentStatus,
-      destinationVesselId: destinationVesselId || null,
-      harvestRecordId: harvestRecordId || undefined,
+      destinationVesselId: permittedDestinationVesselId || null,
+      harvestRecordId: canLinkHarvest ? harvestRecordId || undefined : undefined,
       operator: operator.trim() || currentUserName,
       notes: notes.trim(),
-    });
+    };
+    const lotId = onReceiveGrapes(restrictOptionalIntakeWrites(preparedInput, {
+      canLinkHarvest,
+      canFillDestinationVessel,
+      canPostIntakeCost,
+    }));
     setToastMessage?.(ka
       ? `მიღება აღირიცხა: ${net.toLocaleString()} კგ ${variety} → ლოტი ${lotId}`
       : `Intake recorded: ${net.toLocaleString()} kg ${variety} → lot ${lotId}`);
@@ -228,14 +281,45 @@ export default function GrapeReceivingTab({
           {ka ? 'ყურძნის მიღება' : 'Grape Intake'}
         </h3>
         <p className="text-xs text-stone-400 font-semibold mt-0.5">
-          {ka
-            ? 'ყურძნის მიღება საკუთარი ვენახიდან ან მომწოდებლისგან — ავტომატურად იქმნება პარტია და ივსება ჭურჭელი'
-            : 'Receive fruit from an own block or a supplier — auto-creates the wine batch and fills the vessel'}
+          {!canReceiveGrapes
+            ? (ka
+              ? 'გადახედეთ მიღების ისტორიას და გახსენით დაკავშირებული ღვინის პარტიები.'
+              : 'Review receiving history and open linked wine batches.')
+            : canFillDestinationVessel
+              ? (ka
+                ? 'ყურძნის მიღება საკუთარი ვენახიდან ან მომწოდებლისგან — ავტომატურად იქმნება პარტია და ივსება ჭურჭელი'
+                : 'Receive fruit from an own block or a supplier — auto-creates the wine batch and fills the vessel')
+              : (ka
+                ? 'აღრიცხეთ ყურძნის მიღება და შექმენით პარტია; ჭურჭლის მინიჭება მოგვიანებით შეიძლება.'
+                : 'Record grape intake and create its batch; a vessel can be assigned later.')}
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-4">
+      {(!canReceiveGrapes || restrictedOptionalActions.length > 0) && (
+        <div role="status" className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="text-xs font-bold">
+              {!canReceiveGrapes
+                ? (ka ? 'მიღებებზე მხოლოდ ნახვის წვდომა' : 'Read-only intake access')
+                : (ka ? 'მიღების შეზღუდული მოქმედებები' : 'Limited intake actions')}
+            </p>
+            <p className="mt-0.5 text-[11px] font-semibold opacity-80">
+              {!canReceiveGrapes
+                ? (ka
+                  ? 'შეგიძლიათ მიღების ისტორიის ნახვა და დაკავშირებული პარტიების გახსნა. ახალი მიღების აღრიცხვა თქვენი როლისთვის მიუწვდომელია.'
+                  : 'You can review receiving history and open linked batches. Recording a new intake is unavailable for your role.')
+                : (ka
+                  ? `შეგიძლიათ მიღების აღრიცხვა და პარტიის შექმნა. თქვენი როლისთვის მიუწვდომელია: ${restrictedOptionalActions.join(', ')}.`
+                  : `You can record an intake and create its batch. Unavailable for your role: ${restrictedOptionalActions.join(', ')}.`)}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className={canReceiveGrapes ? 'grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-4' : 'grid grid-cols-1 gap-4'}>
         {/* ── Intake form ───────────────────────────────── */}
+        {canReceiveGrapes && (
         <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
           {/* Source toggle */}
           <div className="grid grid-cols-2 gap-2">
@@ -252,7 +336,7 @@ export default function GrapeReceivingTab({
           {/* Own vineyard: optional pending-harvest prefill + block */}
           {source === 'own' ? (
             <>
-              {pendingHarvests.length > 0 && (
+              {canLinkHarvest && pendingHarvests.length > 0 && (
                 <div>
                   <label className={labelCls}>{ka ? 'მოსავლის ჩანაწერიდან (არჩევითი)' : 'From planned harvest (optional)'}</label>
                   <select value={harvestRecordId} onChange={e => applyHarvest(e.target.value)} className={inputCls}>
@@ -365,6 +449,8 @@ export default function GrapeReceivingTab({
           </div>
 
           {/* Costing */}
+          {canPostIntakeCost && (
+          <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <label className={labelCls}>{ka ? 'ყურძნის ფასი / კგ' : `Fruit cost / kg (${currency})`}</label>
@@ -390,6 +476,8 @@ export default function GrapeReceivingTab({
             <div className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 dark:bg-emerald-950/20 dark:text-emerald-300 dark:border-emerald-900">
               {ka ? 'ხარჯების წიგნში ჩაიწერება:' : 'Will post to cost ledger:'} <strong>{computedFruitCost.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}</strong>
             </div>
+          )}
+          </>
           )}
 
           {/* Chemistry */}
@@ -436,7 +524,8 @@ export default function GrapeReceivingTab({
           </div>
 
           {/* Destination + operator */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className={`grid grid-cols-1 gap-2 ${canFillDestinationVessel ? 'sm:grid-cols-2' : ''}`}>
+            {canFillDestinationVessel && (
             <div>
               <label className={labelCls}>{ka ? 'დანიშნულების ჭურჭელი' : 'Destination vessel'}</label>
               <select value={destinationVesselId} onChange={e => setDest(e.target.value)} className={inputCls}>
@@ -446,6 +535,7 @@ export default function GrapeReceivingTab({
                 ))}
               </select>
             </div>
+            )}
             <div>
               <label className={labelCls}>{ka ? 'ოპერატორი' : 'Operator'}</label>
               <input type="text" value={operator} onChange={e => setOperator(e.target.value)} placeholder={currentUserName} className={inputCls} />
@@ -479,6 +569,7 @@ export default function GrapeReceivingTab({
             <CheckCircle2 className="w-4 h-4" /> {ka ? 'მიღების აღრიცხვა და პარტიის შექმნა' : 'Record intake & create batch'}
           </button>
         </div>
+        )}
 
         {/* ── Recent intakes ────────────────────────────── */}
         <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
@@ -492,8 +583,14 @@ export default function GrapeReceivingTab({
             <>
             <EmptyState
               icon={Grape}
-              title="No grape intakes yet"
-              description="Fill in the receiving form to receive fruit and create the first wine batch."
+              title={ka ? 'ყურძნის მიღება ჯერ არ არის' : 'No grape intakes yet'}
+              description={canReceiveGrapes
+                ? (ka
+                  ? 'შეავსეთ მიღების ფორმა პირველი ხილის მისაღებად და ღვინის პარტიის შესაქმნელად.'
+                  : 'Fill in the receiving form to receive fruit and create the first wine batch.')
+                : (ka
+                  ? 'არსებული მიღების ჩანაწერები აქ გამოჩნდება.'
+                  : 'Existing intake records will appear here.')}
             />
             <div className="hidden">
               <Grape className="w-10 h-10 mx-auto mb-2 opacity-30" />

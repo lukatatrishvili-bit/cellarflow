@@ -1,8 +1,20 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Warehouse, Plus, Trash2, Boxes, Thermometer, Droplet, PackagePlus, LockKeyhole } from 'lucide-react';
 import type { Language } from '../lib/i18n';
-import type { WineLot, BottlingRunRecord, SalesOrderRecord } from '../lib/wineryState';
-import { computeStock, unstored, utilization, type StorageLocation, type StockMovement, type StorageType } from '../lib/storage';
+import type { WineLot, BottlingRunRecord, SalesDispatchRecord, SalesOrderRecord } from '../lib/wineryState';
+import {
+  computeStock,
+  isFinishedGoodsLot,
+  storageLocationReferences,
+  storageMovementDeletionBlockers,
+  unstored,
+  utilization,
+  type StorageLocation,
+  type StorageLocationReferences,
+  type StockMovement,
+  type StorageMovementDeletionBlockers,
+  type StorageType,
+} from '../lib/storage';
 import { reservedBottlesFor, stockAvailabilityPosition } from '../lib/sales';
 import { CountUp } from './motion';
 
@@ -13,10 +25,17 @@ interface Props {
   locations: StorageLocation[];
   movements: StockMovement[];
   orders?: SalesOrderRecord[];
+  dispatches?: SalesDispatchRecord[];
   onUpdateLocations: (locations: StorageLocation[]) => void;
   onUpdateMovements: (movements: StockMovement[]) => void;
+  onDeleteLocation?: (locationId: string) => boolean | void;
+  onDeleteMovement?: (movementId: string) => boolean | void;
   setToastMessage?: (message: string) => void;
   onNavigate?: (target: { module: string; tab?: string }) => void;
+  canCreateLocation?: boolean;
+  canDeleteLocation?: boolean;
+  canCreateMovement?: boolean;
+  canDeleteMovement?: boolean;
 }
 
 const TYPES: Array<{ id: StorageType; ka: string; en: string }> = [
@@ -29,6 +48,55 @@ const TYPES: Array<{ id: StorageType; ka: string; en: string }> = [
 ];
 const typeLabel = (id: StorageType, ka: boolean) => { const t = TYPES.find(x => x.id === id); return t ? (ka ? t.ka : t.en) : id; };
 
+const joinLabels = (parts: string[], conjunction: string): string => {
+  if (parts.length <= 1) return parts[0] || '';
+  if (parts.length === 2) return `${parts[0]} ${conjunction} ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, ${conjunction} ${parts[parts.length - 1]}`;
+};
+
+const locationDeletionReason = (references: StorageLocationReferences, ka: boolean): string => {
+  const counts: Array<[number, string, string]> = [
+    [references.movementIds.length, 'stock movement', 'მარაგის მოძრაობა'],
+    [references.bottlingRunIds.length, 'bottling run', 'ჩამოსხმის ჩანაწერი'],
+    [references.salesOrderIds.length, 'sales order', 'გაყიდვის შეკვეთა'],
+    [references.salesDispatchIds.length, 'sales dispatch', 'გაცემის ჩანაწერი'],
+  ];
+  const parts = counts
+    .filter(([count]) => count > 0)
+    .map(([count, en, kaLabel]) => ka ? `${count} ${kaLabel}` : `${count} ${en}${count === 1 ? '' : 's'}`);
+  return ka
+    ? `წაშლა დაბლოკილია: ამ ლოკაციას კვლავ უკავშირდება ${joinLabels(parts, 'და')}. ჯერ განაახლეთ ან წაშალეთ დაკავშირებული ჩანაწერები.`
+    : `Deletion locked: ${joinLabels(parts, 'and')} still ${references.total === 1 ? 'references' : 'reference'} this location. Update or remove the linked records first.`;
+};
+
+const movementDeletionReason = (blockers: StorageMovementDeletionBlockers, ka: boolean): string => {
+  const linked: string[] = [];
+  if (blockers.bottlingRunIds.length > 0) {
+    linked.push(ka
+      ? `${blockers.bottlingRunIds.length} ჩამოსხმის ჩანაწერს`
+      : `${blockers.bottlingRunIds.length} bottling run${blockers.bottlingRunIds.length === 1 ? '' : 's'}`);
+  }
+  if (blockers.salesDispatchIds.length > 0) {
+    linked.push(ka
+      ? `${blockers.salesDispatchIds.length} გაცემის ჩანაწერს`
+      : `${blockers.salesDispatchIds.length} sales dispatch${blockers.salesDispatchIds.length === 1 ? '' : 'es'}`);
+  }
+  if (linked.length > 0) {
+    return ka
+      ? `მოძრაობა დაბლოკილია, რადგან ის ეკუთვნის ${joinLabels(linked, 'და')}. წაშალეთ საწყისი ჩანაწერი შესაბამის სამუშაო პროცესში.`
+      : `Movement locked because it belongs to ${joinLabels(linked, 'and')}. Delete the source record from its workflow instead.`;
+  }
+  if (blockers.wouldCreateNegativeStock) {
+    const shortage = Math.abs(blockers.remainingOnHandBottles);
+    return ka
+      ? `წაშლა მარაგს ${shortage.toLocaleString()} ბოთლით უარყოფითს გახდის. ამის ნაცვლად დააფიქსირეთ მაკორექტირებელი მოძრაობა.`
+      : `Deletion would leave stock short by ${shortage.toLocaleString()} bottles. Record a correcting movement instead.`;
+  }
+  return ka
+    ? `წაშლის შემდეგ დარჩება ${blockers.remainingOnHandBottles.toLocaleString()} ბოთლი, ხოლო ${blockers.reservedBottles.toLocaleString()} დაჯავშნილია. ჯერ გადაიტანეთ ან გააუქმეთ ჯავშნები.`
+    : `Deletion would leave ${blockers.remainingOnHandBottles.toLocaleString()} bottles for ${blockers.reservedBottles.toLocaleString()} reserved. Move or cancel the reservations first.`;
+};
+
 export default function StorageTab({
   lang,
   lots,
@@ -36,10 +104,17 @@ export default function StorageTab({
   locations,
   movements,
   orders = [],
+  dispatches = [],
   onUpdateLocations,
   onUpdateMovements,
+  onDeleteLocation,
+  onDeleteMovement,
   setToastMessage,
   onNavigate,
+  canCreateLocation = true,
+  canDeleteLocation = true,
+  canCreateMovement = true,
+  canDeleteMovement = true,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
@@ -64,6 +139,24 @@ export default function StorageTab({
   }, [orders, stock, today]);
   const totalAvailable = Math.max(0, totalStored - totalReserved);
   const totalUnstored = useMemo(() => Object.values(unstoredByLot).reduce((a, n) => a + n, 0), [unstoredByLot]);
+  const locationDeletionReferences = useMemo(() => new Map(locations.map(location => [
+    location.id,
+    storageLocationReferences(location.id, { movements, bottlingRuns, orders, dispatches }),
+  ])), [bottlingRuns, dispatches, locations, movements, orders]);
+  const movementDeletionGuards = useMemo(() => new Map(movements.slice(0, 30).map(movement => [
+    movement.id,
+    storageMovementDeletionBlockers(movement.id, {
+      movements,
+      bottlingRuns,
+      orders,
+      dispatches,
+      asOfDate: today,
+    }),
+  ])), [bottlingRuns, dispatches, movements, orders, today]);
+  const finishedGoodsLots = useMemo(
+    () => lots.filter(lot => isFinishedGoodsLot(lot, bottlingRuns)),
+    [bottlingRuns, lots],
+  );
 
   const lotName = (id: string) => lots.find(l => l.id === id)?.name || id;
 
@@ -71,7 +164,7 @@ export default function StorageTab({
   const [ln, setLn] = useState(''); const [lt, setLt] = useState<StorageType>('warehouse');
   const [lcap, setLcap] = useState(''); const [ltemp, setLtemp] = useState(''); const [lhum, setLhum] = useState('');
   const addLoc = () => {
-    if (!ln.trim()) return;
+    if (!canCreateLocation || !ln.trim()) return;
     const loc: StorageLocation = {
       id: `loc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: ln.trim(), type: lt,
@@ -82,13 +175,33 @@ export default function StorageTab({
     onUpdateLocations([...locations, loc]);
     setLn(''); setLcap(''); setLtemp(''); setLhum('');
   };
+  const deleteLocation = (locationId: string) => {
+    if (!canDeleteLocation) return;
+    const references = locationDeletionReferences.get(locationId);
+    if (references && references.total > 0) {
+      setToastMessage?.(locationDeletionReason(references, ka));
+      return;
+    }
+    if (typeof window !== 'undefined' && !window.confirm(ka
+      ? 'წავშალოთ ეს შენახვის ლოკაცია? სინქრონიზაციის შემდეგ მოქმედების გაუქმება შეუძლებელია.'
+      : 'Delete this storage location? This cannot be undone after sync.')) return;
+    if (onDeleteLocation) {
+      onDeleteLocation(locationId);
+      return;
+    }
+    onUpdateLocations(locations.filter(location => location.id !== locationId));
+  };
 
   // movement form
   const [mDate, setMDate] = useState(new Date().toISOString().slice(0, 10));
-  const [mLot, setMLot] = useState(lots[0]?.id || '');
+  const [mLot, setMLot] = useState(finishedGoodsLots[0]?.id || '');
   const [mLoc, setMLoc] = useState('');
   const [mDir, setMDir] = useState<'in' | 'out'>('in');
   const [mQty, setMQty] = useState('');
+  useEffect(() => {
+    if (finishedGoodsLots.some(lot => lot.id === mLot)) return;
+    setMLot(finishedGoodsLots[0]?.id || '');
+  }, [finishedGoodsLots, mLot]);
   const moveQty = Math.max(0, parseInt(mQty) || 0);
   const selectedOnHand = stock.get(mLoc)?.byLot[mLot] || 0;
   const selectedPosition = stockAvailabilityPosition({
@@ -99,8 +212,10 @@ export default function StorageTab({
     asOfDate: today,
   });
   const overAvailableForOut = mDir === 'out' && moveQty > selectedPosition.availableBottles;
-  const canMove = !!mLot && !!mLoc && moveQty > 0 && !overAvailableForOut;
+  const selectedLotIsFinishedGoods = finishedGoodsLots.some(lot => lot.id === mLot);
+  const canMove = selectedLotIsFinishedGoods && !!mLoc && moveQty > 0 && !overAvailableForOut;
   const submitMove = () => {
+    if (!canCreateMovement) return;
     if (!canMove) {
       if (overAvailableForOut) {
         setToastMessage?.(
@@ -108,6 +223,10 @@ export default function StorageTab({
             ? 'ვერ გაიცემა: რაოდენობა აჭარბებს არარეზერვირებულ ხელმისაწვდომ მარაგს.'
             : 'Cannot record outbound movement: quantity exceeds unreserved available stock.'
         );
+      } else if (!selectedLotIsFinishedGoods) {
+        setToastMessage?.(ka
+          ? 'საწყობში მოძრაობა მხოლოდ ჩამოსხმულ ღვინოს შეიძლება შეეხოს.'
+          : 'Storage movements can only use bottled wine with bottling provenance.');
       }
       return;
     }
@@ -124,8 +243,35 @@ export default function StorageTab({
     setMQty('');
   };
   const prefillReceive = (lotId: string, bottles: number) => {
+    if (!canCreateMovement) return;
     setMLot(lotId); setMDir('in'); setMQty(String(bottles)); if (!mLoc && locations[0]) setMLoc(locations[0].id);
   };
+  const deleteMovement = (movementId: string) => {
+    if (!canDeleteMovement) return;
+    const blockers = storageMovementDeletionBlockers(movementId, {
+      movements,
+      bottlingRuns,
+      orders,
+      dispatches,
+      asOfDate: today,
+    });
+    if (blockers?.blocked) {
+      setToastMessage?.(movementDeletionReason(blockers, ka));
+      return;
+    }
+    if (typeof window !== 'undefined' && !window.confirm(ka
+      ? 'წავშალოთ ეს მარაგის მოძრაობა? ბალანსი დაუყოვნებლივ შეიცვლება და სინქრონიზაციის შემდეგ მოქმედების გაუქმება შეუძლებელია.'
+      : 'Delete this stock movement? Stock balances will change immediately and this cannot be undone after sync.')) return;
+    if (onDeleteMovement) {
+      onDeleteMovement(movementId);
+      return;
+    }
+    onUpdateMovements(movements.filter(movement => movement.id !== movementId));
+  };
+
+  const hasAnyStorageAction = canCreateLocation || canDeleteLocation || canCreateMovement || canDeleteMovement;
+  const hasAllStorageActions = canCreateLocation && canDeleteLocation && canCreateMovement && canDeleteMovement;
+  const showStorageForms = canCreateLocation || canCreateMovement;
 
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
   const inputCls = 'w-full bg-stone-50 border border-stone-200 px-2.5 py-2 rounded-lg text-xs font-semibold text-stone-700 outline-none focus:border-[#4e0e15] dark:bg-stone-900 dark:border-stone-800';
@@ -139,6 +285,21 @@ export default function StorageTab({
         </h3>
         <p className="text-xs text-stone-400 font-semibold mt-0.5">{ka ? 'მზა ნაწარმის მარაგი ლოკაციების მიხედვით' : 'Finished-goods stock by location · feeds Annex №8'}</p>
       </div>
+
+      {!hasAllStorageActions && (
+        <div role="status" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+          <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {!hasAnyStorageAction
+              ? (ka
+                ? 'შენახვის მონაცემები მხოლოდ სანახავია. შეგიძლიათ შეამოწმოთ ლოკაციები, მარაგი, ხელმისაწვდომობა და მოძრაობების ისტორია.'
+                : 'Storage data is read-only. You can review locations, stock, availability, and movement history.')
+              : (ka
+                ? 'შენახვის ზოგიერთი მოქმედება თქვენი როლისთვის მიუწვდომელია. ლოკაციები, მარაგი, ხელმისაწვდომობა და მოძრაობების ისტორია კვლავ ხილულია.'
+                : 'Some storage actions are unavailable for your role. Locations, stock, availability, and movement history remain visible.')}
+          </span>
+        </div>
+      )}
 
       {/* Summary */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -163,18 +324,25 @@ export default function StorageTab({
           <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300">{ka ? 'ჩამოსხმული, მაგრამ ჯერ არ განთავსებული:' : 'Bottled but not yet placed in storage:'}</span>
           <div className="flex flex-wrap gap-2 mt-2">
             {Object.entries(unstoredByLot).map(([lotId, n]) => (
-              <button key={lotId} onClick={() => prefillReceive(lotId, n)}
-                className="flex items-center gap-1 px-2.5 py-1 bg-white dark:bg-stone-900 border border-amber-300 rounded-lg text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-100 cursor-pointer">
-                <PackagePlus className="w-3 h-3" /> {lotName(lotId)} — {n}
-              </button>
+              canCreateMovement ? (
+                <button key={lotId} onClick={() => prefillReceive(lotId, n)}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-white dark:bg-stone-900 border border-amber-300 rounded-lg text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-100 cursor-pointer">
+                  <PackagePlus className="w-3 h-3" /> {lotName(lotId)} — {n}
+                </button>
+              ) : (
+                <span key={lotId} className="flex items-center gap-1 px-2.5 py-1 bg-white dark:bg-stone-900 border border-amber-300 rounded-lg text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                  <PackagePlus className="w-3 h-3" /> {lotName(lotId)} — {n}
+                </span>
+              )
             ))}
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-5">
+      <div className={`grid grid-cols-1 ${showStorageForms ? 'lg:grid-cols-[340px_1fr]' : ''} gap-5`}>
         {/* Locations */}
-        <div className="space-y-4">
+        {showStorageForms && <div className="space-y-4">
+          {canCreateLocation && (
           <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-3 dark:bg-stone-900 dark:border-stone-800">
             <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><Plus className="w-4 h-4" /> {ka ? 'ლოკაციის დამატება' : 'Add location'}</h4>
             <div><label className={labelCls}>{ka ? 'დასახელება' : 'Name'}</label><input value={ln} onChange={e => setLn(e.target.value)} className={inputCls} placeholder={ka ? 'მაგ. მთავარი საწყობი' : 'e.g. Main warehouse'} /></div>
@@ -190,8 +358,10 @@ export default function StorageTab({
             </div>
             <button onClick={addLoc} disabled={!ln.trim()} className="w-full px-4 py-2 bg-[#4e0e15] hover:bg-[#34070a] disabled:opacity-50 text-amber-50 rounded-xl text-xs font-bold uppercase tracking-wide cursor-pointer">{ka ? 'დამატება' : 'Add'}</button>
           </div>
+          )}
 
           {/* Movement form */}
+          {canCreateMovement && (
           <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-3 dark:bg-stone-900 dark:border-stone-800">
             <h4 className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100"><Boxes className="w-4 h-4" /> {ka ? 'მოძრაობა' : 'Stock movement'}</h4>
             {locations.length === 0 ? (
@@ -207,7 +377,18 @@ export default function StorageTab({
                   <div><label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label><input type="date" value={mDate} onChange={e => setMDate(e.target.value)} className={inputCls} /></div>
                   <div><label className={labelCls}>{ka ? 'ბოთლი' : 'Bottles'}</label><input type="number" min={0} value={mQty} onChange={e => setMQty(e.target.value)} className={inputCls} /></div>
                 </div>
-                <div><label className={labelCls}>{ka ? 'ლოტი' : 'Wine lot'}</label><select value={mLot} onChange={e => setMLot(e.target.value)} className={inputCls}>{lots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ჩამოსხმული ლოტი' : 'Bottled wine lot'}</label>
+                  <select value={mLot} onChange={e => setMLot(e.target.value)} className={inputCls} disabled={finishedGoodsLots.length === 0}>
+                    {finishedGoodsLots.length === 0 && <option value="">{ka ? 'ჩამოსხმული ლოტი არ არის' : 'No bottled lots available'}</option>}
+                    {finishedGoodsLots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                  {finishedGoodsLots.length === 0 && (
+                    <p role="status" className="mt-1.5 text-[10px] leading-relaxed text-amber-700 dark:text-amber-300">
+                      {ka ? 'ჯერ დააფიქსირეთ ჩამოსხმა; დაუმუშავებელი ღვინო ბოთლების საწყობში ვერ განთავსდება.' : 'Record a bottling run first; bulk wine cannot be placed in finished-goods storage.'}
+                    </p>
+                  )}
+                </div>
                 <div><label className={labelCls}>{ka ? 'ლოკაცია' : 'Location'}</label><select value={mLoc} onChange={e => setMLoc(e.target.value)} className={inputCls}><option value="">{ka ? 'აირჩიეთ' : 'Select…'}</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
                 <button onClick={submitMove} disabled={!canMove} className="w-full px-4 py-2 bg-[#4e0e15] hover:bg-[#34070a] disabled:opacity-50 text-amber-50 rounded-xl text-xs font-bold uppercase tracking-wide cursor-pointer">{ka ? 'დაფიქსირება' : 'Record'}</button>
                 {mDir === 'out' && mLoc && mLot && (
@@ -226,16 +407,23 @@ export default function StorageTab({
               </>
             )}
           </div>
-        </div>
+          )}
+        </div>}
 
         {/* Stock by location */}
         <div className="space-y-4">
           {locations.length === 0 ? (
             <div className="bg-white border border-dashed border-[#e8dfd5] rounded-2xl p-12 text-center text-stone-400 dark:bg-stone-900 dark:border-stone-800">
               <Warehouse className="w-10 h-10 mx-auto mb-2 opacity-40" />
-              <p className="text-xs font-bold">{ka ? 'დაამატეთ პირველი ლოკაცია' : 'Add your first storage location'}</p>
+              <p className="text-xs font-bold">
+                {canCreateLocation
+                  ? (ka ? 'დაამატეთ პირველი ლოკაცია' : 'Add your first storage location')
+                  : (ka ? 'შენახვის ლოკაციები ჯერ არ არის' : 'No storage locations yet')}
+              </p>
               <p className="mt-1 text-[11px] text-stone-400">
-                {ka ? 'ჩამოსხმული მარაგის განთავსებამდე საჭიროა შენახვის ადგილი.' : 'Create a place to receive bottled stock, or return to bottling first.'}
+                {canCreateLocation
+                  ? (ka ? 'ჩამოსხმული მარაგის განთავსებამდე საჭიროა შენახვის ადგილი.' : 'Create a place to receive bottled stock, or return to bottling first.')
+                  : (ka ? 'ლოკაციის დამატება შეუძლია შესაბამისი წვდომის მქონე გუნდის წევრს.' : 'A team member with storage access can add the first location.')}
               </p>
               <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
                 <button
@@ -258,6 +446,11 @@ export default function StorageTab({
             const s = stock.get(loc.id);
             const u = utilization(s, loc);
             const lotEntries = s ? Object.entries(s.byLot) : [];
+            const deletionReferences = locationDeletionReferences.get(loc.id);
+            const deletionLocked = Boolean(deletionReferences && deletionReferences.total > 0);
+            const deletionReason = deletionReferences && deletionLocked
+              ? locationDeletionReason(deletionReferences, ka)
+              : '';
             return (
               <div key={loc.id} className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
                 <div className="px-4 py-3 border-b border-[#e8dfd5] dark:border-stone-800 flex items-center justify-between gap-2">
@@ -269,8 +462,25 @@ export default function StorageTab({
                       {loc.targetHumidity != null && <span className="flex items-center gap-0.5"><Droplet className="w-3 h-3" />{loc.targetHumidity}%</span>}
                     </div>
                   </div>
-                  <button onClick={() => onUpdateLocations(locations.filter(l => l.id !== loc.id))} className="text-stone-300 hover:text-rose-600 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
+                  {canDeleteLocation && (
+                    <button
+                      type="button"
+                      onClick={() => deleteLocation(loc.id)}
+                      disabled={deletionLocked}
+                      title={deletionLocked ? deletionReason : (ka ? `${loc.name} ლოკაციის წაშლა` : `Delete location ${loc.name}`)}
+                      aria-label={ka ? `${loc.name} ლოკაციის წაშლა` : `Delete location ${loc.name}`}
+                      className="text-stone-300 hover:text-rose-600 disabled:text-amber-500 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {deletionLocked ? <LockKeyhole className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
+                {canDeleteLocation && deletionLocked && (
+                  <div role="status" className="flex items-start gap-1.5 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[10px] font-semibold leading-relaxed text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                    <LockKeyhole className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>{deletionReason}</span>
+                  </div>
+                )}
                 <div className="p-4 space-y-3">
                   {/* capacity bar */}
                   <div>
@@ -329,15 +539,40 @@ export default function StorageTab({
               <div className="overflow-x-auto max-h-72 overflow-y-auto">
                 <table className="w-full text-left text-[11px]">
                   <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
-                    {movements.slice(0, 30).map(m => (
-                      <tr key={m.id} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
-                        <td className="p-2.5 font-mono text-stone-500">{m.date}</td>
-                        <td className="p-2.5 text-stone-700 dark:text-amber-50">{lotName(m.lotId)}</td>
-                        <td className="p-2.5 text-stone-500">{locations.find(l => l.id === m.locationId)?.name || '—'}</td>
-                        <td className={`p-2.5 text-right font-mono font-bold ${m.direction === 'in' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600'}`}>{m.direction === 'in' ? '+' : '−'}{m.bottles}</td>
-                        <td className="p-2.5 text-right"><button onClick={() => onUpdateMovements(movements.filter(x => x.id !== m.id))} className="text-stone-300 hover:text-rose-600 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button></td>
-                      </tr>
-                    ))}
+                    {movements.slice(0, 30).map(m => {
+                      const blockers = movementDeletionGuards.get(m.id);
+                      const deletionLocked = Boolean(blockers?.blocked);
+                      const deletionReason = blockers && deletionLocked ? movementDeletionReason(blockers, ka) : '';
+                      return (
+                        <tr key={m.id} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
+                          <td className="p-2.5 font-mono text-stone-500">{m.date}</td>
+                          <td className="p-2.5 text-stone-700 dark:text-amber-50">
+                            <span>{lotName(m.lotId)}</span>
+                            {canDeleteMovement && deletionLocked && (
+                              <span className="mt-1 flex max-w-sm items-start gap-1 text-[9px] font-semibold leading-relaxed text-amber-700 dark:text-amber-300">
+                                <LockKeyhole className="mt-0.5 h-2.5 w-2.5 shrink-0" /> {deletionReason}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2.5 text-stone-500">{locations.find(l => l.id === m.locationId)?.name || '—'}</td>
+                          <td className={`p-2.5 text-right font-mono font-bold ${m.direction === 'in' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600'}`}>{m.direction === 'in' ? '+' : '−'}{m.bottles}</td>
+                          {canDeleteMovement && (
+                            <td className="p-2.5 text-right">
+                              <button
+                                type="button"
+                                onClick={() => deleteMovement(m.id)}
+                                disabled={deletionLocked}
+                                title={deletionLocked ? deletionReason : (ka ? `${m.date} მოძრაობის წაშლა` : `Delete movement ${m.date}`)}
+                                aria-label={ka ? `${m.date} მოძრაობის წაშლა` : `Delete movement ${m.date}`}
+                                className="text-stone-300 hover:text-rose-600 disabled:text-amber-500 disabled:cursor-not-allowed cursor-pointer"
+                              >
+                                {deletionLocked ? <LockKeyhole className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

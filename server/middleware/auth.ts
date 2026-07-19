@@ -118,6 +118,13 @@ export async function setOrganizationStateHeaders(res: express.Response, usernam
   return meta;
 }
 
+export function organizationContextMismatch(requestedOrganizationId: unknown, activeOrganizationId: string): boolean {
+  const requested = typeof requestedOrganizationId === 'string'
+    ? requestedOrganizationId.trim()
+    : '';
+  return Boolean(requested && requested !== activeOrganizationId);
+}
+
 export const loginLimiter = createSharedLoginLimiter({
   maxAttempts: 8,
   windowMs: 15 * 60 * 1000,
@@ -142,6 +149,14 @@ export function checkWineryScope(capability: Capability) {
     const organizationId = user.activeOrganizationId;
     if (!organizationId) {
       return res.status(400).json({ error: 'No active organization set for user' });
+    }
+    const requestedOrganizationId = req.get('X-CellarFlow-Org-Id');
+    if (organizationContextMismatch(requestedOrganizationId, organizationId)) {
+      res.setHeader('X-CellarFlow-Org-Id', organizationId);
+      return res.status(409).json({
+        code: 'org_context_changed',
+        error: 'The active organization changed before this request completed. Reload the current organization state and retry.',
+      });
     }
     
     (req as any).wineryContext = {

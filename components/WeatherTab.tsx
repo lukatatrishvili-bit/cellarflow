@@ -23,6 +23,7 @@ interface WeatherTabProps {
   setPrefilledTaskTitle?: (title: string) => void;
   setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
   setPrefilledTaskDesc?: (desc: string) => void;
+  canCreateTask?: boolean;
 }
 
 interface WeatherData {
@@ -279,7 +280,8 @@ export default function WeatherTab({
   setActiveTab,
   setPrefilledTaskTitle,
   setPrefilledTaskPriority,
-  setPrefilledTaskDesc
+  setPrefilledTaskDesc,
+  canCreateTask = true,
 }: WeatherTabProps) {
   const currentLang = (lang === 'ka' || lang === 'it' || lang === 'fr' || lang === 'de') ? lang : 'en';
   const t = dict[currentLang];
@@ -1204,9 +1206,10 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       </div>
                       <p className="text-xs font-semibold leading-relaxed mt-3">{sprayingAnalysis.message}</p>
                       
-                      {sprayingAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
+                      {canCreateTask && sprayingAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
                         <button
                           onClick={() => {
+                            if (!canCreateTask) return;
                             const blockName = activeBlock?.name || '';
                             const variety = activeBlock?.grapeVariety || '';
                             const temp = weatherData?.currentTemp ?? '';
@@ -1274,9 +1277,10 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       </div>
                       <p className="text-xs font-semibold leading-relaxed mt-3">{harvestAnalysis.message}</p>
                       
-                      {harvestAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
+                      {canCreateTask && harvestAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
                         <button
                           onClick={() => {
+                            if (!canCreateTask) return;
                             const blockName = activeBlock?.name || '';
                             const variety = activeBlock?.grapeVariety || '';
                             const temp = weatherData?.currentTemp ?? '';

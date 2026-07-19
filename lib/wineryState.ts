@@ -32,6 +32,8 @@ export interface WineLot {
     type: string;
     description: string;
     operator: string;
+    /** Workflow record that created this timeline event, when reversible. */
+    sourceRef?: string;
   }>;
   sensoryProfile?: {
     tannins: number; // 1-10
@@ -239,6 +241,8 @@ export interface TransferEvent {
 
 export interface BottlingRunRecord {
   id: string;
+  /** Actual record creation time; legacy runs may only have `date` or a timestamped id. */
+  createdAt?: string;
   lotId: string;
   lotName: string;
   date: string;
@@ -325,8 +329,8 @@ export interface SalesOrderRecord {
   grossProfit?: number;
   marginPct?: number | null;
   status: SalesOrderStatus;
-  dispatchId?: string;
-  fulfilledAt?: string;
+  dispatchId?: string | null;
+  fulfilledAt?: string | null;
   cancelledAt?: string;
   operator: string;
   notes?: string;

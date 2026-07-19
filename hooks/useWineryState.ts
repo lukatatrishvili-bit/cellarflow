@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Language } from '../lib/i18n';
-import { SyncQueueManager, IndexedDBQueue } from '../lib/syncQueue';
+import { SyncQueueManager, IndexedDBQueue, type PendingConflictSyncIntent } from '../lib/syncQueue';
 import type {
   Vessel,
   WineLot,
@@ -37,10 +37,18 @@ import { signAuditEntries } from '../lib/auditHash';
 import type { CostEntry } from '../lib/costing';
 import { grapeIntakeCostEntry, materialCostEntryFromOperation } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
-import type { StorageLocation, StockMovement } from '../lib/storage';
+import {
+  storageLocationReferences,
+  storageMovementDeletionBlockers,
+  type StorageLocation,
+  type StockMovement,
+} from '../lib/storage';
 import { PDO_RULES } from '../lib/pdo';
 import { createDocumentAttachmentRecord, type DocumentAttachmentInput } from '../lib/attachments';
 import { createCrmLeadRecord, upsertCrmLeadRecord, type CrmLeadRecordInput } from '../lib/crm';
+import { persistDeletionTombstones, type DeletionTombstone } from '../lib/deletionTombstones';
+import { newerBottlingRunFor } from '../lib/bottlingIntegrity';
+import { createUniqueLotId, createUniqueRecordId } from '../lib/recordIds';
 import {
   createAiDraftQueueItems,
   upsertAiDraftQueueItems,
@@ -49,6 +57,10 @@ import {
   type AiDraftQueueStatus,
 } from '../lib/aiDraftActions';
 import { isKnownRole } from '../server/permissions';
+import {
+  buildResolvedSyncState,
+  resolveDeletionIntent,
+} from '../lib/syncConflictRecovery';
 
 interface RolePersistence {
   setItem(key: string, value: string): void;
@@ -71,6 +83,105 @@ export function applyOrganizationSwitchRole(
     // React state remains authoritative when persistent storage is unavailable.
   }
   return updatedUser;
+}
+
+export function applyLiveSessionProfile(
+  currentUser: UserProfile,
+  response: unknown,
+  storage?: RolePersistence,
+): UserProfile | null {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return null;
+  const candidate = response as Partial<UserProfile>;
+  if (!isKnownRole(candidate.role)) return null;
+  if (typeof candidate.username !== 'string' || candidate.username !== currentUser.username) return null;
+
+  const updatedUser: UserProfile = {
+    ...currentUser,
+    username: candidate.username,
+    role: candidate.role,
+    ...(typeof candidate.email === 'string' ? { email: candidate.email } : {}),
+    ...(typeof candidate.fullName === 'string' ? { fullName: candidate.fullName } : {}),
+    ...(candidate.language === 'en' || candidate.language === 'ka' ? { language: candidate.language } : {}),
+    ...(Array.isArray(candidate.enabledModules)
+      ? { enabledModules: candidate.enabledModules.filter((item): item is string => typeof item === 'string') }
+      : {}),
+    ...(Array.isArray(candidate.enabledWidgets)
+      ? { enabledWidgets: candidate.enabledWidgets.filter((item): item is string => typeof item === 'string') }
+      : {}),
+    ...(typeof candidate.registrationComplete === 'boolean'
+      ? { registrationComplete: candidate.registrationComplete }
+      : {}),
+  };
+  try {
+    storage?.setItem('vinea_curr_user', JSON.stringify(updatedUser));
+  } catch {
+    // React state remains authoritative when persistent storage is unavailable.
+  }
+  return updatedUser;
+}
+
+export function isWineryDatabaseSnapshot(value: unknown): value is Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const arrayKeys = [
+    'vessels', 'lots', 'fermlogs', 'lablogs', 'inventory', 'tasks', 'notes',
+    'blocks', 'vineyardProjects', 'phenologyLogs', 'sprays', 'scoutings',
+    'soilRecords', 'samplings', 'harvests', 'irrigationLogs', 'fertilizerLogs',
+    'auditLogs', 'bottlingRuns', 'transfers', 'grapeIntakes', 'cellarOps',
+    'costEntries', 'storageLocations', 'stockMovements', 'salesDispatches',
+    'salesOrders', 'supplierPayments', 'certificationRecords', 'attachments',
+    'crmLeads', 'aiDrafts',
+  ];
+  return arrayKeys.every(key => Array.isArray(candidate[key]))
+    && Boolean(candidate.winePricing && typeof candidate.winePricing === 'object' && !Array.isArray(candidate.winePricing))
+    && Boolean(candidate.companyProfile && typeof candidate.companyProfile === 'object' && !Array.isArray(candidate.companyProfile));
+}
+
+const createBlankCompanyProfile = (): CompanyProfile => ({
+  companyName: '',
+  wineryName: '',
+  country: '',
+  region: '',
+  municipality: '',
+  address: '',
+  identificationCode: '',
+  wineAgencyRegistrationCode: '',
+  legalAddress: '',
+  factualAddress: '',
+  certificateContactPerson: '',
+  certificatePhone: '',
+  certificateEmail: '',
+  producerRegistrationNotes: '',
+  contactEmail: '',
+  phone: '',
+  website: '',
+  measurementUnits: 'metric',
+  currency: 'GEL',
+});
+
+const createSignedOutUser = (): UserProfile => ({
+  username: '',
+  email: '',
+  fullName: '',
+  role: 'Read-Only',
+  language: 'en',
+  registrationComplete: true,
+});
+
+const TENANT_CACHE_KEYS = [
+  'cf_vessels', 'cf_lots', 'cf_fermlogs', 'cf_lablogs', 'cf_inventory',
+  'cf_tasks', 'cf_notes', 'vinea_blocks', 'vinea_projects', 'vinea_phenology',
+  'vinea_sprays', 'vinea_scoutings', 'vinea_soil', 'vinea_samplings',
+  'vinea_harvests', 'vinea_irrigation', 'vinea_fertilizer', 'vinea_audit_logs',
+  'cf_bottling_history', 'cf_transfers_history', 'cf_grape_intakes',
+  'cf_cellar_ops', 'cf_cost_entries', 'cf_wine_pricing', 'cf_storage_locations',
+  'cf_storage_movements', 'cf_sales_dispatches', 'cf_sales_orders',
+  'cf_supplier_payments', 'cf_certification_records', 'cf_attachments',
+  'cf_crm_leads', 'cf_ai_drafts', 'vinea_company_profile', 'vinea_last_sync_at',
+] as const;
+
+function clearTenantCachedData(storage: Pick<Storage, 'removeItem'>): void {
+  TENANT_CACHE_KEYS.forEach(key => storage.removeItem(key));
 }
 
 export interface CellarNote {
@@ -149,23 +260,23 @@ export function useWineryState() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   // Auth States
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUser, setCurrentUser] = useState<UserProfile>({
-    username: '',
-    email: '',
-    fullName: '',
-    role: 'Read-Only',
-    language: 'en',
-    registrationComplete: true,
-  });
+  const [currentUser, setCurrentUser] = useState<UserProfile>(createSignedOutUser);
 
   const [organizations, setOrganizations] = useState<{ id: string; name: string; role: string; isActive: boolean }[]>([]);
+  const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
+  const [workspaceHydrationError, setWorkspaceHydrationError] = useState<string | null>(null);
+  const organizationSwitchInFlight = useRef(false);
+  const workspaceTransitionRef = useRef(false);
 
   const fetchOrganizations = async () => {
+    const requestEpoch = syncEpoch.current;
     try {
       const res = await fetch('/api/org/list');
       if (res.ok) {
         const list = await res.json();
-        setOrganizations(list);
+        if (requestEpoch === syncEpoch.current && Array.isArray(list)) {
+          setOrganizations(list);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch organizations:', err);
@@ -173,60 +284,76 @@ export function useWineryState() {
   };
 
   const handleSwitchOrganization = async (orgId: string): Promise<boolean> => {
+    if (organizationSwitchInFlight.current) return false;
+    organizationSwitchInFlight.current = true;
+    workspaceTransitionRef.current = true;
+    setIsSwitchingOrganization(true);
+    setWorkspaceHydrationError(null);
+    invalidateSyncWork(true);
     try {
-      const res = await fetch('/api/org/switch', {
+      const res = await SyncQueueManager.switchOrganizationContext(() => fetch('/api/org/switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ organizationId: orgId })
-      });
+      }));
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        clearTenantCachedData(localStorage);
+        // Conflict snapshots are tenant data. Invalidate them as soon as the
+        // server commits the switch, before any new-workspace screen can open.
+        setSyncConflicts(null);
+        setPendingServerDb(null);
+        pendingConflictSyncIntent.current = null;
         const switchedUser = applyOrganizationSwitchRole(currentUser, data, localStorage);
         if (!switchedUser) {
-          setToastMessage(lang === 'ka'
-            ? '⚠️ სამუშაო სივრცე შეიცვალა, მაგრამ ახალი როლის განახლება ვერ მოხერხდა. გთხოვთ, განაახლოთ გვერდი.'
-            : '⚠️ Workspace switched, but its role could not be refreshed. Please reload the page.');
+          const message = lang === 'ka'
+            ? 'სამუშაო სივრცე შეიცვალა, მაგრამ ახალი როლის ჩატვირთვა ვერ მოხერხდა. უსაფრთხოდ გასაგრძელებლად განაახლეთ გვერდი.'
+            : 'The workspace changed, but its role could not be loaded. Reload before continuing safely.';
+          setWorkspaceHydrationError(message);
+          setToastMessage(`⚠️ ${message}`);
           return false;
         }
-        // Update permission-bearing client state before any follow-up fetches so
-        // the previous workspace role cannot keep controls visible while the new
-        // organization data hydrates.
+
+        const dbData = await SyncQueueManager.sync({});
+        if (!isWineryDatabaseSnapshot(dbData)) {
+          const message = lang === 'ka'
+            ? 'ახალი სამუშაო სივრცის მონაცემები ვერ ჩაიტვირთა. ძველი მონაცემების ახალ სივრცეში მოხვედრის თავიდან ასაცილებლად მუშაობა შეჩერებულია — განაახლეთ გვერდი.'
+            : 'The new workspace data could not be loaded. Editing is blocked to prevent old data entering the new workspace; reload the page.';
+          setWorkspaceHydrationError(message);
+          setToastMessage(`⚠️ ${message}`);
+          return false;
+        }
+
+        // Commit role and data together while the transition overlay still
+        // blocks interaction with the old workspace snapshot.
+        updateAllStates(dbData);
         setCurrentUser(switchedUser);
+        hasHydrated.current = true;
+        workspaceTransitionRef.current = false;
         await fetchOrganizations();
-        await discardLocalUnsyncedChanges();
+        setLastSyncError(null);
         setToastMessage(lang === 'ka' ? 'სამუშაო სივრცე შეიცვალა!' : 'Switched winery workspace!');
         return true;
       } else {
+        hasHydrated.current = true;
+        workspaceTransitionRef.current = false;
         setToastMessage(`⚠️ ${data.error || 'Failed to switch workspace'}`);
         return false;
       }
     } catch (err) {
-      setToastMessage(lang === 'ka' ? '⚠️ კავშირის შეცდომა სამუშაო სივრცის შეცვლისას.' : '⚠️ Connection error while switching workspace.');
+      const message = lang === 'ka'
+        ? 'სამუშაო სივრცის შეცვლა უსაფრთხოდ ვერ დასრულდა. მონაცემების შერევის თავიდან ასაცილებლად განაახლეთ გვერდი.'
+        : 'The workspace transition could not finish safely. Reload the page to prevent data from different workspaces mixing.';
+      setWorkspaceHydrationError(message);
+      setToastMessage(`⚠️ ${message}`);
       return false;
+    } finally {
+      organizationSwitchInFlight.current = false;
+      setIsSwitchingOrganization(false);
     }
   };
 
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>({
-    companyName: '',
-    wineryName: '',
-    country: '',
-    region: '',
-    municipality: '',
-    address: '',
-    identificationCode: '',
-    wineAgencyRegistrationCode: '',
-    legalAddress: '',
-    factualAddress: '',
-    certificateContactPerson: '',
-    certificatePhone: '',
-    certificateEmail: '',
-    producerRegistrationNotes: '',
-    contactEmail: '',
-    phone: '',
-    website: '',
-    measurementUnits: 'metric',
-    currency: 'GEL'
-  });
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(createBlankCompanyProfile);
 
   const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -312,9 +439,35 @@ export function useWineryState() {
   // Synchronization refs to manage server state & loop prevention
   const isSyncing = useRef(false);
   const hasHydrated = useRef(false);
-  const pendingSync = useRef<{ payload: any } | null>(null);
+  const pendingSync = useRef<{ payload: any; epoch: number } | null>(null);
+  const pendingConflictSyncIntent = useRef<PendingConflictSyncIntent | null>(null);
+  const syncEpoch = useRef(0);
+  const conflictResolutionInFlight = useRef(false);
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const lastServerState = useRef<Record<string, string>>({});
+
+  const invalidateSyncWork = (pauseHydration = false) => {
+    syncEpoch.current += 1;
+    pendingSync.current = null;
+    if (pauseHydration) hasHydrated.current = false;
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOrganizationContextChanged = (event: StorageEvent) => {
+      if (event.key !== 'cellarflow_org_state_org_id' || event.oldValue === event.newValue) return;
+      workspaceTransitionRef.current = true;
+      invalidateSyncWork(true);
+      setSyncConflicts(null);
+      setPendingServerDb(null);
+      pendingConflictSyncIntent.current = null;
+      setWorkspaceHydrationError(lang === 'ka'
+        ? 'სამუშაო სივრცე სხვა ჩანართში შეიცვალა. უსაფრთხოდ გასაგრძელებლად განაახლეთ ეს გვერდი.'
+        : 'The workspace changed in another tab. Reload this page before continuing safely.');
+    };
+    window.addEventListener('storage', handleOrganizationContextChanged);
+    return () => window.removeEventListener('storage', handleOrganizationContextChanged);
+  }, [lang]);
 
   // Auto-dismiss toast messages after 5 seconds
   useEffect(() => {
@@ -384,14 +537,16 @@ export function useWineryState() {
   };
 
   const triggerSync = async (forcePayload?: any) => {
+    if (!hasHydrated.current || workspaceTransitionRef.current) return;
     if (isSyncing.current) {
       // Don't drop syncs requested while one is in flight (the dropped data —
       // e.g. a freshly added task — would be reverted by the in-flight
       // response). Remember the latest request and run it afterwards.
-      pendingSync.current = { payload: forcePayload };
+      pendingSync.current = { payload: forcePayload, epoch: syncEpoch.current };
       return;
     }
     isSyncing.current = true;
+    const requestEpoch = syncEpoch.current;
 
     try {
       const latestState = forcePayload || {
@@ -403,20 +558,34 @@ export function useWineryState() {
       };
 
       const response = await SyncQueueManager.sync(latestState);
+      if (requestEpoch !== syncEpoch.current) return;
       if (response) {
+        const hasNewerPendingPayload = Boolean(pendingSync.current)
+          && !response.hasConflicts
+          && !response.orgStateConflict
+          && !response.syncError;
+        if (hasNewerPendingPayload) return;
         if (response.hasConflicts) {
           setSyncConflicts(response.conflicts);
           setPendingServerDb(response.serverDb);
-          setToastMessage(lang === 'ka' ? 'კონფლიქტი აღმოჩენილია სინქრონიზაციისას!' : 'Sync conflict detected! Review required.');
+          pendingConflictSyncIntent.current = response.pendingSyncIntent
+            || SyncQueueManager.getPendingConflictSyncIntent();
+          setToastMessage(response.deletionRejected
+            ? (lang === 'ka'
+              ? 'წაშლა გაუქმდა და ჩანაწერი აღდგა, რადგან დაკავშირებული მონაცემები სხვა სესიაში შეიცვალა. ჯერ მოაგვარეთ კონფლიქტი.'
+              : 'Deletion was cancelled and the record restored because linked data changed in another session. Resolve the conflict first.')
+            : response.deletionDeferred
+            ? (lang === 'ka'
+              ? 'წაშლა შეჩერდა, რადგან დაკავშირებული ჩანაწერი სხვა სესიაში შეიცვალა. მოაგვარეთ კონფლიქტი და შემდეგ სცადეთ წაშლა ხელახლა.'
+              : 'Deletion was paused because a linked record changed in another session. Resolve the conflict, then retry the deletion.')
+            : (lang === 'ka' ? 'კონფლიქტი აღმოჩენილია სინქრონიზაციისას!' : 'Sync conflict detected! Review required.'));
         } else if (response.orgStateConflict) {
-          if (response.serverDb) {
-            await SyncQueueManager.clearOfflineQueue();
-            updateAllStates(response.serverDb);
-          }
+          // A second whole-document race is not an acknowledgement. Keep the
+          // local transaction and its dirty revisions intact for a later retry.
           setLastSyncError(response.syncError || 'Organization state conflict');
           setToastMessage(lang === 'ka'
-            ? '⚠️ მონაცემები განახლდა სერვერიდან. თქვენი ბოლო ცვლილება არ ჩაიწერა, რადგან მეღვინეობის მონაცემები სხვა სესიამ შეცვალა.'
-            : '⚠️ Refreshed from server. Your last change was not saved because this winery changed in another session.');
+            ? '⚠️ მეღვინეობის მონაცემები სხვა სესიამ შეცვალა. თქვენი ლოკალური ცვლილება შენახულია და ხელახლა სინქრონიზაციისთვის მზადაა.'
+            : '⚠️ This winery changed in another session. Your local change was kept and is ready to retry.');
         } else if (response.syncError) {
           // The server rejected the whole sync — keep data dirty for retry,
           // but tell the user instead of failing silently.
@@ -426,7 +595,12 @@ export function useWineryState() {
           }
         } else {
           updateAllStates(response);
-          if (response.recoveredOrgStateConflict) {
+          pendingConflictSyncIntent.current = null;
+          if (response.deletionRejected) {
+            setToastMessage(lang === 'ka'
+              ? 'წაშლა გაუქმდა. ჩანაწერი აღდგა სერვერიდან, რადგან მასთან დაკავშირებული მონაცემები შეიცვალა.'
+              : 'Deletion cancelled. The record was restored from the server because its linked data changed.');
+          } else if (response.recoveredOrgStateConflict) {
             setToastMessage(lang === 'ka'
               ? '✓ მონაცემები განახლდა და ცვლილება უსაფრთხოდ ჩაიწერა.'
               : '✓ Data refreshed and your change was saved safely.');
@@ -448,20 +622,26 @@ export function useWineryState() {
     } finally {
       isSyncing.current = false;
       if (pendingSync.current) {
-        const { payload } = pendingSync.current;
+        const { payload, epoch } = pendingSync.current;
         pendingSync.current = null;
-        triggerSync(payload);
+        if (epoch === syncEpoch.current && hasHydrated.current && !workspaceTransitionRef.current) {
+          triggerSync(payload);
+        }
       }
     }
   };
 
   const discardLocalUnsyncedChanges = async () => {
+    invalidateSyncWork();
     try {
-      await SyncQueueManager.clearOfflineQueue();
-      const dbData = await SyncQueueManager.sync({});
-      if (dbData) {
-        updateAllStates(dbData);
+      const dbData = await SyncQueueManager.discardPendingChangesAndFetch();
+      if (!isWineryDatabaseSnapshot(dbData)) {
+        const detail = dbData?.syncError || (lang === 'ka' ? 'სერვერის მონაცემები ვერ ჩაიტვირთა.' : 'Server state could not be loaded.');
+        setLastSyncError(detail);
+        setToastMessage(`⚠️ ${lang === 'ka' ? 'ლოკალური ცვლილებები არ გაუქმებულა' : 'Local changes were not discarded'}: ${detail}`);
+        return;
       }
+      updateAllStates(dbData);
       setLastSyncError(null);
       setToastMessage(lang === 'ka' ? 'ლოკალური ცვლილებები გაუქმებულია. სინქრონიზირებულია სერვერთან.' : 'Local changes discarded. Synchronized with server state.');
     } catch (err) {
@@ -561,12 +741,23 @@ export function useWineryState() {
   };
 
   const handleAuthLogout = async () => {
+    invalidateSyncWork();
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
     } catch (err) {
       console.error('Logout request failed:', err);
     }
+    await SyncQueueManager.discardPendingChanges();
+    SyncQueueManager.clearOrganizationContext();
     setIsLoggedIn(false);
+    setSyncConflicts(null);
+    setPendingServerDb(null);
+    pendingConflictSyncIntent.current = null;
+    setWorkspaceHydrationError(null);
+    workspaceTransitionRef.current = false;
+    setOrganizations([]);
+    setCompanyProfile(createBlankCompanyProfile());
+    setCurrentUser(createSignedOutUser());
     localStorage.removeItem('vinea_is_logged_in');
     localStorage.removeItem('vinea_curr_user');
     localStorage.removeItem('cf_vessels');
@@ -739,6 +930,7 @@ export function useWineryState() {
   };
 
   const clearAllData = async () => {
+    invalidateSyncWork();
     try {
       const res = await fetch('/api/admin/reset', {
         method: 'POST',
@@ -781,7 +973,7 @@ export function useWineryState() {
         localStorage.removeItem('vinea_company_profile');
         localStorage.removeItem('vinea_deleted_ids');
 
-        await SyncQueueManager.clearOfflineQueue();
+        await SyncQueueManager.discardPendingChanges();
 
         // Hydrate empty states locally
         updateAllStates(cleanDB);
@@ -1212,7 +1404,7 @@ export function useWineryState() {
   };
 
   const handleAddBlock = (block: Omit<VineyardBlock, 'id'>) => {
-    const id = `block-${Date.now()}`;
+    const id = createUniqueRecordId('block', blocks.map(item => item.id));
     setBlocks(prev => [...prev, { ...block, id }]);
   };
 
@@ -1221,7 +1413,7 @@ export function useWineryState() {
   };
 
   const handleAddVineyardProject = (project: Omit<VineyardPlantingProject, 'id'>) => {
-    const id = sanitizeId(`vp-${Date.now()}`);
+    const id = createUniqueRecordId('vp', vineyardProjects.map(item => item.id));
     setVineyardProjects(prev => [...prev, { ...project, id }]);
   };
 
@@ -1230,27 +1422,27 @@ export function useWineryState() {
   };
 
   const handleAddPhenologyLog = (log: Omit<PhenologyRecord, 'id'>) => {
-    const id = `ph-${Date.now()}`;
+    const id = createUniqueRecordId('ph', phenologyLogs.map(item => item.id));
     setPhenologyLogs(prev => [...prev, { ...log, id }]);
   };
 
   const handleAddSprayRecord = (rec: Omit<SprayRecord, 'id'>) => {
-    const id = `spray-${Date.now()}`;
+    const id = createUniqueRecordId('spray', sprays.map(item => item.id));
     setSprays(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddScoutingRecord = (rec: Omit<ScoutingRecord, 'id'>) => {
-    const id = `scout-${Date.now()}`;
+    const id = createUniqueRecordId('scout', scoutings.map(item => item.id));
     setScoutings(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddSamplings = (rec: Omit<GrapeSamplingRecord, 'id'>) => {
-    const id = `sample-${Date.now()}`;
+    const id = createUniqueRecordId('sample', samplings.map(item => item.id));
     setSamplings(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddHarvestRecord = (rec: Omit<HarvestRecord, 'id'>) => {
-    const id = `harv-${Date.now()}`;
+    const id = createUniqueRecordId('harv', harvests.map(item => item.id));
     setHarvests(prev => [...prev, { ...rec, id }]);
   };
 
@@ -1259,12 +1451,12 @@ export function useWineryState() {
   };
 
   const handleAddIrrigation = (rec: Omit<IrrigationRecord, 'id'>) => {
-    const id = `irrig-${Date.now()}`;
+    const id = createUniqueRecordId('irrig', irrigationLogs.map(item => item.id));
     setIrrigationLogs(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddFertilizer = (rec: Omit<FertilizationRecord, 'id'>) => {
-    const id = `fert-${Date.now()}`;
+    const id = createUniqueRecordId('fert', fertilizerLogs.map(item => item.id));
     setFertilizerLogs(prev => [...prev, { ...rec, id }]);
   };
 
@@ -1275,8 +1467,17 @@ export function useWineryState() {
     vintage: number, 
     harvestedDate: string
   ): string => {
-    const rawLotId = `LOT-${variety.substring(0, 2).toUpperCase()}-${vintage}-${Date.now().toString().slice(-4)}`;
-    const lotId = sanitizeId(rawLotId);
+    if (!Number.isFinite(harvestedKg) || harvestedKg <= 0) {
+      throw new Error('Harvest weight must be greater than zero.');
+    }
+    if (!Number.isInteger(vintage) || vintage < 1900 || vintage > 2200) {
+      throw new Error('Harvest vintage must match a valid harvest year.');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(harvestedDate)) {
+      throw new Error('Harvest date must use YYYY-MM-DD format.');
+    }
+
+    const lotId = createUniqueLotId(variety, vintage, lots.map(item => item.id));
     const assocBlock = blocks.find(b => b.id === blockId);
     const lotName = `${variety} - ${assocBlock ? assocBlock.name : 'Ridge'} Crop`;
     const intendedAppellation = cleanText(assocBlock?.microzone);
@@ -1314,25 +1515,9 @@ export function useWineryState() {
 
     setLots(prev => [...prev, newLot]);
 
-    // Add initial fermentation tracking node
-    const firstDailyFermLog: DailyFermLog = {
-      id: sanitizeId(`fl-${Date.now()}`),
-      tankId: 'T-1',
-      lotId,
-      date: harvestedDate,
-      temperature: 16.0,
-      density: 1.090,
-      sugar: 21.5,
-      ph: 3.25,
-      tastingNotes: 'Crushed and direct-pumped. Cold settle initiated.',
-      capManagement: 'None',
-      additives: 'None'
-    };
-    setFermLogs(prev => [...prev, firstDailyFermLog]);
-
     // Record system audit log
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: currentUser.fullName,
       module: 'MARANIOS',
@@ -1349,19 +1534,18 @@ export function useWineryState() {
 
   /**
    * Structured grape receiving / intake. Creates a wine batch (WineLot) from the
-   * captured fruit, optionally fills a destination vessel, seeds the first
-   * fermentation log with the chemistry measured at the weighbridge, records the
-   * intake document, and writes an audit entry. Returns the new lot id.
+   * captured fruit, optionally fills a destination vessel, records the intake
+   * document, and writes an audit entry. Fermentation telemetry is intentionally
+   * not fabricated here; the first log belongs to an actual cellar reading.
+   * Returns the new lot id.
    */
   const handleReceiveGrapes = (
     input: Omit<GrapeIntakeRecord, 'id' | 'createdLotId' | 'netWeightKg' | 'estimatedVolumeL'>,
   ): string => {
     const netWeightKg = Math.max(0, (input.grossWeightKg || 0) - (input.tareWeightKg || 0));
     const estimatedVolumeL = estimateMustVolumeL(netWeightKg, input.juiceYieldPct || 0);
-    const intakeId = sanitizeId(`intake-${Date.now()}`);
-
-    const rawLotId = `LOT-${(input.variety || 'XX').substring(0, 2).toUpperCase()}-${input.vintage}-${Date.now().toString().slice(-4)}`;
-    const lotId = sanitizeId(rawLotId);
+    const intakeId = createUniqueRecordId('intake', grapeIntakes.map(item => item.id));
+    const lotId = createUniqueLotId(input.variety || 'XX', input.vintage, lots.map(item => item.id));
     const origin = input.source === 'own'
       ? (input.blockName || 'Own vineyard')
       : (input.supplierName || 'Supplier');
@@ -1410,22 +1594,6 @@ export function useWineryState() {
       }));
     }
 
-    // Seed the first fermentation log with the real measured chemistry.
-    const firstFermLog: DailyFermLog = {
-      id: sanitizeId(`flog-${Date.now()}`),
-      tankId: input.destinationVesselId || '',
-      lotId,
-      date: input.date,
-      temperature: input.temperatureC,
-      density: 1.090,
-      sugar: input.brix,
-      ph: input.ph,
-      tastingNotes: `Received ${input.condition} condition fruit (${input.pickingMethod} picked).`,
-      capManagement: 'None',
-      additives: 'None',
-    };
-    setFermLogs(prev => [...prev, firstFermLog]);
-
     const intakeRecord: GrapeIntakeRecord = {
       ...input,
       id: intakeId,
@@ -1456,7 +1624,7 @@ export function useWineryState() {
     }
 
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: input.operator || currentUser.fullName,
       module: 'GVINO',
@@ -1483,7 +1651,7 @@ export function useWineryState() {
    * and an audit entry.
    */
   const handleAddSupplierPayment = (input: Omit<SupplierPayment, 'id' | 'operator'> & { operator?: string }): string => {
-    const id = sanitizeId(`spay-${Date.now()}`);
+    const id = createUniqueRecordId('spay', supplierPayments.map(item => item.id));
     const payment: SupplierPayment = {
       ...input,
       id,
@@ -1492,7 +1660,7 @@ export function useWineryState() {
     setSupplierPayments(prev => [payment, ...prev]);
 
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: payment.operator,
       module: 'GVINO',
@@ -1511,7 +1679,7 @@ export function useWineryState() {
     setSupplierPayments(prev => prev.filter(p => p.id !== id));
     if (payment) {
       const audit: MaraniOSAuditLog = {
-        id: sanitizeId(`audit-${Date.now()}`),
+        id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
         timestamp: new Date().toISOString(),
         user: currentUser.fullName,
         module: 'GVINO',
@@ -1541,7 +1709,7 @@ export function useWineryState() {
     const hasVolumeChange = input.volumeAfterL != null && Number.isFinite(input.volumeAfterL);
     const volumeAfterL = hasVolumeChange ? Math.max(0, input.volumeAfterL as number) : undefined;
 
-    const opId = sanitizeId(`op-${Date.now()}`);
+    const opId = createUniqueRecordId('op', cellarOps.map(item => item.id));
     const operator = input.operator || currentUser.fullName;
     const dateOnly = (input.date || new Date().toISOString()).slice(0, 10);
 
@@ -1605,7 +1773,7 @@ export function useWineryState() {
 
     // 5) Audit.
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: operator,
       module: 'GVINO',
@@ -1625,7 +1793,7 @@ export function useWineryState() {
     if (!logLotId || !logTankId) return;
 
     const newLog: DailyFermLog = {
-      id: sanitizeId(`flog-${Date.now()}`),
+      id: createUniqueRecordId('flog', fermLogs.map(item => item.id)),
       tankId: logTankId,
       lotId: logLotId,
       date: new Date().toISOString().split('T')[0],
@@ -1648,7 +1816,7 @@ export function useWineryState() {
     if (!labLotId || !labTankId) return;
 
     const newLab: LabAnalysis = {
-      id: sanitizeId(`lab-${Date.now()}`),
+      id: createUniqueRecordId('lab', labLogs.map(item => item.id)),
       lotId: labLotId,
       tankId: labTankId,
       date: new Date().toISOString().split('T')[0],
@@ -1705,7 +1873,7 @@ export function useWineryState() {
 
   const handleAddNewTask = (title: string, priority: 'high' | 'medium' | 'low', dueDate: string, description: string) => {
     const newTask: Task = {
-      id: sanitizeId(`task-${Date.now()}`),
+      id: createUniqueRecordId('task', tasks.map(item => item.id)),
       title,
       priority,
       dueDate: dueDate || new Date().toISOString().split('T')[0],
@@ -1717,21 +1885,148 @@ export function useWineryState() {
     setToastMessage(lang === 'ka' ? 'ახალი დავალება დაემატა!' : 'New task assigned successfully!');
   };
 
-  const recordDeletion = (id: string) => {
-    try {
-      const stored = localStorage.getItem('vinea_deleted_ids');
-      const list = stored ? JSON.parse(stored) : [];
-      list.push(id);
-      localStorage.setItem('vinea_deleted_ids', JSON.stringify(list));
-      
-      if (!SyncQueueManager.isOnline()) {
+  const recordDeletions = (records: DeletionTombstone[]): boolean => {
+    if (!persistDeletionTombstones(records, localStorage)) {
+      setToastMessage(lang === 'ka'
+        ? 'წაშლა ვერ დაიწყო, რადგან ამ მოწყობილობაზე ცვლილების უსაფრთხოდ შენახვა ვერ მოხერხდა. გაათავისუფლეთ საცავი ან განაახლეთ გვერდი და სცადეთ ხელახლა.'
+        : 'Deletion could not start because this device could not save it safely. Free browser storage or refresh, then try again.');
+      return false;
+    }
+
+    if (!SyncQueueManager.isOnline()) {
+      records.forEach(({ id, collection }) => {
+        if (!collection) return;
         IndexedDBQueue.addMutation({
           action: 'delete',
-          collection: 'any',
-          recordId: id
+          collection,
+          recordId: id,
         });
+      });
+    }
+    return true;
+  };
+
+  const recordDeletion = (id: string, collection: string): boolean => (
+    recordDeletions([{ id, collection }])
+  );
+
+  const handleDeleteStorageLocation = (locationId: string): boolean => {
+    const location = storageLocations.find(item => item.id === locationId);
+    if (!location) return false;
+
+    const references = storageLocationReferences(locationId, {
+      movements: stockMovements,
+      bottlingRuns,
+      orders: salesOrders,
+      dispatches: salesDispatches,
+    });
+    if (references.total > 0) {
+      setToastMessage(lang === 'ka'
+        ? 'შენახვის ლოკაცია ვერ წაიშლება, სანამ მასთან დაკავშირებული ჩანაწერები არსებობს.'
+        : 'This storage location cannot be deleted while operational records still reference it.');
+      return false;
+    }
+
+    if (!recordDeletion(locationId, 'storageLocations')) return false;
+    setStorageLocations(prev => prev.filter(item => item.id !== locationId));
+    setToastMessage(lang === 'ka' ? 'შენახვის ლოკაცია წაიშალა.' : 'Storage location deleted.');
+    return true;
+  };
+
+  const handleDeleteStockMovement = (movementId: string): boolean => {
+    const blockers = storageMovementDeletionBlockers(movementId, {
+      movements: stockMovements,
+      bottlingRuns,
+      orders: salesOrders,
+      dispatches: salesDispatches,
+    });
+    if (!blockers) return false;
+    if (blockers.blocked) {
+      setToastMessage(lang === 'ka'
+        ? 'მარაგის მოძრაობა ვერ წაიშლება, რადგან ეს დაარღვევს დაკავშირებულ ჩანაწერს ან მარაგის ბალანსს.'
+        : 'This stock movement cannot be deleted because it would break a linked record or stock balance.');
+      return false;
+    }
+
+    if (!recordDeletion(movementId, 'stockMovements')) return false;
+    setStockMovements(prev => prev.filter(item => item.id !== movementId));
+    setToastMessage(lang === 'ka' ? 'მარაგის მოძრაობა წაიშალა.' : 'Stock movement deleted.');
+    return true;
+  };
+
+  const handleDeleteBottlingRun = (runId: string): boolean => {
+    const run = bottlingRuns.find(item => item.id === runId);
+    if (!run) return false;
+    const lot = lots.find(item => item.id === run.lotId);
+    if (!lot || run.previousLotVolumeL === undefined || run.previousLotStage === undefined) {
+      setToastMessage(lang === 'ka'
+        ? 'ამ ძველი ჩამოსხმის უსაფრთხოდ გაუქმება შეუძლებელია, რადგან პარტიის აღდგენის სრული მონაცემები არ არის შენახული.'
+        : 'This legacy bottling run cannot be rolled back safely because its complete lot restoration snapshot is missing.');
+      return false;
+    }
+    const previousLotVolumeL = run.previousLotVolumeL;
+    const previousLotStage = run.previousLotStage;
+    const newerRun = newerBottlingRunFor(bottlingRuns, run.id);
+    if (newerRun) {
+      setToastMessage(lang === 'ka'
+        ? 'ჯერ ამავე პარტიის უფრო ახალი ჩამოსხმა გააუქმეთ. ისტორიული ჩანაწერების რიგის დარღვევა პარტიის მოცულობას შეცდომით აღადგენს.'
+        : 'Roll back the newest bottling run for this lot first. Reversing history out of order would restore an incorrect lot volume.');
+      return false;
+    }
+    const linkedMovement = stockMovements.find(movement => (
+      movement.id === run.storageMovementId || movement.sourceRef === run.id
+    ));
+
+    if (linkedMovement) {
+      const blockers = storageMovementDeletionBlockers(linkedMovement.id, {
+        movements: stockMovements,
+        bottlingRuns: bottlingRuns.filter(item => item.id !== run.id),
+        orders: salesOrders,
+        dispatches: salesDispatches,
+      });
+      if (blockers?.blocked) {
+        setToastMessage(lang === 'ka'
+          ? 'ჩამოსხმის გაუქმება ვერ მოხერხდება: დაკავშირებული მარაგის მოძრაობა საჭიროა შემდგომი გატანის, ჯავშნის ან სწორი ბალანსისთვის.'
+          : 'This bottling run cannot be rolled back because its stock movement is required by a later dispatch, reservation, or valid balance.');
+        return false;
       }
-    } catch { /* ignore */ }
+    }
+
+    if (typeof window !== 'undefined' && !window.confirm(lang === 'ka'
+      ? 'გავაუქმოთ ეს ჩამოსხმა? პარტიის მოცულობა, შეფუთვის მარაგი, ხარჯები და შენახვის მოძრაობა აღდგება. სინქრონიზაციის შემდეგ მოქმედების გაუქმება შეუძლებელია.'
+      : 'Roll back this bottling run? Lot volume, packaging stock, costs, and its storage movement will be restored. This cannot be undone after sync.')) {
+      return false;
+    }
+
+    const linkedCosts = costEntries.filter(entry => entry.sourceRef === run.id);
+    const deletions: DeletionTombstone[] = [
+      { id: run.id, collection: 'bottlingRuns' },
+      ...linkedCosts.map(entry => ({ id: entry.id, collection: 'costEntries' })),
+      ...(linkedMovement ? [{ id: linkedMovement.id, collection: 'stockMovements' }] : []),
+    ];
+    if (!recordDeletions(deletions)) return false;
+
+    setBottlingRuns(prev => prev.filter(item => item.id !== run.id));
+    setCostEntries(prev => prev.filter(entry => entry.sourceRef !== run.id));
+    if (linkedMovement) {
+      setStockMovements(prev => prev.filter(movement => movement.id !== linkedMovement.id));
+    }
+    if (run.packagingDeductions) {
+      setInventory(prev => prev.map(item => {
+        const restored = run.packagingDeductions?.[item.id] || 0;
+        return restored > 0
+          ? { ...item, stock: Math.round(((item.stock || 0) + restored) * 1000) / 1000 }
+          : item;
+      }));
+    }
+    setLots(prev => prev.map(item => item.id !== run.lotId ? item : {
+      ...item,
+      currentVolume: previousLotVolumeL,
+      stage: previousLotStage,
+      history: (item.history || []).filter(event => event.sourceRef !== run.id),
+    }));
+    setToastMessage(lang === 'ka' ? 'ჩამოსხმის ჩანაწერი უსაფრთხოდ გაუქმდა.' : 'Bottling run rolled back safely.');
+    return true;
   };
 
   // Offload an inline attachment's bytes to object storage and swap the record
@@ -1741,8 +2036,9 @@ export function useWineryState() {
   const offloadAttachmentToObjectStore = async (local: DocumentAttachment, input: DocumentAttachmentInput) => {
     if (!SyncQueueManager.isOnline()) return;
     if (local.storage.kind !== 'inline' || !local.storage.dataUrl) return;
+    const operationEpoch = syncEpoch.current;
     try {
-      const res = await fetch('/api/attachments/upload', {
+      const res = await SyncQueueManager.runInOrganizationContext(() => fetch('/api/attachments/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1755,11 +2051,11 @@ export function useWineryState() {
           linkedRecordId: input.linkedRecordId,
           description: input.description,
         }),
-      });
+      }));
       if (!res.ok) return;
       const body = await res.json().catch(() => null);
       const objectKey = body?.attachment?.storage?.objectKey;
-      if (!objectKey) return;
+      if (!objectKey || operationEpoch !== syncEpoch.current || workspaceTransitionRef.current) return;
       setAttachments(prev => prev.map(a => (
         a.id === local.id
           ? {
@@ -1787,7 +2083,7 @@ export function useWineryState() {
   };
 
   const handleDeleteAttachment = (attachmentId: string) => {
-    recordDeletion(attachmentId);
+    if (!recordDeletion(attachmentId, 'attachments')) return;
     setAttachments(prev => prev.filter(item => item.id !== attachmentId));
     setToastMessage(lang === 'ka' ? 'Attachment removed.' : 'Attachment removed.');
   };
@@ -1811,7 +2107,7 @@ export function useWineryState() {
   };
 
   const handleDeleteCrmLead = (leadId: string) => {
-    recordDeletion(leadId);
+    if (!recordDeletion(leadId, 'crmLeads')) return;
     setCrmLeads(prev => prev.filter(lead => lead.id !== leadId));
     setToastMessage(lang === 'ka' ? 'CRM lead removed.' : 'CRM lead removed.');
   };
@@ -1837,14 +2133,14 @@ export function useWineryState() {
   };
 
   const handleDeleteTask = (taskId: string) => {
-    recordDeletion(taskId);
+    if (!recordDeletion(taskId, 'tasks')) return;
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setToastMessage(lang === 'ka' ? 'დავალება წაიშალა!' : 'Task deleted successfully!');
   };
 
   const handleAddNewNote = (title: string, category: 'Enology' | 'Tasting' | 'Sanitation' | 'General', content: string, relatedLotId?: string) => {
     const newNote: CellarNote = {
-      id: sanitizeId(`note-${Date.now()}`),
+      id: createUniqueRecordId('note', notesList.map(item => item.id)),
       title,
       category,
       content,
@@ -1857,7 +2153,7 @@ export function useWineryState() {
   };
 
   const handleDeleteNote = (noteId: string) => {
-    recordDeletion(noteId);
+    if (!recordDeletion(noteId, 'notes')) return;
     setNotesList(prev => prev.filter(n => n.id !== noteId));
     setToastMessage(lang === 'ka' ? 'შენიშვნა წაიშალა!' : 'Note removed successfully!');
   };
@@ -1876,46 +2172,73 @@ export function useWineryState() {
   };
 
   const resolveConflict = async (resolutions: Record<string, 'local' | 'server'>) => {
-    if (!syncConflicts || !pendingServerDb) return;
-    
-    const db = { ...pendingServerDb };
-    
-    syncConflicts.forEach(conflict => {
-      const choice = resolutions[`${conflict.collection}-${conflict.recordId}`] || 'server';
-      
-      // Map client-side collection names to server-side keys
-      let colKey = conflict.collection;
-      if (conflict.collection === 'notesList') colKey = 'notes';
-      if (conflict.collection === 'fermLogs') colKey = 'fermlogs';
-      if (conflict.collection === 'labLogs') colKey = 'lablogs';
-      
-      const list = db[colKey];
-      if (list) {
-        const index = list.findIndex((x: any) => x.id === conflict.recordId);
-        let resolvedItem = choice === 'local' ? { ...conflict.local } : { ...conflict.server };
+    if (!syncConflicts || !pendingServerDb || conflictResolutionInFlight.current || workspaceTransitionRef.current) return;
+    conflictResolutionInFlight.current = true;
+    const resolutionEpoch = syncEpoch.current;
+    const conflictsToResolve = syncConflicts;
+    try {
+    const pendingIntent = pendingConflictSyncIntent.current
+      || SyncQueueManager.getPendingConflictSyncIntent();
+    if (!pendingIntent) {
+      throw new Error('The original sync transaction could not be recovered. Local changes were kept.');
+    }
 
-        // If choosing local, bump lastModified and rebase onto the server
-        // version we just reviewed — otherwise the re-push would conflict again.
-        if (choice === 'local') {
-          resolvedItem.lastModified = new Date().toISOString();
-          resolvedItem.baselineTimestamp = conflict.server?.lastModified;
-        }
-        
-        if (index !== -1) {
-          list[index] = resolvedItem;
-        } else {
-          list.push(resolvedItem);
-        }
-      }
+    const deletionIntent = resolveDeletionIntent(
+      pendingIntent.payload,
+      conflictsToResolve,
+      resolutions,
+    );
+    const discardedDeletions: DeletionTombstone[] = [
+      ...deletionIntent.discardedRecords,
+      ...deletionIntent.discardedLegacyIds.map(id => ({ id })),
+    ];
+    if (
+      discardedDeletions.length > 0
+      && !SyncQueueManager.discardPendingConflictDeletions(
+        discardedDeletions,
+        pendingIntent.organizationId,
+      )
+    ) {
+      throw new Error('The server-version choice could not be saved safely. Local changes were kept.');
+    }
+
+    const inMemoryRetryPayload = { ...pendingIntent.payload };
+    if (deletionIntent.retainedRecords.length > 0) {
+      inMemoryRetryPayload.deletedRecords = deletionIntent.retainedRecords;
+    } else {
+      delete inMemoryRetryPayload.deletedRecords;
+    }
+    if (deletionIntent.retainedLegacyIds.length > 0) {
+      inMemoryRetryPayload.deletedIds = deletionIntent.retainedLegacyIds;
+    } else {
+      delete inMemoryRetryPayload.deletedIds;
+    }
+    const retryIntent = SyncQueueManager.getPendingConflictSyncIntent() || {
+      ...pendingIntent,
+      payload: inMemoryRetryPayload,
+    };
+    if (!await SyncQueueManager.isPendingConflictSyncIntentCurrent(retryIntent)) {
+      throw new Error('Newer local changes were made after this conflict appeared. Retry sync before resolving it.');
+    }
+
+    const db = buildResolvedSyncState({
+      serverDb: pendingServerDb,
+      attemptedPayload: retryIntent.payload,
+      conflicts: conflictsToResolve,
+      resolutions,
     });
 
     // Clear mutations queue from IndexedDB
     await SyncQueueManager.clearOfflineQueue();
+    if (resolutionEpoch !== syncEpoch.current || workspaceTransitionRef.current || !hasHydrated.current) return;
 
-    // Re-mark collections dirty so standard sync pushes modifications back
-    syncConflicts.forEach(conflict => {
-      SyncQueueManager.markDirty(conflict.collection);
-    });
+    // Re-mark every collection in the attempted transaction, including clean
+    // siblings that were deferred when one anchor record conflicted.
+    const retryCollections = new Set([
+      ...retryIntent.dirtyCollections,
+      ...conflictsToResolve.map(conflict => conflict.collection),
+    ]);
+    retryCollections.forEach(collection => SyncQueueManager.markDirty(collection));
 
     setSyncConflicts(null);
     setPendingServerDb(null);
@@ -1945,6 +2268,8 @@ export function useWineryState() {
       auditLogs: db.auditLogs || auditLogs,
       bottlingRuns: db.bottlingRuns || bottlingRuns,
       transfers: db.transfers || transfers,
+      grapeIntakes: db.grapeIntakes || grapeIntakes,
+      cellarOps: db.cellarOps || cellarOps,
       costEntries: db.costEntries || costEntries,
       winePricing: db.winePricing || winePricing,
       storageLocations: db.storageLocations || storageLocations,
@@ -1959,9 +2284,17 @@ export function useWineryState() {
       companyProfile: db.companyProfile || companyProfile
     };
 
-    triggerSync(currentFullState);
+    await triggerSync(currentFullState);
     
     setToastMessage(lang === 'ka' ? 'კონფლიქტები წარმატებით მოგვარდა!' : 'Conflicts resolved successfully!');
+    } catch (error) {
+      setLastSyncError(error instanceof Error ? error.message : 'Conflict resolution failed');
+      setToastMessage(lang === 'ka'
+        ? '⚠️ კონფლიქტის მოგვარება ვერ დასრულდა. მონაცემები არ გაგზავნილა.'
+        : '⚠️ Conflict resolution could not finish. No resolved data was sent.');
+    } finally {
+      conflictResolutionInFlight.current = false;
+    }
   };
 
   return {
@@ -2087,6 +2420,9 @@ export function useWineryState() {
     handleDeleteTask,
     handleAddNewNote,
     handleDeleteNote,
+    handleDeleteStorageLocation,
+    handleDeleteStockMovement,
+    handleDeleteBottlingRun,
     handleAddInventory,
     handleAuthLogin,
     handleDemoLogin,
@@ -2096,6 +2432,8 @@ export function useWineryState() {
     handleResendVerification,
     handleUpdateProfile,
     organizations,
+    isSwitchingOrganization,
+    workspaceHydrationError,
     fetchOrganizations,
     handleSwitchOrganization,
     syncConflicts,

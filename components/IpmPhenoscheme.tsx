@@ -50,6 +50,8 @@ interface IpmPhenoschemeProps {
   onAddSprayRecord: (rec: Omit<SprayRecord, 'id'>) => void;
   currentUser: UserProfile;
   blockWeather: any;
+  canCreateVineyardRecord?: boolean;
+  canDeleteVineyardRecord?: boolean;
 }
 
 // 10 Phenological Stages Seed Data
@@ -446,7 +448,9 @@ export default function IpmPhenoscheme({
   sprays,
   onAddSprayRecord,
   currentUser,
-  blockWeather
+  blockWeather,
+  canCreateVineyardRecord = true,
+  canDeleteVineyardRecord = true,
 }: IpmPhenoschemeProps) {
   const isKa = lang === 'ka';
 
@@ -522,8 +526,9 @@ export default function IpmPhenoscheme({
   });
 
   useEffect(() => {
+    if (!canCreateVineyardRecord && !canDeleteVineyardRecord) return;
     localStorage.setItem('vinea_ipm_traps', JSON.stringify(traps));
-  }, [traps]);
+  }, [canCreateVineyardRecord, canDeleteVineyardRecord, traps]);
 
   // Risk Engine inputs state
   const [riskWeather, setRiskWeather] = useState<'dry' | 'moderate' | 'wet'>('moderate');
@@ -632,7 +637,7 @@ export default function IpmPhenoscheme({
 
   const handleAddSprayLog = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedBlock) return;
+    if (!selectedBlock || !canCreateVineyardRecord) return;
 
     const fd = new FormData(e.currentTarget);
     const target = String(fd.get('targetProblem') || '');
@@ -679,7 +684,7 @@ export default function IpmPhenoscheme({
 
   const handleAddTrapLog = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedBlock) return;
+    if (!selectedBlock || !canCreateVineyardRecord) return;
 
     const fd = new FormData(e.currentTarget);
     const count = parseInt(fd.get('mothsCount') as string) || 0;
@@ -694,12 +699,13 @@ export default function IpmPhenoscheme({
       operator: currentUser.fullName
     };
 
-    setTraps([newTrap, ...traps]);
+    setTraps(current => [newTrap, ...current]);
     e.currentTarget.reset();
   };
 
   const handleDeleteTrap = (id: string) => {
-    setTraps(traps.filter(t => t.id !== id));
+    if (!canDeleteVineyardRecord) return;
+    setTraps(current => current.filter(t => t.id !== id));
   };
 
   if (!selectedBlock) {
@@ -739,6 +745,18 @@ export default function IpmPhenoscheme({
           <span className="text-[10px] font-mono text-amber-200 block font-semibold">{selectedBlock.grapeVariety} • {daysToHarvest} {isKa ? 'დღე მოსავლამდე' : 'days to harvest'}</span>
         </div>
       </div>
+
+      {(!canCreateVineyardRecord || !canDeleteVineyardRecord) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-relaxed text-amber-900">
+          {!canCreateVineyardRecord && !canDeleteVineyardRecord
+            ? (isKa
+              ? 'IPM-ზე მხოლოდ ნახვის წვდომა გაქვთ. რისკები, ფენოსქემა, ხაფანგები და წამლობის ისტორია ხელმისაწვდომია ცვლილებების გარეშე.'
+              : 'You have read-only IPM access. Risks, the phenoscheme, traps, and spray history remain available without edit controls.')
+            : (isKa
+              ? 'IPM მოქმედებები ნაწილობრივ ხელმისაწვდომია; ჩანაწერის შექმნისა და წაშლის ელემენტები თქვენი უფლებების მიხედვით არის ნაჩვენები.'
+              : 'IPM actions are partially available; create and delete controls follow your assigned permissions.')}
+        </div>
+      )}
 
       {/* 2. Sub-Tabs */}
       <div className="flex flex-wrap items-center gap-1 bg-stone-50 p-1 border border-stone-200 rounded-xl text-xs font-semibold">
@@ -1081,18 +1099,20 @@ export default function IpmPhenoscheme({
               <span className="text-stone-400 font-mono">
                 {isKa ? `🍇 მოსავლის დაგეგმვა: დარჩენილია ${daysToHarvest} დღე` : `🍇 Harvest Planning: ${daysToHarvest} days left until expected picking`}
               </span>
-              <button
-                onClick={() => {
-                  setIpmTab('sprays');
-                  // Preset active ingredient selector based on the current stage's top recommendation
-                  setFormMoa(selectedStage.active_ingredient_groups[0]?.moa || '');
-                  setFormPhi(21);
-                }}
-                className="bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold uppercase font-mono px-3.5 py-1.8 rounded-lg cursor-pointer transition-all text-[10px] tracking-wider inline-flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                {isKa ? 'შეწამვლის ლოგის მომზადება' : 'Draft Spray Treatment'}
-              </button>
+              {canCreateVineyardRecord && (
+                <button
+                  onClick={() => {
+                    setIpmTab('sprays');
+                    // Preset active ingredient selector based on the current stage's top recommendation
+                    setFormMoa(selectedStage.active_ingredient_groups[0]?.moa || '');
+                    setFormPhi(21);
+                  }}
+                  className="bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold uppercase font-mono px-3.5 py-1.8 rounded-lg cursor-pointer transition-all text-[10px] tracking-wider inline-flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {isKa ? 'შეწამვლის ლოგის მომზადება' : 'Draft Spray Treatment'}
+                </button>
+              )}
             </div>
 
           </div>
@@ -1105,6 +1125,7 @@ export default function IpmPhenoscheme({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* Add Trap Log */}
+          {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
             <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 pb-2">
               {isKa ? 'ახალი ჩანაწერი ხაფანგებზე' : 'Record Pheromone Trap Catch'}
@@ -1143,9 +1164,10 @@ export default function IpmPhenoscheme({
               </button>
             </form>
           </div>
+          )}
 
           {/* Trap history list & status checks */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
+          <div className={`${canCreateVineyardRecord ? 'lg:col-span-2' : 'lg:col-span-3'} bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4`}>
             <div className="flex items-center justify-between border-b border-stone-100 pb-2">
               <h4 className="font-serif font-bold text-sm text-[#4e0e15]">
                 {isKa ? 'ყურძნის ჭიის ფერომონული ხაფანგების ისტორია' : 'European Grape Moth Trap Records'}
@@ -1191,13 +1213,15 @@ export default function IpmPhenoscheme({
                     </strong>
                     <span className="block text-slate-400 text-[9px] font-mono font-normal mt-0.5">{trap.date} • {trap.operator}</span>
                   </div>
-                  <button
-                    onClick={() => handleDeleteTrap(trap.id)}
-                    className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer"
-                    title="Delete log"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {canDeleteVineyardRecord && (
+                    <button
+                      onClick={() => handleDeleteTrap(trap.id)}
+                      className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer"
+                      title={isKa ? 'ხაფანგის ჩანაწერის წაშლა' : 'Delete trap log'}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
 
@@ -1218,6 +1242,7 @@ export default function IpmPhenoscheme({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* Add Spray Record Form with real-time verification */}
+          {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
             <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 pb-2">
               {isKa ? 'ახალი წამლობის შეყვანა' : 'Log Brand-Free Spray'}
@@ -1348,9 +1373,10 @@ export default function IpmPhenoscheme({
               </button>
             </form>
           </div>
+          )}
 
           {/* Active Spray logs list showing MoA labels */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
+          <div className={`${canCreateVineyardRecord ? 'lg:col-span-2' : 'lg:col-span-3'} bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4`}>
             <h4 className="font-serif font-bold text-sm text-[#4e0e15]">
               {isKa ? 'ქიმიური წამლობების ისტორია და კოდების კონტროლი' : 'Active Chemical Applications & Resistance Ledger'}
             </h4>
