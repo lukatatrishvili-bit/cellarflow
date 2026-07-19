@@ -8,37 +8,39 @@ generator client {
 }
 
 model User {
-  id                 String          @id @default(cuid())
-  username           String          @unique
-  email              String          @unique
-  fullName           String
-  role               String
-  language           String          @default("en")
-  passwordHash       String
-  emailVerified      Boolean         @default(false)
-  verifyTokenHash    String?
-  verifyTokenExpires BigInt?
-  resetTokenHash     String?
-  resetTokenExpires  BigInt?
-  isDemo             Boolean         @default(false)
+  id                   String   @id @default(cuid())
+  username             String   @unique
+  email                String   @unique
+  fullName             String
+  role                 String
+  language             String   @default("en")
+  passwordHash         String
+  emailVerified        Boolean  @default(false)
+  verifyTokenHash      String?
+  verifyTokenExpires   BigInt?
+  resetTokenHash       String?
+  resetTokenExpires    BigInt?
+  isDemo               Boolean  @default(false)
   activeOrganizationId String?
-  enabledModules     Json?
-  enabledWidgets     Json?
-  registrationComplete Boolean       @default(true)
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  enabledModules       Json?
+  enabledWidgets       Json?
+  registrationComplete Boolean  @default(true)
+  accountEnabled       Boolean  @default(true)
+  sessionVersion       Int      @default(1)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
-  memberships        Membership[]
+  memberships Membership[]
 }
 
 model Organization {
-  id               String          @id @default(cuid())
-  name             String
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  memberships      Membership[]
-  invitations      Invitation[]
+  memberships Membership[]
+  invitations Invitation[]
 
   companyProfile   CompanyProfile?
   vessels          Vessel[]
@@ -72,7 +74,7 @@ model Organization {
   /// Authoritative JSONB snapshot of the full winery/vineyard ERP state.
   /// The detailed collection tables below are retained for compatibility but
   /// are not the production source of truth for this milestone.
-  state            OrganizationState?
+  state OrganizationState?
 }
 
 model OrganizationState {
@@ -91,7 +93,7 @@ model Membership {
   user           User         @relation(fields: [userId], references: [username], onDelete: Cascade)
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  role           String       // "Owner/Admin", "Winemaker", "Lab Technician", "Cellar Worker", "Read-Only"
+  role           String // "Owner/Admin", "Winemaker", "Lab Technician", "Cellar Worker", "Read-Only"
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -103,19 +105,19 @@ model Invitation {
   email          String
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  role           String       // "Owner/Admin", "Winemaker", etc.
-  token          String       @unique
+  role           String // "Owner/Admin", "Winemaker", etc.
+  tokenHash      String       @unique
   expiresAt      DateTime
   acceptedAt     DateTime?
   createdAt      DateTime     @default(now())
 }
 
 model LoginAttempt {
-  key         String   @id
-  count       Int      @default(0)
+  key         String    @id
+  count       Int       @default(0)
   firstAt     DateTime
   lockedUntil DateTime?
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime  @updatedAt
 }
 
 model CompanyProfile {
@@ -138,43 +140,57 @@ model CompanyProfile {
 }
 
 model Vessel {
-  id                  String       @id
-  organizationId      String
-  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  type                String
-  shape               String
-  capacity            Float
-  currentVolume       Float
-  assignedLotId       String?
-  cleaningStatus      String
-  lastCleaned         String
-  temperature         Float
-  coolingJacketActive Boolean
-  targetTemperature   Float?
-  lastOperation       String
-  locationDetails     String?
-  xGrid               Int?
-  yGrid               Int?
-  lastSealedDate      String?
-  soilTemperature     Float?
-  qvevriNumber        String?
-  maraniLocation      String?
-  buried              Boolean?
-  lastWashingDate     String?
-  limeWashStatus      String?
-  waxingStatus        String?
-  inspectionNotes     String?
-  fillingDate         String?
-  grapeVariety        String?
-  chachaPercentage    Float?
-  stemInclusion       Boolean?
-  mixingFrequency     String?
-  dailyMixingLog      Json         @default("[]")
-  sealingDate         String?
-  openingDate         String?
+  id                      String       @id
+  organizationId          String
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  type                    String
+  shape                   String
+  capacity                Float
+  currentVolume           Float
+  assignedLotId           String?
+  cleaningStatus          String
+  lastCleaned             String
+  temperature             Float
+  coolingJacketActive     Boolean
+  targetTemperature       Float?
+  lastOperation           String
+  locationDetails         String?
+  xGrid                   Int?
+  yGrid                   Int?
+  lastSealedDate          String?
+  soilTemperature         Float?
+  qvevriNumber            String?
+  maraniLocation          String?
+  buried                  Boolean?
+  lastWashingDate         String?
+  limeWashStatus          String?
+  waxingStatus            String?
+  inspectionNotes         String?
+  fillingDate             String?
+  grapeVariety            String?
+  chachaPercentage        Float?
+  stemInclusion           Boolean?
+  mixingFrequency         String?
+  dailyMixingLog          Json         @default("[]")
+  sealingDate             String?
+  openingDate             String?
   skinContactDurationDays Int?
-  firstRackingDate    String?
-  sanitationHistory   Json         @default("[]")
+  firstRackingDate        String?
+  sanitationHistory       Json         @default("[]")
+}
+
+model SecurityAuditEvent {
+  id             String   @id @default(cuid())
+  eventType      String
+  username       String?
+  actorUsername  String?
+  organizationId String?
+  ipHash         String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([username, createdAt])
 }
 
 model WineLot {
@@ -272,76 +288,76 @@ model Note {
 }
 
 model VineyardBlock {
-  id                   String       @id
-  organizationId       String
-  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name                 String
-  vineyardName         String
-  locationName         String
-  cadastralCode        String?
+  id                           String       @id
+  organizationId               String
+  organization                 Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name                         String
+  vineyardName                 String
+  locationName                 String
+  cadastralCode                String?
   officialCadastreDocumentName String?
-  landOwner            String?
-  grower               String?
-  municipality         String?
-  community            String?
-  village              String?
-  microzone            String?
-  parcelName           String?
-  parcelArea           Float?
-  latitude             Float
-  longitude            Float
-  area                 Float
-  elevation            Float
-  slope                String
-  aspect               String
-  soilType             String
-  grapeVariety         String
-  clone                String?
-  rootstock            String?
-  plantingYear         Int
-  spacing              String
-  rowsCount            Int
-  vinesCount           Int
-  trainingSystem       String
-  pruningSystem        String
-  irrigationEnabled    Boolean
-  farmingStatus        String
-  currentPhenology     String
-  estimatedHarvestDate String
-  notes                String
-  boundary             Json?
-  gpsPolygon           Json?
-  vineyardCondition    String?
+  landOwner                    String?
+  grower                       String?
+  municipality                 String?
+  community                    String?
+  village                      String?
+  microzone                    String?
+  parcelName                   String?
+  parcelArea                   Float?
+  latitude                     Float
+  longitude                    Float
+  area                         Float
+  elevation                    Float
+  slope                        String
+  aspect                       String
+  soilType                     String
+  grapeVariety                 String
+  clone                        String?
+  rootstock                    String?
+  plantingYear                 Int
+  spacing                      String
+  rowsCount                    Int
+  vinesCount                   Int
+  trainingSystem               String
+  pruningSystem                String
+  irrigationEnabled            Boolean
+  farmingStatus                String
+  currentPhenology             String
+  estimatedHarvestDate         String
+  notes                        String
+  boundary                     Json?
+  gpsPolygon                   Json?
+  vineyardCondition            String?
 }
 
 model VineyardPlantingProject {
-  id                              String       @id
-  organizationId                  String
-  organization                    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  projectName                     String
-  landOwnershipDocumentName       String?
-  cadastralMapDocumentName        String?
-  soilAnalysisDocumentName        String?
-  agrotechnicalQuestionnaireName  String?
-  plannedVarieties                Json         @default("[]")
-  rootstock                       String?
-  spacing                         String?
-  rowDirection                    String?
-  irrigationPlan                  String?
-  nurseryInvoiceDocumentName      String?
-  applicationStatus               String
-  approvalDate                    String?
-  approvalValidUntil              String?
-  soilDepth                       Float?
-  pH                              Float?
-  organicMatter                   Float?
-  caco3                           Float?
-  texture                         String?
-  ec                              Float?
-  exchangeableCa                  Float?
-  exchangeableMg                  Float?
-  exchangeableNa                  Float?
-  hygroscopicWater                Float?
+  id                             String       @id
+  organizationId                 String
+  organization                   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  projectName                    String
+  landOwnershipDocumentName      String?
+  cadastralMapDocumentName       String?
+  soilAnalysisDocumentName       String?
+  agrotechnicalQuestionnaireName String?
+  plannedVarieties               Json         @default("[]")
+  rootstock                      String?
+  spacing                        String?
+  rowDirection                   String?
+  irrigationPlan                 String?
+  nurseryInvoiceDocumentName     String?
+  applicationStatus              String
+  approvalDate                   String?
+  approvalValidUntil             String?
+  soilDepth                      Float?
+  pH                             Float?
+  organicMatter                  Float?
+  caco3                          Float?
+  texture                        String?
+  ec                             Float?
+  exchangeableCa                 Float?
+  exchangeableMg                 Float?
+  exchangeableNa                 Float?
+  hygroscopicWater               Float?
 }
 
 model PhenologyRecord {

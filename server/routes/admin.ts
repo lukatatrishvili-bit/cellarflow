@@ -15,13 +15,25 @@ import {
   forceSaveDB,
   reloadOrganizationDataFromPostgres,
   getDbRuntimeStatus,
+  listSecurityAuditEvents,
 } from '../db';
 import { getSeederData } from '../seedTestUser';
 import { getRecentClientErrors } from './telemetry';
 import { loginLimiter, sessionCookie, parseCookies } from '../middleware/auth';
-import { hashPassword, verifySessionToken, createSessionToken } from '../auth';
+import {
+  hashPassword,
+  verifySessionToken,
+  createSessionToken,
+  passcodeValidationError,
+  sessionPayloadForUser,
+  sessionVersionForUser,
+  userAccountIsEnabled,
+} from '../auth';
 import { isValidEmail } from '../emailVerification';
 import { sendMail } from '../mailer';
+import { isKnownRole } from '../permissions';
+import { clientIp } from '../config';
+import { auditSecurityEvent } from '../securityAudit';
 import {
   summarizeAiDrafts,
   summarizeAttachments,
@@ -230,6 +242,7 @@ router.get('/users', async (req, res) => {
       fullName: u.fullName,
       role: u.role,
       emailVerified: u.emailVerified,
+      accountEnabled: u.accountEnabled !== false,
       isDemo: u.isDemo,
       createdAt: u.createdAt,
       organizations: orgs
@@ -244,7 +257,7 @@ router.post('/users/update', async (req, res) => {
   const auth = await requireMasterAdmin(req, res);
   if (!auth) return;
 
-  const { username, email, role, emailVerified, passcode } = req.body;
+  const { username, email, role, emailVerified, accountEnabled, passcode } = req.body;
   if (!username) {
     return res.status(400).json({ error: 'Username is required' });
   }
@@ -267,6 +280,9 @@ router.post('/users/update', async (req, res) => {
   }
 
   if (role !== undefined) {
+    if (!isKnownRole(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
     user.role = role;
   }
 
@@ -274,12 +290,22 @@ router.post('/users/update', async (req, res) => {
     user.emailVerified = !!emailVerified;
   }
 
+  if (accountEnabled !== undefined) {
+    if (typeof accountEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'accountEnabled must be a boolean' });
+    }
+    user.accountEnabled = accountEnabled;
+  }
+
   if (passcode !== undefined) {
     const trimmed = String(passcode).trim();
-    if (trimmed.length < 4) {
-      return res.status(400).json({ error: 'Passcode must be at least 4 characters long' });
-    }
+    const passcodeError = passcodeValidationError(trimmed);
+    if (passcodeError) return res.status(400).json({ error: passcodeError });
     user.passwordHash = hashPassword(trimmed);
+  }
+
+  if ([email, role, emailVerified, accountEnabled, passcode].some(value => value !== undefined)) {
+    user.sessionVersion = sessionVersionForUser(user) + 1;
   }
 
   await saveCoreMetadata('admin-user-update');
@@ -287,9 +313,18 @@ router.post('/users/update', async (req, res) => {
     email !== undefined ? 'email' : '',
     role !== undefined ? 'role' : '',
     emailVerified !== undefined ? 'emailVerified' : '',
+    accountEnabled !== undefined ? 'accountEnabled' : '',
     passcode !== undefined ? 'passcode' : '',
   ].filter(Boolean).join(', ');
   recordAdminAction(auth.username, 'user.update', username, changed);
+  await auditSecurityEvent({
+    eventType: 'admin.user_updated',
+    username,
+    actorUsername: auth.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+    metadata: { changed },
+  });
   res.json({ ok: true, message: 'User updated successfully' });
 });
 
@@ -325,6 +360,12 @@ router.post('/users/delete', async (req, res) => {
   await saveCoreMetadata('admin-user-delete');
 
   recordAdminAction(auth.username, 'user.delete', username);
+  await auditSecurityEvent({
+    eventType: 'admin.user_deleted',
+    username,
+    actorUsername: auth.username,
+    ip: clientIp(req),
+  });
   res.json({ ok: true, message: 'User deleted successfully' });
 });
 
@@ -415,13 +456,21 @@ router.post('/impersonate', async (req, res) => {
   const db = getDB();
   const user = db.users.find(u => u.username === target);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!userAccountIsEnabled(user)) return res.status(409).json({ error: 'Disabled accounts cannot be impersonated' });
 
   const token = createSessionToken(
-    { username: user.username, role: user.role, impersonatedBy: auth.username },
+    sessionPayloadForUser(user, user.role, { impersonatedBy: auth.username }),
     false,
   );
   res.setHeader('Set-Cookie', sessionCookie(token, 3600)); // 1-hour support window
   recordAdminAction(auth.username, 'impersonate.start', target);
+  await auditSecurityEvent({
+    eventType: 'admin.impersonation_started',
+    username: target,
+    actorUsername: auth.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+  });
   res.json({ ok: true, username: user.username, fullName: user.fullName });
 });
 
@@ -439,6 +488,12 @@ router.post('/impersonate/stop', async (req, res) => {
   const adminToken = createSessionToken({ username: session.impersonatedBy, role: 'Owner/Admin' }, false);
   res.setHeader('Set-Cookie', sessionCookie(adminToken, 86400));
   recordAdminAction(String(session.impersonatedBy), 'impersonate.stop', String(session.username));
+  await auditSecurityEvent({
+    eventType: 'admin.impersonation_stopped',
+    username: String(session.username),
+    actorUsername: String(session.impersonatedBy),
+    ip: clientIp(req),
+  });
   res.json({ ok: true, username: session.impersonatedBy });
 });
 
@@ -469,11 +524,16 @@ router.post('/test-email', async (req, res) => {
   const to = String(req.body?.to || '').trim();
   if (!isValidEmail(to)) return res.status(400).json({ error: 'A valid recipient email is required' });
 
-  const result = await sendMail({
-    to,
-    subject: 'VinOS — delivery test',
-    text: `This is a delivery test from the VinOS admin console, requested by ${auth.username} at ${new Date().toISOString()}. If you received it, outbound email works.`,
-  });
+  let result;
+  try {
+    result = await sendMail({
+      to,
+      subject: 'VinOS — delivery test',
+      text: `This is a delivery test from the VinOS admin console, requested by ${auth.username} at ${new Date().toISOString()}. If you received it, outbound email works.`,
+    });
+  } catch {
+    return res.status(503).json({ error: 'Outbound email delivery failed' });
+  }
   recordAdminAction(auth.username, 'email.test', to, `transport=${result.transport}`);
   res.json({ ok: true, delivered: result.delivered, transport: result.transport });
 });
@@ -521,6 +581,14 @@ router.get('/orgs/inspect', async (req, res) => {
     crmSummary: summarizeCrmLeads(data),
     aiDraftSummary: summarizeAiDrafts(data),
   });
+});
+
+// GET /api/admin/security-events
+router.get('/security-events', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+  const events = await listSecurityAuditEvents(200);
+  res.json({ ok: true, events });
 });
 
 // POST /api/admin/reset

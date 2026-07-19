@@ -103,6 +103,40 @@ export function createSessionToken(payload: any, rememberMe?: boolean): string {
   return Buffer.from(data).toString('base64') + '.' + signature;
 }
 
+export function sessionVersionForUser(user: any): number {
+  const value = Number(user?.sessionVersion);
+  return Number.isInteger(value) && value > 0 ? value : 1;
+}
+
+export function sessionPayloadForUser(
+  user: any,
+  role: string,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    username: user.username,
+    role,
+    sessionVersion: sessionVersionForUser(user),
+    ...extra,
+  };
+}
+
+/**
+ * Legacy sessions without a version map to version 1. Once a password reset or
+ * security-sensitive admin change increments the stored version, every older
+ * cookie fails this comparison on its next request.
+ */
+export function sessionMatchesUserVersion(session: any, user: any): boolean {
+  const sessionVersion = session?.sessionVersion === undefined
+    ? 1
+    : Number(session.sessionVersion);
+  return Number.isInteger(sessionVersion) && sessionVersion === sessionVersionForUser(user);
+}
+
+export function userAccountIsEnabled(user: any): boolean {
+  return Boolean(user) && user.accountEnabled !== false;
+}
+
 export function verifySessionToken(token: string): any {
   if (!token) return null;
   try {

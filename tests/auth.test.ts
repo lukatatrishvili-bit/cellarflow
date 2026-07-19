@@ -11,6 +11,10 @@ import {
   MIN_PASSCODE_LENGTH,
   MAX_PASSCODE_LENGTH,
   sameNormalizedEmail,
+  sessionMatchesUserVersion,
+  sessionPayloadForUser,
+  sessionVersionForUser,
+  userAccountIsEnabled,
 } from '../server/auth';
 
 /** Reproduce the pre-2026 `salt:hash` format at 10,000 PBKDF2 iterations. */
@@ -99,6 +103,27 @@ describe('session tokens', () => {
   it('rejects empty and malformed tokens', () => {
     expect(verifySessionToken('')).toBeNull();
     expect(verifySessionToken('no-dot')).toBeNull();
+  });
+
+  it('binds new sessions to the current server-side session version', () => {
+    const user = { username: 'alice', sessionVersion: 3 };
+    const token = createSessionToken(sessionPayloadForUser(user, 'Winemaker'));
+    const payload = verifySessionToken(token);
+
+    expect(payload.sessionVersion).toBe(3);
+    expect(sessionMatchesUserVersion(payload, user)).toBe(true);
+    expect(sessionMatchesUserVersion(payload, { ...user, sessionVersion: 4 })).toBe(false);
+  });
+
+  it('treats legacy versionless users and sessions as version one', () => {
+    expect(sessionVersionForUser({ username: 'legacy' })).toBe(1);
+    expect(sessionMatchesUserVersion({ username: 'legacy' }, { username: 'legacy' })).toBe(true);
+    expect(sessionMatchesUserVersion({ username: 'legacy' }, { username: 'legacy', sessionVersion: 2 })).toBe(false);
+  });
+
+  it('defaults legacy accounts to enabled but honors an explicit disable', () => {
+    expect(userAccountIsEnabled({ username: 'legacy' })).toBe(true);
+    expect(userAccountIsEnabled({ username: 'disabled', accountEnabled: false })).toBe(false);
   });
 });
 

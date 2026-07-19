@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import type { PrismaClient as PrismaClientType } from '@prisma/client';
 import { downloadDb, uploadDb, gcsEnabled, gcsTarget } from './gcsStore';
 import { createEmptyIntegrationHubState, ensureIntegrationHubState, type IntegrationHubState } from '../lib/integrations';
+import { hashToken } from './emailVerification';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -211,6 +212,7 @@ async function loadLocalOrGcsDB(): Promise<void> {
     organizations: [],
     memberships: [],
     invitations: [],
+    securityAuditEvents: [],
     orgData: {}
   };
 }
@@ -258,6 +260,7 @@ export interface DBState {
   organizations: any[];
   memberships: any[];
   invitations: any[];
+  securityAuditEvents: any[];
   orgData: Record<string, UserDataState>;
 }
 
@@ -368,10 +371,27 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
 
 function normalizeDbState(data: Partial<DBState> & { userData?: Record<string, Partial<UserDataState>> } | null | undefined): DBState {
   const normalized: DBState = {
-    users: Array.isArray(data?.users) ? data.users : [],
+    users: Array.isArray(data?.users)
+      ? data.users.map((user: any) => ({
+        ...user,
+        accountEnabled: user?.accountEnabled !== false,
+        sessionVersion: Number.isInteger(Number(user?.sessionVersion)) && Number(user.sessionVersion) > 0
+          ? Number(user.sessionVersion)
+          : 1,
+      }))
+      : [],
     organizations: Array.isArray(data?.organizations) ? data.organizations : [],
     memberships: Array.isArray(data?.memberships) ? data.memberships : [],
-    invitations: Array.isArray(data?.invitations) ? data.invitations : [],
+    invitations: Array.isArray(data?.invitations)
+      ? data.invitations.map((invite: any) => {
+        const { token, ...safeInvite } = invite || {};
+        return {
+          ...safeInvite,
+          tokenHash: safeInvite.tokenHash || (token ? hashToken(token) : hashToken(String(safeInvite.id || ''))),
+        };
+      })
+      : [],
+    securityAuditEvents: Array.isArray(data?.securityAuditEvents) ? data.securityAuditEvents : [],
     orgData: {},
   };
 
@@ -418,6 +438,7 @@ function serializeDbState(data: DBState = getDB()): string {
     organizations: data.organizations || [],
     memberships: data.memberships || [],
     invitations: data.invitations || [],
+    securityAuditEvents: data.securityAuditEvents || [],
     orgData: data.orgData || {},
   };
   return JSON.stringify(plain, null, 2);
@@ -533,6 +554,8 @@ function dbFromPostgresRows(rows: {
       enabledModules: stringArray(u.enabledModules, DEFAULT_USER_MODULES),
       enabledWidgets: stringArray(u.enabledWidgets, DEFAULT_USER_WIDGETS),
       registrationComplete: u.registrationComplete ?? true,
+      accountEnabled: u.accountEnabled !== false,
+      sessionVersion: Number.isInteger(u.sessionVersion) && u.sessionVersion > 0 ? u.sessionVersion : 1,
       createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
       updatedAt: u.updatedAt ? new Date(u.updatedAt).toISOString() : undefined,
     })),
@@ -555,11 +578,12 @@ function dbFromPostgresRows(rows: {
       email: i.email,
       organizationId: i.organizationId,
       role: i.role,
-      token: i.token,
+      tokenHash: i.tokenHash,
       expiresAt: i.expiresAt.toISOString(),
       acceptedAt: i.acceptedAt ? i.acceptedAt.toISOString() : null,
       createdAt: i.createdAt ? new Date(i.createdAt).toISOString() : undefined,
     })),
+    securityAuditEvents: [],
     orgData: {},
   };
 
@@ -602,6 +626,7 @@ export function getDB(): DBState {
       organizations: [],
       memberships: [],
       invitations: [],
+      securityAuditEvents: [],
       orgData: {}
     };
   }
@@ -750,6 +775,8 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
           create: {
             id: user.id || undefined,
@@ -769,6 +796,8 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
         });
       }
@@ -796,7 +825,7 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
           },
@@ -805,7 +834,7 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
           },
@@ -842,6 +871,190 @@ export async function refreshCoreMetadataFromPostgres(): Promise<boolean> {
     console.warn('[db] PostgreSQL core metadata refresh failed; using process cache fallback:', err);
     return false;
   }
+}
+
+export type InvitationAcceptanceStatus =
+  | 'success'
+  | 'not_found'
+  | 'already_accepted'
+  | 'expired'
+  | 'user_not_found'
+  | 'email_mismatch'
+  | 'email_unverified';
+
+export interface InvitationAcceptanceResult {
+  status: InvitationAcceptanceStatus;
+  organizationId?: string;
+  role?: string;
+}
+
+function normalizedEmail(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/**
+ * Claim an invitation and create/update its membership as one database
+ * transaction. The conditional update is the concurrency gate: only one
+ * request can move acceptedAt from null, so duplicate submissions cannot race
+ * into multiple or partially-applied memberships.
+ */
+export async function acceptInvitationAtomically(
+  tokenHash: string,
+  username: string,
+  now = new Date(),
+): Promise<InvitationAcceptanceResult> {
+  const prisma = await getPrisma();
+
+  if (prisma) {
+    const result = await prisma.$transaction(async (tx) => {
+      const invite = await tx.invitation.findUnique({ where: { tokenHash } });
+      if (!invite) return { status: 'not_found' } as InvitationAcceptanceResult;
+      if (invite.acceptedAt) return { status: 'already_accepted' } as InvitationAcceptanceResult;
+      if (invite.expiresAt.getTime() <= now.getTime()) return { status: 'expired' } as InvitationAcceptanceResult;
+
+      const user = await tx.user.findUnique({ where: { username } });
+      if (!user) return { status: 'user_not_found' } as InvitationAcceptanceResult;
+      if (user.accountEnabled === false) return { status: 'user_not_found' } as InvitationAcceptanceResult;
+      if (normalizedEmail(user.email) !== normalizedEmail(invite.email)) {
+        return { status: 'email_mismatch' } as InvitationAcceptanceResult;
+      }
+      if (!user.emailVerified) return { status: 'email_unverified' } as InvitationAcceptanceResult;
+
+      const claimed = await tx.invitation.updateMany({
+        where: {
+          id: invite.id,
+          acceptedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { acceptedAt: now },
+      });
+      if (claimed.count !== 1) {
+        return { status: 'already_accepted' } as InvitationAcceptanceResult;
+      }
+
+      await tx.membership.upsert({
+        where: {
+          userId_organizationId: {
+            userId: user.username,
+            organizationId: invite.organizationId,
+          },
+        },
+        update: { role: invite.role },
+        create: {
+          userId: user.username,
+          organizationId: invite.organizationId,
+          role: invite.role,
+        },
+      });
+      await tx.user.update({
+        where: { username: user.username },
+        data: { activeOrganizationId: invite.organizationId },
+      });
+
+      return {
+        status: 'success',
+        organizationId: invite.organizationId,
+        role: invite.role,
+      } as InvitationAcceptanceResult;
+    });
+
+    if (result.status === 'success') await refreshCoreMetadataFromPostgres();
+    return result;
+  }
+
+  const db = getDB();
+  const invite = db.invitations.find((candidate: any) => candidate.tokenHash === tokenHash);
+  if (!invite) return { status: 'not_found' };
+  if (invite.acceptedAt) return { status: 'already_accepted' };
+  if (new Date(invite.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
+
+  const user = db.users.find((candidate: any) => candidate.username === username);
+  if (!user) return { status: 'user_not_found' };
+  if (user.accountEnabled === false) return { status: 'user_not_found' };
+  if (normalizedEmail(user.email) !== normalizedEmail(invite.email)) return { status: 'email_mismatch' };
+  if (user.emailVerified === false) return { status: 'email_unverified' };
+
+  // Claim before the first await so concurrent requests in this process see it.
+  invite.acceptedAt = now.toISOString();
+  const existing = db.memberships.find((membership: any) => (
+    membership.userId === user.username && membership.organizationId === invite.organizationId
+  ));
+  if (existing) {
+    existing.role = invite.role;
+  } else {
+    db.memberships.push({
+      id: `mem_${Math.random().toString(36).slice(2, 11)}`,
+      userId: user.username,
+      organizationId: invite.organizationId,
+      role: invite.role,
+    });
+  }
+  user.activeOrganizationId = invite.organizationId;
+  await saveCoreMetadata('org-invite-accept');
+  return { status: 'success', organizationId: invite.organizationId, role: invite.role };
+}
+
+export interface SecurityAuditEventInput {
+  eventType: string;
+  username?: string | null;
+  actorUsername?: string | null;
+  organizationId?: string | null;
+  ipHash?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+function safeAuditMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+  const entries = Object.entries(metadata).filter(([key]) => (
+    !/(authorization|cookie|passcode|password|secret|token)/i.test(key)
+  ));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+export async function recordSecurityAuditEvent(input: SecurityAuditEventInput): Promise<void> {
+  const eventType = String(input.eventType || '').trim();
+  if (!eventType) return;
+  const metadata = safeAuditMetadata(input.metadata);
+  const data = {
+    eventType,
+    username: input.username || null,
+    actorUsername: input.actorUsername || null,
+    organizationId: input.organizationId || null,
+    ipHash: input.ipHash || null,
+    metadata: metadata ? jsonForPrisma(metadata) : undefined,
+  };
+
+  const prisma = await getPrisma();
+  if (prisma && (prisma as any).securityAuditEvent) {
+    await (prisma as any).securityAuditEvent.create({ data });
+    return;
+  }
+
+  const db = getDB();
+  if (!db.securityAuditEvents) db.securityAuditEvents = [];
+  db.securityAuditEvents.unshift({
+    id: `security_${Math.random().toString(36).slice(2, 11)}`,
+    ...data,
+    createdAt: new Date().toISOString(),
+  });
+  if (db.securityAuditEvents.length > 2000) db.securityAuditEvents.length = 2000;
+  saveDB({ syncPostgres: false });
+}
+
+export async function listSecurityAuditEvents(limit = 200): Promise<any[]> {
+  const take = Math.min(500, Math.max(1, Math.floor(limit)));
+  const prisma = await getPrisma();
+  if (prisma && (prisma as any).securityAuditEvent) {
+    const rows = await (prisma as any).securityAuditEvent.findMany({
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+    return rows.map((row: any) => ({
+      ...row,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+    }));
+  }
+  return [...(getDB().securityAuditEvents || [])].slice(0, take);
 }
 
 export async function saveCoreMetadata(source = 'core-metadata'): Promise<void> {
@@ -889,6 +1102,7 @@ export interface PostgresReadinessProbe {
     coreMetadataRead: boolean;
     organizationStateRead: boolean;
     loginAttemptStoreRead: boolean;
+    securityAuditStoreRead: boolean;
   };
   errors: string[];
 }
@@ -928,6 +1142,7 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
       coreMetadataRead: false,
       organizationStateRead: false,
       loginAttemptStoreRead: false,
+      securityAuditStoreRead: false,
     },
     errors: [],
   };
@@ -952,6 +1167,7 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
   probe.checks.coreMetadataRead = coreChecks.every(Boolean);
   probe.checks.organizationStateRead = await probePrismaModelRead((prisma as any).organizationState, 'OrganizationState', probe.errors);
   probe.checks.loginAttemptStoreRead = await probePrismaModelRead((prisma as any).loginAttempt, 'LoginAttempt', probe.errors);
+  probe.checks.securityAuditStoreRead = await probePrismaModelRead((prisma as any).securityAuditEvent, 'SecurityAuditEvent', probe.errors);
   probe.ok = Object.values(probe.checks).every(Boolean) && probe.errors.length === 0;
   return probe;
 }
@@ -1004,6 +1220,8 @@ async function persistFullDbToPostgres(
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
           create: {
             username: user.username,
@@ -1022,6 +1240,8 @@ async function persistFullDbToPostgres(
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
         });
       }
@@ -1049,7 +1269,7 @@ async function persistFullDbToPostgres(
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
           },
@@ -1058,7 +1278,7 @@ async function persistFullDbToPostgres(
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
           },
@@ -1137,6 +1357,7 @@ export function getDbRuntimeStatus() {
     organizations: [],
     memberships: [],
     invitations: [],
+    securityAuditEvents: [],
     orgData: {}
   };
   const serializedBytes = Buffer.byteLength(JSON.stringify(db), 'utf8');

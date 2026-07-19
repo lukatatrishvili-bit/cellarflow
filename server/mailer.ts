@@ -1,10 +1,10 @@
 /**
  * Minimal outbound mail. Sends through SMTP when configured (SMTP_HOST etc.),
- * and otherwise logs the message to the server console so verification flows
- * still work in development and self-hosted setups without a mail provider.
+ * and otherwise logs the message only outside production so verification flows
+ * still work in local development without a mail provider.
  *
  * nodemailer is imported lazily and only when SMTP is configured, so it stays an
- * optional dependency — the app builds and runs without it.
+ * out of the startup path.
  */
 
 export interface MailMessage {
@@ -17,6 +17,13 @@ export interface MailMessage {
 export interface MailResult {
   delivered: boolean;
   transport: 'smtp' | 'console';
+}
+
+export class MailDeliveryError extends Error {
+  constructor(message = 'Outbound email delivery failed') {
+    super(message);
+    this.name = 'MailDeliveryError';
+  }
 }
 
 function smtpConfigured(): boolean {
@@ -47,8 +54,16 @@ export async function sendMail(msg: MailMessage): Promise<MailResult> {
       });
       return { delivered: true, transport: 'smtp' };
     } catch (err) {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[mailer] SMTP delivery failed.');
+        throw new MailDeliveryError();
+      }
       console.error('[mailer] SMTP send failed, falling back to console:', err);
     }
+  }
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[mailer] SMTP_HOST is not configured; outbound email was not sent.');
+    throw new MailDeliveryError('Outbound email is not configured');
   }
   // Dev / no-provider fallback: make the message (and any link) visible in logs.
   console.log(

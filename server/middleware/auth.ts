@@ -1,5 +1,5 @@
 import express from 'express';
-import { verifySessionToken, createSessionToken } from '../auth';
+import { verifySessionToken, sessionMatchesUserVersion, userAccountIsEnabled } from '../auth';
 import { can, type Capability } from '../permissions';
 import { getDB, getUserOrganizationStateMeta, refreshCoreMetadataFromPostgres, getPrismaClientForAdmin } from '../db';
 import { cleanEnv, COOKIE_SECURE } from '../config';
@@ -58,11 +58,14 @@ export async function liveSessionRole(req: express.Request): Promise<{ username:
   await refreshCoreMetadataFromPostgres();
   const user = getDB().users.find(u => u.username === session.username);
   if (!user) return null;
+  if (!userAccountIsEnabled(user)) return null;
+  if (!sessionMatchesUserVersion(session, user)) return null;
   const db = getDB();
   const activeOrganizationId = user.activeOrganizationId;
   const membership = activeOrganizationId
     ? db.memberships?.find(m => m.userId === user.username && m.organizationId === activeOrganizationId)
     : null;
+  if (activeOrganizationId && !membership) return null;
   return { username: user.username, role: membership?.role || user.role };
 }
 
@@ -127,6 +130,24 @@ export function organizationContextMismatch(requestedOrganizationId: unknown, ac
 
 export const loginLimiter = createSharedLoginLimiter({
   maxAttempts: 8,
+  windowMs: 15 * 60 * 1000,
+  lockoutMs: 15 * 60 * 1000,
+}, getPrismaClientForAdmin);
+
+export const accountRecoveryLimiter = createSharedLoginLimiter({
+  maxAttempts: 5,
+  windowMs: 60 * 60 * 1000,
+  lockoutMs: 60 * 60 * 1000,
+}, getPrismaClientForAdmin);
+
+export const invitationLimiter = createSharedLoginLimiter({
+  maxAttempts: 20,
+  windowMs: 15 * 60 * 1000,
+  lockoutMs: 15 * 60 * 1000,
+}, getPrismaClientForAdmin);
+
+export const oauthCallbackLimiter = createSharedLoginLimiter({
+  maxAttempts: 10,
   windowMs: 15 * 60 * 1000,
   lockoutMs: 15 * 60 * 1000,
 }, getPrismaClientForAdmin);

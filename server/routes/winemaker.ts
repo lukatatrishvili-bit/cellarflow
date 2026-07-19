@@ -1,8 +1,7 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { getDB } from '../db';
-import { verifySessionToken as authVerifySession } from '../auth';
-import { parseCookies as middlewareParseCookies } from '../middleware/auth';
+import { requireCapability } from '../middleware/auth';
 import { GEMINI_MODEL } from '../config';
 
 const router = express.Router();
@@ -97,6 +96,8 @@ export function getHistoricalContext(username: string): string {
 // POST /api/gemini
 router.post('/', async (req, res) => {
   try {
+    const auth = await requireCapability(req, res, 'read');
+    if (!auth) return;
     const { prompt, cellarState, stream, lang } = req.body;
 
     if (!process.env.GEMINI_API_KEY) {
@@ -105,14 +106,10 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const cookies = middlewareParseCookies(req.headers.cookie);
-    const session = authVerifySession(cookies['maranios_session']);
-    const username = session?.username;
+    const username = auth.username;
 
     let historicalContext = "";
-    if (username) {
-      historicalContext = getHistoricalContext(username);
-    }
+    historicalContext = getHistoricalContext(username);
 
     const SYSTEM_PROMPT = `You are the VinOS AI Winemaker Assistant (Copilot), a world-class enological advisor, biochemist, and cellar processes expert.
 You help winemakers worldwide with:

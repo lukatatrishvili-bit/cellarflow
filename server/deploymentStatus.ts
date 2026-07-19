@@ -44,6 +44,7 @@ export interface RuntimeScaleProbe {
     coreMetadataRead?: boolean;
     organizationStateRead?: boolean;
     loginAttemptStoreRead?: boolean;
+    securityAuditStoreRead?: boolean;
   };
   errors?: string[];
 }
@@ -220,6 +221,12 @@ export function applyRuntimeScaleReadinessProbe(
     addCompleted('Live PostgreSQL probe confirmed the shared LoginAttempt limiter table is readable.');
   } else {
     addBlocker('Live PostgreSQL probe could not read the shared LoginAttempt limiter table.');
+  }
+
+  if (probe.checks?.securityAuditStoreRead === true) {
+    addCompleted('Live PostgreSQL probe confirmed the SecurityAuditEvent table is readable.');
+  } else if (probe.checks?.securityAuditStoreRead === false) {
+    addBlocker('Live PostgreSQL probe could not read the SecurityAuditEvent table.');
   }
 
   for (const error of probe.errors || []) {

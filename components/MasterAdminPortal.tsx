@@ -22,6 +22,7 @@ interface UserRecord {
   fullName: string;
   role: string;
   emailVerified: boolean;
+  accountEnabled: boolean;
   isDemo: boolean;
   createdAt: string;
   organizations: Array<{ id: string; name: string; role: string }>;
@@ -201,6 +202,7 @@ export default function MasterAdminPortal({
   const [editRole, setEditRole] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editVerified, setEditVerified] = useState(false);
+  const [editEnabled, setEditEnabled] = useState(true);
   const [newPasscode, setNewPasscode] = useState('');
   const [isUpdatingUser, setIsUpdatingUser] = useState(false);
 
@@ -484,6 +486,7 @@ export default function MasterAdminPortal({
           email: editEmail,
           role: editRole,
           emailVerified: editVerified,
+          accountEnabled: editEnabled,
           passcode: newPasscode || undefined
         })
       });
@@ -1195,8 +1198,13 @@ export default function MasterAdminPortal({
                                 </div>
                               </td>
                               <td className="px-5 py-3.5">
-                                <span className={`flex items-center gap-1.5 font-bold ${u.emailVerified ? 'text-emerald-500' : 'text-amber-500'}`}>
-                                  {u.emailVerified ? (
+                                <span className={`flex items-center gap-1.5 font-bold ${u.accountEnabled === false ? 'text-red-500' : u.emailVerified ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                  {u.accountEnabled === false ? (
+                                    <>
+                                      <ShieldAlert className="w-3.5 h-3.5" />
+                                      <span>{isKa ? 'áƒ’áƒáƒ›áƒáƒ áƒ—áƒ£áƒšáƒ˜' : 'DISABLED'}</span>
+                                    </>
+                                  ) : u.emailVerified ? (
                                     <>
                                       <ShieldCheck className="w-3.5 h-3.5" />
                                       <span>{isKa ? 'ვერიფიცირებული' : 'VERIFIED'}</span>
@@ -1213,9 +1221,9 @@ export default function MasterAdminPortal({
                                 <div className="flex items-center justify-end gap-2">
                                   <button
                                     onClick={() => handleImpersonate(u.username)}
-                                    disabled={isMaster || impersonatingUsername !== null}
+                                    disabled={isMaster || u.accountEnabled === false || impersonatingUsername !== null}
                                     className={`p-1.5 bg-stone-900 border border-stone-850 rounded-lg transition-colors ${
-                                      isMaster || impersonatingUsername !== null
+                                      isMaster || u.accountEnabled === false || impersonatingUsername !== null
                                         ? 'opacity-30 cursor-not-allowed text-stone-600'
                                         : 'hover:border-emerald-500/30 text-stone-450 hover:text-emerald-400 cursor-pointer'
                                     }`}
@@ -1233,6 +1241,7 @@ export default function MasterAdminPortal({
                                       setEditRole(u.role);
                                       setEditEmail(u.email);
                                       setEditVerified(u.emailVerified);
+                                      setEditEnabled(u.accountEnabled !== false);
                                     }}
                                     className="p-1.5 bg-stone-900 border border-stone-850 hover:border-cyan-500/30 text-stone-450 hover:text-cyan-400 rounded-lg cursor-pointer transition-colors"
                                     title={isKa ? 'დეტალების / კოდის რედაქტირება' : 'Edit details / passcode'}
@@ -1753,6 +1762,21 @@ export default function MasterAdminPortal({
                     </button>
                   </div>
 
+                  <div className="flex items-center justify-between bg-stone-950/50 border border-stone-900 p-2.5 rounded-xl">
+                    <span className="text-[10px] uppercase text-stone-400 font-bold">{isKa ? 'áƒáƒœáƒ’áƒáƒ áƒ˜áƒ¨áƒ˜áƒ¡ áƒ¡áƒ¢áƒáƒ¢áƒ£áƒ¡áƒ˜' : 'Account Status'}</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditEnabled(prev => !prev)}
+                      className={`px-3 py-1 text-[9px] font-bold rounded-lg cursor-pointer transition-colors ${
+                        editEnabled
+                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/20'
+                          : 'bg-red-950 text-red-400 border border-red-500/20'
+                      }`}
+                    >
+                      {editEnabled ? (isKa ? 'áƒáƒ¥áƒ¢áƒ˜áƒ£áƒ áƒ˜' : 'ACTIVE') : (isKa ? 'áƒ’áƒáƒ›áƒáƒ áƒ—áƒ£áƒšáƒ˜' : 'DISABLED')}
+                    </button>
+                  </div>
+
                   <div>
                     <label className="block text-[9px] uppercase text-stone-500 font-bold mb-1">{isKa ? 'კოდის იძულებითი შეცვლა' : 'Force Passcode Override'}</label>
                     <div className="relative">
@@ -1762,7 +1786,7 @@ export default function MasterAdminPortal({
                         value={newPasscode}
                         onChange={e => setNewPasscode(e.target.value)}
                         className="w-full bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs text-stone-200 outline-none focus:border-cyan-500/30"
-                        minLength={4}
+                        minLength={8}
                       />
                       <KeyRound className="w-3.5 h-3.5 text-stone-600 absolute right-3.5 top-2.5" />
                     </div>

@@ -112,16 +112,25 @@ Do not begin P2 work while a related P0 invariant is unproved.
 - A reviewed baseline migration now covers the existing Prisma schema. The verified image runs it in a one-task, zero-retry Cloud Run job before service deployment; an existing `db push` database is baselined only after an exact schema-drift check, and every failure prevents the new revision from deploying.
 - CI blocks high and critical production dependency advisories. Non-breaking lockfile refreshes removed the current high findings; the remaining transitive moderate `uuid` advisories and their accepted temporary mitigation are recorded in `docs/dependency-security.md`.
 - Repository branch protection, the required CI status, production reviewers, and the first immutable-image deployment were confirmed configured/executed on 2026-07-19.
-- The release pipeline portion of Milestone 1 is complete; account/team hardening remains unchanged below.
+- The release pipeline portion of Milestone 1 is complete. Account/team hardening is now implemented and is awaiting the same immutable-image rollout for production.
 
 ### 5.2 Account and team hardening
 
-- Rate-limit password recovery, resend-verification, invitation creation/read/accept, and OAuth callback failure loops.
-- Persist invitation token hashes rather than raw bearer tokens.
-- Consume invitations atomically so two requests cannot accept the same invitation.
-- Add a server-side session version or revocation timestamp; password reset, account disable, role removal, and security-sensitive admin actions must invalidate old sessions.
-- Fail closed for recovery/invitation mail in production. Never emit live bearer links to production logs as a fallback.
-- Add audit events for password reset, invitation lifecycle, membership/role changes, impersonation, and runtime configuration changes without recording secrets.
+- Rate-limit password recovery, resend-verification, invitation creation/read/accept, and OAuth callback failure loops. **Implemented.**
+- Persist invitation token hashes rather than raw bearer tokens. **Implemented.**
+- Consume invitations atomically so two requests cannot accept the same invitation. **Implemented.**
+- Add a server-side session version or revocation timestamp; password reset, account disable, role removal, and security-sensitive admin actions must invalidate old sessions. **Implemented.**
+- Fail closed for recovery/invitation mail in production. Never emit live bearer links to production logs as a fallback. **Implemented.**
+- Add audit events for password reset, invitation lifecycle, membership/role changes, impersonation, and runtime configuration changes without recording secrets. **Implemented.**
+
+### Account-hardening execution note — 2026-07-19
+
+- Recovery, verification-resend, invitation, and OAuth callback quotas share the PostgreSQL-backed limiter, with hashed IP/identity keys so diagnostic state does not disclose account identifiers or bearer values.
+- Existing invitation values are SHA-256 transformed by migration; new invitations persist only a digest. Acceptance uses a conditional single-use claim, membership upsert, and active-organization change in one PostgreSQL transaction, with equivalent single-process fallback behavior.
+- Sessions carry a server-owned version. Password reset, account enable/disable, and security-sensitive master-admin updates increment it; live authorization also rejects disabled/deleted users and removed active memberships immediately.
+- Production mail delivery now requires SMTP and reports only generic operational failures. Full verification, reset, and invitation links remain available solely through the development console transport.
+- Durable security events cover recovery, verification, invitations, OAuth failures/success, account administration, impersonation, and runtime OAuth changes; IP addresses are HMAC-hashed, secret-shaped metadata keys are discarded, and master administrators can inspect the recent durable trail through a protected endpoint.
+- Focused regression coverage exercises recovery enumeration resistance and throttling, OAuth failure throttling, invitation replay/race protection in JSON and PostgreSQL paths, session revocation, account disablement, membership removal, migration behavior, and production mail logging safety.
 
 ### Exit gate
 
@@ -259,7 +268,7 @@ Do not begin P2 work while a related P0 invariant is unproved.
 2. Finish storage deletion integrity and scoped tombstone durability.
 3. Finish conflict-resolution recovery and split the current work into reviewable commits.
 4. Add CI with build-before-budget, unit/type gates, and production boot smoke test.
-5. Add recovery/invitation throttling, hashed invitations, atomic acceptance, and session revocation.
+5. ✅ Add recovery/invitation throttling, hashed invitations, atomic acceptance, and session revocation.
 6. Add PostgreSQL integration tests and migration validation in CI.
 7. Migrate vessel/lot relational identity to tenant-safe keys and add collision tests.
 8. Replace background vessel/lot upserts with a durable, deletion-aware projection plus reconciliation report.

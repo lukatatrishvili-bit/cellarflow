@@ -13,6 +13,10 @@ import {
   passwordNeedsUpgrade,
   passcodeValidationError,
   sameNormalizedEmail,
+  sessionMatchesUserVersion,
+  sessionPayloadForUser,
+  sessionVersionForUser,
+  userAccountIsEnabled,
 } from '../auth';
 import {
   getDB,
@@ -21,8 +25,9 @@ import {
   getUserData,
   createEmptyUserData,
   refreshCoreMetadataFromPostgres,
+  acceptInvitationAtomically,
 } from '../db';
-import { generateVerificationToken, isVerificationTokenValid, isValidEmail } from '../emailVerification';
+import { generateVerificationToken, hashToken, isVerificationTokenValid, isValidEmail } from '../emailVerification';
 import { sendMail, buildVerificationEmail, buildResetPasswordEmail, buildInvitationEmail } from '../mailer';
 import { createDemoUser } from '../demoAccount';
 import {
@@ -34,8 +39,15 @@ import {
   demoAccountConfig,
 } from '../config';
 import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from '../oauthConfigPolicy';
-import { loginLimiter } from '../middleware/auth';
+import {
+  accountRecoveryLimiter,
+  invitationLimiter,
+  loginLimiter,
+  oauthCallbackLimiter,
+} from '../middleware/auth';
 import { isKnownRole, type Role } from '../permissions';
+import { auditSecurityEvent } from '../securityAudit';
+import type { SharedLoginLimiter } from '../loginLimiter';
 
 const authRouter = express.Router();
 const orgRouter = express.Router();
@@ -53,6 +65,32 @@ const WIDGET_MODULES: Record<string, 'vazi' | 'gvino' | null> = {
   tasks: null,
   audit: null,
 };
+
+function rateLimitKey(scope: string, req: express.Request, subject = ''): string {
+  return `rate:${scope}:${hashToken(`${clientIp(req)}:${subject.trim().toLowerCase()}`)}`;
+}
+
+async function consumeRateLimit(
+  limiter: SharedLoginLimiter,
+  keys: string[],
+  res: express.Response,
+): Promise<boolean> {
+  const uniqueKeys = Array.from(new Set(keys));
+  for (const key of uniqueKeys) {
+    const remaining = await limiter.lockRemainingSeconds(key);
+    if (remaining > 0) {
+      res.setHeader('Retry-After', String(remaining));
+      res.status(429).json({ error: 'Too many requests. Try again later.' });
+      return false;
+    }
+  }
+  await Promise.all(uniqueKeys.map(key => limiter.recordFailure(key)));
+  return true;
+}
+
+function validSessionForUser(session: any, user: any): boolean {
+  return Boolean(session && userAccountIsEnabled(user) && sessionMatchesUserVersion(session, user));
+}
 
 function cleanText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -254,6 +292,8 @@ authRouter.post('/register', async (req, res) => {
     verifyTokenHash: verification.tokenHash,
     verifyTokenExpires: verification.expiresAt,
     activeOrganizationId: orgId,
+    accountEnabled: true,
+    sessionVersion: 1,
   };
   db.users.push(user);
 
@@ -270,7 +310,29 @@ authRouter.post('/register', async (req, res) => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
   };
   const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${verification.token}&u=${encodeURIComponent(cleanUsername)}`;
-  const mail = await sendMail(buildVerificationEmail({ to: cleanEmail, link, lang: user.language, wineryName: 'VinOS' }));
+  let mail;
+  try {
+    mail = await sendMail(buildVerificationEmail({ to: cleanEmail, link, lang: user.language, wineryName: 'VinOS' }));
+  } catch {
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: cleanUsername,
+      organizationId: orgId,
+      ip: clientIp(req),
+      metadata: { purpose: 'email_verification' },
+    });
+    return res.status(503).json({
+      error: 'Your account was created, but the verification email could not be delivered. Please try resending it later.',
+      code: 'email_delivery_failed',
+    });
+  }
+
+  await auditSecurityEvent({
+    eventType: 'account.registered',
+    username: cleanUsername,
+    organizationId: orgId,
+    ip: clientIp(req),
+  });
 
   res.json({
     requiresVerification: true,
@@ -287,7 +349,7 @@ authRouter.get('/verify-email', async (req, res) => {
   const db = getDB();
   const user = db.users.find(u => u.username === username) as any;
 
-  if (!user) return res.redirect('/?verify_error=invalid');
+  if (!user || !userAccountIsEnabled(user)) return res.redirect('/?verify_error=invalid');
   if (user.emailVerified) return res.redirect('/?verified=already');
   if (!isVerificationTokenValid(user, token)) return res.redirect('/?verify_error=expired');
 
@@ -296,7 +358,14 @@ authRouter.get('/verify-email', async (req, res) => {
   delete user.verifyTokenExpires;
   await saveCoreMetadata('auth-verify-email');
 
-  const sessionToken = createSessionToken({ username: user.username, role: user.role }, true);
+  await auditSecurityEvent({
+    eventType: 'email.verified',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+  });
+
+  const sessionToken = createSessionToken(sessionPayloadForUser(user, user.role), true);
   res.setHeader('Set-Cookie', sessionCookie(sessionToken, 2592000)); // 30 days
 
   res.redirect('/?verified=1');
@@ -304,6 +373,11 @@ authRouter.get('/verify-email', async (req, res) => {
 
 authRouter.post('/resend-verification', async (req, res) => {
   const id = String(req.body?.identifier || '').toLowerCase().trim();
+  if (!await consumeRateLimit(accountRecoveryLimiter, [
+    rateLimitKey('verification-resend-ip', req),
+    rateLimitKey('verification-resend-identity', req, id),
+  ], res)) return;
+
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === id || (u.email || '').toLowerCase().trim() === id) as any;
@@ -312,13 +386,31 @@ authRouter.post('/resend-verification', async (req, res) => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
   };
 
-  if (user && user.emailVerified === false) {
+  if (user && userAccountIsEnabled(user) && user.emailVerified === false) {
     const verification = generateVerificationToken();
     user.verifyTokenHash = verification.tokenHash;
     user.verifyTokenExpires = verification.expiresAt;
     await saveCoreMetadata('auth-resend-verification');
     const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${verification.token}&u=${encodeURIComponent(user.username)}`;
-    const mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+    let mail;
+    try {
+      mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+      await auditSecurityEvent({
+        eventType: 'email.verification_resent',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+      });
+    } catch {
+      await auditSecurityEvent({
+        eventType: 'email.delivery_failed',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+        metadata: { purpose: 'email_verification' },
+      });
+      return res.json({ ok: true });
+    }
     if (exposeVerifyLink(mail.transport)) {
       return res.json({ ok: true, devVerifyUrl: link });
     }
@@ -331,6 +423,10 @@ authRouter.post('/forgot-password', async (req, res) => {
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'A valid email address is required' });
   }
+  if (!await consumeRateLimit(accountRecoveryLimiter, [
+    rateLimitKey('password-forgot-ip', req),
+    rateLimitKey('password-forgot-identity', req, email),
+  ], res)) return;
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
@@ -338,7 +434,7 @@ authRouter.post('/forgot-password', async (req, res) => {
 
   // Always return the same public result for a syntactically valid email so
   // this endpoint cannot be used to enumerate VinOS accounts.
-  if (!user) {
+  if (!user || !userAccountIsEnabled(user)) {
     return res.json({ ok: true });
   }
 
@@ -348,7 +444,25 @@ authRouter.post('/forgot-password', async (req, res) => {
   await saveCoreMetadata('auth-forgot-password');
 
   const link = `${appBaseUrl(req)}/?reset_token=${resetToken.token}&u=${encodeURIComponent(user.username)}`;
-  const mail = await sendMail(buildResetPasswordEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+  let mail;
+  try {
+    mail = await sendMail(buildResetPasswordEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+    await auditSecurityEvent({
+      eventType: 'password.reset_requested',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+    });
+  } catch {
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { purpose: 'password_reset' },
+    });
+    return res.json({ ok: true });
+  }
 
   const exposeVerifyLink = (transport: 'smtp' | 'console'): boolean => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
@@ -371,12 +485,17 @@ authRouter.post('/reset-password', async (req, res) => {
     return res.status(400).json({ error: passcodeError });
   }
 
+  const cleanUsername = String(username).toLowerCase().trim();
+  if (!await consumeRateLimit(accountRecoveryLimiter, [
+    rateLimitKey('password-reset-ip', req),
+    rateLimitKey('password-reset-identity', req, cleanUsername),
+  ], res)) return;
+
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const cleanUsername = String(username).toLowerCase().trim();
   const user = db.users.find(u => u.username === cleanUsername) as any;
 
-  if (!user) {
+  if (!user || !userAccountIsEnabled(user)) {
     return res.status(400).json({ error: 'Invalid or expired reset token' });
   }
 
@@ -390,9 +509,17 @@ authRouter.post('/reset-password', async (req, res) => {
   }
 
   user.passwordHash = hashPassword(passcode || 'vinea2026');
+  user.sessionVersion = sessionVersionForUser(user) + 1;
   delete user.resetTokenHash;
   delete user.resetTokenExpires;
   await saveCoreMetadata('auth-reset-password');
+
+  await auditSecurityEvent({
+    eventType: 'password.reset_completed',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+  });
 
   res.json({ ok: true });
 });
@@ -437,7 +564,7 @@ authRouter.post('/login', async (req, res) => {
   const db = getDB();
   
   const user = db.users.find(u => u.username === identifier || u.email === identifier);
-  if (!user || !verifyPassword(passcode, user.passwordHash)) {
+  if (!user || !userAccountIsEnabled(user) || !verifyPassword(passcode, user.passwordHash)) {
     await loginLimiter.recordFailure(limiterKey);
     return res.status(401).json({ error: 'Invalid username or passcode' });
   }
@@ -463,7 +590,7 @@ authRouter.post('/login', async (req, res) => {
   }
 
   const effectiveRole = activeMembershipRole(db, user);
-  const token = createSessionToken({ username: user.username, role: effectiveRole }, rememberMe);
+  const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400;
   res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
   res.json(publicUser(user, { role: effectiveRole }));
@@ -476,9 +603,9 @@ authRouter.post('/demo', async (_req, res) => {
 
   try {
     const user = await ensureDemoAccount();
-    if (!user) return res.status(404).json({ error: 'Demo login is unavailable.' });
+    if (!user || !userAccountIsEnabled(user)) return res.status(404).json({ error: 'Demo login is unavailable.' });
 
-    const token = createSessionToken({ username: user.username, role: user.role }, false);
+    const token = createSessionToken(sessionPayloadForUser(user, user.role), false);
     res.setHeader('Set-Cookie', sessionCookie(token, 86400));
     res.json(publicUser(user, { isDemo: true, registrationComplete: true }));
   } catch (err) {
@@ -610,7 +737,7 @@ authRouter.get('/google/login', (req, res) => {
   res.redirect(authUrl);
 });
 
-authRouter.post('/google/configure', (req, res) => {
+authRouter.post('/google/configure', async (req, res) => {
   if (!isRuntimeOAuthConfigAllowed()) {
     return res.status(403).send('Runtime OAuth configuration is disabled in production.');
   }
@@ -625,7 +752,7 @@ authRouter.post('/google/configure', (req, res) => {
   db.googleConfig.clientId = String(clientId).trim();
   db.googleConfig.clientSecret = String(clientSecret).trim();
   
-  saveCoreMetadata('auth-google-config');
+  await saveCoreMetadata('auth-google-config');
 
   const trimmedClientId = String(clientId).trim();
   const trimmedClientSecret = String(clientSecret).trim();
@@ -633,12 +760,20 @@ authRouter.post('/google/configure', (req, res) => {
     GOOGLE_CLIENT_ID: trimmedClientId,
     GOOGLE_CLIENT_SECRET: trimmedClientSecret
   });
+
+  await auditSecurityEvent({
+    eventType: 'runtime.oauth_configuration_updated',
+    ip: clientIp(req),
+    metadata: { provider: 'google' },
+  });
   
   res.redirect('/api/auth/google/login');
 });
 
 authRouter.get('/google/callback', async (req, res) => {
   const { code } = req.query;
+  const callbackRateKey = rateLimitKey('oauth-callback-ip', req);
+  if (!await consumeRateLimit(oauthCallbackLimiter, [callbackRateKey], res)) return;
   if (!code) {
     return res.status(400).send('Authorization code missing');
   }
@@ -661,9 +796,13 @@ authRouter.get('/google/callback', async (req, res) => {
     });
     
     if (!tokenRes.ok) {
-      const errText = await tokenRes.text();
-      console.error('Google token exchange failed:', errText);
-      return res.status(tokenRes.status).send(`Failed to exchange code: ${errText}`);
+      console.error(`[auth] Google token exchange failed with status ${tokenRes.status}.`);
+      await auditSecurityEvent({
+        eventType: 'oauth.callback_failed',
+        ip: clientIp(req),
+        metadata: { stage: 'token_exchange', providerStatus: tokenRes.status },
+      });
+      return res.status(502).send('OAuth provider authentication failed');
     }
     
     const tokenData = await tokenRes.json() as any;
@@ -674,9 +813,13 @@ authRouter.get('/google/callback', async (req, res) => {
     });
     
     if (!userinfoRes.ok) {
-      const errText = await userinfoRes.text();
-      console.error('Google userinfo fetch failed:', errText);
-      return res.status(userinfoRes.status).send(`Failed to fetch userinfo: ${errText}`);
+      console.error(`[auth] Google user information request failed with status ${userinfoRes.status}.`);
+      await auditSecurityEvent({
+        eventType: 'oauth.callback_failed',
+        ip: clientIp(req),
+        metadata: { stage: 'userinfo', providerStatus: userinfoRes.status },
+      });
+      return res.status(502).send('OAuth provider authentication failed');
     }
     
     const userinfo = await userinfoRes.json() as any;
@@ -691,6 +834,16 @@ authRouter.get('/google/callback', async (req, res) => {
     const dbData = getDB();
     const cleanEmail = email.toLowerCase().trim();
     let user = dbData.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail);
+    if (user && !userAccountIsEnabled(user)) {
+      await auditSecurityEvent({
+        eventType: 'oauth.login_rejected',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+        metadata: { reason: 'account_disabled', provider: 'google' },
+      });
+      return res.status(403).send('This account is unavailable');
+    }
     
     let username = '';
     if (user) {
@@ -717,6 +870,8 @@ authRouter.get('/google/callback', async (req, res) => {
         enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
         registrationComplete: false,
         emailVerified: true,
+        accountEnabled: true,
+        sessionVersion: 1,
       };
       const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
       const org = { id: orgId, name: `${fullName || username}'s Estate` };
@@ -732,12 +887,27 @@ authRouter.get('/google/callback', async (req, res) => {
       await saveUserData(username, dbData.orgData[orgId]);
     }
     
-    const token = createSessionToken({ username: user.username, role: user.role }, true);
+    const effectiveRole = activeMembershipRole(dbData, user);
+    const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), true);
     res.setHeader('Set-Cookie', sessionCookie(token, 2592000));
+
+    await oauthCallbackLimiter.clear(callbackRateKey);
+    await auditSecurityEvent({
+      eventType: 'oauth.login_succeeded',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { provider: 'google' },
+    });
     
     res.redirect((user as any).registrationComplete === false ? '/?complete_registration=1' : '/');
   } catch (err) {
-    console.error('OAuth2 callback error:', err);
+    console.error(`[auth] OAuth callback failed (${err instanceof Error ? err.name : 'unknown_error'}).`);
+    await auditSecurityEvent({
+      eventType: 'oauth.callback_failed',
+      ip: clientIp(req),
+      metadata: { stage: 'unexpected' },
+    });
     res.status(500).send('OAuth2 flow failed');
   }
 });
@@ -769,11 +939,17 @@ authRouter.get('/me', async (req, res) => {
       registrationComplete: true,
     });
   }
-  
+
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
+  }
+  if (user.activeOrganizationId && !db.memberships?.some((membership: any) => (
+    membership.userId === user.username && membership.organizationId === user.activeOrganizationId
+  ))) {
+    return res.status(401).json({ error: 'Session is no longer authorized for the active organization' });
   }
   
   res.json(publicUser(user, {
@@ -795,8 +971,11 @@ authRouter.post('/complete_registration', async (req, res) => {
   const db = getDB();
   ensureDbCollections(db);
   const user = db.users.find(u => u.username === session.username) as any;
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
+  }
+  if (user.registrationComplete !== false) {
+    return res.status(409).json({ error: 'Registration is already complete' });
   }
 
   const cleanFullName = cleanText(req.body?.fullName || user.fullName);
@@ -819,6 +998,7 @@ authRouter.post('/complete_registration', async (req, res) => {
 
   user.fullName = cleanFullName;
   user.role = req.body.role;
+  user.sessionVersion = sessionVersionForUser(user) + 1;
   user.language = normalizeLanguage(req.body?.language || user.language);
   user.enabledModules = enabledModules;
   user.enabledWidgets = selectedWidgets(req.body?.enabledWidgets, enabledModules);
@@ -840,7 +1020,7 @@ authRouter.post('/complete_registration', async (req, res) => {
   await saveCoreMetadata('auth-complete-registration');
   await saveUserData(user.username, data, { updatedBy: 'auth-complete-registration' });
 
-  const newToken = createSessionToken({ username: user.username, role: user.role }, true);
+  const newToken = createSessionToken(sessionPayloadForUser(user, user.role), true);
   res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
   res.json(publicUser(user));
 });
@@ -854,9 +1034,10 @@ authRouter.post('/update_profile', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
   
@@ -914,16 +1095,31 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
   const org = db.organizations?.find(o => o.id === orgId);
   const cleanEmail = String(email).toLowerCase().trim();
 
-  const token = generateVerificationToken().token;
+  if (!await consumeRateLimit(invitationLimiter, [
+    rateLimitKey('invitation-create-ip', req),
+    rateLimitKey('invitation-create-actor', req, session.username),
+  ], res)) return;
+
+  const existingPending = db.invitations?.find((candidate: any) => (
+    candidate.organizationId === orgId
+    && sameNormalizedEmail(candidate.email, cleanEmail)
+    && !candidate.acceptedAt
+    && new Date(candidate.expiresAt).getTime() > Date.now()
+  ));
+  if (existingPending) {
+    return res.status(409).json({ error: 'A current invitation already exists for this email address' });
+  }
+
+  const inviteToken = generateVerificationToken();
   const inviteId = 'invite_' + Math.random().toString(36).substr(2, 9);
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-  const invitation = {
+  const invitation: any = {
     id: inviteId,
     email: cleanEmail,
     organizationId: orgId,
     role: role,
-    token: token,
+    tokenHash: inviteToken.tokenHash,
     expiresAt: expiresAt.toISOString(),
     acceptedAt: null,
   };
@@ -932,14 +1128,40 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
   db.invitations.push(invitation);
   await saveCoreMetadata('org-invite-create');
 
-  const link = `${appBaseUrl(req)}/accept-invite?token=${token}`;
-  const mail = await sendMail(buildInvitationEmail({
-    to: cleanEmail,
-    inviterName: user.fullName,
-    orgName: org?.name || 'VinOS Estate',
-    link,
-    lang: user.language
-  }));
+  const link = `${appBaseUrl(req)}/accept-invite?token=${inviteToken.token}`;
+  let mail;
+  try {
+    mail = await sendMail(buildInvitationEmail({
+      to: cleanEmail,
+      inviterName: user.fullName,
+      orgName: org?.name || 'VinOS Estate',
+      link,
+      lang: user.language
+    }));
+  } catch {
+    // The raw token is intentionally gone after this request. Mark the record
+    // unusable so a failed delivery cannot leave a misleading pending invite.
+    invitation.acceptedAt = new Date().toISOString();
+    await saveCoreMetadata('org-invite-delivery-failed');
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: user.username,
+      actorUsername: user.username,
+      organizationId: orgId,
+      ip: clientIp(req),
+      metadata: { purpose: 'invitation' },
+    });
+    return res.status(503).json({ error: 'The invitation email could not be delivered. Please try again later.' });
+  }
+
+  await auditSecurityEvent({
+    eventType: 'invitation.created',
+    username: cleanEmail,
+    actorUsername: user.username,
+    organizationId: orgId,
+    ip: clientIp(req),
+    metadata: { role },
+  });
 
   const exposeVerifyLink = (transport: 'smtp' | 'console'): boolean => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
@@ -954,9 +1176,12 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
 
 orgRouter.get('/invitations/:token', async (req, res) => {
   const { token } = req.params;
+  if (!await consumeRateLimit(invitationLimiter, [
+    rateLimitKey('invitation-read-ip', req),
+  ], res)) return;
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const invite = db.invitations?.find(i => i.token === token);
+  const invite = db.invitations?.find(i => i.tokenHash === hashToken(token));
 
   if (!invite) {
     return res.status(404).json({ error: 'Invitation not found' });
@@ -981,6 +1206,9 @@ orgRouter.post('/accept-invite', async (req, res) => {
   if (!token) {
     return res.status(400).json({ error: 'Invitation token is required' });
   }
+  if (!await consumeRateLimit(invitationLimiter, [
+    rateLimitKey('invitation-accept-ip', req),
+  ], res)) return;
 
   const cookies = parseCookies(req.headers.cookie);
   const sessionToken = cookies['maranios_session'];
@@ -992,49 +1220,38 @@ orgRouter.post('/accept-invite', async (req, res) => {
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const invite = db.invitations?.find(i => i.token === token);
-
-  if (!invite) {
-    return res.status(404).json({ error: 'Invitation not found' });
-  }
-  if (invite.acceptedAt) {
-    return res.status(400).json({ error: 'Invitation has already been accepted' });
-  }
-  if (new Date(invite.expiresAt) < new Date()) {
-    return res.status(400).json({ error: 'Invitation has expired' });
-  }
-
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
-  if (!sameNormalizedEmail(user.email, invite.email)) {
+
+  const result = await acceptInvitationAtomically(hashToken(String(token)), user.username);
+  if (result.status === 'not_found') return res.status(404).json({ error: 'Invitation not found' });
+  if (result.status === 'already_accepted') return res.status(400).json({ error: 'Invitation has already been accepted' });
+  if (result.status === 'expired') return res.status(400).json({ error: 'Invitation has expired' });
+  if (result.status === 'email_mismatch') {
     return res.status(403).json({ error: 'This invitation was issued to a different email address' });
   }
-  if ((user as any).emailVerified === false) {
+  if (result.status === 'email_unverified') {
     return res.status(403).json({ error: 'Verify your email before accepting this invitation' });
   }
-
-  const memId = 'mem_' + Math.random().toString(36).substr(2, 9);
-  const membership = {
-    id: memId,
-    userId: user.username,
-    organizationId: invite.organizationId,
-    role: invite.role
-  };
-
-  if (!db.memberships) db.memberships = [];
-  
-  const alreadyMember = db.memberships.some(m => m.userId === user.username && m.organizationId === invite.organizationId);
-  if (!alreadyMember) {
-    db.memberships.push(membership);
+  if (result.status !== 'success' || !result.organizationId || !result.role) {
+    return res.status(401).json({ error: 'User not found' });
   }
 
-  invite.acceptedAt = new Date().toISOString();
-  user.activeOrganizationId = invite.organizationId;
-  await saveCoreMetadata('org-invite-accept');
+  const refreshedUser = getDB().users.find(candidate => candidate.username === user.username) || user;
+  const newToken = createSessionToken(sessionPayloadForUser(refreshedUser, result.role), true);
+  res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
+  await auditSecurityEvent({
+    eventType: 'invitation.accepted',
+    username: user.username,
+    actorUsername: user.username,
+    organizationId: result.organizationId,
+    ip: clientIp(req),
+    metadata: { role: result.role },
+  });
 
-  res.json({ ok: true, activeOrganizationId: invite.organizationId });
+  res.json({ ok: true, activeOrganizationId: result.organizationId });
 });
 
 orgRouter.post('/switch', async (req, res) => {
@@ -1054,7 +1271,7 @@ orgRouter.post('/switch', async (req, res) => {
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
 
@@ -1069,7 +1286,7 @@ orgRouter.post('/switch', async (req, res) => {
   user.activeOrganizationId = organizationId;
   await saveCoreMetadata('org-switch');
 
-  const newToken = createSessionToken({ username: user.username, role: membership.role }, true);
+  const newToken = createSessionToken(sessionPayloadForUser(user, membership.role), true);
   res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
 
   res.json(buildOrganizationSwitchResponse(organizationId, membership.role));
@@ -1097,7 +1314,16 @@ orgRouter.get('/members', checkWineryScope('read'), async (req, res) => {
     };
   });
 
-  const pendingInvites = db.invitations?.filter(i => i.organizationId === orgId && !i.acceptedAt && new Date(i.expiresAt) > new Date()) || [];
+  const pendingInvites = (db.invitations?.filter(i => (
+    i.organizationId === orgId && !i.acceptedAt && new Date(i.expiresAt) > new Date()
+  )) || []).map((invite: any) => ({
+    id: invite.id,
+    email: invite.email,
+    organizationId: invite.organizationId,
+    role: invite.role,
+    expiresAt: invite.expiresAt,
+    createdAt: invite.createdAt,
+  }));
 
   res.json({ members, pendingInvites });
 });
@@ -1112,7 +1338,7 @@ orgRouter.get('/list', async (req, res) => {
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) return res.status(401).json({ error: 'User not found' });
+  if (!validSessionForUser(session, user)) return res.status(401).json({ error: 'User not found' });
 
   const userMemberships = db.memberships?.filter(m => m.userId === user.username) || [];
   const orgs = userMemberships.map(m => {

@@ -1,5 +1,5 @@
 import express from 'express';
-import { parseCookies } from '../middleware/auth';
+import { liveSessionRole, parseCookies } from '../middleware/auth';
 import { verifySessionToken } from '../auth';
 import { getUserData, createEmptyUserData } from '../db';
 
@@ -113,13 +113,8 @@ function initTelemetry(username: string, userDb: any) {
 
 // GET /api/telemetry/active
 router.get('/active', async (req, res) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const token = cookies['maranios_session'];
-  const session = verifySessionToken(token);
-  
-  if (!session) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  const session = await liveSessionRole(req);
+  if (!session) return res.status(401).json({ error: 'Unauthorized' });
 
   const userDb = await getUserData(session.username) || createEmptyUserData();
 

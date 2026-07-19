@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { hashToken } from '../server/emailVerification';
 
 const originalEnv = { ...process.env };
 
@@ -146,6 +147,153 @@ describe('database persistence', () => {
         updatedBy: 'gcs-or-local-json',
       }),
     }));
+  });
+
+  it('normalizes legacy JSON invitation bearers into hashes without persisting the raw value', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
+    const dbPath = path.join(root, 'db.json');
+    fs.writeFileSync(dbPath, JSON.stringify({
+      users: [],
+      organizations: [],
+      memberships: [],
+      invitations: [{
+        id: 'legacy-invite',
+        email: 'guest@example.com',
+        organizationId: 'org-legacy',
+        role: 'Read-Only',
+        token: 'raw-legacy-bearer',
+        expiresAt: '2030-01-01T00:00:00.000Z',
+      }],
+      orgData: {},
+    }), 'utf8');
+    const dbModule = await loadDbModule(dbPath);
+
+    await dbModule.initDB();
+
+    expect(dbModule.getDB().invitations[0]).toMatchObject({
+      tokenHash: hashToken('raw-legacy-bearer'),
+    });
+    expect(dbModule.getDB().invitations[0].token).toBeUndefined();
+    expect(fs.readFileSync(dbPath, 'utf8')).not.toContain('raw-legacy-bearer');
+  });
+
+  it('claims an invitation only once and applies its membership atomically in JSON fallback mode', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
+    const dbPath = path.join(root, 'db.json');
+    const dbModule = await loadDbModule(dbPath);
+    const db = dbModule.getDB();
+    const tokenHash = hashToken('single-use-invite');
+    db.users.push({
+      username: 'guest',
+      email: 'guest@example.com',
+      emailVerified: true,
+      sessionVersion: 1,
+    });
+    db.organizations.push({ id: 'org-atomic', name: 'Atomic Estate' });
+    db.invitations.push({
+      id: 'invite-atomic',
+      email: 'guest@example.com',
+      organizationId: 'org-atomic',
+      role: 'Winemaker',
+      tokenHash,
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      acceptedAt: null,
+    });
+
+    const results = await Promise.all([
+      dbModule.acceptInvitationAtomically(tokenHash, 'guest', new Date('2029-01-01T00:00:00.000Z')),
+      dbModule.acceptInvitationAtomically(tokenHash, 'guest', new Date('2029-01-01T00:00:00.000Z')),
+    ]);
+
+    expect(results.map(result => result.status).sort()).toEqual(['already_accepted', 'success']);
+    expect(db.memberships).toContainEqual(expect.objectContaining({
+      userId: 'guest',
+      organizationId: 'org-atomic',
+      role: 'Winemaker',
+    }));
+    expect(db.memberships.filter(membership => membership.organizationId === 'org-atomic')).toHaveLength(1);
+    expect(db.users[0].activeOrganizationId).toBe('org-atomic');
+  });
+
+  it('uses a conditional PostgreSQL transaction as the invitation concurrency gate', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
+    const dbPath = path.join(root, 'db.json');
+    const invite = {
+      id: 'invite-postgres',
+      email: 'guest@example.com',
+      organizationId: 'org-postgres',
+      role: 'Read-Only',
+      tokenHash: hashToken('postgres-invite'),
+      expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+      acceptedAt: null,
+      createdAt: new Date('2029-01-01T00:00:00.000Z'),
+    };
+    const user = {
+      username: 'guest', email: 'guest@example.com', fullName: 'Guest', role: 'Read-Only',
+      language: 'en', passwordHash: 'hash', emailVerified: true, activeOrganizationId: null,
+      enabledModules: [], enabledWidgets: [], registrationComplete: true, sessionVersion: 1,
+    };
+    const tx = {
+      invitation: {
+        findUnique: vi.fn(async () => invite),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      user: {
+        findUnique: vi.fn(async () => user),
+        update: vi.fn(async () => ({})),
+      },
+      membership: { upsert: vi.fn(async () => ({})) },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: any) => callback(tx)),
+      user: { findMany: vi.fn(async () => [{ ...user, activeOrganizationId: 'org-postgres' }]) },
+      organization: { findMany: vi.fn(async () => [{ id: 'org-postgres', name: 'Postgres Estate' }]) },
+      membership: { findMany: vi.fn(async () => [{
+        id: 'mem-postgres', userId: 'guest', organizationId: 'org-postgres', role: 'Read-Only',
+      }]) },
+      invitation: { findMany: vi.fn(async () => [{ ...invite, acceptedAt: new Date('2029-01-01T00:00:00.000Z') }]) },
+    };
+    const dbModule = await loadDbModuleWithMockPrisma(dbPath, prisma);
+    const now = new Date('2029-01-01T00:00:00.000Z');
+
+    const result = await dbModule.acceptInvitationAtomically(invite.tokenHash, 'guest', now);
+
+    expect(result).toEqual({ status: 'success', organizationId: 'org-postgres', role: 'Read-Only' });
+    expect(tx.invitation.updateMany).toHaveBeenCalledWith({
+      where: { id: 'invite-postgres', acceptedAt: null, expiresAt: { gt: now } },
+      data: { acceptedAt: now },
+    });
+    expect(tx.membership.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId_organizationId: { userId: 'guest', organizationId: 'org-postgres' } },
+    }));
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { username: 'guest' },
+      data: { activeOrganizationId: 'org-postgres' },
+    });
+  });
+
+  it('filters bearer-shaped metadata from security audit events', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
+    const dbPath = path.join(root, 'db.json');
+    const dbModule = await loadDbModule(dbPath);
+
+    await dbModule.recordSecurityAuditEvent({
+      eventType: 'invitation.created',
+      username: 'owner',
+      ipHash: 'hashed-ip',
+      metadata: { purpose: 'invitation', token: 'must-not-persist' },
+    });
+
+    const saved = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    expect(saved.securityAuditEvents[0]).toMatchObject({
+      eventType: 'invitation.created',
+      ipHash: 'hashed-ip',
+      metadata: { purpose: 'invitation' },
+    });
+    expect(JSON.stringify(saved.securityAuditEvents[0])).not.toContain('must-not-persist');
+    await expect(dbModule.listSecurityAuditEvents(10)).resolves.toEqual([
+      expect.objectContaining({ eventType: 'invitation.created' }),
+    ]);
   });
 
   it('fails closed in production when configured PostgreSQL cannot initialize', async () => {
@@ -385,6 +533,7 @@ describe('database persistence', () => {
       invitation: readableModel(),
       organizationState: readableModel(),
       loginAttempt: readableModel(),
+      securityAuditEvent: readableModel(),
     };
     const dbModule = await loadDbModuleWithMockPrisma(dbPath, prisma);
 
@@ -399,11 +548,13 @@ describe('database persistence', () => {
         coreMetadataRead: true,
         organizationStateRead: true,
         loginAttemptStoreRead: true,
+        securityAuditStoreRead: true,
       },
       errors: [],
     });
     expect(prisma.user.count).toHaveBeenCalledTimes(1);
     expect(prisma.loginAttempt.count).toHaveBeenCalledTimes(1);
+    expect(prisma.securityAuditEvent.count).toHaveBeenCalledTimes(1);
   });
 
   it('reports PostgreSQL readiness errors when the LoginAttempt model is missing', async () => {
@@ -416,6 +567,7 @@ describe('database persistence', () => {
       membership: readableModel(),
       invitation: readableModel(),
       organizationState: readableModel(),
+      securityAuditEvent: readableModel(),
     };
     const dbModule = await loadDbModuleWithMockPrisma(dbPath, prisma);
 
