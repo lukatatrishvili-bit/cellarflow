@@ -252,7 +252,7 @@ export default function App() {
     } else {
       setShowOnboarding(false);
     }
-  }, [state.isLoggedIn, state.currentUser.enabledModules, state.currentUser.registrationComplete]);
+  }, [state.isLoggedIn, state.currentUser.isMasterAdmin, state.currentUser.enabledModules, state.currentUser.registrationComplete]);
 
   // Redirect active module if disabled
   useEffect(() => {
