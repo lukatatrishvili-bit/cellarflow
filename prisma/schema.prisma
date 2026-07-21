@@ -42,35 +42,40 @@ model Organization {
   memberships Membership[]
   invitations Invitation[]
 
-  companyProfile    CompanyProfile?
-  vessels           Vessel[]
-  lots              WineLot[]
-  fermlogs          DailyFermLog[]
-  lablogs           LabAnalysis[]
-  inventory         InventoryItem[]
-  tasks             Task[]
-  notes             Note[]
-  blocks            VineyardBlock[]
-  vineyardProjects  VineyardPlantingProject[]
-  phenologyLogs     PhenologyRecord[]
-  sprays            SprayRecord[]
-  scoutings         ScoutingRecord[]
-  soilRecords       SoilAnalysisRecord[]
-  samplings         GrapeSamplingRecord[]
-  harvests          HarvestRecord[]
-  irrigationLogs    IrrigationRecord[]
-  fertilizerLogs    FertilizationRecord[]
-  auditLogs         AuditLog[]
-  bottlingRuns      BottlingRun[]
-  transfers         Transfer[]
-  grapeIntakes      GrapeIntake[]
-  cellarOps         CellarOp[]
-  costEntries       CostEntry[]
-  storageLocations  StorageLocation[]
-  stockMovements    StockMovement[]
-  salesDispatches   SalesDispatch[]
-  salesOrders       SalesOrder[]
-  commandExecutions CommandExecution[]
+  companyProfile       CompanyProfile?
+  vessels              Vessel[]
+  lots                 WineLot[]
+  fermlogs             DailyFermLog[]
+  lablogs              LabAnalysis[]
+  inventory            InventoryItem[]
+  tasks                Task[]
+  notes                Note[]
+  blocks               VineyardBlock[]
+  vineyardProjects     VineyardPlantingProject[]
+  phenologyLogs        PhenologyRecord[]
+  sprays               SprayRecord[]
+  scoutings            ScoutingRecord[]
+  soilRecords          SoilAnalysisRecord[]
+  samplings            GrapeSamplingRecord[]
+  harvests             HarvestRecord[]
+  irrigationLogs       IrrigationRecord[]
+  fertilizerLogs       FertilizationRecord[]
+  auditLogs            AuditLog[]
+  bottlingRuns         BottlingRun[]
+  transfers            Transfer[]
+  grapeIntakes         GrapeIntake[]
+  cellarOps            CellarOp[]
+  costEntries          CostEntry[]
+  storageLocations     StorageLocation[]
+  stockMovements       StockMovement[]
+  salesDispatches      SalesDispatch[]
+  salesOrders          SalesOrder[]
+  commandExecutions    CommandExecution[]
+  subscription         OrganizationSubscription?
+  billingPayments      BillingPayment[]
+  subscriptionRequests SubscriptionRequest[]
+  subscriptionAudits   SubscriptionAudit[]
+  productionUsage      AnnualProductionUsage[]
 
   /// Authoritative JSONB snapshot of the full winery/vineyard ERP state.
   /// The detailed collection tables below are retained for compatibility but
@@ -107,6 +112,107 @@ model CommandExecution {
 
   @@unique([organizationId, commandId])
   @@index([organizationId, commandType, createdAt])
+}
+
+model OrganizationSubscription {
+  id                     String       @id @default(cuid())
+  organizationId         String       @unique
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planId                 String
+  billingInterval        String
+  status                 String
+  startsAt               DateTime
+  renewsAt               DateTime?
+  endsAt                 DateTime?
+  trialEndsAt            DateTime?
+  promotionCode          String?
+  capacityOverrideLiters Float?
+  featureOverrides       Json?
+  customPriceMinor       Int?
+  gracePeriodDays        Int          @default(30)
+  capacityExceededAt     DateTime?
+  cancelAtPeriodEnd      Boolean      @default(false)
+  provider               String?
+  providerCustomerId     String?
+  providerRecurringId    String?
+  providerCardMask       String?
+  providerCardExpiry     String?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  @@index([status, renewsAt])
+}
+
+model BillingPayment {
+  id                String       @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  provider          String
+  providerPaymentId String?      @unique
+  merchantPaymentId String       @unique
+  idempotencyKey    String?      @unique
+  kind              String       @default("checkout")
+  planId            String
+  billingInterval   String
+  amountMinor       Int
+  currency          String       @default("GEL")
+  status            String       @default("created")
+  failureCode       String?
+  failureMessage    String?
+  paidAt            DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@index([status, createdAt])
+}
+
+model SubscriptionRequest {
+  id                       String       @id @default(cuid())
+  organizationId           String
+  organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedBy              String
+  requestType              String
+  requestedPlanId          String?
+  requestedBillingInterval String?
+  message                  String?
+  status                   String       @default("pending")
+  resolvedBy               String?
+  resolvedAt               DateTime?
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+
+  @@index([organizationId, status, createdAt])
+  @@index([status, createdAt])
+}
+
+model SubscriptionAudit {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actorUsername  String
+  action         String
+  previousValue  Json?
+  nextValue      Json?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+model AnnualProductionUsage {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  productionYear   Int
+  litersProcessed  Float        @default(0)
+  source           String       @default("derived_lots")
+  lastCalculatedAt DateTime     @default(now())
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([organizationId, productionYear])
+  @@index([productionYear, litersProcessed])
 }
 
 model Membership {

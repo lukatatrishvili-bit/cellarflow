@@ -33,6 +33,7 @@ import {
 } from '../db';
 import { generateVerificationToken, hashToken, isVerificationTokenValid, isValidEmail } from '../emailVerification';
 import { sendMail, buildVerificationEmail, buildResetPasswordEmail, buildInvitationEmail } from '../mailer';
+import { startOrganizationTrial } from '../billing/service';
 import { createDemoUser } from '../demoAccount';
 import {
   cleanEnv,
@@ -304,6 +305,7 @@ authRouter.post('/register', async (req, res) => {
 
   await saveCoreMetadata('auth-register');
   await saveUserData(cleanUsername, db.orgData[orgId], { updatedBy: 'auth-register' });
+  await startOrganizationTrial(orgId, cleanUsername);
 
   const exposeVerifyLink = (transport: 'smtp' | 'console'): boolean => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
@@ -887,6 +889,7 @@ authRouter.get('/google/callback', async (req, res) => {
       dbData.users.push(user);
       await saveCoreMetadata('auth-google-register');
       await saveUserData(username, dbData.orgData[orgId]);
+      await startOrganizationTrial(orgId, username);
     }
 
     const effectiveRole = activeMembershipRole(dbData, user);

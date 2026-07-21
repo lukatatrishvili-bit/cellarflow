@@ -46,6 +46,7 @@ import {
   type PermissionModule,
 } from '../permissions';
 import { recordSyncOperationalMetric } from '../operationalTelemetry';
+import { organizationHasFeature, recordProductionUsage } from '../billing/service';
 
 const router = express.Router();
 
@@ -2644,6 +2645,30 @@ function syncActionsForCollection(userDb: any, collection: string, incoming: any
   return [...actions];
 }
 
+export function syncMutatesCollection(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords: any,
+  collection: string,
+): boolean {
+  const existing = Array.isArray(userDb?.[collection]) ? userDb[collection] : [];
+  const existingById = new Map(existing
+    .filter((item: any) => item?.id)
+    .map((item: any) => [item.id, item]));
+  const incoming = collections[collection];
+  if (Array.isArray(incoming) && incoming.some((item: any) => {
+    if (!item || typeof item !== 'object' || !item.id) return false;
+    const stored = existingById.get(item.id);
+    return !stored || syncRecordFingerprint(stored) !== syncRecordFingerprint(item);
+  })) return true;
+
+  if (Array.isArray(deletedRecords) && deletedRecords.some((record: any) => (
+    record?.collection === collection && existingById.has(record?.id)
+  ))) return true;
+  return Array.isArray(deletedIds) && deletedIds.some((id: any) => existingById.has(id));
+}
+
 function deletionTargetsForId(userDb: any, id: string): Array<{ collection: string; module: ReturnType<typeof moduleForSyncCollection>; action: PermissionAction }> {
   const targets: Array<{ collection: string; module: ReturnType<typeof moduleForSyncCollection>; action: PermissionAction }> = [];
   for (const [collection, value] of Object.entries(userDb || {})) {
@@ -2808,6 +2833,20 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     // the budget guard below can allow shrinking syncs even when already at cap.
     const inlineBytesBefore = sumInlineAttachmentBytes(userDb.attachments);
 
+    if (syncMutatesCollection(userDb, collections, deletedIds, deletedRecords, 'costEntries')) {
+      const canTrackProductionCosts = await organizationHasFeature(
+        session.organizationId,
+        'production_cost_tracking',
+      );
+      if (!canTrackProductionCosts) {
+        return res.status(403).json({
+          code: 'subscription_feature_required',
+          feature: 'production_cost_tracking',
+          error: 'Production cost tracking is not included in the current subscription plan.',
+        });
+      }
+    }
+
     const permissionError = authorizeSyncPayload(session.role, userDb, collections, undefined);
     if (permissionError) {
       return res.status(403).json({ error: permissionError });
@@ -2929,6 +2968,12 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
       }
       throw err;
     }
+
+    // Capacity is informational during harvest: usage is updated server-side,
+    // but exceeding a plan never blocks or discards operational records.
+    await recordProductionUsage(session.organizationId, candidateDb).catch((error) => {
+      console.error('[billing] failed to refresh production usage:', error instanceof Error ? error.message : 'unknown error');
+    });
 
     await setOrganizationStateHeaders(res, session.username);
     const responseDb = redactWineryDatabaseForRole(session.role, candidateDb);

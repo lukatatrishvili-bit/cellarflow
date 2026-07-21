@@ -6,6 +6,7 @@ import { GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
 import { crmLeadContactLine } from '../lib/crm';
 import { localizedRoleLabel } from '../lib/roleLabels';
 import { canViewAppDestination } from '../lib/navigationPermissions';
+import BillingSettingsPanel from './BillingSettingsPanel';
 import {
   directoryRecordToCrmLead,
   directoryRecordLabel,
@@ -823,6 +824,8 @@ export default function ProfileSettingsTab({
           </div>
         )}
       </div>
+
+      <BillingSettingsPanel lang={lang} canManage={isOwnerAdmin} />
 
       {isOwnerAdmin && (
         <div className="bg-emerald-50/40 border border-emerald-200 p-6 rounded-2xl shadow-sm space-y-4 dark:bg-emerald-950/10 dark:border-emerald-900/40">

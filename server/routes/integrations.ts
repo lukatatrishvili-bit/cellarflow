@@ -23,6 +23,7 @@ import {
   type IntegrationSyncJob,
 } from '../../lib/integrations';
 import { sealIntegrationSecret } from '../integrationSecrets';
+import { requireBillingFeature } from '../billing/middleware';
 import { pullOneCEntitySet, testOneCConnection } from '../integrationTransport';
 import {
   applyWineAgencyVerification,
@@ -209,7 +210,7 @@ router.get('/connectors', checkWineryScope('admin'), async (req, res) => {
   });
 });
 
-router.post('/connectors/:connectorId/config', checkWineryScope('admin'), async (req, res) => {
+router.post('/connectors/:connectorId/config', checkWineryScope('admin'), requireBillingFeature('custom_integrations'), async (req, res) => {
   const session = (req as any).wineryContext;
   // Capture the raw credential BEFORE validation replaces it with the
   // '[provided]' marker; it is sealed server-side and never echoed back.
@@ -253,7 +254,7 @@ router.post('/connectors/:connectorId/config', checkWineryScope('admin'), async 
   }
 });
 
-router.post('/connectors/:connectorId/mappings', checkWineryScope('admin'), async (req, res) => {
+router.post('/connectors/:connectorId/mappings', checkWineryScope('admin'), requireBillingFeature('custom_integrations'), async (req, res) => {
   const session = (req as any).wineryContext;
   let mappings;
   try {
@@ -282,7 +283,7 @@ router.post('/connectors/:connectorId/mappings', checkWineryScope('admin'), asyn
   }
 });
 
-router.post('/jobs', checkWineryScope('admin'), async (req, res) => {
+router.post('/jobs', checkWineryScope('admin'), requireBillingFeature('custom_integrations'), async (req, res) => {
   const session = (req as any).wineryContext;
   let input;
   try {
@@ -332,7 +333,7 @@ router.get('/jobs', checkWineryScope('admin'), async (req, res) => {
   });
 });
 
-router.post('/jobs/:jobId/retry', checkWineryScope('admin'), async (req, res) => {
+router.post('/jobs/:jobId/retry', checkWineryScope('admin'), requireBillingFeature('custom_integrations'), async (req, res) => {
   const session = (req as any).wineryContext;
   const data = await getScopedData(session.username);
   const hub = integrationHubFor(data);
@@ -358,7 +359,7 @@ router.post('/jobs/:jobId/retry', checkWineryScope('admin'), async (req, res) =>
 
 // POST /api/integrations/connectors/:connectorId/test — live reachability probe
 // against the configured 1C OData endpoint (SSRF-guarded server-side fetch).
-router.post('/connectors/:connectorId/test', checkWineryScope('admin'), async (req, res) => {
+router.post('/connectors/:connectorId/test', checkWineryScope('admin'), requireBillingFeature('custom_integrations'), async (req, res) => {
   const session = (req as any).wineryContext;
   const data = await getScopedData(session.username);
   const hub = integrationHubFor(data);
@@ -386,7 +387,7 @@ router.post('/connectors/:connectorId/test', checkWineryScope('admin'), async (r
 // POST /api/integrations/jobs/live-pull — fetch an entity set from 1C over
 // OData and run it through the standard import pipeline (idempotent external
 // refs, source-of-truth protection, conflicts for unmatched rows).
-router.post('/jobs/live-pull', checkWineryScope('admin'), async (req, res) => {
+router.post('/jobs/live-pull', checkWineryScope('admin'), requireBillingFeature('custom_integrations'), async (req, res) => {
   const session = (req as any).wineryContext;
   const entitySet = String((req.body as any)?.entitySet || '').trim();
   const domain = (req.body as any)?.domain;
@@ -443,7 +444,7 @@ router.post('/jobs/live-pull', checkWineryScope('admin'), async (req, res) => {
   }
 });
 
-router.post('/conflicts/:conflictId/resolve', checkWineryScope('admin'), async (req, res) => {
+router.post('/conflicts/:conflictId/resolve', checkWineryScope('admin'), requireBillingFeature('custom_integrations'), async (req, res) => {
   const session = (req as any).wineryContext;
   let resolution;
   try {

@@ -1,9 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyUserData } from '../server/db';
 import { organizationContextMismatch } from '../server/middleware/auth';
-import { authorizeSyncPayload, redactWineryDatabaseForRole } from '../server/routes/sync';
+import {
+  authorizeSyncPayload,
+  redactWineryDatabaseForRole,
+  syncMutatesCollection,
+} from '../server/routes/sync';
 
 describe('sync authorization', () => {
+  it('distinguishes preserved cost data from a gated cost mutation', () => {
+    const userDb = { costEntries: [{ id: 'cost-1', amount: 500, lastModified: '2026-07-20T00:00:00Z' }] };
+
+    expect(syncMutatesCollection(userDb, {
+      costEntries: [{ id: 'cost-1', amount: 500, lastModified: '2026-07-21T00:00:00Z' }],
+    }, undefined, undefined, 'costEntries')).toBe(false);
+    expect(syncMutatesCollection(userDb, {
+      costEntries: [{ id: 'cost-1', amount: 600 }],
+    }, undefined, undefined, 'costEntries')).toBe(true);
+    expect(syncMutatesCollection(userDb, {}, undefined, [
+      { collection: 'costEntries', id: 'cost-1' },
+    ], 'costEntries')).toBe(true);
+  });
+
   it('allows attachment removal when the role can update the target module', () => {
     const userDb = {
       attachments: [

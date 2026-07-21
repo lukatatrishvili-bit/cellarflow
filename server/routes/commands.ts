@@ -21,6 +21,7 @@ import { SalesStockReversalCommandError } from '../../lib/commands/salesStockRev
 import { StorageMovementCommandError } from '../../lib/commands/storageMovement';
 import { TransferCommandError } from '../../lib/commands/transfer';
 import { TransferReversalCommandError } from '../../lib/commands/transferReversal';
+import { organizationHasFeature } from '../billing/service';
 import { bottlingCommandResult, executeCellarBottlingCommand } from '../commands/bottling';
 import {
   bottlingReversalCommandResult,
@@ -202,6 +203,14 @@ router.post('/cellar.harvest-intake', checkWineryScope('write'), async (req, res
   const commandId = typeof req.body?.commandId === 'string' ? req.body.commandId : '';
   const organizationId = String(session.organizationId || '');
   try {
+    if (requestsCosting && !await organizationHasFeature(organizationId, 'production_cost_tracking')) {
+      return commandError(
+        res,
+        403,
+        'subscription_feature_required',
+        'Production cost tracking is not included in the current subscription plan.',
+      );
+    }
     const prisma = await getPrismaClientForAdmin();
     if (!prisma) {
       return commandError(
@@ -804,6 +813,14 @@ router.post('/cellar.bottling', checkWineryScope('write'), async (req, res) => {
   const organizationId = String(session.organizationId || '');
 
   try {
+    if (requestsCosting && !await organizationHasFeature(organizationId, 'production_cost_tracking')) {
+      return commandError(
+        res,
+        403,
+        'subscription_feature_required',
+        'Production cost tracking is not included in the current subscription plan.',
+      );
+    }
     const prisma = await getPrismaClientForAdmin();
     if (!prisma) {
       return commandError(

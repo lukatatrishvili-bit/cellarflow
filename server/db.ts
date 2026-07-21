@@ -1105,6 +1105,7 @@ export interface PostgresReadinessProbe {
     organizationStateRead: boolean;
     loginAttemptStoreRead: boolean;
     securityAuditStoreRead: boolean;
+    billingStorageRead?: boolean;
   };
   errors: string[];
 }
@@ -1148,6 +1149,7 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
       organizationStateRead: false,
       loginAttemptStoreRead: false,
       securityAuditStoreRead: false,
+      billingStorageRead: false,
     },
     errors: [],
   };
@@ -1173,6 +1175,14 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
   probe.checks.organizationStateRead = await probePrismaModelRead((prisma as any).organizationState, 'OrganizationState', probe.errors);
   probe.checks.loginAttemptStoreRead = await probePrismaModelRead((prisma as any).loginAttempt, 'LoginAttempt', probe.errors);
   probe.checks.securityAuditStoreRead = await probePrismaModelRead((prisma as any).securityAuditEvent, 'SecurityAuditEvent', probe.errors);
+  const billingChecks = await Promise.all([
+    probePrismaModelRead((prisma as any).organizationSubscription, 'OrganizationSubscription', probe.errors),
+    probePrismaModelRead((prisma as any).billingPayment, 'BillingPayment', probe.errors),
+    probePrismaModelRead((prisma as any).subscriptionRequest, 'SubscriptionRequest', probe.errors),
+    probePrismaModelRead((prisma as any).subscriptionAudit, 'SubscriptionAudit', probe.errors),
+    probePrismaModelRead((prisma as any).annualProductionUsage, 'AnnualProductionUsage', probe.errors),
+  ]);
+  probe.checks.billingStorageRead = billingChecks.every(Boolean);
   probe.ok = Object.values(probe.checks).every(Boolean) && probe.errors.length === 0;
   return probe;
 }

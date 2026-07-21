@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   ShieldAlert, RefreshCw, Trash2, Edit, Activity, Cpu, Database,
   Server, User, Users, Check, X, ShieldCheck, Terminal, AlertTriangle, KeyRound,
-  Eye, Mail, ScrollText, Unlock, Download, Wrench, Gauge, SearchCode
+  Eye, Mail, ScrollText, Unlock, Download, Wrench, Gauge, SearchCode, CreditCard
 } from 'lucide-react';
 import { useFocusTrap } from './useFocusTrap';
 import { localizedRoleLabel } from '../lib/roleLabels';
+import MasterBillingAdmin from './MasterBillingAdmin';
 
 interface MasterAdminPortalProps {
   lang: string;
@@ -185,7 +186,7 @@ export default function MasterAdminPortal({
   setToastMessage
 }: MasterAdminPortalProps) {
   const isKa = lang === 'ka';
-  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'ops' | 'audit' | 'client-errors' | 'terminal'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'billing' | 'ops' | 'audit' | 'client-errors' | 'terminal'>('stats');
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -645,6 +646,7 @@ export default function MasterAdminPortal({
         <nav className="w-56 border-r border-cyan-900/20 bg-[#090708] p-4 flex flex-col gap-2 shrink-0">
           <span className="text-[9px] uppercase text-cyan-800 font-bold tracking-widest mb-2 block">{isKa ? 'ინტერფეისები' : 'Interfaces'}</span>
           {[
+            { id: 'billing', label: isKa ? 'გამოწერები და ფასები' : 'Subscriptions', icon: CreditCard },
             { id: 'stats', label: isKa ? 'სისტემის მდგომარეობა' : 'System Health', icon: Activity },
             { id: 'users', label: isKa ? 'მომხმარებლები' : 'User Accounts', icon: User },
             { id: 'orgs', label: isKa ? 'მარნები / ორგანიზაციები' : 'Wineries / Orgs', icon: Users },
@@ -1649,7 +1651,18 @@ export default function MasterAdminPortal({
                 </motion.div>
               )}
 
-              {/* Tab 4: Command Line Terminal */}
+              {activeTab === 'billing' && (
+                <motion.div
+                  key="billing"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <MasterBillingAdmin isKa={isKa} onMessage={setToastMessage} />
+                </motion.div>
+              )}
+
+              {/* Tab: Command Line Terminal */}
               {activeTab === 'terminal' && (
                 <motion.div
                   key="terminal"

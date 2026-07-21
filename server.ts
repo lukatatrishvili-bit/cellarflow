@@ -13,6 +13,7 @@ import commandsRouter from './server/routes/commands';
 import telemetryRouter from './server/routes/telemetry';
 import adminRouter, { seedTestUserHandler } from './server/routes/admin';
 import winemakerRouter from './server/routes/winemaker';
+import billingRouter from './server/routes/billing';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { demoAccountConfig } from './server/config';
 import { getServiceReadiness } from './server/readiness';
@@ -43,6 +44,7 @@ app.use('/api/commands', commandsRouter);
 app.use('/api/telemetry', telemetryRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/gemini', winemakerRouter);
+app.use('/api/billing', billingRouter);
 
 // Dev seeder endpoint
 app.get('/api/dev/seed-testuser1', seedTestUserHandler);

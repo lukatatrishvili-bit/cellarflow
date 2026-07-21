@@ -23,6 +23,7 @@ import {
   salesWorkflowPermissions,
   vineyardWorkflowPermissions,
 } from '../lib/workflowPermissions';
+import type { BillingFeature } from '../lib/billing/planCatalog';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -60,6 +61,7 @@ const SyncConflictResolutionModal = lazyRetry(() => import('../components/SyncCo
 const AuthAccountFlows = lazyRetry(() => import('../components/AuthAccountFlows'));
 const MasterAdminPortal = lazyRetry(() => import('../components/MasterAdminPortal'));
 const NotificationCenter = lazyRetry(() => import('../components/NotificationCenter'));
+const PricingPage = lazyRetry(() => import('../components/PricingPage'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
@@ -154,9 +156,11 @@ export default function App() {
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [isEndingImpersonation, setIsEndingImpersonation] = useState(false);
+  const [billingEntitlements, setBillingEntitlements] = useState<Partial<Record<BillingFeature, boolean>> | null>(null);
   const [initialAuthLinkContext] = useState<InitialAuthLinkContext>(readInitialAuthLinkContext);
   const [authAccountFlow, setAuthAccountFlow] = useState<AuthAccountFlow | null>(initialAuthLinkContext.flow);
   const [pendingInvitationToken, setPendingInvitationToken] = useState(initialAuthLinkContext.invitationToken);
+  const activeBillingOrganizationId = state.organizations.find(organization => organization.isActive)?.id || '';
   const aiDrawerRef = useRef<HTMLDivElement | null>(null);
   useFocusTrap(aiDrawerRef, { active: isAiDrawerOpen, onClose: () => setIsAiDrawerOpen(false) });
 
@@ -180,6 +184,27 @@ export default function App() {
       initialAuthLinkContext.flow === 'reset-password' ? '/reset-password' : '/accept-invite',
     );
   }, [initialAuthLinkContext]);
+
+  useEffect(() => {
+    const organizationId = activeBillingOrganizationId;
+    if (!state.isLoggedIn || state.currentUser.isMasterAdmin || !organizationId) {
+      setBillingEntitlements(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetch('/api/billing/subscription', { signal: controller.signal })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Unable to load subscription entitlements.');
+        setBillingEntitlements(data.entitlements || null);
+      })
+      .catch(error => {
+        if (error?.name !== 'AbortError') setBillingEntitlements(null);
+      });
+    return () => controller.abort();
+  }, [state.isLoggedIn, state.currentUser.isMasterAdmin, activeBillingOrganizationId]);
+
+  const billingAllows = (feature: BillingFeature) => billingEntitlements?.[feature] !== false;
 
   const rememberInvitation = (token: string) => {
     setPendingInvitationToken(token);
@@ -710,6 +735,22 @@ export default function App() {
         <Loader2 className="w-10 h-10 animate-spin text-emerald-800 mb-2" />
         <span className="text-xs font-semibold tracking-wide uppercase font-serif">{state.lang === 'ka' ? 'VinOS ერთიანი პლატფორმა იტვირთება...' : 'Powering up VinOS Unified Platform...'}</span>
       </div>
+    );
+  }
+
+  if (typeof window !== 'undefined' && window.location.pathname === '/pricing') {
+    return (
+      <Suspense fallback={<ModuleLoader />}>
+        <PricingPage
+          lang={state.lang}
+          isLoggedIn={state.isLoggedIn}
+          currentRole={state.currentUser.role}
+          onLanguageChange={(nextLang) => {
+            state.setLang(nextLang);
+            localStorage.setItem('vinea_lang', nextLang);
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -1977,10 +2018,10 @@ export default function App() {
             pricing={state.winePricing}
             onUpdatePricing={state.setWinePricing}
             onNavigate={handleNavigate}
-            canCreateCost={canAccess(state.currentUser.role, 'costs', 'create')}
-            canDeleteCost={canAccess(state.currentUser.role, 'costs', 'delete')}
+            canCreateCost={canAccess(state.currentUser.role, 'costs', 'create') && billingAllows('production_cost_tracking')}
+            canDeleteCost={canAccess(state.currentUser.role, 'costs', 'delete') && billingAllows('production_cost_tracking')}
             canUpdatePricing={canAccess(state.currentUser.role, 'sales', 'update')}
-            canExportCosts={canAccess(state.currentUser.role, 'costs', 'export') && canAccess(state.currentUser.role, 'sales', 'export')}
+            canExportCosts={canAccess(state.currentUser.role, 'costs', 'export') && canAccess(state.currentUser.role, 'sales', 'export') && billingAllows('advanced_reports')}
           />
         </Suspense>
       ) : state.activeModule === 'storage' ? (

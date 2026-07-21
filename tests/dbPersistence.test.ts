@@ -535,6 +535,11 @@ describe('database persistence', () => {
       organizationState: readableModel(),
       loginAttempt: readableModel(),
       securityAuditEvent: readableModel(),
+      organizationSubscription: readableModel(),
+      billingPayment: readableModel(),
+      subscriptionRequest: readableModel(),
+      subscriptionAudit: readableModel(),
+      annualProductionUsage: readableModel(),
     };
     const dbModule = await loadDbModuleWithMockPrisma(dbPath, prisma);
 
@@ -550,6 +555,7 @@ describe('database persistence', () => {
         organizationStateRead: true,
         loginAttemptStoreRead: true,
         securityAuditStoreRead: true,
+        billingStorageRead: true,
       },
       errors: [],
     });

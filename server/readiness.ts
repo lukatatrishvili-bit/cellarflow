@@ -89,6 +89,7 @@ export async function getServiceReadiness(): Promise<ServiceReadiness> {
       organizationStateRead: false,
       loginAttemptStoreRead: false,
       securityAuditStoreRead: false,
+      billingStorageRead: false,
     },
     errors: ['Readiness database probe timed out.'],
   };
