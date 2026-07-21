@@ -110,7 +110,6 @@ export async function initDB(): Promise<void> {
   console.log('[db] initializing PostgreSQL connection via Prisma...');
 
   try {
-    let migratedJsonToPostgres = false;
     const users = await prisma.user.findMany();
     const organizations = await prisma.organization.findMany();
     const memberships = await prisma.membership.findMany();
@@ -131,7 +130,6 @@ export async function initDB(): Promise<void> {
 
       cleanupDemoData();
       await persistFullDbToPostgres('gcs-or-local-json');
-      migratedJsonToPostgres = true;
       lastPostgresMigrationAt = new Date().toISOString();
       lastPostgresMigrationSource = gcsEnabled ? gcsTarget() : 'local-json';
       console.log(`[db] migrated JSON state into PostgreSQL JSONB: users=${dbData.users.length}, organizations=${dbData.organizations.length}, orgStates=${Object.keys(dbData.orgData || {}).length}.`);
@@ -218,6 +216,8 @@ async function loadLocalOrGcsDB(): Promise<void> {
 }
 
 export interface UserDataState {
+  /** Server-private bounded ledger preventing stale clients from resurrecting deleted records. */
+  syncDeletionLedger: any[];
   vessels: any[];
   lots: any[];
   fermlogs: any[];
@@ -266,6 +266,7 @@ export interface DBState {
 
 export function createEmptyUserData(): UserDataState {
   return {
+    syncDeletionLedger: [],
     vessels: [],
     lots: [],
     fermlogs: [],
@@ -329,6 +330,7 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
   return {
     ...empty,
     ...data,
+    syncDeletionLedger: Array.isArray(data.syncDeletionLedger) ? data.syncDeletionLedger : [],
     vessels: Array.isArray(data.vessels) ? data.vessels : [],
     lots: Array.isArray(data.lots) ? data.lots : [],
     fermlogs: Array.isArray(data.fermlogs) ? data.fermlogs : [],
@@ -1114,15 +1116,18 @@ async function probePrismaModelRead(model: any, label: string, errors: string[])
   }
 
   try {
-    if (typeof model.count === 'function') {
-      await model.count();
-      return true;
-    }
     if (typeof model.findMany === 'function') {
       await model.findMany({ take: 1 });
       return true;
     }
-    errors.push(`${label} Prisma model has no readable count/findMany method.`);
+    // Compatibility fallback for minimal clients/test doubles. Generated
+    // Prisma models use the bounded findMany branch above so readiness never
+    // scans an entire growing audit or login-attempt table.
+    if (typeof model.count === 'function') {
+      await model.count();
+      return true;
+    }
+    errors.push(`${label} Prisma model has no readable findMany/count method.`);
     return false;
   } catch (err) {
     errors.push(`${label} read failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1646,7 +1651,7 @@ export async function saveOrganizationData(
             }
           });
         }
-        
+
         // 2. Double-write lots
         for (const lot of normalizedData.lots || []) {
           if (!lot.id) continue;

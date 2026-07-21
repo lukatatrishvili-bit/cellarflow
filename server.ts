@@ -9,11 +9,13 @@ import authRouter, { orgRouter } from './server/routes/auth';
 import syncRouter from './server/routes/sync';
 import integrationsRouter from './server/routes/integrations';
 import attachmentsRouter from './server/routes/attachments';
+import commandsRouter from './server/routes/commands';
 import telemetryRouter from './server/routes/telemetry';
 import adminRouter, { seedTestUserHandler } from './server/routes/admin';
 import winemakerRouter from './server/routes/winemaker';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { demoAccountConfig } from './server/config';
+import { getServiceReadiness } from './server/readiness';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -37,6 +39,7 @@ app.use('/api/org', orgRouter);
 app.use('/api', syncRouter);
 app.use('/api/integrations', integrationsRouter);
 app.use('/api/attachments', attachmentsRouter);
+app.use('/api/commands', commandsRouter);
 app.use('/api/telemetry', telemetryRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/gemini', winemakerRouter);
@@ -47,6 +50,35 @@ app.get('/api/dev/seed-testuser1', seedTestUserHandler);
 // Public liveness probe — intentionally minimal (no config/infra details).
 app.get('/api/health', (_req, res) => {
   res.status(200).json({ ok: true });
+});
+
+// Readiness is deliberately stricter than liveness: an instance can stay
+// alive for diagnostics while Cloud Run stops routing writes to an unavailable
+// or schema-incomplete database. Optional integrations never fail readiness.
+app.get('/api/ready', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const readiness = await getServiceReadiness();
+    res.status(readiness.ok ? 200 : 503).json(readiness);
+  } catch {
+    res.status(503).json({
+      ok: false,
+      checkedAt: new Date().toISOString(),
+      database: {
+        status: 'not_ready',
+        backend: 'local_json',
+        schemaReady: false,
+        failureClass: 'database_unavailable_or_schema_mismatch',
+      },
+      optionalIntegrations: {
+        status: 'degraded',
+        storageBackup: 'degraded',
+        aiAssistant: 'degraded',
+        email: 'degraded',
+        googleOAuth: 'degraded',
+      },
+    });
+  }
 });
 
 // Public config endpoint for frontend hydration
@@ -98,7 +130,7 @@ if (isProd) {
   // In development, load Vite middleware dynamically to provide live reload on same port!
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
-    server: { 
+    server: {
       middlewareMode: true,
       hmr: { server }
     },

@@ -181,6 +181,36 @@ describe('data mapping', () => {
     expect(annex8.rows[annex8.rows.length - 1].balance).toBe(150);
   });
 
+  it('keeps a bottling correction out of Annex 7 and as an outbound audit row in Annex 8', () => {
+    const original: any = {
+      id: 'BR-REVERSED', commandId: 'cmd-bottle-1', recordKind: 'bottling',
+      reversedByCommandId: 'cmd-bottle-reversal', lotId: 'SAP-2026-01', lotName: 'Saperavi 2026',
+      date: '2026-06-15', lotNumber: 'L-26-07', operator: 'A', formats: { '0.75': 1200 },
+      volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0,
+    };
+    const correction: any = {
+      ...original, id: 'BR-CORRECTION', commandId: 'cmd-bottle-reversal', recordKind: 'reversal',
+      date: '2026-06-16', reversedByCommandId: undefined, reversalOfRunId: original.id,
+      reversalOfCommandId: original.commandId,
+    };
+    const active: any = {
+      id: 'BR-ACTIVE', commandId: 'cmd-bottle-2', recordKind: 'bottling',
+      lotId: 'SAP-2026-01', lotName: 'Saperavi 2026', date: '2026-07-01', lotNumber: 'L-26-08',
+      operator: 'A', formats: { '0.75': 800 }, volumeBottledL: 600, totalBottles: 800, totalCeramic: 0,
+    };
+    const ctx = makeCtx({ lang: 'en', bottlingRuns: [original, correction, active] });
+    const annex7 = buildDocument('annex_07_bottling_act', ctx);
+    const annex8 = buildDocument('annex_08_warehouse_movement', ctx);
+
+    expect(annex7.rows).toHaveLength(1);
+    expect(annex7.rows[0].lotNo).toBe('L-26-08');
+    expect(annex7.totalsRow?.fillQty).toBe(60);
+    expect(annex8.totalsRow?.incoming).toBe(150);
+    expect(annex8.totalsRow?.outgoing).toBe(90);
+    expect(annex8.rows[annex8.rows.length - 1].balance).toBe(60);
+    expect(annex8.rows.some(row => /Bottling correction/.test(String(row.fromTo)))).toBe(true);
+  });
+
   it('Annex 8 reflects sales dispatches in the outgoing column and balance', () => {
     const bottlingRuns: any[] = [
       { id: 'BR1', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
@@ -196,6 +226,36 @@ describe('data mapping', () => {
     expect(doc.totalsRow?.incoming).toBe(90);  // 900 L bottled
     expect(doc.totalsRow?.outgoing).toBe(30);  // 300 L sold
     expect(doc.rows[doc.rows.length - 1].balance).toBe(60); // 90 − 30 dal on hand
+  });
+
+  it('Annex 8 shows a sales correction as an inbound return without erasing the outbound row', () => {
+    const bottlingRuns: any[] = [
+      { id: 'BR1', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
+        operator: 'A', formats: { '0.75': 1200 }, volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0 },
+    ];
+    const original: any = {
+      id: 'SD1', date: '2026-06-20', customerName: 'Wine Bar', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026',
+      locationId: 'WH-1', locationName: 'WH', bottles: 400, pricePerBottle: 25, currency: 'GEL',
+      revenue: 10000, stockMovementId: 'SM1', operator: 'A', reversedByCommandId: 'cmd-return',
+    };
+    const correction = {
+      ...original,
+      id: 'SD1-RETURN',
+      date: '2026-06-21',
+      recordKind: 'reversal',
+      stockMovementId: 'SM1-RETURN',
+      reversalOfDispatchId: original.id,
+      reversedByCommandId: undefined,
+    };
+    const doc = buildDocument('annex_08_warehouse_movement', makeCtx({
+      bottlingRuns,
+      salesDispatches: [original, correction],
+    }));
+
+    expect(doc.totalsRow?.incoming).toBe(120);
+    expect(doc.totalsRow?.outgoing).toBe(30);
+    expect(doc.rows[doc.rows.length - 1].balance).toBe(90);
+    expect(doc.rows.some(row => /Return \/ correction|დაბრუნება \/ კორექცია/.test(String(row.fromTo)))).toBe(true);
   });
 
   it('Annex 3 maps structured grape intakes with gross/tare/net + reception sugar', () => {
@@ -260,6 +320,53 @@ describe('data mapping', () => {
     expect(doc.rows).toHaveLength(1);
     expect(doc.rows[0].balance).toBe(4.5);
     expect(doc.rows[0].outgoing).toBe(0);
+  });
+
+  it('Annex 3 retains a reversed receipt and its negative correction', () => {
+    const original: any = {
+      id: 'GI-ORIGINAL', commandId: 'cmd-intake', recordKind: 'intake', reversedByCommandId: 'cmd-reversal',
+      date: '2026-09-23', source: 'supplier', supplierName: 'Grower', variety: 'Saperavi', vintage: 2026,
+      grossWeightKg: 9_500, tareWeightKg: 500, netWeightKg: 9_000, brix: 23.4, ph: 3.45,
+      titratableAcidity: 5.8, temperatureC: 18, condition: 'excellent', pickingMethod: 'hand', wineClass: 'red',
+      juiceYieldPct: 70, estimatedVolumeL: 6_300, destinationVesselId: null, createdLotId: 'LOT-VOID',
+      operator: 'A', notes: '',
+    };
+    const correction = {
+      ...original, id: 'GI-CORRECTION', recordKind: 'reversal', date: '2026-09-24',
+      reversalOfIntakeId: original.id, reversalOfCommandId: original.commandId,
+      reversalReason: 'Duplicate receipt', reversedByCommandId: undefined,
+    };
+    const doc = buildDocument('annex_03_grape_reception', makeCtx({ grapeIntakes: [original, correction] }));
+    expect(doc.rows).toHaveLength(2);
+    expect(doc.rows[0].netto).toBe(9_000);
+    expect(doc.rows[1].netto).toBe(-9_000);
+    expect(String(doc.rows[1].note)).toContain('CORRECTION of GI-ORIGINAL');
+    expect(doc.totalsRow?.netto).toBe(0);
+  });
+
+  it('Annex 13 records a cellar-operation correction as inbound material restoration', () => {
+    const inventory: any[] = [
+      { id: 'INV-B', name: 'ბენტონიტი', category: 'additives', stock: 30, minThreshold: 10, unit: 'კგ', costPerUnit: 6, supplierName: 'Enartis', details: '' },
+    ];
+    const original = {
+      id: 'OP-A', recordKind: 'operation', date: '2026-10-07', type: 'fining',
+      lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', materialId: 'INV-B',
+      materialName: 'ბენტონიტი', dose: 4, unit: 'კგ', operator: 'A', notes: '',
+      reversedByCommandId: 'cmd-reversal',
+    };
+    const correction = {
+      ...original, id: 'OP-A-REVERSAL', recordKind: 'reversal', date: '2026-10-08',
+      reversedByCommandId: undefined, reversalOfOperationId: original.id,
+    };
+    const doc = buildDocument('annex_13_materials_movement', makeCtx({
+      inventory, cellarOps: [original, correction],
+    }));
+
+    expect(doc.rows).toHaveLength(3);
+    expect(doc.rows[0].incoming).toBe(30);
+    expect(doc.rows[1]).toMatchObject({ outgoing: 4, balance: 26 });
+    expect(doc.rows[2]).toMatchObject({ incoming: 4, outgoing: 0, balance: 30 });
+    expect(String(doc.rows[2].fromTo)).toMatch(/correction|შესწორება/i);
   });
 });
 

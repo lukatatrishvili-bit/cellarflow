@@ -3,6 +3,7 @@ import {
   clearDeletionTombstones,
   DELETION_TOMBSTONE_BASE_KEY,
   deletionTombstoneKey,
+  deletionTombstoneStorageValue,
   readDeletionTombstones,
   type DeletionTombstone,
 } from './deletionTombstones';
@@ -13,6 +14,20 @@ export const PENDING_CHANGES_SWITCH_CODE = 'pending_local_changes';
 export const PENDING_CHANGES_SWITCH_ERROR = 'This workspace has unsynced changes. Sync or discard them before switching workspaces.';
 export const WORKSPACE_TRANSITION_STORAGE_KEY = 'cellarflow_workspace_transition_pending';
 export const PENDING_CONFLICT_SYNC_BASE_KEY = 'vinea_pending_conflict_sync';
+export const PENDING_COMMANDS_BASE_KEY = 'cellarflow_pending_commands';
+export const MAX_PENDING_COMMAND_INTENTS = 24;
+export const MAX_PENDING_COMMAND_INTENT_CHARS = 128_000;
+
+export class PendingCommandIntentLimitError extends Error {
+  constructor(
+    public readonly code: 'pending_command_queue_full' | 'pending_command_intent_too_large' | 'pending_command_persistence_failed',
+    message: string,
+    public readonly statusCode: number,
+  ) {
+    super(message);
+    this.name = 'PendingCommandIntentLimitError';
+  }
+}
 
 export interface WorkspaceTransitionMarker {
   fromOrganizationId: string | null;
@@ -27,6 +42,13 @@ export interface PendingConflictSyncIntent {
   dirtyCollections: string[];
   dirtyRevisions: Record<string, number>;
   organizationId: string | null;
+  capturedAt: string;
+}
+
+export interface PendingCommandIntent<TPayload = unknown> {
+  commandId: string;
+  commandType: string;
+  payload: TPayload;
   capturedAt: string;
 }
 
@@ -149,6 +171,86 @@ export class SyncQueueManager {
       : PENDING_CONFLICT_SYNC_BASE_KEY;
   }
 
+  private static pendingCommandsKey(organizationId = this.currentOrganizationId()): string {
+    return organizationId
+      ? `${PENDING_COMMANDS_BASE_KEY}:${organizationId}`
+      : PENDING_COMMANDS_BASE_KEY;
+  }
+
+  static getPendingCommandIntents<TPayload = unknown>(
+    organizationId = this.currentOrganizationId(),
+  ): Array<PendingCommandIntent<TPayload>> {
+    if (!this.hasLocalStorage()) return [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem(this.pendingCommandsKey(organizationId)) || '[]');
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((intent): intent is PendingCommandIntent<TPayload> => Boolean(
+        intent
+        && typeof intent === 'object'
+        && typeof intent.commandId === 'string'
+        && typeof intent.commandType === 'string'
+        && typeof intent.capturedAt === 'string'
+        && 'payload' in intent,
+      ));
+    } catch {
+      return [];
+    }
+  }
+
+  private static persistPendingCommandIntent(intent: PendingCommandIntent): void {
+    if (!this.hasLocalStorage()) {
+      throw new PendingCommandIntentLimitError(
+        'pending_command_persistence_failed',
+        'Durable browser storage is unavailable. Enable site storage before retrying; nothing was sent.',
+        409,
+      );
+    }
+    const storageKey = this.pendingCommandsKey();
+    const current = this.getPendingCommandIntents();
+    const withoutSameId = current.filter(item => item.commandId !== intent.commandId);
+    if (withoutSameId.length >= MAX_PENDING_COMMAND_INTENTS) {
+      throw new PendingCommandIntentLimitError(
+        'pending_command_queue_full',
+        `The durable command queue already contains ${MAX_PENDING_COMMAND_INTENTS} unacknowledged actions. Recover or discard those actions before creating another command.`,
+        429,
+      );
+    }
+    const serializedIntent = JSON.stringify(intent);
+    if (serializedIntent.length > MAX_PENDING_COMMAND_INTENT_CHARS) {
+      throw new PendingCommandIntentLimitError(
+        'pending_command_intent_too_large',
+        'This command is too large for safe browser recovery. Reduce attached or free-text data and retry.',
+        413,
+      );
+    }
+    try {
+      localStorage.setItem(storageKey, JSON.stringify([...withoutSameId, intent]));
+    } catch {
+      throw new PendingCommandIntentLimitError(
+        'pending_command_persistence_failed',
+        'The command could not be stored safely in this browser. Free browser storage before retrying; nothing was sent.',
+        409,
+      );
+    }
+    const persisted = this.getPendingCommandIntents()
+      .find(item => item.commandId === intent.commandId);
+    if (!persisted || JSON.stringify(persisted) !== serializedIntent) {
+      throw new PendingCommandIntentLimitError(
+        'pending_command_persistence_failed',
+        'The command could not be verified in durable browser storage. Nothing was sent.',
+        409,
+      );
+    }
+  }
+
+  static consumePendingCommandIntent(commandId: string): void {
+    if (!this.hasLocalStorage()) return;
+    const storageKey = this.pendingCommandsKey();
+    const remaining = this.getPendingCommandIntents().filter(intent => intent.commandId !== commandId);
+    if (remaining.length > 0) localStorage.setItem(storageKey, JSON.stringify(remaining));
+    else localStorage.removeItem(storageKey);
+  }
+
   static getWorkspaceTransitionMarker(): WorkspaceTransitionMarker | null {
     if (!this.hasLocalStorage()) return null;
     const raw = localStorage.getItem(WORKSPACE_TRANSITION_STORAGE_KEY);
@@ -244,9 +346,9 @@ export class SyncQueueManager {
     ) return false;
 
     if (this.hasLocalStorage()) {
-      const identity = (record: DeletionTombstone) => `${record.collection || '*'}\u0000${record.id}`;
+      const signature = (record: DeletionTombstone) => JSON.stringify(deletionTombstoneStorageValue(record));
       const currentDeletions = new Set(
-        readDeletionTombstones(localStorage, this.currentDeletionTombstoneKey()).map(identity),
+        readDeletionTombstones(localStorage, this.currentDeletionTombstoneKey()).map(signature),
       );
       const expectedDeletions = new Set<string>();
       for (const record of Array.isArray(intent.payload.deletedRecords) ? intent.payload.deletedRecords : []) {
@@ -256,14 +358,17 @@ export class SyncQueueManager {
           && typeof (record as any).id === 'string'
           && typeof (record as any).collection === 'string'
         ) {
-          expectedDeletions.add(identity({
+          expectedDeletions.add(signature({
             id: (record as any).id,
             collection: (record as any).collection,
+            baselineTimestamp: (record as any).baselineTimestamp,
+            baselineFingerprint: (record as any).baselineFingerprint,
+            deletedAt: (record as any).deletedAt,
           }));
         }
       }
       for (const id of Array.isArray(intent.payload.deletedIds) ? intent.payload.deletedIds : []) {
-        if (typeof id === 'string') expectedDeletions.add(identity({ id }));
+        if (typeof id === 'string') expectedDeletions.add(signature({ id }));
       }
       if (
         currentDeletions.size !== expectedDeletions.size
@@ -277,6 +382,31 @@ export class SyncQueueManager {
     return !mutations.some(mutation => {
       const timestamp = Date.parse(mutation.timestamp);
       return !Number.isFinite(timestamp) || timestamp > capturedAt;
+    });
+  }
+
+  /** Atomically persist local/server choices for versioned deletion conflicts. */
+  static async reconcilePendingConflictDeletionRecords(
+    retained: DeletionTombstone[],
+    discarded: DeletionTombstone[],
+    organizationId?: string | null,
+  ): Promise<boolean> {
+    if (!this.hasLocalStorage()) return true;
+    const targetOrganizationId = organizationId === undefined
+      ? this.currentOrganizationId()
+      : (organizationId?.trim() || null);
+    const tombstoneKey = targetOrganizationId
+      ? `${DELETION_TOMBSTONE_BASE_KEY}:${targetOrganizationId}`
+      : DELETION_TOMBSTONE_BASE_KEY;
+    const conflictIntentKey = this.pendingConflictSyncKey(targetOrganizationId);
+    const { reconcileDeletionConflictRecords } = await import('./syncDeletionConflict');
+    return reconcileDeletionConflictRecords({
+      storage: localStorage,
+      tombstoneKey,
+      conflictIntentKey,
+      retained,
+      discarded,
+      readIntent: () => this.getPendingConflictSyncIntent(targetOrganizationId),
     });
   }
 
@@ -314,9 +444,7 @@ export class SyncQueueManager {
       const remainingTombstones = readDeletionTombstones(localStorage, tombstoneKey)
         .filter(record => !discardedIdentities.has(identity(record)));
       if (remainingTombstones.length > 0) {
-        localStorage.setItem(tombstoneKey, JSON.stringify(remainingTombstones.map(record => (
-          record.collection ? { collection: record.collection, id: record.id } : record.id
-        ))));
+        localStorage.setItem(tombstoneKey, JSON.stringify(remainingTombstones.map(deletionTombstoneStorageValue)));
       } else {
         localStorage.removeItem(tombstoneKey);
       }
@@ -416,11 +544,51 @@ export class SyncQueueManager {
     return this.runExclusive(operation);
   }
 
+  /** Save command intent before sending and serialize it with sync/switch work. */
+  static executeCommandRequest(
+    endpoint: string,
+    intent: PendingCommandIntent,
+  ): Promise<Response> {
+    return this.runExclusive(async () => {
+      try {
+        this.persistPendingCommandIntent(intent);
+      } catch (error) {
+        const rejected = error instanceof PendingCommandIntentLimitError
+          ? error
+          : new PendingCommandIntentLimitError(
+            'pending_command_persistence_failed',
+            'The command could not be stored safely in this browser. Nothing was sent.',
+            409,
+          );
+        return new Response(JSON.stringify({
+          ok: false,
+          error: { code: rejected.code, message: rejected.message, retryable: false },
+        }), {
+          status: rejected.statusCode,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const headers = this.requestHeaders();
+      const capturedAt = Date.parse(intent.capturedAt);
+      if (Number.isFinite(capturedAt)) {
+        headers['X-CellarFlow-Queue-Age-Ms'] = String(Math.max(0, Date.now() - capturedAt));
+      }
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ commandId: intent.commandId, payload: intent.payload }),
+      });
+      this.rememberOrgStateHeaders(response);
+      return response;
+    });
+  }
+
   private static async hasPendingChangesUnlocked(): Promise<boolean> {
     if (this.hasLocalStorage()) {
       if (this.getDirtyCollections().size > 0) return true;
       if (readDeletionTombstones(localStorage, this.currentDeletionTombstoneKey()).length > 0) return true;
       if (this.getPendingConflictSyncIntent()) return true;
+      if (this.getPendingCommandIntents().length > 0) return true;
     }
     return (await IndexedDBQueue.getMutations()).length > 0;
   }
@@ -541,7 +709,12 @@ export class SyncQueueManager {
   static async discardPendingChanges(): Promise<void> {
     const tombstoneKey = this.currentDeletionTombstoneKey();
     const conflictIntentKey = this.pendingConflictSyncKey();
-    await this.runExclusive(() => this.discardPendingChangesForKey(tombstoneKey, conflictIntentKey));
+    const pendingCommandsKey = this.pendingCommandsKey();
+    await this.runExclusive(() => this.discardPendingChangesForKey(
+      tombstoneKey,
+      conflictIntentKey,
+      pendingCommandsKey,
+    ));
   }
 
   /** Fetch authoritative state first, then discard local intent atomically. */
@@ -551,6 +724,7 @@ export class SyncQueueManager {
     return this.runExclusive(async () => {
       const tombstoneKey = this.currentDeletionTombstoneKey();
       const conflictIntentKey = this.pendingConflictSyncKey();
+      const pendingCommandsKey = this.pendingCommandsKey();
       const response = await fetch('/api/db', { headers: this.requestHeaders() });
       this.rememberOrgStateHeaders(response);
       if (!response.ok) {
@@ -573,7 +747,7 @@ export class SyncQueueManager {
       if (!validSnapshot) {
         return { syncError: 'Server state was incomplete. Local changes were kept.' };
       }
-      await this.discardPendingChangesForKey(tombstoneKey, conflictIntentKey);
+      await this.discardPendingChangesForKey(tombstoneKey, conflictIntentKey, pendingCommandsKey);
       return data;
     });
   }
@@ -781,15 +955,15 @@ export class SyncQueueManager {
 
           offlineMutations.forEach(mut => {
             if (mut.action === 'put') {
-              const serverCol = mut.collection === 'notesList' ? 'notes' : 
-                                mut.collection === 'fermLogs' ? 'fermlogs' : 
+              const serverCol = mut.collection === 'notesList' ? 'notes' :
+                                mut.collection === 'fermLogs' ? 'fermlogs' :
                                 mut.collection === 'labLogs' ? 'lablogs' : mut.collection;
               const serverRecord = serverDb[serverCol]?.find((x: any) => x.id === mut.recordId);
               if (serverRecord) {
                 // If server record was modified since client's baseline copy, we flag a conflict
                 const baselineTS = mut.baselineTimestamp ? new Date(mut.baselineTimestamp).getTime() : 0;
                 const serverTS = serverRecord.lastModified ? new Date(serverRecord.lastModified).getTime() : 0;
-                
+
                 if (serverTS > 0 && baselineTS > 0 && serverTS !== baselineTS) {
                   conflicts.push({
                     collection: mut.collection,
@@ -824,7 +998,7 @@ export class SyncQueueManager {
         method,
         headers: this.requestHeaders()
       };
-      
+
       if (method === 'POST') {
         options.body = JSON.stringify(payload);
       }
@@ -954,6 +1128,7 @@ export class SyncQueueManager {
   private static async discardPendingChangesForKey(
     tombstoneKey: string,
     conflictIntentKey = this.pendingConflictSyncKey(),
+    pendingCommandsKey = this.pendingCommandsKey(),
   ): Promise<void> {
     if (this.hasLocalStorage() && !clearDeletionTombstones(localStorage, tombstoneKey)) {
       throw new Error('Pending deletions could not be cleared from local storage.');
@@ -963,6 +1138,10 @@ export class SyncQueueManager {
         localStorage.removeItem(conflictIntentKey);
         if (localStorage.getItem(conflictIntentKey) !== null) {
           throw new Error('Pending conflict intent could not be cleared from local storage.');
+        }
+        localStorage.removeItem(pendingCommandsKey);
+        if (localStorage.getItem(pendingCommandsKey) !== null) {
+          throw new Error('Pending command intent could not be cleared from local storage.');
         }
       } catch (error) {
         throw error instanceof Error
@@ -987,9 +1166,7 @@ export class SyncQueueManager {
     const current = readDeletionTombstones(localStorage, tombstoneKey);
     const remaining = current.filter(record => !sentIdentities.has(identity(record)));
     if (remaining.length > 0) {
-      localStorage.setItem(tombstoneKey, JSON.stringify(remaining.map(record => (
-        record.collection ? { collection: record.collection, id: record.id } : record.id
-      ))));
+      localStorage.setItem(tombstoneKey, JSON.stringify(remaining.map(deletionTombstoneStorageValue)));
     } else {
       clearDeletionTombstones(localStorage, tombstoneKey);
     }

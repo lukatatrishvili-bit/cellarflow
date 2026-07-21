@@ -11,6 +11,8 @@ import type {
   CompanyProfile, VineyardBlock, Vessel, WineLot, GrapeIntakeRecord,
   CellarOperation, DailyFermLog, LabAnalysis,
 } from './wineryState';
+import { isActiveCellarOperation } from './cellarOperationIntegrity';
+import { isActiveHarvestIntake } from './harvestIntakeIntegrity';
 
 export type SetupStepId =
   | 'profile'   // name + region identify the estate on documents
@@ -47,9 +49,9 @@ export interface SetupJourneyInput {
   companyProfile: Pick<CompanyProfile, 'companyName' | 'wineryName' | 'region'>;
   blocks: Pick<VineyardBlock, 'id'>[];
   vessels: Pick<Vessel, 'id'>[];
-  lots: Pick<WineLot, 'id'>[];
-  grapeIntakes: Pick<GrapeIntakeRecord, 'id'>[];
-  cellarOps: Pick<CellarOperation, 'id'>[];
+  lots: Pick<WineLot, 'id' | 'voidedAt'>[];
+  grapeIntakes: Pick<GrapeIntakeRecord, 'id' | 'recordKind' | 'reversedByCommandId' | 'reversedAt'>[];
+  cellarOps: Pick<CellarOperation, 'id' | 'recordKind' | 'reversedByCommandId' | 'reversedAt' | 'reversalOfOperationId'>[];
   fermLogs: Pick<DailyFermLog, 'id'>[];
   labLogs: Pick<LabAnalysis, 'id'>[];
 }
@@ -89,14 +91,15 @@ export function computeSetupJourney(input: SetupJourneyInput): SetupJourneyState
       en: 'Receive your first grapes', ka: 'მიიღეთ პირველი ყურძენი',
       enHint: 'An intake creates the wine batch automatically.',
       kaHint: 'მიღება ავტომატურად ქმნის ღვინის პარტიას.',
-      done: input.grapeIntakes.length > 0 || input.lots.length > 0,
+      done: input.grapeIntakes.some(intake => isActiveHarvestIntake(intake as GrapeIntakeRecord))
+        || input.lots.some(lot => !lot.voidedAt),
     },
     {
       id: 'operation', module: 'gvino', tab: 'operations',
       en: 'Log a cellar operation', ka: 'აღრიცხეთ პირველი ოპერაცია',
       enHint: 'Pressing, punch-downs, SO₂ — under 30 seconds each.',
       kaHint: 'დაწურვა, ჩაწნეხა, სულფიტაცია — თითო 30 წამში.',
-      done: input.cellarOps.length > 0 || input.fermLogs.length > 0,
+      done: input.cellarOps.some(isActiveCellarOperation) || input.fermLogs.length > 0,
     },
     {
       id: 'lab', module: 'gvino', tab: 'labs',

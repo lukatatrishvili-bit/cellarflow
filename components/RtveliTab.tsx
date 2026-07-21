@@ -11,6 +11,7 @@ import {
   computeSupplierLedger, computeSeasonStats, computeCapacityPlan, seasonYears,
   type SupplierLedgerRow,
 } from '../lib/rtveli';
+import { isActiveHarvestIntake } from '../lib/harvestIntakeIntegrity';
 
 interface Props {
   lang: Language;
@@ -78,7 +79,9 @@ export default function RtveliTab({
   /** Printable bilingual settlement statement for one supplier. */
   const printStatement = (row: SupplierLedgerRow) => {
     const supplierIntakes = intakes.filter(i =>
-      i.source === 'supplier' && (i.supplierName || '').trim() === row.supplierName && (i.date || '').startsWith(String(season)));
+      isActiveHarvestIntake(i) && i.source === 'supplier'
+      && (i.supplierName || '').trim() === row.supplierName
+      && (i.date || '').startsWith(String(season)));
     const supplierPays = payments.filter(p =>
       (p.supplierName || '').trim() === row.supplierName && (p.date || '').startsWith(String(season)));
     const wineryName = company.wineryName || company.companyName || 'VinOS';

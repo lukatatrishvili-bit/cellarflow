@@ -140,8 +140,8 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
             <Bell className="w-3.5 h-3.5 text-amber-300" /> {isKa ? 'მარნის ალერტები' : 'Cellar Alerts'}
           </span>
           <span className="text-[9px] font-mono font-bold">
-            {criticalCount > 0 
-              ? (isKa ? `${criticalCount} კრიტიკული` : `${criticalCount} critical`) 
+            {criticalCount > 0
+              ? (isKa ? `${criticalCount} კრიტიკული` : `${criticalCount} critical`)
               : (isKa ? `${count} აქტიური` : `${count} open`)}
           </span>
         </div>
@@ -192,8 +192,8 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
           <div className="px-4 py-8 text-center text-stone-400 flex flex-col items-center gap-2">
             <ShieldCheck className="w-7 h-7 text-emerald-500" />
             <span className="text-[11px] font-semibold">
-              {isKa 
-                ? `აქტიური ${filter === 'critical' ? 'კრიტიკული' : filter === 'warning' ? 'გაფრთხილების' : 'ინფორმაციული'} ალერტები არ არის.` 
+              {isKa
+                ? `აქტიური ${filter === 'critical' ? 'კრიტიკული' : filter === 'warning' ? 'გაფრთხილების' : 'ინფორმაციული'} ალერტები არ არის.`
                 : `No ${filter} alerts.`}
             </span>
           </div>

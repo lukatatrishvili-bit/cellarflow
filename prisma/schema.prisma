@@ -42,34 +42,35 @@ model Organization {
   memberships Membership[]
   invitations Invitation[]
 
-  companyProfile   CompanyProfile?
-  vessels          Vessel[]
-  lots             WineLot[]
-  fermlogs         DailyFermLog[]
-  lablogs          LabAnalysis[]
-  inventory        InventoryItem[]
-  tasks            Task[]
-  notes            Note[]
-  blocks           VineyardBlock[]
-  vineyardProjects VineyardPlantingProject[]
-  phenologyLogs    PhenologyRecord[]
-  sprays           SprayRecord[]
-  scoutings        ScoutingRecord[]
-  soilRecords      SoilAnalysisRecord[]
-  samplings        GrapeSamplingRecord[]
-  harvests         HarvestRecord[]
-  irrigationLogs   IrrigationRecord[]
-  fertilizerLogs   FertilizationRecord[]
-  auditLogs        AuditLog[]
-  bottlingRuns     BottlingRun[]
-  transfers        Transfer[]
-  grapeIntakes     GrapeIntake[]
-  cellarOps        CellarOp[]
-  costEntries      CostEntry[]
-  storageLocations StorageLocation[]
-  stockMovements   StockMovement[]
-  salesDispatches  SalesDispatch[]
-  salesOrders      SalesOrder[]
+  companyProfile    CompanyProfile?
+  vessels           Vessel[]
+  lots              WineLot[]
+  fermlogs          DailyFermLog[]
+  lablogs           LabAnalysis[]
+  inventory         InventoryItem[]
+  tasks             Task[]
+  notes             Note[]
+  blocks            VineyardBlock[]
+  vineyardProjects  VineyardPlantingProject[]
+  phenologyLogs     PhenologyRecord[]
+  sprays            SprayRecord[]
+  scoutings         ScoutingRecord[]
+  soilRecords       SoilAnalysisRecord[]
+  samplings         GrapeSamplingRecord[]
+  harvests          HarvestRecord[]
+  irrigationLogs    IrrigationRecord[]
+  fertilizerLogs    FertilizationRecord[]
+  auditLogs         AuditLog[]
+  bottlingRuns      BottlingRun[]
+  transfers         Transfer[]
+  grapeIntakes      GrapeIntake[]
+  cellarOps         CellarOp[]
+  costEntries       CostEntry[]
+  storageLocations  StorageLocation[]
+  stockMovements    StockMovement[]
+  salesDispatches   SalesDispatch[]
+  salesOrders       SalesOrder[]
+  commandExecutions CommandExecution[]
 
   /// Authoritative JSONB snapshot of the full winery/vineyard ERP state.
   /// The detailed collection tables below are retained for compatibility but
@@ -85,6 +86,27 @@ model OrganizationState {
   updatedBy      String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+/// Durable, organization-scoped idempotency claim and replayable command result.
+/// The command's business mutation and transition to `completed` are committed
+/// in the same PostgreSQL transaction.
+model CommandExecution {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  commandId      String
+  commandType    String
+  actorUsername  String
+  requestHash    String
+  status         String       @default("pending")
+  result         Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  completedAt    DateTime?
+
+  @@unique([organizationId, commandId])
+  @@index([organizationId, commandType, createdAt])
 }
 
 model Membership {

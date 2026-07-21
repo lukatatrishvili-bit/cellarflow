@@ -44,6 +44,9 @@ export function isValidId(id: any): boolean {
 export interface DeletedRecordRef {
   id: string;
   collection: string;
+  baselineTimestamp?: string;
+  baselineFingerprint?: string;
+  deletedAt?: string;
 }
 
 export interface DeletionMatcher {
@@ -96,6 +99,7 @@ export function applyDeletions(
   const matcher = createDeletionMatcher(deletedIds, deletedRecords);
   if (!matcher.hasDeletions) return;
   for (const key of Object.keys(db)) {
+    if (key === 'syncDeletionLedger') continue;
     if (Array.isArray(db[key])) {
       db[key] = db[key].filter((item: any) => !item || !item.id || !matcher.isDeleted(key, item.id));
     }
@@ -181,29 +185,29 @@ export function mergeCollections(db: any, collections: Record<string, any>, hist
           const historyKey = `${historyCollection}:${clientItem.id}`;
           const historyList = documentHistory.get(historyKey) || [];
           const baselineEntry = historyList.find(entry => entry.lastModified === baselineTimestamp);
-          
+
           let merged = false;
           if (baselineEntry) {
             const baseline = baselineEntry.data;
             const mergedRecord = { ...existing };
             let hasConflict = false;
-            
+
             const allKeys = new Set([
               ...Object.keys(incoming),
               ...Object.keys(existing),
               ...Object.keys(baseline)
             ]);
-            
+
             for (const k of allKeys) {
               if (k === 'lastModified' || k === 'baselineTimestamp' || k === 'id') continue;
-              
+
               const localVal = incoming[k];
               const serverVal = existing[k];
               const baseVal = baseline[k];
-              
+
               const localChanged = JSON.stringify(localVal) !== JSON.stringify(baseVal);
               const serverChanged = JSON.stringify(serverVal) !== JSON.stringify(baseVal);
-              
+
               if (localChanged && serverChanged) {
                 // Both modified this field
                 if (JSON.stringify(localVal) === JSON.stringify(serverVal)) {
@@ -221,7 +225,7 @@ export function mergeCollections(db: any, collections: Record<string, any>, hist
                 mergedRecord[k] = serverVal;
               }
             }
-            
+
             if (!hasConflict) {
               recordDocumentHistory(historyCollection, existing.id, existing, existing.lastModified);
               Object.assign(existing, mergedRecord);
@@ -229,7 +233,7 @@ export function mergeCollections(db: any, collections: Record<string, any>, hist
               merged = true;
             }
           }
-          
+
           if (!merged) {
             conflicts.push({
               collection: toClientKey(key),

@@ -10,7 +10,7 @@ import type {
   BottlingRunRecord, SalesDispatchRecord, DocumentAttachment,
 } from '../lib/wineryState';
 import {
-  listForms, buildDocument, buildFilename, type ExportContext, type FilterId, type FormTemplate,
+  listForms, buildDocument, buildFilename, type ExportContext, type FilterId,
 } from '../lib/georgianForms';
 import {
   evaluateAccountingYear,
@@ -26,7 +26,6 @@ import {
   checksumAttachmentDataUrl,
   formatAttachmentSize,
   getAttachmentAccess,
-  MAX_INLINE_ATTACHMENT_BYTES,
   SUPPORTED_ATTACHMENT_ACCEPT,
   type DocumentAttachmentInput,
 } from '../lib/attachments';
@@ -119,12 +118,26 @@ export default function OfficialDocsTab(props: Props) {
   );
 
   // Data pools: the user's real (synced) data, or a self-contained demo set.
-  const pools = useDemo ? demoPools : {
+  const pools = useMemo(() => useDemo ? demoPools : ({
     blocks: props.blocks, lots: props.lots, vessels: props.vessels, harvests: props.harvests,
     samplings: props.samplings, inventory: props.inventory, labLogs: props.labLogs, transfers: realTransfers,
     grapeIntakes: props.grapeIntakes, cellarOps: props.cellarOps, bottlingRuns: props.bottlingRuns,
     salesDispatches: props.salesDispatches,
-  };
+  }), [
+    props.blocks,
+    props.bottlingRuns,
+    props.cellarOps,
+    props.grapeIntakes,
+    props.harvests,
+    props.inventory,
+    props.labLogs,
+    props.lots,
+    props.salesDispatches,
+    props.samplings,
+    props.vessels,
+    realTransfers,
+    useDemo,
+  ]);
 
   const ctx: ExportContext = useMemo(() => ({
     lang: ka ? 'ka' : 'en',

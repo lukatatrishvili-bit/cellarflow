@@ -113,7 +113,7 @@ describe('computeAlerts', () => {
       ],
     });
     const severities = alerts.map((a: Alert) => a.severity);
-    expect(severities).toEqual([...severities].sort((a, b) => (a === 'critical' ? -1 : 1)));
+    expect(severities).toEqual([...severities].sort((a, _b) => (a === 'critical' ? -1 : 1)));
     expect(severities[0]).toBe('critical');
   });
 });

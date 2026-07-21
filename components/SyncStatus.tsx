@@ -49,11 +49,16 @@ export default function SyncStatus({ lang }: { lang: Language }) {
       : (ka ? 'ყველაფერი სინქრონიზებულია' : 'All changes synced');
 
   return (
-    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-xl shadow-2xs text-[10px] font-mono font-bold tracking-wider border transition-all duration-300 ${cls}`} title={title}>
+    <div
+      role="status"
+      aria-label={title}
+      className={`flex items-center gap-1 px-2 py-1 rounded-xl shadow-2xs text-[10px] font-mono font-bold tracking-wider border transition-all duration-300 sm:gap-1.5 sm:px-3 ${cls}`}
+      title={title}
+    >
       {offline ? <WifiOff className="w-3 h-3" /> : pending > 0 ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wifi className="w-3 h-3" />}
-      <span>{offline ? (ka ? 'ოფლაინ' : 'OFFLINE') : (ka ? 'ონლაინ' : 'ONLINE')}</span>
+      <span className="hidden sm:inline">{offline ? (ka ? 'ოფლაინ' : 'OFFLINE') : (ka ? 'ონლაინ' : 'ONLINE')}</span>
       {pending > 0 && (
-        <span className="px-1.5 py-0.5 bg-white/70 rounded-full text-[9px]">{pending} {ka ? 'მოლოდინში' : 'queued'}</span>
+        <span className="px-1.5 py-0.5 bg-white/70 rounded-full text-[9px]">{pending}<span className="hidden sm:inline"> {ka ? 'მოლოდინში' : 'queued'}</span></span>
       )}
     </div>
   );

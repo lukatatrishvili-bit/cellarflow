@@ -78,7 +78,7 @@ export function buildVerificationEmail(opts: {
   const ka = opts.lang === 'ka';
   const brand = opts.wineryName || 'VinOS';
   const subject = ka ? `${brand} — ელფოსტის დადასტურება` : `${brand} — Verify your email`;
-  
+
   const text = ka
     ? `მოგესალმებით!\n\nთქვენი ${brand}-ის ანგარიშის გასააქტიურებლად დაადასტურეთ ელფოსტა ამ ბმულზე გადასვლით:\n${opts.link}\n\nბმული აქტიურია 24 საათის განმავლობაში. თუ რეგისტრაცია არ განგიხორციელებიათ, უგულებელყავით ეს წერილი.`
     : `Welcome!\n\nConfirm your email to activate your ${brand} account by opening this link:\n${opts.link}\n\nThe link is valid for 24 hours. If you didn't sign up, you can safely ignore this message.`;
@@ -94,8 +94,8 @@ export function buildVerificationEmail(opts: {
             ${ka ? 'დაადასტურეთ თქვენი ელფოსტა' : 'Verify Your Email Address'}
           </h2>
           <p style="font-size: 15px; margin-bottom: 24px; color: #4a3e3d;">
-            ${ka 
-              ? `მადლობა ${brand}-ზე რეგისტრაციისთვის. გთხოვთ, დაადასტუროთ თქვენი ელფოსტა ანგარიშის გასააქტიურებლად და მუშაობის დასაწყებად.` 
+            ${ka
+              ? `მადლობა ${brand}-ზე რეგისტრაციისთვის. გთხოვთ, დაადასტუროთ თქვენი ელფოსტა ანგარიშის გასააქტიურებლად და მუშაობის დასაწყებად.`
               : `Thank you for registering on ${brand}. Please verify your email address to activate your account and start managing your winery.`}
           </p>
           <div style="text-align: center; margin: 32px 0;">
@@ -104,14 +104,14 @@ export function buildVerificationEmail(opts: {
             </a>
           </div>
           <p style="font-size: 13px; color: #8c7f7e; margin-bottom: 0;">
-            ${ka 
-              ? 'ეს ბმული აქტიურია 24 საათის განმავლობაში. თუ ეს რეგისტრაცია თქვენ არ გეკუთვნით, შეგიძლიათ უგულებელყოთ ეს წერილი.' 
+            ${ka
+              ? 'ეს ბმული აქტიურია 24 საათის განმავლობაში. თუ ეს რეგისტრაცია თქვენ არ გეკუთვნით, შეგიძლიათ უგულებელყოთ ეს წერილი.'
               : 'This link is valid for 24 hours. If you did not create this account, you can safely ignore this email.'}
           </p>
           <hr style="border: none; border-top: 1px solid #ebdcd0; margin: 32px 0;" />
           <p style="font-size: 12px; color: #a39695; line-height: 1.5; margin: 0;">
-            ${ka 
-              ? 'თუ ღილაკი არ მუშაობს, დააკოპირეთ და ჩასვით ეს ბმული ბრაუზერში:' 
+            ${ka
+              ? 'თუ ღილაკი არ მუშაობს, დააკოპირეთ და ჩასვით ეს ბმული ბრაუზერში:'
               : "If the button above doesn't work, copy and paste this URL into your browser:"}
             <br />
             <a href="${opts.link}" style="color: #4e0e15; text-decoration: underline; word-break: break-all;">${opts.link}</a>
@@ -133,7 +133,7 @@ export function buildResetPasswordEmail(opts: {
   const ka = opts.lang === 'ka';
   const brand = opts.wineryName || 'VinOS';
   const subject = ka ? `${brand} — პაროლის აღდგენა` : `${brand} — Reset your passcode`;
-  
+
   const text = ka
     ? `მოგესალმებით!\n\nთქვენი ${brand}-ის ანგარიშის პაროლის აღსადგენად გადადით ამ ბმულზე:\n${opts.link}\n\nბმული აქტიურია 24 საათის განმავლობაში. თუ ეს მოთხოვნა თქვენ არ გეკუთვნით, უგულებელყავით ეს წერილი.`
     : `Hello!\n\nTo reset your ${brand} passcode, please open this link:\n${opts.link}\n\nThe link is valid for 24 hours. If you did not request a passcode reset, you can safely ignore this email.`;
@@ -149,8 +149,8 @@ export function buildResetPasswordEmail(opts: {
             ${ka ? 'პაროლის აღდგენა' : 'Reset Your Passcode'}
           </h2>
           <p style="font-size: 15px; margin-bottom: 24px; color: #4a3e3d;">
-            ${ka 
-              ? `თქვენ მოითხოვეთ ${brand}-ის ანგარიშის პაროლის აღდგენა. გთხოვთ, დააჭიროთ ქვემოთ მოცემულ ღილაკს ახალი პაროლის დასაყენებლად.` 
+            ${ka
+              ? `თქვენ მოითხოვეთ ${brand}-ის ანგარიშის პაროლის აღდგენა. გთხოვთ, დააჭიროთ ქვემოთ მოცემულ ღილაკს ახალი პაროლის დასაყენებლად.`
               : `You requested a passcode reset for your ${brand} account. Please click the button below to choose a new passcode.`}
           </p>
           <div style="text-align: center; margin: 32px 0;">
@@ -159,14 +159,14 @@ export function buildResetPasswordEmail(opts: {
             </a>
           </div>
           <p style="font-size: 13px; color: #8c7f7e; margin-bottom: 0;">
-            ${ka 
-              ? 'ეს ბმული აქტიურია 24 საათის განმავლობაში. თუ ეს მოთხოვნა თქვენ არ გაგიკეთებიათ, შეგიძლიათ უგულებელყოთ ეს წერილი.' 
+            ${ka
+              ? 'ეს ბმული აქტიურია 24 საათის განმავლობაში. თუ ეს მოთხოვნა თქვენ არ გაგიკეთებიათ, შეგიძლიათ უგულებელყოთ ეს წერილი.'
               : 'This link is valid for 24 hours. If you did not request this, you can safely ignore this email.'}
           </p>
           <hr style="border: none; border-top: 1px solid #ebdcd0; margin: 32px 0;" />
           <p style="font-size: 12px; color: #a39695; line-height: 1.5; margin: 0;">
-            ${ka 
-              ? 'თუ ღილაკი არ მუშაობს, დააკოპირეთ და ჩასვით ეს ბმული ბრაუზერში:' 
+            ${ka
+              ? 'თუ ღილაკი არ მუშაობს, დააკოპირეთ და ჩასვით ეს ბმული ბრაუზერში:'
               : "If the button above doesn't work, copy and paste this URL into your browser:"}
             <br />
             <a href="${opts.link}" style="color: #4e0e15; text-decoration: underline; word-break: break-all;">${opts.link}</a>
@@ -205,8 +205,8 @@ export function buildInvitationEmail(opts: {
             ${ka ? 'მოწვევა სამუშაო სივრცეში' : 'Workspace Invitation'}
           </h2>
           <p style="font-size: 15px; margin-bottom: 24px; color: #4a3e3d;">
-            ${ka 
-              ? `მოგესალმებით! <strong>${opts.inviterName}</strong> გიწვევთ შეუერთდეთ მარნის <strong>„${opts.orgName}“</strong> ციფრულ სამუშაო სივრცეს <strong>VinOS</strong> პლატფორმაზე.` 
+            ${ka
+              ? `მოგესალმებით! <strong>${opts.inviterName}</strong> გიწვევთ შეუერთდეთ მარნის <strong>„${opts.orgName}“</strong> ციფრულ სამუშაო სივრცეს <strong>VinOS</strong> პლატფორმაზე.`
               : `Hello! <strong>${opts.inviterName}</strong> has invited you to join the <strong>"${opts.orgName}"</strong> digital winery workspace on the <strong>VinOS</strong> platform.`}
           </p>
           <p style="font-size: 14px; margin-bottom: 24px; color: #665a59;">
@@ -220,14 +220,14 @@ export function buildInvitationEmail(opts: {
             </a>
           </div>
           <p style="font-size: 13px; color: #8c7f7e; margin-bottom: 0;">
-            ${ka 
-              ? 'ეს ბმული აქტიურია 24 საათის განმავლობაში. თუ ეს მოწვევა თქვენ არ გეკუთვნით, შეგიძლიათ უგულებელყოთ ეს წერილი.' 
+            ${ka
+              ? 'ეს ბმული აქტიურია 24 საათის განმავლობაში. თუ ეს მოწვევა თქვენ არ გეკუთვნით, შეგიძლიათ უგულებელყოთ ეს წერილი.'
               : 'This link is valid for 24 hours. If you did not expect this invitation, you can safely ignore this email.'}
           </p>
           <hr style="border: none; border-top: 1px solid #ebdcd0; margin: 32px 0;" />
           <p style="font-size: 12px; color: #a39695; line-height: 1.5; margin: 0;">
-            ${ka 
-              ? 'თუ ღილაკი არ მუშაობს, დააკოპირეთ და ჩასვით ეს ბმული ბრაუზერში:' 
+            ${ka
+              ? 'თუ ღილაკი არ მუშაობს, დააკოპირეთ და ჩასვით ეს ბმული ბრაუზერში:'
               : "If the button above doesn't work, copy and paste this URL into your browser:"}
             <br />
             <a href="${opts.link}" style="color: #4e0e15; text-decoration: underline; word-break: break-all;">${opts.link}</a>

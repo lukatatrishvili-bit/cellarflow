@@ -8,6 +8,8 @@ import type {
 } from './wineryState';
 import type { FormTemplate, ValidationWarning, DocRow } from './georgianForms';
 import { calculateCadastreCompleteness } from './cadastre';
+import { isActiveBottlingRun } from './bottlingIntegrity';
+import { isActiveHarvestIntake } from './harvestIntakeIntegrity';
 
 export type ComplianceBadge =
   | 'Ready'
@@ -100,7 +102,7 @@ export function evaluateLotCompliance(input: {
   bottlingRuns: BottlingRunRecord[];
 }): ComplianceReadiness {
   const { lot, company, grapeIntakes, blocks, labLogs, bottlingRuns } = input;
-  const intake = grapeIntakes.find(g => g.createdLotId === lot.id);
+  const intake = grapeIntakes.find(g => isActiveHarvestIntake(g) && g.createdLotId === lot.id);
   const block = intake?.blockId ? blocks.find(b => b.id === intake.blockId) : findLotBlock(lot, blocks);
   const isBottled = lot.stage === 'bottled' || lot.stage === 'sold';
   const pdoLike = lot.classification === 'PDO' || hasValue(lot.intendedAppellation);
@@ -118,7 +120,7 @@ export function evaluateLotCompliance(input: {
     req('origin_proof', 'origin proof status', 'წარმოშობის დადასტურება', lot.originProofStatus === 'verified' ? lot.originProofStatus : ''),
     req('lab_result', 'latest lab result', 'ლაბორატორიული შედეგი', labLogs.some(l => l.lotId === lot.id)),
     req('certificate_file', 'certificate file', 'სერტიფიკატის ფაილი', lot.certificateFileName || lot.certificateNumber),
-    req('bottling_act', 'bottling act', 'ჩამოსხმის აქტი', isBottled ? bottlingRuns.some(r => r.lotId === lot.id) : 'not required'),
+    req('bottling_act', 'bottling act', 'ჩამოსხმის აქტი', isBottled ? bottlingRuns.some(r => r.lotId === lot.id && isActiveBottlingRun(r)) : 'not required'),
   ]);
 }
 
@@ -146,8 +148,8 @@ export function evaluateAccountingYear(input: {
   bottlingRuns: BottlingRunRecord[];
 }): ComplianceReadiness {
   const year = String(input.year);
-  const yearIntakes = input.grapeIntakes.filter(g => (g.date || '').startsWith(year));
-  const yearLots = input.lots.filter(l => String(l.vintage) === year || (l.createdAt || '').startsWith(year));
+  const yearIntakes = input.grapeIntakes.filter(g => isActiveHarvestIntake(g) && (g.date || '').startsWith(year));
+  const yearLots = input.lots.filter(l => !l.voidedAt && (String(l.vintage) === year || (l.createdAt || '').startsWith(year)));
   return scoreRequirements('accounting_year', [
     req('company_ready', 'company profile ready', 'კომპანიის პროფილი მზადაა', evaluateCompanyProfile(input.company).missingCritical.length === 0, true),
     req('vineyard_blocks', 'vineyard blocks registered', 'ვენახის ნაკვეთები რეგისტრირებულია', input.blocks.length > 0),
@@ -156,6 +158,6 @@ export function evaluateAccountingYear(input: {
     req('transport_intakes', 'transport/lab fields on intakes', 'ტრანსპორტი/ლაბ. ველები მიღებებზე', yearIntakes.length > 0 && yearIntakes.every(g => hasValue(g.transportNumber || g.transportName) && hasValue(g.labAnalysisNumber))),
     req('lots', 'wine lots for year', 'წლის ღვინის ლოტები', yearLots.length > 0),
     req('classifications', 'lot classifications set', 'ლოტის კლასიფიკაციები შევსებულია', yearLots.length > 0 && yearLots.every(l => hasValue(l.classification))),
-    req('bottling_runs', 'bottling acts where applicable', 'ჩამოსხმის აქტები საჭიროებისამებრ', yearLots.every(l => !['bottled', 'sold'].includes(l.stage) || input.bottlingRuns.some(r => r.lotId === l.id))),
+    req('bottling_runs', 'bottling acts where applicable', 'ჩამოსხმის აქტები საჭიროებისამებრ', yearLots.every(l => !['bottled', 'sold'].includes(l.stage) || input.bottlingRuns.some(r => r.lotId === l.id && isActiveBottlingRun(r)))),
   ]);
 }

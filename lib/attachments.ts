@@ -174,7 +174,10 @@ export function normalizeAttachmentFileName(fileName: unknown): string | null {
   if (typeof fileName !== 'string') return null;
   const trimmed = fileName.trim();
   if (!trimmed || trimmed.length > MAX_ATTACHMENT_FILENAME_CHARS) return null;
-  if (/[\x00-\x1F\x7F]/.test(trimmed)) return null;
+  if (Array.from(trimmed).some(character => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  })) return null;
   if (/[\\/:*?"<>|]/.test(trimmed)) return null;
 
   const baseName = trimmed.replace(/\.[^.]+$/, '').trim();

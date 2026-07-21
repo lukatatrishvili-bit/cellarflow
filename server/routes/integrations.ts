@@ -24,6 +24,14 @@ import {
 } from '../../lib/integrations';
 import { sealIntegrationSecret } from '../integrationSecrets';
 import { pullOneCEntitySet, testOneCConnection } from '../integrationTransport';
+import {
+  applyWineAgencyVerification,
+  searchWineAgencyRegistry,
+  wineAgencyIdentityMismatches,
+  wineAgencyVerificationStatus,
+  WINE_AGENCY_PORTAL_URL,
+  WineAgencyRegistryError,
+} from '../wineAgencyRegistry';
 
 const router = express.Router();
 
@@ -86,6 +94,99 @@ export function validateConflictResolutionInput(input: unknown): string {
   return resolution;
 }
 
+router.get('/wine-agency/registry', checkWineryScope('admin'), async (req, res) => {
+  try {
+    const result = await searchWineAgencyRegistry({
+      registrationNumber: String(req.query.registrationNumber || req.query.lotNumber || ''),
+      companyName: String(req.query.companyName || ''),
+    });
+    return res.json({ ok: true, ...result, portalUrl: WINE_AGENCY_PORTAL_URL });
+  } catch (error) {
+    const statusCode = error instanceof WineAgencyRegistryError ? error.statusCode : 502;
+    const message = error instanceof Error ? error.message : 'Wine Agency registry lookup failed.';
+    return res.status(statusCode).json({ error: message });
+  }
+});
+
+router.post('/wine-agency/registry/link', checkWineryScope('admin'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  try {
+    const registrationNumber = String(req.body?.registrationNumber || '');
+    // Resolve the record again server-side so a client cannot persist invented
+    // verification evidence or stale producer details.
+    const lookup = await searchWineAgencyRegistry({ registrationNumber }, { useCache: false });
+    const entry = lookup.results.find(result => result.registrationNumber === registrationNumber.trim());
+    if (!entry) return res.status(404).json({ error: 'Producer was not found in the Wine Agency public directory.' });
+
+    const data = await getScopedData(session.username);
+    const applied = applyWineAgencyVerification(data.companyProfile, entry);
+    data.companyProfile = applied.profile;
+    appendIntegrationAudit(
+      data,
+      session.username,
+      'Wine Agency Producer Identity Verified',
+      entry.registrationNumber,
+      { verification: applied.verification, mismatches: applied.mismatches },
+      'Producer identity was re-read from the Agency public directory before local verification evidence was saved.',
+    );
+    await saveUserData(session.username, data, { updatedBy: `api-integrations:${session.username}` });
+    return res.json({
+      ok: true,
+      companyProfile: data.companyProfile,
+      verification: applied.verification,
+      mismatches: applied.mismatches,
+      status: wineAgencyVerificationStatus(data.companyProfile),
+      portalUrl: WINE_AGENCY_PORTAL_URL,
+    });
+  } catch (error) {
+    const statusCode = error instanceof WineAgencyRegistryError ? error.statusCode : 500;
+    const message = error instanceof Error ? error.message : 'Unable to link Wine Agency producer identity.';
+    return res.status(statusCode).json({ error: message });
+  }
+});
+
+router.post('/wine-agency/registry/reverify', checkWineryScope('admin'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  try {
+    const data = await getScopedData(session.username);
+    const linkedVerification = data.companyProfile.wineAgencyVerification;
+    if (!linkedVerification?.registrationNumber) {
+      return res.status(409).json({ error: 'Link a Wine Agency producer record before requesting a re-check.' });
+    }
+
+    // The server chooses the already-linked identity. No client-supplied
+    // producer number can silently replace trusted verification evidence.
+    const registrationNumber = linkedVerification.registrationNumber;
+    const lookup = await searchWineAgencyRegistry({ registrationNumber }, { useCache: false });
+    const entry = lookup.results.find(result => result.registrationNumber === registrationNumber);
+    if (!entry) return res.status(404).json({ error: 'The linked producer was not found in the Wine Agency public directory.' });
+
+    const applied = applyWineAgencyVerification(data.companyProfile, entry);
+    data.companyProfile = applied.profile;
+    appendIntegrationAudit(
+      data,
+      session.username,
+      'Wine Agency Producer Identity Rechecked',
+      entry.registrationNumber,
+      { verification: applied.verification, mismatches: applied.mismatches },
+      'The linked producer identity was re-read from the Agency public directory using the server-stored registration number.',
+    );
+    await saveUserData(session.username, data, { updatedBy: `api-integrations:${session.username}` });
+    return res.json({
+      ok: true,
+      companyProfile: data.companyProfile,
+      verification: applied.verification,
+      mismatches: applied.mismatches,
+      status: wineAgencyVerificationStatus(data.companyProfile),
+      portalUrl: WINE_AGENCY_PORTAL_URL,
+    });
+  } catch (error) {
+    const statusCode = error instanceof WineAgencyRegistryError ? error.statusCode : 500;
+    const message = error instanceof Error ? error.message : 'Unable to re-check the linked Wine Agency producer identity.';
+    return res.status(statusCode).json({ error: message });
+  }
+});
+
 router.get('/connectors', checkWineryScope('admin'), async (req, res) => {
   const session = (req as any).wineryContext;
   const data = await getScopedData(session.username);
@@ -97,6 +198,14 @@ router.get('/connectors', checkWineryScope('admin'), async (req, res) => {
     domains: INTEGRATION_DOMAINS,
     sourceOfTruth: SOURCE_OF_TRUTH_RULES,
     hub: publicHub(hub),
+    wineAgency: {
+      verification: data.companyProfile.wineAgencyVerification || null,
+      mismatches: data.companyProfile.wineAgencyVerification
+        ? wineAgencyIdentityMismatches(data.companyProfile, data.companyProfile.wineAgencyVerification)
+        : [],
+      status: wineAgencyVerificationStatus(data.companyProfile),
+      portalUrl: WINE_AGENCY_PORTAL_URL,
+    },
   });
 });
 

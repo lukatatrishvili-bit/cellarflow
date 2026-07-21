@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import type { DailyFermLog } from '../lib/wineryState';
+import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
 
 interface FermentationCurveChartProps {
   logs: DailyFermLog[];
@@ -22,7 +23,7 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
   // Filter and sort logs chronologically for the selected lot
   const activeLogs = useMemo(() => {
     return logs
-      .filter((log) => log.lotId === selectedLotId)
+      .filter((log) => log.lotId === selectedLotId && isPhysicalFermentationReading(log))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [logs, selectedLotId]);
 
@@ -131,7 +132,7 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
       const targetDuration = 14;
       const f = 0.5 * (1 - Math.cos(Math.min(1, daysElapsed / targetDuration) * Math.PI));
       const targetDensity = startDensity - (startDensity - 0.990) * f;
-      
+
       return {
         ...d,
         parsedDate,
@@ -143,7 +144,6 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
     const latestLog = activeLogs[activeLogs.length - 1];
     let slope = -0.008; // default
     let isStuck = false;
-    let slopeValForDisplay = 0.008;
 
     if (activeLogs.length >= 2) {
       const logsForSlope = activeLogs.slice(-3);
@@ -152,7 +152,6 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
       const timeDiffDays = (new Date(last.date).getTime() - new Date(first.date).getTime()) / (24 * 60 * 60 * 1000);
       if (timeDiffDays > 0) {
         const calcSlope = (last.density - first.density) / timeDiffDays;
-        slopeValForDisplay = Math.abs(calcSlope);
         if (calcSlope < 0) {
           slope = calcSlope;
         } else {
@@ -172,7 +171,7 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
     // X Scale: Time
     const dateExtent = d3.extent(formattedData, (d) => d.parsedDate) as [Date, Date];
     let endDomainDate = d3.timeDay.offset(dateExtent[1], 0.2);
-    
+
     // Extend xDomain to forecasted dryDate if within reasonable limits (e.g. 25 days)
     const showForecastLine = !isStuck && daysToDryVal > 0 && latestLog && latestLog.density > 0.990 && daysToDryVal <= 25;
     if (showForecastLine) {
@@ -489,9 +488,9 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
             </div>
           )}
 
-          <svg 
-            ref={svgRef} 
-            width={dimensions.width} 
+          <svg
+            ref={svgRef}
+            width={dimensions.width}
             height={dimensions.height}
             className="overflow-visible block max-w-full"
           />
@@ -518,7 +517,7 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
 
       {/* Floating Interactive Hover Tooltip Card */}
       {hoveredPoint && (
-        <div 
+        <div
           className="absolute z-50 pointer-events-none bg-stone-900/95 text-stone-100 p-3 rounded-lg shadow-xl border border-stone-850 text-xs w-64 space-y-2 backdrop-blur-xs font-sans"
           style={{ left: `${tooltipPos.x}px`, top: `${tooltipPos.y}px` }}
         >

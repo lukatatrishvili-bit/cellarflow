@@ -1,10 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck,
   Boxes,
   GitMerge,
   Grape,
   Info,
+  Maximize2,
+  Minimize2,
   PackageCheck,
   Search,
   ShoppingCart,
@@ -31,13 +33,16 @@ import type { StorageLocation, StockMovement } from '../lib/storage';
 import { stageLabel } from '../lib/enumLabels';
 import {
   buildLotLineageGraph,
+  fitLineageZoom,
   layoutLineageGraph,
+  lineagePathTargets,
   LINEAGE_NODE_HEIGHT,
   LINEAGE_NODE_WIDTH,
   type LineageEdge,
   type LineageNode,
   type LineageNodeType,
   type PositionedLineageNode,
+  shortestPathNodeIds,
 } from '../lib/lineage';
 import { EmptyState, PageHeader, SectionCard, StatusBadge } from './ui/primitives';
 
@@ -422,6 +427,10 @@ export default function LotLineageGraphTab({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [focusPathOnly, setFocusPathOnly] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const lastAutoFitKeyRef = useRef('');
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 
   const lotOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -440,6 +449,7 @@ export default function LotLineageGraphTab({
     if (focusLotId && lots.some(l => l.id === focusLotId)) {
       setSelectedLotId(focusLotId);
       setSelectedNodeId(null);
+      setFocusPathOnly(false);
     }
   }, [focusLotId, lots]);
 
@@ -459,47 +469,82 @@ export default function LotLineageGraphTab({
     }, selectedLotId);
   }, [bottlingRuns, cellarOps, certificationRecords, grapeIntakes, lots, salesDispatches, salesOrders, selectedLotId, stockMovements, storageLocations, transfers]);
 
-  const positioned = useMemo(() => layoutLineageGraph(graph), [graph]);
+  const visibleNodeIds = useMemo(() => {
+    if (!focusPathOnly || !selectedNodeId) return null;
+    const ids = shortestPathNodeIds(graph, `lot:${selectedLotId}`, selectedNodeId);
+    return ids.size > 0 ? ids : null;
+  }, [focusPathOnly, graph, selectedLotId, selectedNodeId]);
+
+  const visibleGraph = useMemo(() => {
+    if (!visibleNodeIds) return graph;
+    return {
+      nodes: graph.nodes.filter(node => visibleNodeIds.has(node.id)),
+      edges: graph.edges.filter(edge => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)),
+    };
+  }, [graph, visibleNodeIds]);
+
+  const pathTargets = useMemo(
+    () => lineagePathTargets(graph, `lot:${selectedLotId}`),
+    [graph, selectedLotId],
+  );
+
+  const positioned = useMemo(() => layoutLineageGraph(visibleGraph), [visibleGraph]);
   const nodesById = useMemo(() => new Map(positioned.nodes.map(n => [n.id, n])), [positioned.nodes]);
   const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) || null : positioned.nodes.find(n => n.emphasis) || null;
   const selectedLot = lots.find(l => l.id === selectedLotId);
-
-  const visibleNodeIds = useMemo(() => {
-    if (!focusPathOnly || !selectedNode) return null;
-    const ids = new Set<string>([selectedNode.id]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      positioned.edges.forEach(edge => {
-        if (ids.has(edge.from) || ids.has(edge.to)) {
-          if (!ids.has(edge.from)) {
-            ids.add(edge.from);
-            changed = true;
-          }
-          if (!ids.has(edge.to)) {
-            ids.add(edge.to);
-            changed = true;
-          }
-        }
-      });
-    }
-    return ids;
-  }, [focusPathOnly, positioned.edges, selectedNode]);
-
-  const visibleNodes = useMemo(
-    () => visibleNodeIds ? positioned.nodes.filter(node => visibleNodeIds.has(node.id)) : positioned.nodes,
-    [positioned.nodes, visibleNodeIds],
-  );
-  const visibleEdges = useMemo(
-    () => visibleNodeIds ? positioned.edges.filter(edge => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)) : positioned.edges,
-    [positioned.edges, visibleNodeIds],
-  );
-  const counts = positioned.nodes.reduce<Record<LineageNodeType, number>>((acc, node) => {
+  const visibleNodes = positioned.nodes;
+  const visibleEdges = positioned.edges;
+  const counts = graph.nodes.reduce<Record<LineageNodeType, number>>((acc, node) => {
     acc[node.type] = (acc[node.type] || 0) + 1;
     return acc;
   }, {} as Record<LineageNodeType, number>);
-  const scaledWidth = Math.max(positioned.width * zoom, 720);
-  const scaledHeight = Math.max(positioned.height * zoom, 360);
+
+  useEffect(() => {
+    const element = canvasViewportRef.current;
+    if (!element) return;
+    const measure = () => setViewportSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [positioned.nodes.length]);
+
+  const fitView = useCallback(() => {
+    if (!positioned.nodes.length || !viewportSize.width || !viewportSize.height) return;
+    setZoom(fitLineageZoom(positioned.width, positioned.height, viewportSize.width, viewportSize.height));
+    canvasViewportRef.current?.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+  }, [positioned.height, positioned.nodes.length, positioned.width, viewportSize.height, viewportSize.width]);
+
+  useEffect(() => {
+    fitView();
+  }, [fitView, isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
+  const visibleGraphKey = visibleNodeIds ? Array.from(visibleNodeIds).sort().join('|') : 'all';
+  useEffect(() => {
+    if (!positioned.nodes.length || !viewportSize.width || !viewportSize.height) return;
+    const key = `${selectedLotId}:${visibleGraphKey}:${positioned.width}x${positioned.height}`;
+    if (lastAutoFitKeyRef.current === key) return;
+    lastAutoFitKeyRef.current = key;
+    setZoom(fitLineageZoom(positioned.width, positioned.height, viewportSize.width, viewportSize.height));
+  }, [positioned.height, positioned.nodes.length, positioned.width, selectedLotId, viewportSize.height, viewportSize.width, visibleGraphKey]);
+
+  const scaledWidth = Math.max(positioned.width * zoom, viewportSize.width || 1);
+  const scaledHeight = Math.max(positioned.height * zoom, viewportSize.height || 360);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -526,6 +571,7 @@ export default function LotLineageGraphTab({
               onChange={e => {
                 setSelectedLotId(e.target.value);
                 setSelectedNodeId(null);
+                setFocusPathOnly(false);
               }}
               className="w-full bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold sm:w-[260px] sm:min-w-[260px] dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
             >
@@ -533,10 +579,27 @@ export default function LotLineageGraphTab({
                 <option key={lot.id} value={lot.id}>{lot.id} · {lot.name}</option>
               ))}
             </select>
+            <select
+              value={focusPathOnly ? selectedNodeId || '' : ''}
+              onChange={event => {
+                const nodeId = event.target.value;
+                setSelectedNodeId(nodeId || null);
+                setFocusPathOnly(Boolean(nodeId));
+              }}
+              aria-label={ka ? 'მიკვლევადობის ბოლო წერტილი' : 'Trace endpoint'}
+              className="w-full bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold sm:w-[230px] sm:min-w-[230px] dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
+            >
+              <option value="">{ka ? 'სრული გრაფი · აირჩიეთ გზა' : 'Full graph · choose a path'}</option>
+              {pathTargets.map(node => (
+                <option key={node.id} value={node.id}>
+                  {(ka ? typeMeta[node.type].labelKa : typeMeta[node.type].label)} · {node.label}
+                </option>
+              ))}
+            </select>
             <div className="flex shrink-0 items-center gap-1 rounded-xl border border-stone-200 bg-stone-50 p-1 dark:border-stone-800 dark:bg-stone-950">
               <button
                 type="button"
-                onClick={() => setZoom(value => Math.max(0.7, Math.round((value - 0.1) * 10) / 10))}
+                onClick={() => setZoom(value => Math.max(0.02, Math.round((value - 0.1) * 10) / 10))}
                 className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
                 title={ka ? 'დაშორება' : 'Zoom out'}
               >
@@ -552,6 +615,15 @@ export default function LotLineageGraphTab({
               </button>
               <button
                 type="button"
+                onClick={fitView}
+                className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
+                title={ka ? 'გრაფიკის მოთავსება' : 'Fit graph to view'}
+                aria-label={ka ? 'გრაფიკის მოთავსება' : 'Fit graph to view'}
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => setZoom(value => Math.min(1.4, Math.round((value + 0.1) * 10) / 10))}
                 className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
                 title={ka ? 'გადიდება' : 'Zoom in'}
@@ -562,11 +634,13 @@ export default function LotLineageGraphTab({
             <button
               type="button"
               onClick={() => setFocusPathOnly(value => !value)}
+              disabled={!selectedNodeId}
               className={`shrink-0 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wide transition-colors ${
                 focusPathOnly
                   ? 'border-[#4e0e15] bg-[#4e0e15] text-amber-50'
                   : 'border-stone-200 bg-stone-50 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300'
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-45`}
+              title={!selectedNodeId ? (ka ? 'ჯერ აირჩიეთ კვანძი' : 'Select a node first') : undefined}
             >
               {ka ? 'არჩეული გზა' : 'Selected path'}
             </button>
@@ -599,7 +673,7 @@ export default function LotLineageGraphTab({
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5">
-        <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
+        <div className={`${isFullscreen ? 'fixed inset-2 z-50 flex flex-col rounded-xl sm:inset-4' : 'rounded-2xl'} bg-white border border-[#e8dfd5] shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800`}>
           <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-center justify-between dark:border-stone-800">
             <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
               <Sparkles className="w-4 h-4" /> {ka ? 'მიკვლევადობის ტილო' : 'Horizontal lineage canvas'}
@@ -607,9 +681,18 @@ export default function LotLineageGraphTab({
             <div className="flex items-center gap-2">
               {focusPathOnly && <StatusBadge tone="brand">{ka ? 'ფოკუსი' : 'focused'}</StatusBadge>}
               <span className="text-[9px] font-mono text-stone-400">
-                {visibleNodes.length}/{positioned.nodes.length} {ka ? 'კვანძი' : 'nodes'} · {visibleEdges.length} {ka ? 'კავშირი' : 'links'}
+                {visibleNodes.length}/{graph.nodes.length} {ka ? 'კვანძი' : 'nodes'} · {visibleEdges.length} {ka ? 'კავშირი' : 'links'}
                 {positioned.hasCycle ? (ka ? ' · ციკლის გაფრთხილება' : ' · cycle warning') : ''}
               </span>
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(value => !value)}
+                className="rounded-lg border border-stone-200 p-1.5 text-stone-500 transition-colors hover:bg-stone-50 hover:text-[#4e0e15] dark:border-stone-800 dark:hover:bg-stone-950 dark:hover:text-amber-200"
+                title={isFullscreen ? (ka ? 'სრული ეკრანიდან გამოსვლა' : 'Exit full screen') : (ka ? 'სრულ ეკრანზე გახსნა' : 'Open full screen')}
+                aria-label={isFullscreen ? (ka ? 'სრული ეკრანიდან გამოსვლა' : 'Exit full screen') : (ka ? 'სრულ ეკრანზე გახსნა' : 'Open full screen')}
+              >
+                {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </button>
             </div>
           </div>
 
@@ -620,7 +703,7 @@ export default function LotLineageGraphTab({
               description={ka ? 'შექმენით პარტია ან მიიღეთ ყურძენი მიკვლევადობის დასაწყებად.' : 'Create a wine lot or receive grapes to begin traceability.'}
             />
           ) : (
-            <div className="overflow-auto bg-[#fbfaf7] dark:bg-stone-950/40">
+            <div ref={canvasViewportRef} className={`${isFullscreen ? 'min-h-0 flex-1' : 'h-[min(68vh,640px)] min-h-[360px]'} overflow-auto overscroll-contain bg-[#fbfaf7] touch-pan-x touch-pan-y dark:bg-stone-950/40`}>
               <div className="relative" style={{ width: scaledWidth, height: scaledHeight, minWidth: '100%' }}>
                 <div
                   className="absolute left-0 top-0 origin-top-left"

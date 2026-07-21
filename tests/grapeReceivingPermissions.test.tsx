@@ -221,4 +221,45 @@ describe('GrapeReceivingTab compound action permissions', () => {
       paymentStatus: 'not_applicable',
     });
   });
+
+  it('shows correction only for authorized, command-created active intakes', () => {
+    const reversible: GrapeIntakeRecord = {
+      ...intake,
+      commandId: 'cmd-intake-a',
+      recordKind: 'intake',
+      lastModified: '2026-09-15T09:00:00.000Z',
+      reversalSnapshot: {
+        version: 1,
+        lot: {
+          id: intake.createdLotId, initialVolume: 700, currentVolume: 700, stage: 'crushing',
+          historyDescription: 'Intake created',
+        },
+        vessel: {
+          id: vessel.id, currentVolume: 0, assignedLotId: null, temperature: 18, lastOperation: 'Sanitized',
+        },
+        auditId: 'audit-intake-a',
+      },
+    };
+    const authorized = renderReceiving({ intakes: [reversible], canReverseHarvestIntake: true });
+    expect(authorized).toContain('aria-label="Correct intake INTAKE-A"');
+
+    const denied = renderReceiving({ intakes: [reversible], canReverseHarvestIntake: false });
+    expect(denied).not.toContain('aria-label="Correct intake INTAKE-A"');
+  });
+
+  it('labels immutable correction and reversed receipt rows', () => {
+    const original = { ...intake, reversedByCommandId: 'cmd-reversal' };
+    const correction: GrapeIntakeRecord = {
+      ...intake,
+      id: 'INTAKE-REVERSAL',
+      recordKind: 'reversal',
+      reversalOfIntakeId: intake.id,
+      reversalOfCommandId: 'cmd-intake',
+      reversalReason: 'Duplicate',
+    };
+    const markup = renderReceiving({ intakes: [correction, original] });
+    expect(markup).toContain('Correction');
+    expect(markup).toContain('Reversed');
+    expect(markup).toContain('-1,000 kg');
+  });
 });

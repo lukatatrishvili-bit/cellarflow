@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { checksumAttachmentDataUrl, MAX_INLINE_ATTACHMENT_BYTES } from '../lib/attachments';
 import {
+  assertSyncPayloadWithinLimits,
   buildRecoverableSyncCandidate,
   buildSyncCandidate,
+  MAX_SYNC_RECORDS_PER_COLLECTION,
+  MAX_SYNC_TOMBSTONES,
+  MAX_SYNC_TOTAL_RECORDS,
   prepareAttachmentsForServerMerge,
   prepareCollectionsForRejectedDeletion,
+  SyncPayloadLimitError,
   validateSyncPayload,
 } from '../server/routes/sync';
 
@@ -27,6 +32,8 @@ const operationalDb = (fields: Record<string, any> = {}) => ({
   auditLogs: [],
   attachments: [],
   inventory: [],
+  vessels: [],
+  cellarOps: [],
   storageLocations: [],
   stockMovements: [],
   salesDispatches: [],
@@ -35,6 +42,61 @@ const operationalDb = (fields: Record<string, any> = {}) => ({
   costEntries: [],
   tasks: [],
   ...fields,
+});
+
+describe('sync payload work limits', () => {
+  it('rejects non-object sync bodies before route destructuring', () => {
+    expect(() => assertSyncPayloadWithinLimits(null)).toThrowError(expect.objectContaining({
+      code: 'sync_payload_invalid',
+      statusCode: 400,
+    }));
+    expect(() => assertSyncPayloadWithinLimits([])).toThrowError(expect.objectContaining({
+      code: 'sync_payload_invalid',
+      statusCode: 400,
+    }));
+  });
+
+  it('accepts collections and tombstones at their documented limits', () => {
+    expect(() => assertSyncPayloadWithinLimits({
+      lots: new Array(MAX_SYNC_RECORDS_PER_COLLECTION).fill(null),
+      deletedRecords: new Array(MAX_SYNC_TOMBSTONES).fill(null),
+    })).not.toThrow();
+  });
+
+  it('rejects an oversized collection with a stable recovery code', () => {
+    try {
+      assertSyncPayloadWithinLimits({
+        lots: new Array(MAX_SYNC_RECORDS_PER_COLLECTION + 1).fill(null),
+      });
+      throw new Error('Expected payload limit rejection.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(SyncPayloadLimitError);
+      expect((error as SyncPayloadLimitError).code).toBe('sync_collection_record_limit_exceeded');
+      expect((error as Error).message).toContain('Local changes were kept');
+    }
+  });
+
+  it('rejects excessive records spread across otherwise valid collections', () => {
+    const records = new Array(MAX_SYNC_RECORDS_PER_COLLECTION).fill(null);
+
+    expect(() => assertSyncPayloadWithinLimits({
+      lots: records,
+      tasks: records,
+      inventory: records,
+      cellarOps: records,
+    })).toThrowError(expect.objectContaining({
+      code: 'sync_total_record_limit_exceeded',
+    }));
+    expect(MAX_SYNC_RECORDS_PER_COLLECTION * 4).toBeGreaterThan(MAX_SYNC_TOTAL_RECORDS);
+  });
+
+  it('rejects an oversized deletion ledger independently of record totals', () => {
+    expect(() => assertSyncPayloadWithinLimits({
+      deletedIds: new Array(MAX_SYNC_TOMBSTONES + 1).fill(null),
+    })).toThrowError(expect.objectContaining({
+      code: 'sync_tombstone_limit_exceeded',
+    }));
+  });
 });
 
 describe('sync payload validation', () => {
@@ -682,6 +744,621 @@ describe('sync payload validation', () => {
       }],
     }, undefined, [{ collection: 'stockMovements', id: 'move-1' }]))
       .toThrow(/still used by sales dispatch|non-existent or deleted Stock Movement/i);
+  });
+
+  it('accepts paired transfer corrections and rejects forged or deleted command ledger records', () => {
+    const original = {
+      id: 'xfer-command-1',
+      commandId: 'cmd-transfer-1',
+      recordKind: 'transfer',
+      sourceId: 'T-1',
+      destId: 'T-2',
+      volume: 100,
+      loss: 2,
+      sourceLotId: 'LOT-A',
+      resultLotId: 'LOT-A',
+      operator: 'Nino',
+      category: 'racking',
+      date: '2026-07-20',
+      pump: 'Pump',
+      details: 'Transferred.',
+      lastModified: '2026-07-20T08:00:00.000Z',
+      reversalSnapshot: { version: 1 },
+    };
+    const correctedOriginal = {
+      ...original,
+      reversedByCommandId: 'cmd-transfer-reversal-1',
+      reversedAt: '2026-07-20T09:00:00.000Z',
+      reversalReason: 'Wrong vessel.',
+      lastModified: '2026-07-20T09:00:00.000Z',
+    };
+    const correction = {
+      id: 'xfer-reversal-1',
+      commandId: 'cmd-transfer-reversal-1',
+      recordKind: 'reversal',
+      reversalOfTransferId: original.id,
+      reversalOfCommandId: original.commandId,
+      reversalReason: 'Wrong vessel.',
+      lastModified: '2026-07-20T09:00:00.000Z',
+      sourceId: 'T-2',
+      destId: 'T-1',
+      volume: 100,
+      loss: 0,
+      operator: 'Owner',
+      category: 'reversal',
+      date: '2026-07-20',
+      pump: 'Accounting correction',
+      details: 'Reversed.',
+    };
+    const db = operationalDb({ transfers: [original] });
+
+    expect(() => validateSyncPayload(db, {
+      transfers: [correctedOriginal, correction],
+    }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, {
+      transfers: [correctedOriginal, { ...correction, reversalOfCommandId: 'cmd-forged' }],
+    }, undefined)).toThrow(/Mismatched Transfer Reversal/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'transfers', id: original.id },
+    ])).toThrow(/Immutable Transfer Ledger/i);
+  });
+
+  it('accepts only a complete append-only sales return and protects its command ledger', () => {
+    const originalMovement = {
+      id: 'move-sale-original',
+      commandId: 'cmd-sale-original',
+      lastModified: '2026-07-20T08:00:00.000Z',
+      date: '2026-07-20',
+      lotId: 'lot-1',
+      locationId: 'loc-1',
+      direction: 'out',
+      bottles: 10,
+      reason: 'sale',
+      sourceRef: 'dispatch-original',
+    };
+    const original = {
+      id: 'dispatch-original',
+      commandId: 'cmd-sale-original',
+      recordKind: 'dispatch',
+      lastModified: '2026-07-20T08:00:00.000Z',
+      date: '2026-07-20',
+      customerName: 'Buyer',
+      lotId: 'lot-1',
+      lotName: 'Lot 1',
+      locationId: 'loc-1',
+      locationName: 'Warehouse',
+      bottles: 10,
+      pricePerBottle: 20,
+      currency: 'GEL',
+      revenue: 200,
+      cogs: 50,
+      grossProfit: 150,
+      stockMovementId: originalMovement.id,
+      operator: 'Owner',
+    };
+    const correctedOriginal = {
+      ...original,
+      lastModified: '2026-07-20T09:00:00.000Z',
+      reversedByCommandId: 'cmd-sale-reversal',
+      reversedAt: '2026-07-20T09:00:00.000Z',
+      reversalReason: 'Returned shipment.',
+    };
+    const correction = {
+      ...original,
+      id: 'dispatch-reversal',
+      commandId: 'cmd-sale-reversal',
+      recordKind: 'reversal',
+      lastModified: '2026-07-20T09:00:00.000Z',
+      stockMovementId: 'move-sale-return',
+      reversalOfDispatchId: original.id,
+      reversalOfCommandId: original.commandId,
+      reversalReason: 'Returned shipment.',
+    };
+    const returnMovement = {
+      id: 'move-sale-return',
+      commandId: 'cmd-sale-reversal',
+      lastModified: '2026-07-20T09:00:00.000Z',
+      date: '2026-07-20',
+      lotId: 'lot-1',
+      locationId: 'loc-1',
+      direction: 'in',
+      bottles: 10,
+      reason: 'sale_reversal',
+      sourceRef: correction.id,
+      reversalOfMovementId: originalMovement.id,
+      reversalOfCommandId: original.commandId,
+    };
+    const db = operationalDb({
+      lots: [{ id: 'lot-1', stage: 'bottled' }],
+      storageLocations: [{ id: 'loc-1', capacityBottles: 100 }],
+      stockMovements: [{
+        id: 'move-receipt', date: '2026-07-01', lotId: 'lot-1', locationId: 'loc-1',
+        direction: 'in', bottles: 100, reason: 'manual',
+      }, originalMovement],
+      salesDispatches: [original],
+    });
+    const correctionCollections = {
+      stockMovements: [returnMovement],
+      salesDispatches: [correctedOriginal, correction],
+    };
+
+    expect(() => validateSyncPayload(db, correctionCollections, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, {
+      ...correctionCollections,
+      stockMovements: [{ ...returnMovement, bottles: 9 }],
+    }, undefined)).toThrow(/Mismatched Sales Reversal/i);
+    expect(() => validateSyncPayload(db, {
+      ...correctionCollections,
+      salesDispatches: [correctedOriginal, { ...correction, revenue: 201 }],
+    }, undefined)).toThrow(/Mismatched Sales Reversal/i);
+    expect(() => validateSyncPayload(db, {
+      stockMovements: [returnMovement],
+      salesDispatches: [correctedOriginal],
+    }, undefined)).toThrow(/Sales Reversal|correction entry/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'salesDispatches', id: original.id },
+    ])).toThrow(/Immutable Sales Ledger/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'stockMovements', id: originalMovement.id },
+    ])).toThrow(/Immutable Stock Ledger/i);
+  });
+
+  it('accepts only a complete bottling compensation and protects every command ledger', () => {
+    const postedAt = '2026-07-20T08:00:00.000Z';
+    const correctedAt = '2026-07-21T09:00:00.000Z';
+    const originalMovement = {
+      id: 'move-bottling-original', commandId: 'cmd-bottling-original', lastModified: postedAt,
+      date: '2026-07-20', lotId: 'lot-1', locationId: 'loc-1', direction: 'in', bottles: 100,
+      reason: 'bottling', sourceRef: 'run-original',
+    };
+    const originalRun = {
+      id: 'run-original', commandId: 'cmd-bottling-original', recordKind: 'bottling',
+      createdAt: postedAt, lastModified: postedAt, lotId: 'lot-1', lotName: 'Lot 1',
+      date: '2026-07-20', lotNumber: 'B-1', operator: 'Nino', formats: { '0.75': 100 },
+      totalBottles: 100, totalCeramic: 0, volumeBottledL: 75,
+      previousLotVolumeL: 200, previousLotStage: 'aging',
+      packagingMaterialIds: { bottle: 'bottle-1' }, packagingDeductions: { 'bottle-1': 100 },
+      bottlesPerBox: 6, packagingCostTotal: 50, bottlingServiceCost: 25,
+      storageLocationId: 'loc-1', storageMovementId: originalMovement.id, placedInStorageBottles: 100,
+    };
+    const updatedOriginal = {
+      ...originalRun, lastModified: correctedAt, reversedByCommandId: 'cmd-bottling-reversal',
+      reversedAt: correctedAt, reversalReason: 'Duplicate posting.',
+    };
+    const correctionRun = {
+      id: 'run-reversal', commandId: 'cmd-bottling-reversal', recordKind: 'reversal',
+      createdAt: correctedAt, lastModified: correctedAt, lotId: 'lot-1', lotName: 'Lot 1',
+      date: '2026-07-21', lotNumber: 'B-1', operator: 'Owner', formats: { '0.75': 100 },
+      totalBottles: 100, totalCeramic: 0, volumeBottledL: 75,
+      packagingMaterialIds: { bottle: 'bottle-1' }, packagingDeductions: { 'bottle-1': 100 },
+      bottlesPerBox: 6, packagingCostTotal: 50, bottlingServiceCost: 25,
+      storageLocationId: 'loc-1', storageMovementId: 'move-bottling-reversal', placedInStorageBottles: 100,
+      reversalOfRunId: originalRun.id, reversalOfCommandId: originalRun.commandId,
+      reversalReason: 'Duplicate posting.',
+    };
+    const returnMovement = {
+      id: 'move-bottling-reversal', commandId: 'cmd-bottling-reversal', lastModified: correctedAt,
+      date: '2026-07-21', lotId: 'lot-1', locationId: 'loc-1', direction: 'out', bottles: 100,
+      reason: 'bottling_reversal', sourceRef: correctionRun.id,
+      reversalOfMovementId: originalMovement.id, reversalOfCommandId: originalRun.commandId,
+    };
+    const originalCosts = [
+      { id: 'cost-pack', commandId: originalRun.commandId, recordKind: 'cost', lastModified: postedAt,
+        date: '2026-07-20', lotId: 'lot-1', category: 'packaging', description: 'Packaging',
+        amount: 50, currency: 'GEL', quantity: 100, sourceRef: originalRun.id },
+      { id: 'cost-service', commandId: originalRun.commandId, recordKind: 'cost', lastModified: postedAt,
+        date: '2026-07-20', lotId: 'lot-1', category: 'bottling', description: 'Service',
+        amount: 25, currency: 'GEL', quantity: 100, sourceRef: originalRun.id },
+    ];
+    const correctedCosts = originalCosts.map(cost => ({
+      ...cost, lastModified: correctedAt, reversedByCommandId: 'cmd-bottling-reversal',
+      reversedAt: correctedAt, reversalReason: 'Duplicate posting.',
+    }));
+    const reversalCosts = originalCosts.map((cost, index) => ({
+      ...cost, id: `cost-reversal-${index}`, commandId: 'cmd-bottling-reversal', recordKind: 'reversal',
+      lastModified: correctedAt, date: '2026-07-21', description: `Reversal: ${cost.description}`,
+      amount: -cost.amount, quantity: -100, sourceRef: correctionRun.id,
+      reversalOfCostEntryId: cost.id, reversalOfCommandId: originalRun.commandId,
+      reversalReason: 'Duplicate posting.',
+    }));
+    const restoredLot = {
+      id: 'lot-1', stage: 'aging', currentVolume: 200, lastCommandId: 'cmd-bottling-reversal',
+      lastModified: correctedAt,
+      history: [{ date: '2026-07-21', type: 'correction', description: 'Correction', operator: 'Owner', sourceRef: correctionRun.id }],
+    };
+    const restoredInventory = {
+      id: 'bottle-1', stock: 150, minThreshold: 0, costPerUnit: 0.5,
+      lastCommandId: 'cmd-bottling-reversal', lastModified: correctedAt,
+    };
+    const db = operationalDb({
+      lots: [{ id: 'lot-1', stage: 'aging', currentVolume: 125, lastCommandId: originalRun.commandId,
+        lastModified: postedAt, history: [{ date: '2026-07-20', type: 'bottling', sourceRef: originalRun.id }] }],
+      inventory: [{ id: 'bottle-1', stock: 50, minThreshold: 0, costPerUnit: 0.5,
+        lastCommandId: originalRun.commandId, lastModified: postedAt }],
+      storageLocations: [{ id: 'loc-1', capacityBottles: 500 }],
+      stockMovements: [originalMovement], bottlingRuns: [originalRun], costEntries: originalCosts,
+    });
+    const correctionCollections = {
+      lots: [restoredLot], inventory: [restoredInventory],
+      bottlingRuns: [updatedOriginal, correctionRun],
+      costEntries: [...reversalCosts, ...correctedCosts], stockMovements: [returnMovement],
+    };
+
+    expect(() => validateSyncPayload(db, correctionCollections, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, {
+      ...correctionCollections,
+      costEntries: [{ ...reversalCosts[0], amount: -49 }, reversalCosts[1], ...correctedCosts],
+    }, undefined)).toThrow(/Bottling Reversal|Cost Reversal/i);
+    expect(() => validateSyncPayload(db, {
+      ...correctionCollections,
+      inventory: [{ ...restoredInventory, stock: 149 }],
+    }, undefined)).toThrow(/packaging material/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'bottlingRuns', id: originalRun.id },
+    ])).toThrow(/Immutable Bottling Ledger/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'costEntries', id: originalCosts[0].id },
+    ])).toThrow(/Immutable Cost Ledger/i);
+  });
+
+  it('accepts only a complete cellar-operation compensation and protects its command ledger', () => {
+    const postedAt = '2026-07-20T08:00:00.000Z';
+    const correctedAt = '2026-07-21T09:00:00.000Z';
+    const description = 'Fining · Bentonite 1.5kg · TANK-1';
+    const original = {
+      id: 'operation-original', commandId: 'cmd-operation-original', recordKind: 'operation',
+      lastModified: postedAt, date: '2026-07-20', type: 'fining', lotId: 'lot-1', lotName: 'Lot 1',
+      vesselId: 'TANK-1', vesselToId: null, volumeBeforeL: 920,
+      materialId: 'material-1', materialName: 'Bentonite', dose: 1.5, unit: 'kg',
+      operator: 'Nino', notes: '',
+      reversalSnapshot: {
+        version: 1,
+        lot: { id: 'lot-1', currentVolume: 920, stage: 'aging' },
+        vessel: { id: 'TANK-1', currentVolume: 920, lastOperation: 'Filled' },
+        inventory: { id: 'material-1', stock: 12 },
+        costEntry: { id: 'cost-operation-original', amount: 12, currency: 'GEL', quantity: 1.5 },
+        auditId: 'audit-operation-original', operationDescription: description,
+      },
+    };
+    const updatedOriginal = {
+      ...original, lastModified: correctedAt, reversedByCommandId: 'cmd-operation-reversal',
+      reversedAt: correctedAt, reversalReason: 'Wrong lot selected.',
+    };
+    const correction = {
+      id: 'operation-reversal', commandId: 'cmd-operation-reversal', recordKind: 'reversal',
+      lastModified: correctedAt, date: '2026-07-21', type: 'correction',
+      customLabel: 'Reversal of fining', lotId: 'lot-1', lotName: 'Lot 1',
+      vesselId: 'TANK-1', vesselToId: null, volumeBeforeL: 920, volumeAfterL: 920,
+      materialId: 'material-1', materialName: 'Bentonite', dose: 1.5, unit: 'kg',
+      operator: 'Owner', notes: 'Wrong lot selected.', reversalOfOperationId: original.id,
+      reversalOfCommandId: original.commandId, reversalReason: 'Wrong lot selected.',
+    };
+    const originalCost = {
+      id: 'cost-operation-original', commandId: original.commandId, recordKind: 'cost',
+      lastModified: postedAt, date: '2026-07-20', lotId: 'lot-1', category: 'additive',
+      description: 'Fining: Bentonite', amount: 12, currency: 'GEL', quantity: 1.5,
+      unitCost: 8, sourceRef: original.id,
+    };
+    const updatedOriginalCost = {
+      ...originalCost, lastModified: correctedAt, reversedByCommandId: correction.commandId,
+      reversedAt: correctedAt, reversalReason: correction.reversalReason,
+    };
+    const reversalCost = {
+      ...originalCost, id: 'cost-operation-reversal', commandId: correction.commandId,
+      recordKind: 'reversal', lastModified: correctedAt, date: '2026-07-21',
+      description: 'Reversal: Fining: Bentonite', amount: -12, quantity: -1.5,
+      sourceRef: correction.id, reversalOfCostEntryId: originalCost.id,
+      reversalOfCommandId: original.commandId, reversalReason: correction.reversalReason,
+    };
+    const originalAudit = {
+      id: 'audit-operation-original', commandId: original.commandId, lastModified: postedAt,
+      timestamp: postedAt, user: 'Nino', module: 'GVINO', actionType: 'Cellar Operation: Fining',
+      changedItem: 'Lot lot-1', oldValue: '', newValue: description, notes: description,
+    };
+    const correctionAudit = {
+      id: 'audit-operation-reversal', commandId: correction.commandId, lastModified: correctedAt,
+      timestamp: correctedAt, user: 'Owner', module: 'GVINO',
+      actionType: 'Cellar Operation Reversal: fining', changedItem: 'Lot lot-1',
+      oldValue: '920 L', newValue: '920 L', notes: 'Wrong lot selected.',
+    };
+    const restoredLot = {
+      id: 'lot-1', stage: 'aging', currentVolume: 920, lastCommandId: correction.commandId,
+      lastModified: correctedAt,
+      history: [{ date: '2026-07-21', type: 'correction', description: 'Correction', operator: 'Owner', sourceRef: correction.id }],
+    };
+    const restoredVessel = {
+      id: 'TANK-1', capacity: 1_200, currentVolume: 920, assignedLotId: 'lot-1', lastOperation: 'Filled',
+      lastCommandId: correction.commandId, lastModified: correctedAt,
+    };
+    const restoredMaterial = {
+      id: 'material-1', stock: 12, minThreshold: 0, costPerUnit: 8,
+      lastCommandId: correction.commandId, lastModified: correctedAt,
+    };
+    const db = operationalDb({
+      lots: [{ id: 'lot-1', stage: 'aging', currentVolume: 920, lastCommandId: original.commandId,
+        lastModified: postedAt, history: [{ date: '2026-07-20', type: 'Fining', description,
+          operator: 'Nino', sourceRef: original.id }] }],
+      vessels: [{ id: 'TANK-1', capacity: 1_200, currentVolume: 920, assignedLotId: 'lot-1',
+        lastOperation: description, lastCommandId: original.commandId, lastModified: postedAt }],
+      inventory: [{ id: 'material-1', stock: 10.5, minThreshold: 0, costPerUnit: 8,
+        lastCommandId: original.commandId, lastModified: postedAt }],
+      cellarOps: [original], costEntries: [originalCost], auditLogs: [originalAudit],
+    });
+    const correctionCollections = {
+      lots: [restoredLot], vessels: [restoredVessel], inventory: [restoredMaterial],
+      cellarOps: [updatedOriginal, correction],
+      costEntries: [reversalCost, updatedOriginalCost], auditLogs: [correctionAudit],
+    };
+
+    expect(() => validateSyncPayload(db, correctionCollections, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, {
+      ...correctionCollections,
+      inventory: [{ ...restoredMaterial, stock: 11.9 }],
+    }, undefined)).toThrow(/Cellar Operation Reversal.*material/i);
+    expect(() => validateSyncPayload(db, {
+      ...correctionCollections,
+      costEntries: [{ ...reversalCost, amount: -11 }, updatedOriginalCost],
+    }, undefined)).toThrow(/Cellar Operation Reversal|Cost Reversal/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'cellarOps', id: original.id },
+    ])).toThrow(/Immutable Cellar Operation Ledger/i);
+    expect(() => validateSyncPayload(db, {
+      cellarOps: [{ ...original, notes: 'forged edit' }],
+    }, undefined)).toThrow(/Immutable Cellar Operation Ledger/i);
+  });
+
+  it('accepts only a complete grape-intake compensation and protects its command ledger', () => {
+    const postedAt = '2026-09-15T09:00:00.000Z';
+    const correctedAt = '2026-09-16T10:00:00.000Z';
+    const snapshot = {
+      version: 1,
+      lot: { id: 'lot-intake', initialVolume: 700, currentVolume: 700, stage: 'crushing', historyDescription: 'Intake created' },
+      harvest: { id: 'harvest-intake', sentToGvino: false, actualHarvestedKg: null, actualHarvestDate: null, associatedLotId: null },
+      vessel: { id: 'tank-intake', currentVolume: 0, assignedLotId: null, temperature: 16, lastOperation: 'Sanitized' },
+      costEntry: { id: 'cost-intake', amount: 2_500, currency: 'GEL', quantity: 1_000 },
+      auditId: 'audit-intake',
+    };
+    const original = {
+      id: 'intake-original', commandId: 'cmd-intake-original', recordKind: 'intake', lastModified: postedAt,
+      date: '2026-09-15', source: 'own', blockId: 'block-intake', variety: 'Saperavi', vintage: 2026,
+      grossWeightKg: 1_100, tareWeightKg: 100, netWeightKg: 1_000, brix: 23, ph: 3.4,
+      titratableAcidity: 6, temperatureC: 18, condition: 'good', pickingMethod: 'hand', wineClass: 'red',
+      juiceYieldPct: 70, estimatedVolumeL: 700, destinationVesselId: 'tank-intake',
+      createdLotId: 'lot-intake', harvestRecordId: 'harvest-intake', operator: 'Nino', notes: '',
+      reversalSnapshot: snapshot,
+    };
+    const updatedOriginal = {
+      ...original, lastModified: correctedAt, reversedByCommandId: 'cmd-intake-reversal',
+      reversedAt: correctedAt, reversalReason: 'Duplicate receipt.',
+    };
+    const correction = {
+      ...original, id: 'intake-reversal', commandId: 'cmd-intake-reversal', recordKind: 'reversal',
+      lastModified: correctedAt, date: '2026-09-16', operator: 'Owner', notes: 'Duplicate receipt.',
+      reversalSnapshot: undefined, reversalOfIntakeId: original.id, reversalOfCommandId: original.commandId,
+      reversalReason: 'Duplicate receipt.',
+    };
+    const originalCost = {
+      id: 'cost-intake', commandId: original.commandId, recordKind: 'cost', lastModified: postedAt,
+      date: '2026-09-15', lotId: 'lot-intake', category: 'grapes', description: 'Grapes', amount: 2_500,
+      currency: 'GEL', quantity: 1_000, unitCost: 2.5, sourceRef: original.id,
+    };
+    const updatedOriginalCost = {
+      ...originalCost, lastModified: correctedAt, reversedByCommandId: correction.commandId,
+      reversedAt: correctedAt, reversalReason: correction.reversalReason,
+    };
+    const reversalCost = {
+      ...originalCost, id: 'cost-intake-reversal', commandId: correction.commandId, recordKind: 'reversal',
+      lastModified: correctedAt, date: '2026-09-16', amount: -2_500, quantity: -1_000,
+      sourceRef: correction.id, reversalOfCostEntryId: originalCost.id,
+      reversalOfCommandId: original.commandId, reversalReason: correction.reversalReason,
+    };
+    const originalAudit = {
+      id: 'audit-intake', commandId: original.commandId, lastModified: postedAt, timestamp: postedAt,
+      user: 'Nino', module: 'GVINO', actionType: 'Grape Receiving', changedItem: 'WineLot lot-intake',
+      oldValue: 'None', newValue: '1000 kg', notes: '',
+    };
+    const correctionAudit = {
+      id: 'audit-intake-reversal', commandId: correction.commandId, lastModified: correctedAt,
+      timestamp: correctedAt, user: 'Owner', module: 'GVINO', actionType: 'Grape Receiving Reversal',
+      changedItem: 'WineLot lot-intake', oldValue: '1000 kg', newValue: 'Voided', notes: 'Duplicate receipt.',
+    };
+    const db = operationalDb({
+      blocks: [{ id: 'block-intake' }],
+      harvests: [{ id: 'harvest-intake', sentToGvino: true, actualHarvestedKg: 1_000,
+        actualHarvestDate: '2026-09-15', associatedLotId: 'lot-intake',
+        lastCommandId: original.commandId, lastModified: postedAt }],
+      lots: [{ id: 'lot-intake', commandId: original.commandId, lastCommandId: original.commandId,
+        lastModified: postedAt, stage: 'crushing', initialVolume: 700, currentVolume: 700,
+        history: [{ date: '2026-09-15', type: 'Grape Receiving', description: 'Intake created', sourceRef: original.id }] }],
+      vessels: [{ id: 'tank-intake', capacity: 1_000, currentVolume: 700, assignedLotId: 'lot-intake',
+        temperature: 18, lastOperation: 'Grape intake: Saperavi (700 L must)',
+        lastCommandId: original.commandId, lastModified: postedAt }],
+      grapeIntakes: [original], costEntries: [originalCost], auditLogs: [originalAudit],
+    });
+    const correctionCollections = {
+      harvests: [{ id: 'harvest-intake', sentToGvino: false,
+        lastCommandId: correction.commandId, lastModified: correctedAt }],
+      lots: [{ id: 'lot-intake', commandId: original.commandId, lastCommandId: correction.commandId,
+        lastModified: correctedAt, stage: 'crushing', initialVolume: 700, currentVolume: 0,
+        voidedAt: correctedAt, voidedByCommandId: correction.commandId, voidReason: correction.reversalReason,
+        history: [{ date: '2026-09-16', type: 'Grape Intake Reversal', description: 'Correction', sourceRef: correction.id }] }],
+      vessels: [{ id: 'tank-intake', capacity: 1_000, currentVolume: 0, assignedLotId: null,
+        temperature: 16, lastOperation: 'Sanitized', lastCommandId: correction.commandId, lastModified: correctedAt }],
+      grapeIntakes: [updatedOriginal, correction],
+      costEntries: [reversalCost, updatedOriginalCost], auditLogs: [correctionAudit],
+    };
+
+    expect(() => validateSyncPayload(db, correctionCollections, undefined))
+      .toThrow(/Harvest Intake Reversal.*harvest/i);
+    const correctedDb = operationalDb({
+      ...db,
+      ...correctionCollections,
+      auditLogs: [correctionAudit, originalAudit],
+    });
+    expect(() => validateSyncPayload(correctedDb, correctionCollections, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(correctedDb, {
+      ...correctionCollections,
+      vessels: [{ ...correctionCollections.vessels[0], currentVolume: 1 }],
+    }, undefined)).toThrow(/Harvest Intake Reversal.*vessel/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'grapeIntakes', id: original.id },
+    ])).toThrow(/Immutable Grape Intake Ledger/i);
+    expect(() => validateSyncPayload(db, {
+      grapeIntakes: [{ ...original, netWeightKg: 999 }],
+    }, undefined)).toThrow(/Immutable Grape Intake Ledger/i);
+  });
+
+  it('accepts only a complete fermentation-completion correction and protects its command ledger', () => {
+    const completedAt = '2026-09-14T16:30:00.000Z';
+    const correctedAt = '2026-09-15T09:00:00.000Z';
+    const originalCommandId = 'cmd-fermentation-complete-original';
+    const reversalCommandId = 'cmd-fermentation-complete-reversal';
+    const snapshot = {
+      version: 1,
+      lot: { id: 'lot-ferm', stage: 'fermenting', currentVolume: 920, historyDescription: 'Completion history' },
+      vessel: { id: 'tank-ferm', currentVolume: 920, assignedLotId: 'lot-ferm', lastOperation: 'Final reading recorded' },
+      finalLog: {
+        id: 'ferm-final', date: '2026-09-14', temperature: 20.5, density: 0.996,
+        sugar: 2, ph: 3.48, tastingNotes: 'Dry and clean', capManagement: 'None', additives: 'None',
+      },
+      auditId: 'audit-fermentation-complete',
+    };
+    const original = {
+      id: 'ferm-final', commandId: originalCommandId, recordKind: 'completion', lastModified: completedAt,
+      tankId: 'tank-ferm', lotId: 'lot-ferm', date: '2026-09-14', temperature: 20.5,
+      density: 0.996, sugar: 2, ph: 3.48, tastingNotes: 'Dry and clean', capManagement: 'None',
+      additives: 'None', isCompletion: true, completedAt, completedBy: 'Nino', completionSnapshot: snapshot,
+    };
+    const updatedOriginal = {
+      ...original, lastModified: correctedAt, reversedByCommandId: reversalCommandId,
+      reversedAt: correctedAt, reversalReason: 'Completion was premature.',
+    };
+    const correction = {
+      id: 'ferm-reversal', commandId: reversalCommandId, recordKind: 'reversal', lastModified: correctedAt,
+      tankId: 'tank-ferm', lotId: 'lot-ferm', date: '2026-09-15', temperature: 20.5,
+      density: 0.996, sugar: 2, ph: 3.48, tastingNotes: 'Correction', capManagement: 'correction',
+      additives: '', isCompletion: false, reversalOfLogId: original.id,
+      reversalOfCommandId: original.commandId, reversalReason: 'Completion was premature.',
+    };
+    const originalAudit = {
+      id: snapshot.auditId, commandId: originalCommandId, lastModified: completedAt,
+      timestamp: completedAt, user: 'Nino', module: 'GVINO', actionType: 'Fermentation Completion',
+      changedItem: 'WineLot lot-ferm', oldValue: 'fermenting', newValue: 'stabilization', notes: '',
+    };
+    const correctionAudit = {
+      id: 'audit-fermentation-reversal', commandId: reversalCommandId, lastModified: correctedAt,
+      timestamp: correctedAt, user: 'Owner', module: 'GVINO', actionType: 'Fermentation Completion Reversal',
+      changedItem: 'WineLot lot-ferm', oldValue: 'stabilization', newValue: 'fermenting', notes: '',
+    };
+    const db = operationalDb({
+      lots: [{ id: 'lot-ferm', stage: 'stabilization', initialVolume: 1_000, currentVolume: 920,
+        lastCommandId: originalCommandId, lastModified: completedAt,
+        history: [{ type: 'Fermentation Concluded', description: 'Completion history', sourceRef: original.id }] }],
+      vessels: [{ id: 'tank-ferm', capacity: 1_200, currentVolume: 920, assignedLotId: 'lot-ferm',
+        lastOperation: 'Fermentation completed for lot lot-ferm; moved to stabilization',
+        lastCommandId: originalCommandId, lastModified: completedAt }],
+      fermlogs: [original], auditLogs: [originalAudit],
+    });
+    const correctionCollections = {
+      lots: [{ id: 'lot-ferm', stage: 'fermenting', initialVolume: 1_000, currentVolume: 920,
+        lastCommandId: reversalCommandId, lastModified: correctedAt,
+        history: [{ type: 'correction', description: 'Correction', sourceRef: correction.id }] }],
+      vessels: [{ id: 'tank-ferm', capacity: 1_200, currentVolume: 920, assignedLotId: 'lot-ferm',
+        lastOperation: 'Final reading recorded', lastCommandId: reversalCommandId, lastModified: correctedAt }],
+      fermlogs: [correction, updatedOriginal], auditLogs: [correctionAudit],
+    };
+
+    expect(() => validateSyncPayload(db, correctionCollections, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, {
+      ...correctionCollections,
+      vessels: [{ ...correctionCollections.vessels[0], lastOperation: 'Forged operation' }],
+    }, undefined)).toThrow(/Fermentation Completion Reversal.*vessel/i);
+    expect(() => validateSyncPayload(db, {}, undefined, [
+      { collection: 'fermlogs', id: original.id },
+    ])).toThrow(/Immutable Fermentation Ledger/i);
+    expect(() => validateSyncPayload(db, {
+      fermlogs: [{ ...original, density: 1.05 }],
+    }, undefined)).toThrow(/Immutable Fermentation Ledger/i);
+
+    const correctedDb = operationalDb({
+      ...db,
+      ...correctionCollections,
+      lots: [{ ...correctionCollections.lots[0], stage: 'stabilization', lastCommandId: 'cmd-later-completion' }],
+      vessels: [{ ...correctionCollections.vessels[0], lastOperation: 'Later completion', lastCommandId: 'cmd-later-completion' }],
+      auditLogs: [correctionAudit, originalAudit],
+    });
+    expect(() => validateSyncPayload(correctedDb, {}, undefined)).not.toThrow();
+  });
+
+  it('rejects finished-goods stock above physical location capacity', () => {
+    const db = operationalDb({
+      lots: [{ id: 'lot-1', stage: 'bottled' }],
+      storageLocations: [{ id: 'loc-1', capacityBottles: 10 }],
+    });
+    expect(() => validateSyncPayload(db, {
+      stockMovements: [{
+        id: 'move-over-capacity', date: '2026-07-20', lotId: 'lot-1', locationId: 'loc-1',
+        direction: 'in', bottles: 11, reason: 'manual',
+      }],
+    }, undefined)).toThrow(/Invalid Storage Capacity/i);
+  });
+
+  it('accepts source-linked receipts and paired relocations from storage.movement', () => {
+    const db = operationalDb({
+      lots: [{ id: 'lot-1', stage: 'bottled' }],
+      storageLocations: [{ id: 'loc-1' }, { id: 'loc-2' }],
+      bottlingRuns: [],
+      stockMovements: [],
+    });
+    const receipt = {
+      id: 'move-receive', commandId: 'cmd-storage-receive', date: '2026-10-02',
+      lotId: 'lot-1', locationId: 'loc-1', direction: 'in', bottles: 60,
+      reason: 'receive', sourceRef: 'run-1',
+    };
+    const run = {
+      id: 'run-1', lotId: 'lot-1', totalBottles: 100, totalCeramic: 0,
+      placedInStorageBottles: 60,
+      storagePlacements: [{
+        movementId: 'move-receive', locationId: 'loc-1', bottles: 60,
+        date: '2026-10-02', commandId: 'cmd-storage-receive',
+      }],
+    };
+
+    expect(() => validateSyncPayload(db, {
+      bottlingRuns: [run],
+      stockMovements: [receipt],
+    }, undefined)).not.toThrow();
+
+    const relocation = [{
+      id: 'move-transfer-out', commandId: 'cmd-storage-transfer', date: '2026-10-03',
+      lotId: 'lot-1', locationId: 'loc-1', direction: 'out', bottles: 20,
+      reason: 'transfer', sourceRef: 'cmd-storage-transfer', relatedMovementId: 'move-transfer-in',
+    }, {
+      id: 'move-transfer-in', commandId: 'cmd-storage-transfer', date: '2026-10-03',
+      lotId: 'lot-1', locationId: 'loc-2', direction: 'in', bottles: 20,
+      reason: 'transfer', sourceRef: 'cmd-storage-transfer', relatedMovementId: 'move-transfer-out',
+    }];
+    expect(() => validateSyncPayload(operationalDb({
+      lots: [{ id: 'lot-1', stage: 'bottled' }],
+      storageLocations: [{ id: 'loc-1' }, { id: 'loc-2' }],
+      bottlingRuns: [run],
+      stockMovements: [receipt],
+    }), {
+      stockMovements: relocation,
+    }, undefined)).not.toThrow();
+
+    expect(() => validateSyncPayload(db, {
+      bottlingRuns: [{ ...run, placedInStorageBottles: 0, storagePlacements: [] }],
+      stockMovements: [receipt],
+    }, undefined)).toThrow(/does not point to stock movement/i);
+    expect(() => validateSyncPayload(operationalDb({
+      lots: [{ id: 'lot-1', stage: 'bottled' }],
+      storageLocations: [{ id: 'loc-1' }, { id: 'loc-2' }],
+      bottlingRuns: [run],
+      stockMovements: [receipt],
+    }), {
+      stockMovements: [{ ...relocation[0], bottles: 21 }, relocation[1]],
+    }, undefined)).toThrow(/Mismatched Storage Relocation/i);
   });
 
   it('keeps typed deletions collection-scoped when record IDs collide', () => {

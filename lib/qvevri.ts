@@ -1,4 +1,5 @@
 import type { Vessel, WineLot, CellarOperation, DailyFermLog } from './wineryState';
+import { isPhysicalFermentationReading } from './fermentationIntegrity';
 
 export interface QvevriPassportInput {
   vessel: Vessel;
@@ -91,6 +92,9 @@ export function buildQvevriPassportSummary(input: QvevriPassportInput) {
     soilTemperature: vessel.soilTemperature ?? null,
     durations,
     sanitationCount,
-    fermentationLogCount: fermentationLogs.filter(log => log.tankId === vessel.id || (lot && log.lotId === lot.id)).length,
+    fermentationLogCount: fermentationLogs.filter(log => (
+      isPhysicalFermentationReading(log)
+      && (log.tankId === vessel.id || (lot && log.lotId === lot.id))
+    )).length,
   };
 }

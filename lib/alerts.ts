@@ -1,4 +1,5 @@
 import type { Vessel, WineLot, DailyFermLog, LabAnalysis, InventoryItem, Task } from './wineryState';
+import { isPhysicalFermentationReading } from './fermentationIntegrity';
 import type { Language } from './i18n';
 
 export type AlertSeverity = 'critical' | 'warning' | 'info';
@@ -105,7 +106,7 @@ export function computeAlerts(input: AlertInputs): Alert[] {
   for (const lot of lots) {
     if (lot.stage !== 'fermenting') continue;
     const logs = fermLogs
-      .filter((f) => f.lotId === lot.id)
+      .filter((f) => f.lotId === lot.id && isPhysicalFermentationReading(f))
       .sort((a, b) => b.date.localeCompare(a.date));
     if (logs.length < 2) continue;
     const [latest, prev] = logs;

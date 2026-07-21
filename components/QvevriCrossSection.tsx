@@ -227,15 +227,15 @@ export default function QvevriCrossSection({
 
       {/* Top Banner Alert for Seal Status */}
       <div className={`mt-3 px-3 py-2 rounded-xl text-[11px] font-medium flex items-center justify-between border ${
-        needsReseal 
-          ? 'bg-rose-50 border-rose-200 text-rose-950 dark:bg-rose-950/20 dark:border-rose-900/60 dark:text-rose-300' 
+        needsReseal
+          ? 'bg-rose-50 border-rose-200 text-rose-950 dark:bg-rose-950/20 dark:border-rose-900/60 dark:text-rose-300'
           : 'bg-emerald-50 border-emerald-200 text-emerald-950 dark:bg-emerald-950/20 dark:border-emerald-900/60 dark:text-emerald-300'
       }`}>
         <span>
           {lang === 'ka' ? 'ლუქი: ' : 'Lid Seal: '}
           <strong>
-            {needsReseal 
-              ? (lang === 'ka' ? 'განახლება სავალდებულოა' : 'Reseal Required') 
+            {needsReseal
+              ? (lang === 'ka' ? 'განახლება სავალდებულოა' : 'Reseal Required')
               : (lang === 'ka' ? 'ჰერმეტული' : 'Airtight')}
           </strong>
         </span>

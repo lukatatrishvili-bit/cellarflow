@@ -52,6 +52,20 @@ const vessels: Vessel[] = [
 
 const transfer: CellarTransferRecord = {
   id: 'xfer-1',
+  commandId: 'cmd-transfer-1',
+  recordKind: 'transfer',
+  reversalSnapshot: {
+    version: 1,
+    sourceVessel: {
+      id: 'T-1', currentVolume: 900, assignedLotId: lot.id,
+      cleaningStatus: 'clean', lastOperation: 'Filled',
+    },
+    destinationVessel: {
+      id: 'T-2', currentVolume: 0, assignedLotId: null,
+      cleaningStatus: 'dirty', lastOperation: 'Emptied',
+    },
+    sourceLot: { id: lot.id, currentVolume: 900 },
+  },
   sourceId: 'T-1',
   destId: 'T-2',
   volume: 500,
@@ -89,7 +103,7 @@ describe('TransfersTab action permissions', () => {
     const markup = renderTransfers({
       canExecuteTransfer: false,
       canSanitizeVessels: false,
-      canRollbackTransfer: false,
+      canReverseTransfer: false,
     });
 
     expect(markup).toContain('Read-only transfer access');
@@ -100,41 +114,41 @@ describe('TransfersTab action permissions', () => {
     expect(markup).not.toContain('Racking &amp; Blending Form');
     expect(markup).not.toContain('Quick Sanitization Controls');
     expect(markup).not.toContain('Confirm &amp; Initiate Fluid Pump');
-    expect(markup).not.toContain('title="Rollback / Undo Movement"');
+    expect(markup).not.toContain('title="Post a reversal correction"');
   });
 
-  it('applies execution, sanitation, and rollback permissions independently', () => {
-    const rollbackRestricted = renderTransfers({
+  it('applies execution, sanitation, and reversal permissions independently', () => {
+    const reversalRestricted = renderTransfers({
       canExecuteTransfer: true,
       canSanitizeVessels: true,
-      canRollbackTransfer: false,
+      canReverseTransfer: false,
     });
     const executionRestricted = renderTransfers({
       canExecuteTransfer: false,
       canSanitizeVessels: true,
-      canRollbackTransfer: true,
+      canReverseTransfer: true,
     });
     const sanitationRestricted = renderTransfers({
       canExecuteTransfer: true,
       canSanitizeVessels: false,
-      canRollbackTransfer: true,
+      canReverseTransfer: true,
     });
 
-    expect(rollbackRestricted).toContain('Limited transfer actions');
-    expect(rollbackRestricted).toContain('cannot roll back transfer records');
-    expect(rollbackRestricted).toContain('Racking &amp; Blending Form');
-    expect(rollbackRestricted).toContain('Quick Sanitization Controls');
-    expect(rollbackRestricted).not.toContain('title="Rollback / Undo Movement"');
+    expect(reversalRestricted).toContain('Limited transfer actions');
+    expect(reversalRestricted).toContain('cannot reverse transfer records');
+    expect(reversalRestricted).toContain('Racking &amp; Blending Form');
+    expect(reversalRestricted).toContain('Quick Sanitization Controls');
+    expect(reversalRestricted).not.toContain('title="Post a reversal correction"');
 
     expect(executionRestricted).toContain('cannot initiate transfers');
     expect(executionRestricted).not.toContain('Racking &amp; Blending Form');
     expect(executionRestricted).toContain('Quick Sanitization Controls');
-    expect(executionRestricted).toContain('title="Rollback / Undo Movement"');
+    expect(executionRestricted).toContain('title="Post a reversal correction"');
 
     expect(sanitationRestricted).toContain('cannot sanitize vessels');
     expect(sanitationRestricted).toContain('Racking &amp; Blending Form');
     expect(sanitationRestricted).not.toContain('Quick Sanitization Controls');
-    expect(sanitationRestricted).toContain('title="Rollback / Undo Movement"');
+    expect(sanitationRestricted).toContain('title="Post a reversal correction"');
   });
 
   it('retains every existing action by default', () => {
@@ -144,7 +158,7 @@ describe('TransfersTab action permissions', () => {
     expect(markup).not.toContain('Read-only transfer access');
     expect(markup).toContain('Racking &amp; Blending Form');
     expect(markup).toContain('Quick Sanitization Controls');
-    expect(markup).toContain('title="Rollback / Undo Movement"');
+    expect(markup).toContain('title="Post a reversal correction"');
   });
 
   it('localizes the read-only guidance in Georgian', () => {
@@ -152,7 +166,7 @@ describe('TransfersTab action permissions', () => {
       lang: 'ka',
       canExecuteTransfer: false,
       canSanitizeVessels: false,
-      canRollbackTransfer: false,
+      canReverseTransfer: false,
     });
 
     expect(markup).toContain('ტრანსფერებზე მხოლოდ ნახვის წვდომა');

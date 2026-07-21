@@ -75,7 +75,7 @@ export default function NotesTab({
           </h3>
           <p className="text-xs text-slate-400 font-medium">{lang === 'ka' ? 'დააფიქსირეთ დეგუსტაციის დაკვირვებები, ქიმიური გადაწყვეტილებები და მარნის შენიშვნები' : 'Capture tasting observations, chemistry decisions, and cellar notes'}</p>
         </div>
-        
+
         <div className="flex items-center gap-3">
           <div className="px-3 py-1.5 bg-indigo-50/50 border border-[#e8dfd5] rounded-lg text-center">
             <span className="text-[9px] text-[#4e0e15] font-mono uppercase font-bold block">{lang === 'ka' ? 'სულ შენიშვნები' : 'Total Notes'}</span>
@@ -110,7 +110,7 @@ export default function NotesTab({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{lang === 'ka' ? 'კატეგორია' : 'Category'}</label>
-                <select 
+                <select
                   name="category"
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2.5 py-2 text-stone-700 outline-none text-xs"
                   defaultValue="Enology"
@@ -123,7 +123,7 @@ export default function NotesTab({
               </div>
               <div>
                 <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{lang === 'ka' ? 'დაკავშირებული პარტია' : 'Related Lot'}</label>
-                <select 
+                <select
                   name="relatedLotId"
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2 py-1.5 text-stone-700 outline-none text-xs"
                   defaultValue=""
@@ -138,7 +138,7 @@ export default function NotesTab({
 
             <div>
               <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{lang === 'ka' ? 'შინაარსი *' : 'Note Content *'}</label>
-              <textarea 
+              <textarea
                 name="content"
                 placeholder={lang === 'ka' ? 'აღწერეთ ენოლოგიური მაჩვენებლები, გემოს დახასიათება ან მარნის ცვლილებები...' : 'Detail enological readings, mouthfeel characters, or cellar changes...'}
                 className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-32 text-stone-800 focus:outline-[#801323] outline-none text-xs"
@@ -146,7 +146,7 @@ export default function NotesTab({
               />
             </div>
 
-            <button 
+            <button
               type="submit"
               className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 rounded-lg font-bold uppercase transition-all duration-200 cursor-pointer text-xs"
             >

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BadgeCheck,
   CalendarClock,
@@ -270,7 +270,7 @@ export default function VineyardProjectsTab({
 
   useEffect(() => {
     setForm(toForm(selectedProject));
-  }, [selectedProject?.id]);
+  }, [selectedProject]);
 
   const updateForm = <K extends keyof ProjectForm>(key: K, value: ProjectForm[K]) => {
     setForm(prev => ({ ...prev, [key]: value }));

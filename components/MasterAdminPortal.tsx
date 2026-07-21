@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ShieldAlert, RefreshCw, Trash2, Edit, Activity, Cpu, Database,
@@ -238,7 +238,7 @@ export default function MasterAdminPortal({
   useFocusTrap(deleteUserDialogRef, { active: !!deletingUsername, onClose: () => setDeletingUsername(null) });
 
   // Fetch Data
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
       const [statsRes, usersRes, orgsRes, healthRes, lockoutsRes, actionsRes, clientErrorsRes] = await Promise.all([
@@ -276,7 +276,7 @@ export default function MasterAdminPortal({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [isKa, lang, setToastMessage]);
 
   useEffect(() => {
     fetchData();
@@ -294,7 +294,7 @@ export default function MasterAdminPortal({
     }, 5000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchData]);
 
   // Auto scroll terminal
   useEffect(() => {
@@ -325,7 +325,7 @@ export default function MasterAdminPortal({
         ? `Recent client errors (${clientErrors.length}): ` + clientErrors.slice(0, 5).map(e => `${e.at.slice(11, 19)} ${e.source}: ${e.message.slice(0, 80)}`).join(' | ')
         : 'No client-side errors recorded this process.';
     } else if (cmd === 'stats') {
-      reply = stats 
+      reply = stats
         ? `Uptime: ${stats.uptimeSeconds}s | Users: ${stats.usersCount} | Orgs: ${stats.orgsCount} | Heap: ${stats.memoryHeapUsedMB}MB/${stats.memoryHeapTotalMB}MB`
         : 'Stats not loaded';
     } else if (cmd === 'users') {
@@ -534,13 +534,13 @@ export default function MasterAdminPortal({
   };
 
   // Filtering
-  const filteredUsers = users.filter(u => 
+  const filteredUsers = users.filter(u =>
     u.username.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
     u.fullName.toLowerCase().includes(userSearch.toLowerCase())
   );
 
-  const filteredOrgs = orgs.filter(o => 
+  const filteredOrgs = orgs.filter(o =>
     o.name.toLowerCase().includes(orgSearch.toLowerCase()) ||
     o.id.toLowerCase().includes(orgSearch.toLowerCase())
   );
@@ -634,7 +634,7 @@ export default function MasterAdminPortal({
             onClick={onClose}
             className="px-4 py-1.5 bg-stone-900 border border-stone-800 rounded-lg hover:border-red-500/40 text-stone-400 hover:text-red-400 transition-all text-xs cursor-pointer tracking-wider font-bold"
           >
-            {isKa ? 'გათიშვა' : 'DISCONNECT'} ✕
+            {isKa ? 'გასვლა' : 'LOG OUT'} ✕
           </button>
         </div>
       </header>
@@ -660,8 +660,8 @@ export default function MasterAdminPortal({
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-xs font-bold tracking-wider transition-all cursor-pointer text-left ${
-                  active 
-                    ? 'bg-cyan-950/20 border-cyan-500/40 text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.08)]' 
+                  active
+                    ? 'bg-cyan-950/20 border-cyan-500/40 text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.08)]'
                     : 'bg-transparent border-transparent text-stone-500 hover:text-stone-300 hover:bg-stone-900/40'
                 }`}
               >
@@ -1083,7 +1083,7 @@ export default function MasterAdminPortal({
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="bg-[#0c090a] border border-cyan-900/20 p-6 rounded-2xl lg:col-span-2 space-y-4 shadow-sm">
                       <h3 className="text-xs uppercase font-bold text-cyan-400 tracking-wider">{isKa ? 'მარნების ბაზის მეტრიკები' : 'Winery Database Metrics'}</h3>
-                      
+
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
                         <div className="p-4 bg-stone-950/60 border border-stone-850 rounded-xl">
                           <span className="text-[10px] text-stone-450 block mb-1 uppercase font-bold">{isKa ? 'მომხმარებლები' : 'Users'}</span>
@@ -1120,7 +1120,7 @@ export default function MasterAdminPortal({
                     <div className="bg-[#0c090a] border border-cyan-900/20 p-6 rounded-2xl space-y-4 shadow-sm text-left">
                       <h3 className="text-xs uppercase font-bold text-cyan-400 tracking-wider">{isKa ? 'სისტემის მართვის ბრძანებები' : 'System Control Commands'}</h3>
                       <p className="text-[11px] text-stone-500">{isKa ? 'დაბალი დონის მანუალური ოპერაციები. ყველა ქმედება იწერება და აუდიტირებადია.' : 'Trigger low-level manual overrides. Actions are logged and auditable.'}</p>
-                      
+
                       <div className="space-y-2.5 pt-2">
                         <button
                           onClick={() => handleSystemAction('save_db')}
@@ -1178,7 +1178,7 @@ export default function MasterAdminPortal({
                               <td className="px-5 py-3.5 text-stone-300 font-mono">{u.email}</td>
                               <td className="px-5 py-3.5">
                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border capitalize ${
-                                  u.role === 'Owner/Admin' 
+                                  u.role === 'Owner/Admin'
                                     ? 'bg-purple-950/30 border-purple-500/30 text-purple-400'
                                     : 'bg-blue-950/30 border-blue-500/30 text-blue-400'
                                 }`}>
@@ -1252,8 +1252,8 @@ export default function MasterAdminPortal({
                                     onClick={() => setDeletingUsername(u.username)}
                                     disabled={isMaster}
                                     className={`p-1.5 bg-stone-900 border border-stone-850 rounded-lg transition-colors ${
-                                      isMaster 
-                                        ? 'opacity-30 cursor-not-allowed text-stone-600' 
+                                      isMaster
+                                        ? 'opacity-30 cursor-not-allowed text-stone-600'
                                         : 'hover:border-red-500/30 text-stone-450 hover:text-red-400 cursor-pointer'
                                     }`}
                                     title={isMaster
@@ -1753,8 +1753,8 @@ export default function MasterAdminPortal({
                       type="button"
                       onClick={() => setEditVerified(prev => !prev)}
                       className={`px-3 py-1 text-[9px] font-bold rounded-lg cursor-pointer transition-colors ${
-                        editVerified 
-                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/20' 
+                        editVerified
+                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/20'
                           : 'bg-amber-950 text-amber-400 border border-amber-500/20'
                       }`}
                     >

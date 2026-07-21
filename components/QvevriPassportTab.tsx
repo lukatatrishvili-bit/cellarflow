@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { CellarOperation, CertificationRecord, DailyFermLog, Vessel, WineLot } from '../lib/wineryState';
+import { isActiveCellarOperation } from '../lib/cellarOperationIntegrity';
 import { buildQvevriPassportSummary, evaluateQvevriPassport } from '../lib/qvevri';
 import {
   ActionButton,
@@ -208,15 +209,15 @@ export default function QvevriPassportTab({
 
   useEffect(() => {
     setForm(formFromVessel(selectedVessel, assignedLot));
-  }, [selectedVessel?.id, assignedLot?.id]);
+  }, [assignedLot, selectedVessel]);
 
   const opsForVessel = useMemo(() => {
     if (!selectedVessel) return [];
-    return cellarOps.filter(op =>
+    return cellarOps.filter(op => isActiveCellarOperation(op) && (
       op.vesselId === selectedVessel.id ||
       op.vesselToId === selectedVessel.id ||
       (assignedLot && op.lotId === assignedLot.id)
-    );
+    ));
   }, [assignedLot, cellarOps, selectedVessel]);
 
   const fermentationLogsForVessel = useMemo(() => {

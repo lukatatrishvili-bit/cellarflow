@@ -8,6 +8,12 @@ export interface DeletionTombstone {
   id: string;
   /** Missing only for a legacy wildcard tombstone created by an older client. */
   collection?: string;
+  /** Server record version the deletion was based on. */
+  baselineTimestamp?: string;
+  /** Stable content fingerprint protects legacy records without timestamps. */
+  baselineFingerprint?: string;
+  /** Stable client capture time retained across retries. */
+  deletedAt?: string;
 }
 
 export const DELETION_TOMBSTONE_BASE_KEY = 'vinea_deleted_ids';
@@ -33,6 +39,48 @@ const tombstoneIdentity = (record: DeletionTombstone): string => (
   `${record.collection || '*'}\u0000${record.id}`
 );
 
+const optionalTimestamp = (value: unknown): string | undefined => (
+  typeof value === 'string' && value.length > 0 && value.length <= 64 && Number.isFinite(Date.parse(value))
+    ? value
+    : undefined
+);
+
+const canonicalRecordValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalRecordValue);
+  if (!value || typeof value !== 'object') return value;
+  const normalized: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    if (key === 'lastModified' || key === 'baselineTimestamp') continue;
+    normalized[key] = canonicalRecordValue((value as Record<string, unknown>)[key]);
+  }
+  return normalized;
+};
+
+export function syncRecordFingerprint(record: unknown): string {
+  const text = JSON.stringify(canonicalRecordValue(record));
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+const optionalFingerprint = (value: unknown): string | undefined => (
+  typeof value === 'string' && /^[0-9a-f]{8}$/.test(value) ? value : undefined
+);
+
+export function deletionTombstoneStorageValue(record: DeletionTombstone): string | DeletionTombstone {
+  if (!record.collection) return record.id;
+  return {
+    collection: record.collection,
+    id: record.id,
+    ...(optionalTimestamp(record.baselineTimestamp) ? { baselineTimestamp: record.baselineTimestamp } : {}),
+    ...(optionalFingerprint(record.baselineFingerprint) ? { baselineFingerprint: record.baselineFingerprint } : {}),
+    ...(optionalTimestamp(record.deletedAt) ? { deletedAt: record.deletedAt } : {}),
+  };
+}
+
 export function readDeletionTombstones(
   storage: DeletionTombstoneStore,
   key = deletionTombstoneKey(storage),
@@ -52,7 +100,19 @@ export function readDeletionTombstones(
           && (item as any).id.length > 0
           && typeof (item as any).collection === 'string'
           && (item as any).collection.length > 0
-            ? { id: (item as any).id, collection: (item as any).collection }
+            ? {
+              id: (item as any).id,
+              collection: (item as any).collection,
+              ...(optionalTimestamp((item as any).baselineTimestamp)
+                ? { baselineTimestamp: (item as any).baselineTimestamp }
+                : {}),
+              ...(optionalFingerprint((item as any).baselineFingerprint)
+                ? { baselineFingerprint: (item as any).baselineFingerprint }
+                : {}),
+              ...(optionalTimestamp((item as any).deletedAt)
+                ? { deletedAt: (item as any).deletedAt }
+                : {}),
+            }
             : null;
       if (!record) continue;
       const identity = tombstoneIdentity(record);
@@ -110,23 +170,47 @@ export function persistDeletionTombstones(
   // When a current action reveals the collection for an old wildcard ID,
   // replace that wildcard rather than forwarding its cross-collection scope.
   const combined = existing.filter(record => record.collection || !requestedIds.has(record.id));
-  const seen = new Set(combined.map(tombstoneIdentity));
+  const indexByIdentity = new Map(combined.map((record, index) => [tombstoneIdentity(record), index]));
   for (const record of requested) {
-    const normalized = { id: record.id, collection: record.collection };
+    const normalized: DeletionTombstone = {
+      id: record.id,
+      collection: record.collection,
+      ...(optionalTimestamp(record.baselineTimestamp) ? { baselineTimestamp: record.baselineTimestamp } : {}),
+      ...(optionalFingerprint(record.baselineFingerprint) ? { baselineFingerprint: record.baselineFingerprint } : {}),
+      ...(optionalTimestamp(record.deletedAt) ? { deletedAt: record.deletedAt } : {}),
+    };
     const identity = tombstoneIdentity(normalized);
-    if (!seen.has(identity)) {
-      seen.add(identity);
+    const existingIndex = indexByIdentity.get(identity);
+    if (existingIndex === undefined) {
+      indexByIdentity.set(identity, combined.length);
       combined.push(normalized);
+    } else {
+      const existing = combined[existingIndex];
+      if ((existing.baselineTimestamp && normalized.baselineTimestamp
+          && existing.baselineTimestamp !== normalized.baselineTimestamp)
+        || (existing.baselineFingerprint && normalized.baselineFingerprint
+          && existing.baselineFingerprint !== normalized.baselineFingerprint)) {
+        return false;
+      }
+      combined[existingIndex] = {
+        ...existing,
+        ...(existing.baselineTimestamp ? {} : normalized.baselineTimestamp ? { baselineTimestamp: normalized.baselineTimestamp } : {}),
+        ...(existing.baselineFingerprint ? {} : normalized.baselineFingerprint ? { baselineFingerprint: normalized.baselineFingerprint } : {}),
+        ...(existing.deletedAt ? {} : normalized.deletedAt ? { deletedAt: normalized.deletedAt } : {}),
+      };
     }
   }
 
   try {
-    storage.setItem(key, JSON.stringify(combined.map(record => (
-      record.collection ? { collection: record.collection, id: record.id } : record.id
-    ))));
+    storage.setItem(key, JSON.stringify(combined.map(deletionTombstoneStorageValue)));
     const durable = readDeletionTombstones(storage, key);
-    const durableIdentities = new Set(durable.map(tombstoneIdentity));
-    return requested.every(record => durableIdentities.has(tombstoneIdentity(record)));
+    return requested.every(record => {
+      const stored = durable.find(item => tombstoneIdentity(item) === tombstoneIdentity(record));
+      const expected = combined.find(item => tombstoneIdentity(item) === tombstoneIdentity(record));
+      return Boolean(stored && expected)
+        && JSON.stringify(deletionTombstoneStorageValue(stored!))
+          === JSON.stringify(deletionTombstoneStorageValue(expected!));
+    });
   } catch {
     return false;
   }

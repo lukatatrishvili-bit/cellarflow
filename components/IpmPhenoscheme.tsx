@@ -1,10 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import type { VineyardBlock, SprayRecord, UserProfile } from '../lib/wineryState';
 import type { Language } from '../lib/i18n';
-import { 
-  Sprout, ShieldAlert, Sparkles, AlertTriangle, 
-  CheckCircle2, Info, Calendar, Plus, Trash2, 
-  RefreshCw, CheckSquare, Layers, Wind
+import { Sparkles, AlertTriangle,
+  CheckCircle2, Info, Plus, Trash2, CheckSquare, Layers, Wind
 } from 'lucide-react';
 
 interface ActiveIngredientGroup {
@@ -508,7 +506,7 @@ export default function IpmPhenoscheme({
     };
     return map[clean] || map[clean.toLowerCase()] || clean;
   };
-  
+
   // Navigation tabs inside the IPM module
   const [ipmTab, setIpmTab] = useState<'timeline' | 'risk' | 'traps' | 'sprays'>('timeline');
   const [selectedStageId, setSelectedStageId] = useState<string>(PHENOLOGICAL_STAGES[2].id); // default to 4-6 leaves
@@ -610,7 +608,7 @@ export default function IpmPhenoscheme({
     // 1. PHI Harvest Conflict Check
     if (phi > daysToHarvest) {
       setSprayFormError(
-        isKa 
+        isKa
           ? `🚨 ლოდინის პერიოდის (PHI) კონფლიქტი! PHI (${phi} დღე) აჭარბებს მოსავლამდე დარჩენილ დროს (${daysToHarvest} დღე). შესხურება დაუშვებელია.`
           : `🚨 Pre-Harvest Interval (PHI) Conflict! The PHI of ${phi} days exceeds the ${daysToHarvest} days remaining until expected harvest. Application is blocked.`
       );
@@ -627,7 +625,7 @@ export default function IpmPhenoscheme({
       const notesClean = (lastSpray.notes || '').toUpperCase();
       if (moa && notesClean.includes(moa.toUpperCase())) {
         setSprayFormWarning(
-          isKa 
+          isKa
             ? `⚠️ რეზისტენტობის რისკი: თქვენ მეორედ იყენებთ ერთი და იგივე მოქმედების მექანიზმის ჯგუფს (MoA: ${moa})! გთხოვთ, შეცვალოთ ქიმიური კლასი.`
             : `⚠️ Resistance Risk: You are repeating the same chemical class / Mode of Action (MoA: ${moa}) consecutively! Rotate to a different MoA group.`
         );
@@ -712,7 +710,7 @@ export default function IpmPhenoscheme({
     return (
       <div className="bg-white border border-stone-200 p-8 rounded-2xl text-center font-serif text-sm text-[#4e0e15]/60 flex flex-col items-center justify-center">
         <Layers className="w-12 h-12 text-stone-300 mb-3 animate-bounce" />
-        {isKa 
+        {isKa
           ? 'ვენახის ფენოსქემისა და IPM პანელის გამოსაყენებლად, გთხოვთ აირჩიოთ ნაკვეთი გვერდითა მენიუში.'
           : 'Please select a vineyard block in the registry panel to deploy the brand-free phenoscheme & IPM dashboard.'}
       </div>
@@ -721,7 +719,7 @@ export default function IpmPhenoscheme({
 
   return (
     <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-md p-5 space-y-6 text-stone-700">
-      
+
       {/* 1. Header Banner */}
       <div className="bg-gradient-to-br from-[#1e2f23] to-[#0d1510] text-white p-5 rounded-xl border border-emerald-900 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -732,12 +730,12 @@ export default function IpmPhenoscheme({
             {isKa ? 'ბრენდების გარეშე ვაზის ფენოსქემის მოდული' : 'Brand-Free Vine Phenoscheme & IPM'}
           </h3>
           <p className="text-[11px] text-emerald-200/80 mt-1 max-w-xl leading-relaxed">
-            {isKa 
+            {isKa
               ? 'ეს პანელი იყენებს მხოლოდ მოქმედ ნივთიერებებსა და MoA (FRAC/IRAC) კოდებს რეზისტენტობის პრევენციისთვის, რეკომენდაციები დამოკიდებულია ნაკვეთის მიკროკლიმატსა და ფაზებზე.'
               : 'This interface uses only active chemical groups and MoA (FRAC/IRAC) rotation rules to prevent pathogen resistance. Spray directives are dynamically generated.'}
           </p>
         </div>
-        
+
         {/* Selected Block Info */}
         <div className="bg-[#FAF8F5]/10 border border-white/10 px-4 py-2.5 rounded-lg text-right shrink-0">
           <span className="text-[9px] font-mono text-emerald-300 block uppercase font-bold">{isKa ? 'აქტიური ნაკვეთი' : 'Selected Block'}</span>
@@ -770,8 +768,8 @@ export default function IpmPhenoscheme({
             key={tab.id}
             onClick={() => setIpmTab(tab.id as any)}
             className={`px-3.5 py-1.8 rounded-lg cursor-pointer transition-all duration-200 font-extrabold uppercase tracking-wide text-[10px] ${
-              ipmTab === tab.id 
-                ? 'bg-[#4e0e15] text-amber-50 shadow-sm' 
+              ipmTab === tab.id
+                ? 'bg-[#4e0e15] text-amber-50 shadow-sm'
                 : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
             }`}
           >
@@ -781,11 +779,11 @@ export default function IpmPhenoscheme({
       </div>
 
       {/* 3. Render tabs content */}
-      
+
       {/* TAB A: PHENOLOGICAL TIMELINE */}
       {ipmTab === 'timeline' && (
         <div className="space-y-6">
-          
+
           {/* Horizontal scrollable timeline track */}
           <div className="space-y-2">
             <h4 className="font-serif font-bold text-xs text-stone-850">
@@ -800,10 +798,10 @@ export default function IpmPhenoscheme({
                     key={st.id}
                     onClick={() => setSelectedStageId(st.id)}
                     className={`shrink-0 w-40 p-3 rounded-xl border text-left cursor-pointer transition-all relative ${
-                      isSelected 
-                        ? 'bg-neutral-50/90 border-[#4e0e15] ring-1 ring-[#4e0e15]/20' 
-                        : isCurrent 
-                        ? 'bg-emerald-50/50 border-emerald-500/50' 
+                      isSelected
+                        ? 'bg-neutral-50/90 border-[#4e0e15] ring-1 ring-[#4e0e15]/20'
+                        : isCurrent
+                        ? 'bg-emerald-50/50 border-emerald-500/50'
                         : 'bg-white border-stone-200/80 hover:bg-stone-50'
                     }`}
                   >
@@ -824,7 +822,7 @@ export default function IpmPhenoscheme({
 
           {/* Details card for selected stage */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 glass-card p-5 rounded-2xl hover-glow transition-all">
-            
+
             {/* Left: General Stage Metadata */}
             <div className="lg:col-span-1 space-y-4">
               <div>
@@ -955,20 +953,20 @@ export default function IpmPhenoscheme({
       {/* TAB B: RISK ENGINE CALCULATOR */}
       {ipmTab === 'risk' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
+
           {/* Left panel: Risk Inputs form */}
           <div className="lg:col-span-1 bg-stone-50 p-5 rounded-2xl border border-stone-200/80 space-y-4 text-xs font-semibold">
             <h4 className="font-serif font-black text-sm text-[#4e0e15] border-b border-stone-100 pb-2">
               {isKa ? 'რისკის ძრავის პარამეტრები' : 'Pathogen Risk Engine Parameters'}
             </h4>
-            
+
             <div className="space-y-3">
               <div>
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'ამინდის პირობები' : 'Weather / Rainfall Forecast'}
                 </label>
-                <select 
-                  value={riskWeather} 
+                <select
+                  value={riskWeather}
                   onChange={(e) => setRiskWeather(e.target.value as any)}
                   className="w-full bg-white border border-[#e8dfd5] rounded px-2.5 py-1.5 outline-none font-bold text-stone-800"
                 >
@@ -982,8 +980,8 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'ყურძნის ჯიშის მგრძნობელობა' : 'Cultivar Pathogen Susceptibility'}
                 </label>
-                <select 
-                  value={varietySensitivity} 
+                <select
+                  value={varietySensitivity}
                   onChange={(e) => setVarietySensitivity(e.target.value as any)}
                   className="w-full bg-white border border-[#e8dfd5] rounded px-2.5 py-1.5 outline-none font-bold text-stone-800"
                 >
@@ -997,8 +995,8 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'ვენახის ისტორიული ფონი' : 'Block Disease History (Infection Pressure)'}
                 </label>
-                <select 
-                  value={diseaseHistory} 
+                <select
+                  value={diseaseHistory}
                   onChange={(e) => setDiseaseHistory(e.target.value as any)}
                   className="w-full bg-white border border-[#e8dfd5] rounded px-2.5 py-1.5 outline-none font-bold text-stone-800"
                 >
@@ -1012,8 +1010,8 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'ვარჯის სიმკვრივე' : 'Vine Canopy Density'}
                 </label>
-                <select 
-                  value={canopyDensity} 
+                <select
+                  value={canopyDensity}
                   onChange={(e) => setCanopyDensity(e.target.value as any)}
                   className="w-full bg-white border border-[#e8dfd5] rounded px-2.5 py-1.5 outline-none font-bold text-stone-800"
                 >
@@ -1027,9 +1025,9 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'დღეები ბოლო შეწამვლიდან' : 'Days Since Last Spray'}
                 </label>
-                <input 
-                  type="number" 
-                  value={daysSinceLastSpray} 
+                <input
+                  type="number"
+                  value={daysSinceLastSpray}
                   onChange={(e) => setDaysSinceLastSpray(Math.max(0, parseInt(e.target.value) || 0))}
                   className="w-full bg-white border border-[#e8dfd5] rounded px-2.5 py-1.5 outline-none font-mono font-bold text-stone-850"
                   min="0"
@@ -1050,7 +1048,7 @@ export default function IpmPhenoscheme({
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
-                
+
                 {/* Risk Gauge */}
                 <div className={`p-5 rounded-xl border flex flex-col items-center justify-center text-center font-sans ${
                   computedRisk === 'high' ? 'bg-rose-50 border-rose-200 text-rose-800' :
@@ -1075,15 +1073,15 @@ export default function IpmPhenoscheme({
                     <strong className="text-stone-850 font-bold block">{isKa ? 'გადაწყვეტილების რეკომენდაცია:' : 'Decision Support Directive:'}</strong>
                     <p className="text-stone-600 leading-relaxed font-semibold">
                       {computedRisk === 'high' ? (
-                        isKa 
+                        isKa
                           ? 'საჭიროა სასწრაფო დაცვა! მაღალი წნეხია, ბოლო წამლობის ინტერვალი გასულია ან ვარჯი ჩახშირებულია. გამოიყენეთ მრავალსაიტიანი დამცავი + სისტემური/ტრანსლამინარული ჯგუფი.'
                           : 'Urgent protection needed! High pressure, recent rain/humidity risk, or long spray intervals exist. Apply a combination of protectant + systemic group.'
                       ) : computedRisk === 'medium' ? (
-                        isKa 
+                        isKa
                           ? 'რეკომენდებულია პრევენციული მოქმედება. ფაზა მგრძნობიარეა, ამინდი ხელს უწყობს სპორების გავრცელებას. შეწამლეთ წვიმამდე.'
                           : 'Preventive action recommended. Stage is sensitive and weather forecast supports spore release. Spray before the next rain event.'
                       ) : (
-                        isKa 
+                        isKa
                           ? 'მხოლოდ მონიტორინგი. ამინდი მშრალია, ვენახი სუფთაა და საფრთხე არ ფიქსირდება. შესხურება ჯერ არ არის საჭირო.'
                           : 'Monitor only. Dry weather, clean historical background, and open canopy mean threat levels are low. Chemical intervention is not needed.'
                       )}
@@ -1123,7 +1121,7 @@ export default function IpmPhenoscheme({
       {/* TAB C: PHEROMONE TRAP LOG */}
       {ipmTab === 'traps' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
+
           {/* Add Trap Log */}
           {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
@@ -1135,12 +1133,12 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'დაჭერილი პეპლები (პეპელა/კვირა) *' : 'Weekly Moths Counted *'}
                 </label>
-                <input 
-                  type="number" 
-                  name="mothsCount" 
-                  defaultValue="12" 
+                <input
+                  type="number"
+                  name="mothsCount"
+                  defaultValue="12"
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-mono font-bold text-stone-900"
-                  required 
+                  required
                   min="0"
                 />
               </div>
@@ -1156,8 +1154,8 @@ export default function IpmPhenoscheme({
                 </select>
               </div>
 
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors"
               >
                 {isKa ? 'ჩაწერა' : 'Log Trap Data'}
@@ -1172,11 +1170,11 @@ export default function IpmPhenoscheme({
               <h4 className="font-serif font-bold text-sm text-[#4e0e15]">
                 {isKa ? 'ყურძნის ჭიის ფერომონული ხაფანგების ისტორია' : 'European Grape Moth Trap Records'}
               </h4>
-              
+
               {/* Threshold indicator */}
               <div className={`text-[10px] font-mono font-bold px-2.5 py-1 rounded border uppercase ${
-                latestTrapCount > 20 
-                  ? 'bg-rose-50 text-rose-800 border-rose-250 animate-pulse' 
+                latestTrapCount > 20
+                  ? 'bg-rose-50 text-rose-800 border-rose-250 animate-pulse'
                   : 'bg-emerald-50 text-emerald-800 border-emerald-200'
               }`}>
                 {isKa ? 'ბოლო მაჩვენებელი' : 'Latest Catch'}: {latestTrapCount} {isKa ? 'პეპელა' : 'moths'} / {latestTrapCount > 20 ? (isKa ? '⚠️ ზღვარს სცდება' : '⚠️ THRESHOLD EXCEEDED') : (isKa ? '✅ ნორმაა' : '✅ NORMAL')}
@@ -1192,7 +1190,7 @@ export default function IpmPhenoscheme({
                     {isKa ? '⚠️ ყურადღება: ყურძნის ჭიის გავრცელება კრიტიკულ ზღვარზეა!' : '⚠️ Critical Warning: Grape moth counts exceed threshold of 20 moths/week!'}
                   </strong>
                   <p className="leading-relaxed text-stone-600 font-medium">
-                    {isKa 
+                    {isKa
                       ? 'რეკომენდებულია მიზნობრივი ინსექტიციდური წამლობა (მაგ. დიამიდები ან სპინოსინები) კვერცხების მასობრივი გამოჩეკვის პერიოდში. აუცილებლად დაიცავით MoA როტაციის წესები!'
                       : 'Targeted insecticidal treatment (e.g. diamides or spinosyns) is recommended during peak egg-hatch. Ensure MoA chemical class rotation.'}
                   </p>
@@ -1240,7 +1238,7 @@ export default function IpmPhenoscheme({
       {/* TAB D: TREATMENT REGISTRY AND MOA */}
       {ipmTab === 'sprays' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
+
           {/* Add Spray Record Form with real-time verification */}
           {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
@@ -1252,12 +1250,12 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'სამიზნე დაავადება / პრობლემა *' : 'Target Problem / Disease *'}
                 </label>
-                <input 
-                  type="text" 
-                  name="targetProblem" 
+                <input
+                  type="text"
+                  name="targetProblem"
                   defaultValue={selectedStage.main_risks_en[0] || 'Downy Mildew'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium text-stone-900"
-                  required 
+                  required
                 />
               </div>
 
@@ -1265,7 +1263,7 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'მოქმედი ნივთიერების ზოგადი ჯგუფი *' : 'Active Ingredient Group *'}
                 </label>
-                <select 
+                <select
                   name="activeIngredient"
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1.5 outline-none font-bold text-stone-850"
                   onChange={(e) => {
@@ -1292,14 +1290,14 @@ export default function IpmPhenoscheme({
                   <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                     {isKa ? 'მოქმედების კოდი (MoA)' : 'MoA Code (FRAC/IRAC)'}
                   </label>
-                  <input 
-                    type="text" 
-                    value={formMoa} 
+                  <input
+                    type="text"
+                    value={formMoa}
                     onChange={(e) => {
                       setFormMoa(e.target.value);
                       handleVerifySprayForm(e.target.value, formPhi);
                     }}
-                    className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none font-mono font-bold" 
+                    className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none font-mono font-bold"
                     placeholder="e.g. FRAC 40"
                   />
                 </div>
@@ -1307,8 +1305,8 @@ export default function IpmPhenoscheme({
                   <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                     {isKa ? 'MoA სისტემა' : 'MoA System'}
                   </label>
-                  <select 
-                    value={formMoaSystem} 
+                  <select
+                    value={formMoaSystem}
                     onChange={(e) => setFormMoaSystem(e.target.value as any)}
                     className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none font-bold text-stone-850"
                   >
@@ -1339,15 +1337,15 @@ export default function IpmPhenoscheme({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">
                   {isKa ? 'ლოდინის პერიოდი (PHI - დღე)' : 'Pre-Harvest Interval (PHI Days)'}
                 </label>
-                <input 
-                  type="number" 
-                  value={formPhi} 
+                <input
+                  type="number"
+                  value={formPhi}
                   onChange={(e) => {
                     const phi = Math.max(0, parseInt(e.target.value) || 0);
                     setFormPhi(phi);
                     handleVerifySprayForm(formMoa, phi);
                   }}
-                  className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none font-mono font-bold text-stone-900" 
+                  className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none font-mono font-bold text-stone-900"
                   min="0"
                 />
               </div>
@@ -1364,8 +1362,8 @@ export default function IpmPhenoscheme({
                 </div>
               )}
 
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 disabled={!!sprayFormError}
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors disabled:bg-stone-300 disabled:cursor-not-allowed"
               >
@@ -1425,7 +1423,7 @@ export default function IpmPhenoscheme({
             {isKa ? '⚠️ უსაფრთხოების რეგულაცია და პასუხისმგებლობის შეზღუდვა' : '⚠️ Regulatory & Chemical Safety Disclaimer'}
           </strong>
           <p className="font-medium text-stone-605">
-            {isKa 
+            {isKa
               ? 'ეს მოდული არის გადაწყვეტილების მხარდაჭერისა და საგანმანათლებლო ინსტრუმენტი. ის არ ანაცვლებს ოფიციალურ ეტიკეტს, ადგილობრივ რეგისტრაციას, აგრონომის რჩევას, შრომის უსაფრთხოების წესებს, გარემოსდაცვით შეზღუდვებს, საექსპორტო MRL მოთხოვნებს ან სამართლებრივ მოთხოვნებს. ნებისმიერი გამოყენების წინ მომხმარებელმა უნდა დაადასტუროს, რომ არჩეული მოქმედი ნივთიერება/პროდუქტი რეგისტრირებულია ვაზისთვის შესაბამის ქვეყანაში და დოზა, PHI, REI, PPE, მაქსიმალური გამოყენების რაოდენობა და შერევის წესები სწორია.'
               : 'This module is a decision-support and educational tool. It does not replace the official pesticide label, local registration rules, agronomist advice, worker safety rules, environmental restrictions, export MRL requirements, or legal requirements. Before any application, the user must confirm that the selected active ingredient/product is registered for grapevine in the target country and that the rate, PHI, REI, PPE, maximum applications and mixing rules are valid.'}
           </p>

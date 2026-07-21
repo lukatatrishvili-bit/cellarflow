@@ -1,5 +1,4 @@
 import React from 'react';
-import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
 
@@ -104,7 +103,7 @@ export default function LabsTab({
               className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
             >
               <option value="">{lang === 'ka' ? '-- აირჩიეთ პარტია --' : '-- Choose Lot --'}</option>
-              {lots.map(l => (
+              {lots.filter(l => !l.voidedAt).map(l => (
                 <option key={l.id} value={l.id}>{l.name}</option>
               ))}
             </select>
@@ -126,7 +125,7 @@ export default function LabsTab({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">ABV% v/v</label>
-              <input 
+              <input
                 type="number" step="0.1" value={labABV}
                 onChange={(e) => setLabABV(parseFloat(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
@@ -134,7 +133,7 @@ export default function LabsTab({
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'აქროლადი მჟავა (VA გ/ლ)' : 'Volatile Acid (VA g/L)'}</label>
-              <input 
+              <input
                 type="number" step="0.01" value={labVA}
                 onChange={(e) => setLabVA(parseFloat(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
@@ -144,7 +143,7 @@ export default function LabsTab({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'თავისუფალი SO₂ მგ/ლ' : 'Free SO₂ mg/L'}</label>
-              <input 
+              <input
                 type="number" value={labFSO2}
                 onChange={(e) => setLabFSO2(parseInt(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
@@ -152,7 +151,7 @@ export default function LabsTab({
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'საერთო SO₂ მგ/ლ' : 'Total SO₂ mg/L'}</label>
-              <input 
+              <input
                 type="number" value={labTSO2}
                 onChange={(e) => setLabTSO2(parseInt(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
@@ -162,7 +161,7 @@ export default function LabsTab({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'ნარჩენი შაქარი (გ/ლ)' : 'Sugar residual (g/L)'}</label>
-              <input 
+              <input
                 type="number" step="0.1" value={labResidualSugar}
                 onChange={(e) => setLabResidualSugar(parseFloat(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
@@ -170,7 +169,7 @@ export default function LabsTab({
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'რძემჟავა (გ/ლ)' : 'Lactic Acid (g/L)'}</label>
-              <input 
+              <input
                 type="number" step="0.1" value={labLactic}
                 onChange={(e) => setLabLactic(parseFloat(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
@@ -180,7 +179,7 @@ export default function LabsTab({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'ტიტრული მჟავიანობა (TA გ/ლ)' : 'Titratable Acidity (TA g/L)'}</label>
-              <input 
+              <input
                 type="number" step="0.1" value={labTA}
                 onChange={(e) => setLabTA(parseFloat(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
@@ -188,14 +187,14 @@ export default function LabsTab({
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-0.5">{lang === 'ka' ? 'სიმღვრივე (NTU)' : 'Turbidity (NTU)'}</label>
-              <input 
+              <input
                 type="number" value={labTurbidity}
                 onChange={(e) => setLabTurbidity(parseInt(e.target.value) || 0)}
                 className="w-full px-2 py-1 text-xs border rounded bg-[#FAF8F5]"
               />
             </div>
           </div>
-          <button 
+          <button
             type="submit"
             className="w-full py-1.5 bg-[#4e0e15] hover:bg-[#6b151e] text-white text-xs font-semibold rounded cursor-pointer"
           >
@@ -274,7 +273,7 @@ export default function LabsTab({
             .filter(log => {
               const lot = lots.find(l => l.id === log.lotId);
               if (!lot) return true;
-              
+
               if (labFilterType !== 'all' && lot.wineClass !== labFilterType) return false;
 
               if (labFilterAge !== 'all') {

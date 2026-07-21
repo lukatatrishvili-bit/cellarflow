@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import type { Vessel, WineLot } from '../lib/wineryState';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
-import { 
-  Move, MapPin, Eye, Thermometer, ShieldAlert, Sparkles, HelpCircle 
+import {
+  Move, MapPin, Eye, Thermometer, ShieldAlert, Sparkles
 } from 'lucide-react';
 
 interface Props {
@@ -27,7 +27,6 @@ export default function CellarMap({
   vessels,
   lots,
   onUpdateVessels,
-  onSelectTank,
   selectedTankId,
   setActiveTab,
   setPrefilledSourceId,
@@ -42,7 +41,7 @@ export default function CellarMap({
   const [isEditingLayout, setIsEditingLayout] = useState(false);
   const [draggedVesselId, setDraggedVesselId] = useState<string | null>(null);
   const [hoveredVessel, setHoveredVessel] = useState<Vessel | null>(null);
-  
+
   // Custom states for drag-and-drop transfer action
   const [activeTransferSource, setActiveTransferSource] = useState<Vessel | null>(null);
   const [transferTargetId, setTransferTargetId] = useState<string | null>(null);
@@ -64,7 +63,7 @@ export default function CellarMap({
   const handleVesselMouseDown = (e: React.MouseEvent, vessel: Vessel) => {
     e.stopPropagation();
     const { x, y } = getSVGCoords(e as any);
-    
+
     if (isEditingLayout) {
       if (!canUpdateVessel) return;
       // Repositioning drag
@@ -161,7 +160,7 @@ export default function CellarMap({
     const isSelected = selectedTankId === v.id;
     const isDragSource = activeTransferSource?.id === v.id;
     const isDragTarget = transferTargetId === v.id;
-    
+
     const fillPercent = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
 
     // Dynamic layer styling
@@ -206,19 +205,19 @@ export default function CellarMap({
           {/* Shadow */}
           <ellipse cx="0" cy="28" rx="20" ry="6" fill="#000" fillOpacity="0.08" />
           {/* Main clay body */}
-          <path 
-            d="M -18,-15 C -18,-15 -25,5 -15,22 C -8,30 8,30 15,22 C 25,5 18,-15 18,-15 L 12,-20 L -12,-20 Z" 
-            fill={layer === 'variety' ? '#c27d54' : bodyColor} 
-            stroke={strokeColor} 
-            strokeWidth={strokeWidth} 
+          <path
+            d="M -18,-15 C -18,-15 -25,5 -15,22 C -8,30 8,30 15,22 C 25,5 18,-15 18,-15 L 12,-20 L -12,-20 Z"
+            fill={layer === 'variety' ? '#c27d54' : bodyColor}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
           />
           {/* Neck collar */}
           <ellipse cx="0" cy="-18" rx="12" ry="4" fill="#a05d34" stroke={strokeColor} strokeWidth={strokeWidth} />
           {/* Liquid level layer overlay */}
           {v.currentVolume > 0 && layer === 'variety' && (
-            <path 
-              d={`M -15,10 C -15,10 -18,15 -10,21 C -5,25 5,25 10,21 C 18,15 15,10 15,10 Z`} 
-              fill={getVarietyColor(v.assignedLotId)} 
+            <path
+              d={`M -15,10 C -15,10 -18,15 -10,21 C -5,25 5,25 10,21 C 18,15 15,10 15,10 Z`}
+              fill={getVarietyColor(v.assignedLotId)}
             />
           )}
           {/* Temperature/alert icon overlay */}
@@ -234,11 +233,11 @@ export default function CellarMap({
           {/* Shadow */}
           <rect x="-22" y="16" width="44" height="6" rx="2" fill="#000" fillOpacity="0.08" />
           {/* Barrel body */}
-          <path 
-            d="M -20,-15 C -15,-18 15,-18 20,-15 C 24,-6 24,6 20,15 C 15,18 -15,18 -20,15 C -24,6 -24,-6 -20,-15 Z" 
-            fill={layer === 'variety' ? '#8c6239' : bodyColor} 
-            stroke={strokeColor} 
-            strokeWidth={strokeWidth} 
+          <path
+            d="M -20,-15 C -15,-18 15,-18 20,-15 C 24,-6 24,6 20,15 C 15,18 -15,18 -20,15 C -24,6 -24,-6 -20,-15 Z"
+            fill={layer === 'variety' ? '#8c6239' : bodyColor}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
           />
           {/* Iron hoops */}
           <path d="M -12,-17 C -9,-7 -9,7 -12,17" fill="none" stroke="#5a4028" strokeWidth="2" />
@@ -246,9 +245,9 @@ export default function CellarMap({
           <circle cx="0" cy="0" r="3" fill="#5a4028" />
           {/* Liquid level */}
           {v.currentVolume > 0 && layer === 'variety' && (
-            <path 
-              d="M -16,5 C -10,8 10,8 16,5 C 18,10 14,14 0,14 C -14,14 -18,10 -16,5 Z" 
-              fill={getVarietyColor(v.assignedLotId)} 
+            <path
+              d="M -16,5 C -10,8 10,8 16,5 C 18,10 14,14 0,14 C -14,14 -18,10 -16,5 Z"
+              fill={getVarietyColor(v.assignedLotId)}
             />
           )}
         </g>
@@ -266,16 +265,16 @@ export default function CellarMap({
           ) : (
             <rect x="-18" y="-32" width="36" height="64" rx="10" fill={layer === 'variety' ? '#94a3b8' : bodyColor} stroke={strokeColor} strokeWidth={strokeWidth} />
           )}
-          
+
           {/* Liquid level height rendering */}
           {v.currentVolume > 0 && (
-            <rect 
-              x={isConcrete ? "-18" : "-16"} 
-              y={30 - (58 * fillPercent) / 100} 
-              width={isConcrete ? "36" : "32"} 
-              height={(58 * fillPercent) / 100} 
+            <rect
+              x={isConcrete ? "-18" : "-16"}
+              y={30 - (58 * fillPercent) / 100}
+              width={isConcrete ? "36" : "32"}
+              height={(58 * fillPercent) / 100}
               rx="2"
-              fill={layer === 'variety' ? getVarietyColor(v.assignedLotId) : 'rgba(255,255,255,0.15)'} 
+              fill={layer === 'variety' ? getVarietyColor(v.assignedLotId) : 'rgba(255,255,255,0.15)'}
             />
           )}
 
@@ -303,7 +302,7 @@ export default function CellarMap({
         <div className="flex items-center gap-3">
           {/* Layer toggles */}
           <div className="bg-slate-100 p-0.5 rounded-lg flex items-center text-[10px] font-bold">
-            <button 
+            <button
               type="button"
               onClick={() => setLayer('variety')}
               className={`px-3 py-1.5 rounded-md flex items-center gap-1 cursor-pointer transition-colors ${
@@ -313,7 +312,7 @@ export default function CellarMap({
               <Eye className="w-3 h-3" />
               {lang === 'ka' ? 'ღვინის ჯიშები' : 'Variety Color'}
             </button>
-            <button 
+            <button
               type="button"
               onClick={() => setLayer('temperature')}
               className={`px-3 py-1.5 rounded-md flex items-center gap-1 cursor-pointer transition-colors ${
@@ -323,7 +322,7 @@ export default function CellarMap({
               <Thermometer className="w-3 h-3" />
               {lang === 'ka' ? 'ტემპერატურა' : 'Temperature'}
             </button>
-            <button 
+            <button
               type="button"
               onClick={() => setLayer('sanitation')}
               className={`px-3 py-1.5 rounded-md flex items-center gap-1 cursor-pointer transition-colors ${
@@ -382,16 +381,16 @@ export default function CellarMap({
           <div className="absolute bottom-4 right-6 bg-stone-950/80 border border-stone-850 text-[10px] text-amber-200/80 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 font-mono pointer-events-none select-none max-w-xs leading-tight">
             <Sparkles className="w-3 h-3 text-[#c5a059] shrink-0 animate-bounce" />
             <span>
-              {lang === 'ka' 
-                ? 'გადაათრიეთ შევსებული ჭურჭელი ცარიელზე გადასაღებად.' 
+              {lang === 'ka'
+                ? 'გადაათრიეთ შევსებული ჭურჭელი ცარიელზე გადასაღებად.'
                 : 'Drag a filled vessel onto another to dispatch a transfer.'}
             </span>
           </div>
         )}
 
-        <svg 
+        <svg
           ref={svgRef}
-          viewBox="0 0 800 500" 
+          viewBox="0 0 800 500"
           className="w-full h-full select-none"
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
@@ -413,21 +412,21 @@ export default function CellarMap({
           {vessels.map(v => {
             const x = (v.xGrid ?? 50) * 8;
             const y = (v.yGrid ?? 50) * 5;
-            
+
             return (
-              <g 
+              <g
                 key={v.id}
                 transform={`translate(${x}, ${y})`}
               >
                 {renderVesselIcon(v)}
-                
+
                 {/* Vessel Text ID tag */}
-                <text 
-                  y="47" 
-                  textAnchor="middle" 
-                  fill="#ffffff" 
-                  fillOpacity="0.7" 
-                  fontSize="9px" 
+                <text
+                  y="47"
+                  textAnchor="middle"
+                  fill="#ffffff"
+                  fillOpacity="0.7"
+                  fontSize="9px"
                   fontFamily="monospace"
                   fontWeight="bold"
                   className="pointer-events-none"
@@ -441,14 +440,14 @@ export default function CellarMap({
           {/* Transfer Drag-Line Overlay */}
           {activeTransferSource && customDragPos && (
             <g>
-              <line 
-                x1={(activeTransferSource.xGrid ?? 50) * 8} 
-                y1={(activeTransferSource.yGrid ?? 50) * 5} 
-                x2={customDragPos.x} 
-                y2={customDragPos.y} 
-                stroke="#10b981" 
-                strokeWidth="2.5" 
-                strokeDasharray="4 4" 
+              <line
+                x1={(activeTransferSource.xGrid ?? 50) * 8}
+                y1={(activeTransferSource.yGrid ?? 50) * 5}
+                x2={customDragPos.x}
+                y2={customDragPos.y}
+                stroke="#10b981"
+                strokeWidth="2.5"
+                strokeDasharray="4 4"
               />
               <circle cx={customDragPos.x} cy={customDragPos.y} r="6" fill="#10b981" />
             </g>
@@ -460,10 +459,10 @@ export default function CellarMap({
           const v = hoveredVessel;
           const x = (v.xGrid ?? 50);
           const y = (v.yGrid ?? 50);
-          
+
           const assignedLot = lots.find(l => l.id === v.assignedLotId);
           const progress = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
-          
+
           // Position tooltip relative to layout percentage
           const style: React.CSSProperties = {
             position: 'absolute',
@@ -472,7 +471,7 @@ export default function CellarMap({
           };
 
           return (
-            <div 
+            <div
               style={style}
               className="bg-stone-950/90 border border-stone-850 text-white px-3.5 py-2.5 rounded-xl shadow-xl w-60 z-30 font-sans backdrop-blur-md transition-all duration-150 animate-fade-in pointer-events-none"
             >
@@ -487,7 +486,7 @@ export default function CellarMap({
               <p className="text-[10px] text-slate-400 font-mono capitalize border-b border-stone-900 pb-1.5 mb-1.5">
                 {v.type.replace('_', ' ')} • {v.locationDetails}
               </p>
-              
+
               <div className="space-y-1 text-[11px]">
                 <div className="flex justify-between">
                   <span className="text-slate-400">{t.capacity || 'Capacity'}:</span>
@@ -503,7 +502,7 @@ export default function CellarMap({
                     {v.temperature.toFixed(1)}°C
                   </span>
                 </div>
-                
+
                 {assignedLot ? (
                   <div className="mt-2 pt-1.5 border-t border-stone-900">
                     <span className="text-[9px] uppercase font-mono tracking-wider text-[#c5a059] block mb-0.5">Assigned Lot:</span>

@@ -22,6 +22,7 @@ const lot: WineLot = {
 
 const run: BottlingRunRecord = {
   id: 'BOT-2026-01',
+  commandId: 'cmd-bottling-2026-01',
   lotId: lot.id,
   lotName: lot.name,
   date: '2026-11-04',
@@ -61,7 +62,6 @@ function props(overrides: Partial<ComponentProps<typeof BottlingTab>> = {}): Com
     onUpdateLots: vi.fn(),
     history: [run],
     onUpdateHistory: vi.fn(),
-    onDeleteRun: vi.fn(),
     inventory: [packaging],
     onUpdateInventory: vi.fn(),
     costEntries: [],
@@ -84,7 +84,7 @@ describe('BottlingTab action permissions', () => {
   it('keeps bottling history visible without exposing mutation controls in read-only mode', () => {
     const markup = renderBottling({
       canCreateBottling: false,
-      canDeleteBottling: false,
+      canReverseBottling: false,
       canUseBottlingCosting: false,
       canPlaceFinishedGoods: false,
     });
@@ -95,13 +95,13 @@ describe('BottlingTab action permissions', () => {
     expect(markup).not.toContain('Record bottling</button>');
     expect(markup).not.toContain('Packaging &amp; bottling cost');
     expect(markup).not.toContain('Place finished goods');
-    expect(markup).not.toContain('Delete bottling run for Saperavi Reserve');
+    expect(markup).not.toContain('Correct bottling run for Saperavi Reserve');
   });
 
   it('allows core bottling without owner-only rollback or unauthorized ledgers', () => {
     const markup = renderBottling({
       canCreateBottling: true,
-      canDeleteBottling: false,
+      canReverseBottling: false,
       canUseBottlingCosting: false,
       canPlaceFinishedGoods: false,
     });
@@ -111,7 +111,7 @@ describe('BottlingTab action permissions', () => {
     expect(markup).toContain('Record bottling</button>');
     expect(markup).not.toContain('Packaging &amp; bottling cost');
     expect(markup).not.toContain('Place finished goods');
-    expect(markup).not.toContain('Delete bottling run for Saperavi Reserve');
+    expect(markup).not.toContain('Correct bottling run for Saperavi Reserve');
   });
 
   it('preserves all existing controls by default for an owner', () => {
@@ -120,14 +120,14 @@ describe('BottlingTab action permissions', () => {
     expect(markup).toContain('Record bottling</button>');
     expect(markup).toContain('Packaging &amp; bottling cost');
     expect(markup).toContain('Place finished goods');
-    expect(markup).toContain('Delete bottling run for Saperavi Reserve');
+    expect(markup).toContain('Correct bottling run for Saperavi Reserve');
   });
 
   it('localizes the read-only explanation in Georgian', () => {
     const markup = renderBottling({
       lang: 'ka',
       canCreateBottling: false,
-      canDeleteBottling: false,
+      canReverseBottling: false,
       canUseBottlingCosting: false,
       canPlaceFinishedGoods: false,
     });

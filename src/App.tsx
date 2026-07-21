@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
-import NotificationCenter from '../components/NotificationCenter';
 import type { PickedLocation } from '../components/LocationPicker';
 import { useWineryState } from '../hooks/useWineryState';
 import { IndexedDBQueue } from '../lib/syncQueue';
@@ -15,7 +14,7 @@ import { canAccess } from '../server/permissions';
 import { parseAuthAccessLink } from '../lib/authAccess';
 import { localizedRoleLabel } from '../lib/roleLabels';
 import {
-  canViewAppDestination,
+  canViewUserDestination,
   firstVisibleWineryTab,
   permissionModuleFor,
 } from '../lib/navigationPermissions';
@@ -59,6 +58,8 @@ const LocationPicker = lazyRetry(() => import('../components/LocationPicker'));
 const GlobalCommandPalette = lazyRetry(() => import('../components/GlobalCommandPalette'));
 const SyncConflictResolutionModal = lazyRetry(() => import('../components/SyncConflictResolutionModal'));
 const AuthAccountFlows = lazyRetry(() => import('../components/AuthAccountFlows'));
+const MasterAdminPortal = lazyRetry(() => import('../components/MasterAdminPortal'));
+const NotificationCenter = lazyRetry(() => import('../components/NotificationCenter'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
@@ -87,7 +88,6 @@ import {
   MailCheck,
   Loader2,
   X,
-  Thermometer,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
@@ -101,7 +101,6 @@ import {
   Coins,
   Warehouse,
   Truck,
-  Trash,
   CheckCircle2,
   Sprout,
   Sun,
@@ -154,6 +153,7 @@ export default function App() {
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [isEndingImpersonation, setIsEndingImpersonation] = useState(false);
   const [initialAuthLinkContext] = useState<InitialAuthLinkContext>(readInitialAuthLinkContext);
   const [authAccountFlow, setAuthAccountFlow] = useState<AuthAccountFlow | null>(initialAuthLinkContext.flow);
   const [pendingInvitationToken, setPendingInvitationToken] = useState(initialAuthLinkContext.invitationToken);
@@ -199,6 +199,22 @@ export default function App() {
     }
   };
 
+  const handleEndImpersonation = async () => {
+    if (isEndingImpersonation) return;
+    setIsEndingImpersonation(true);
+    try {
+      const response = await fetch('/api/admin/impersonate/stop', { method: 'POST' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Could not end the support session.');
+      }
+      window.location.reload();
+    } catch (error) {
+      state.setToastMessage(error instanceof Error ? error.message : 'Could not end the support session.');
+      setIsEndingImpersonation(false);
+    }
+  };
+
   const handleAuthFlowReturn = (context: ReturnToSignInContext) => {
     if (context.flow === 'accept-invite') {
       if (context.reason === 'authentication-required' && context.invitationToken) {
@@ -227,7 +243,11 @@ export default function App() {
 
   // Onboarding wizard toggling
   useEffect(() => {
-    if (state.isLoggedIn && (state.currentUser.registrationComplete === false || !state.currentUser.enabledModules)) {
+    if (
+      state.isLoggedIn
+      && !state.currentUser.isMasterAdmin
+      && (state.currentUser.registrationComplete === false || !state.currentUser.enabledModules)
+    ) {
       setShowOnboarding(true);
     } else {
       setShowOnboarding(false);
@@ -244,6 +264,9 @@ export default function App() {
     if (state.activeModule === 'gvino' && !enabledModules.includes('gvino')) {
       state.setActiveModule(enabledModules.includes('vazi') ? 'vazi' : 'portal');
     }
+    // The facade object is recreated as domain state changes; rerunning on the
+    // whole object would turn this guard into an every-render effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isLoggedIn, state.currentUser.enabledModules, state.activeModule]);
 
   // Dark Mode State
@@ -299,6 +322,9 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
+    // Rebind only for localized messages. Winery-state actions are current
+    // facade callbacks and must not churn browser listeners every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lang]);
 
   // A new service worker took over mid-session (event from src/main.tsx).
@@ -407,6 +433,9 @@ export default function App() {
     fetchTelemetry();
     const interval = setInterval(fetchTelemetry, 15000);
     return () => clearInterval(interval);
+    // The polling lifecycle follows authentication; task deduplication reads
+    // through refs, while facade identity changes on every domain update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isLoggedIn]);
 
   // Derived live alert feed for the notification center
@@ -469,7 +498,7 @@ export default function App() {
         state.setSelectedTankId(null);
         setIsAiDrawerOpen(false);
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && !state.currentUser.isMasterAdmin) {
         e.preventDefault();
         setIsCommandOpen(open => !open);
       }
@@ -537,7 +566,7 @@ export default function App() {
     },
   ];
   const canViewModule = (moduleId: string, tabId?: string) => (
-    canViewAppDestination(state.currentUser.role, moduleId, tabId)
+    canViewUserDestination(state.currentUser, moduleId, tabId)
   );
   const accessibleWineryTabGroups = wineryTabGroups
     .map((group) => ({
@@ -564,6 +593,7 @@ export default function App() {
     && canViewModule(state.activeModule, state.activeTab)
     && !canManageCurrentArea
     && state.activeModule !== 'portal'
+    && state.activeModule !== 'master-admin'
     && state.activeModule !== 'settings'
     && !(state.activeModule === 'gvino' && state.activeTab === 'dashboard');
   const moduleGroups = [
@@ -615,12 +645,13 @@ export default function App() {
     },
     {
       id: 'settings',
-      label: t.nav_settings || 'Settings',
-      icon: ClipboardList,
+      label: state.currentUser.isMasterAdmin ? 'System' : (t.nav_settings || 'Settings'),
+      icon: state.currentUser.isMasterAdmin ? ShieldAlert : ClipboardList,
       primary: 'integrations',
       modules: [
         { id: 'integrations', label: state.lang === 'ka' ? 'ინტეგრაციები' : 'Integration Hub', icon: PlugZap },
         { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList },
+        { id: 'master-admin', label: 'System Console', icon: ShieldAlert },
       ],
     },
   ].map(group => {
@@ -646,7 +677,10 @@ export default function App() {
       }
     }
     state.setActiveModule((moduleGroups[0]?.primary || 'portal') as any);
-  }, [state.isLoggedIn, state.currentUser.role, state.activeModule, state.activeTab]);
+    // Navigation helpers and the state facade are render-derived. The scalar
+    // route/role dependencies below are the events this repair effect handles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isLoggedIn, state.currentUser.role, state.currentUser.isMasterAdmin, state.activeModule, state.activeTab]);
 
   const switchModule = (moduleId: string) => {
     state.setActiveModule(moduleId as any);
@@ -693,8 +727,8 @@ export default function App() {
             <div className="flex items-center gap-2 text-xs font-semibold">
               <span className="animate-pulse">⚡</span>
               <span>
-                {state.lang === 'ka' 
-                  ? 'კავშირი გაწყდა. მარანი მუშაობს ოფლაინ რეჟიმში — ცვლილებები შეინახება ლოკალურად და სინქრონიზირდება კავშირის აღდგენისას.' 
+                {state.lang === 'ka'
+                  ? 'კავშირი გაწყდა. მარანი მუშაობს ოფლაინ რეჟიმში — ცვლილებები შეინახება ლოკალურად და სინქრონიზირდება კავშირის აღდგენისას.'
                   : 'Offline Mode Enabled — Using local VinOS cache. Unsaved modifications will auto-sync on reconnect.'}
               </span>
             </div>
@@ -752,10 +786,10 @@ export default function App() {
       {/* overflow-x clipping lives on <body> (globals.css): an overflow value
           on this wrapper would break position:sticky for the floating header */}
       <div className="min-h-screen bg-[#f8f6f2] dark:bg-[#0a0607] flex flex-col font-sans relative transition-colors duration-300">
-      
+
       {/* Ambient, photo-free backdrop: drifting light + terrace contours */}
       <AuroraBackdrop variant={state.isLoggedIn ? 'subtle' : 'rich'} shouldReduceMotion={perf.shouldReduceMotion} />
-      
+
       {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
       {state.toastMessage && (() => {
         const isSyncIssue = typeof state.toastMessage === 'string' && (
@@ -827,7 +861,7 @@ export default function App() {
         );
       })()}
 
-      {state.isLoggedIn && (
+      {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
         <Suspense fallback={null}>
           <GlobalCommandPalette
             open={isCommandOpen}
@@ -894,7 +928,7 @@ export default function App() {
         <span className="hidden xl:block text-sm font-serif tracking-[0.22em] text-[#1b1715] font-black dark:text-amber-100 shrink-0">VinOS</span>
 
         {/* LEFT — module navigation */}
-        {state.isLoggedIn && (
+        {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
           <>
             {/* Desktop: inline module tabs, with dropdown submenus for grouped areas */}
             <nav aria-label={state.lang === 'ka' ? 'მოდულების ნავიგაცია' : 'Module navigation'} className="hidden md:flex items-center gap-0.5 min-w-0">
@@ -1024,9 +1058,9 @@ export default function App() {
 
         {/* RIGHT — status, search, notifications, settings, logout */}
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
-          <SyncStatus lang={state.lang} />
+          {!state.currentUser.isMasterAdmin && <SyncStatus lang={state.lang} />}
 
-          {state.isLoggedIn && (
+          {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
             <button
               type="button"
               onClick={() => setIsCommandOpen(true)}
@@ -1041,7 +1075,11 @@ export default function App() {
 
           <InstallButton lang={state.lang} />
 
-          {state.isLoggedIn && <NotificationCenter alerts={alerts} onSelect={handleSelectAlert} lang={state.lang} />}
+          {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
+            <Suspense fallback={null}>
+              <NotificationCenter alerts={alerts} onSelect={handleSelectAlert} lang={state.lang} />
+            </Suspense>
+          )}
 
           {/* Settings menu — theme, language, settings/integration links, hide bar */}
           {state.isLoggedIn && (
@@ -1104,6 +1142,11 @@ export default function App() {
                         <ClipboardList className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />{t.nav_settings || 'Settings'}
                       </button>
                     )}
+                    {canViewModule('master-admin') && (
+                      <button role="menuitem" onClick={() => { switchModule('master-admin'); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
+                        <ShieldAlert className="w-4 h-4 text-[#4e0e15] dark:text-cyan-300" />System Console
+                      </button>
+                    )}
                     {canViewModule('integrations') && (
                       <button role="menuitem" onClick={() => { switchModule('integrations'); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
                         <PlugZap className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />{state.lang === 'ka' ? 'ინტეგრაციები' : 'Integration Hub'}
@@ -1146,6 +1189,21 @@ export default function App() {
           )}
         </div>
       </header>
+      {state.currentUser.impersonatedBy && (
+        <div role="status" className="relative max-w-[1720px] w-full mx-auto mt-2 px-4 py-2.5 rounded-xl border border-cyan-300 bg-cyan-50 text-xs font-semibold text-cyan-950 shadow-sm dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-100 flex flex-wrap items-center justify-between gap-3">
+          <span>
+            Support session: viewing the app as <strong>{state.currentUser.fullName}</strong>. Started by {state.currentUser.impersonatedBy}.
+          </span>
+          <button
+            type="button"
+            disabled={isEndingImpersonation}
+            onClick={handleEndImpersonation}
+            className="rounded-lg border border-cyan-400 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-cyan-900 transition-colors hover:bg-cyan-100 disabled:cursor-wait disabled:opacity-60 dark:border-cyan-700 dark:bg-cyan-950 dark:text-cyan-100"
+          >
+            {isEndingImpersonation ? 'Returning…' : 'Return to admin'}
+          </button>
+        </div>
+      )}
       {shouldShowReadOnlyNotice && (
         <div role="status" className="relative max-w-[1720px] w-full mx-auto mt-2 px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[10px] font-mono font-bold uppercase tracking-wide text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           {state.lang === 'ka' ? 'ამ განყოფილებაში მხოლოდ ნახვა შეგიძლიათ' : 'View-only access in this area'}: {activePermissionModule.replace(/_/g, ' ')}
@@ -1211,7 +1269,7 @@ export default function App() {
                   <div className="text-[8px] font-mono uppercase tracking-[0.2em] text-[#c5a059]">Unified Estate ERP</div>
                 </div>
               </div>
-              
+
               {state.verificationPending && (
                 <div className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/30 dark:border-amber-900/60">
                   <div className="flex items-start gap-2.5">
@@ -1289,7 +1347,7 @@ export default function App() {
                       state.setLoginError('Select at least one workspace module.');
                       return;
                     }
-                    
+
                     let mappedRole: 'Owner/Admin' | 'Viticulturist' | 'Winemaker' | 'Lab Technician' | 'Cellar Worker' | 'Read-Only' = 'Viticulturist';
                     if (selectedRole === 'Winemaker') {
                       mappedRole = 'Winemaker';
@@ -1768,6 +1826,15 @@ export default function App() {
             </div>
           </div>
         </div>
+      ) : state.currentUser.isMasterAdmin ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <MasterAdminPortal
+            lang={state.lang}
+            currentUser={state.currentUser}
+            onClose={() => { void state.handleAuthLogout(); }}
+            setToastMessage={state.setToastMessage}
+          />
+        </Suspense>
       ) : state.activeModule === 'vazi' ? (
         <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 flex flex-col">
           <Suspense fallback={<ModuleLoader />}>
@@ -1795,6 +1862,7 @@ export default function App() {
               onAddHarvestRecord={state.handleAddHarvestRecord}
               onUpdateHarvestRecord={state.handleUpdateHarvestRecord}
               onSendHarvestToGvino={state.handleSendHarvestToGvino}
+              onPrepareHarvestIntake={state.setPrefilledIntakeHarvestId}
               onAddIrrigation={state.handleAddIrrigation}
               onAddFertilizer={state.handleAddFertilizer}
               setActiveModule={state.setActiveModule}
@@ -1808,7 +1876,9 @@ export default function App() {
               canDeleteVineyardRecord={vineyardPermissions.canDeleteVineyardRecord}
               canCreateVineyardProject={vineyardPermissions.canCreateVineyardProject}
               canUpdateVineyardProject={vineyardPermissions.canUpdateVineyardProject}
-              canDispatchHarvestToGvino={vineyardPermissions.canDispatchHarvestToGvino}
+              canDispatchHarvestToGvino={vineyardPermissions.canDispatchHarvestToGvino
+                && cellarPermissions.intake.canReceiveGrapes
+                && cellarPermissions.intake.canLinkHarvest}
               canCreateTask={vineyardPermissions.canCreateTask}
             />
           </Suspense>
@@ -1841,11 +1911,12 @@ export default function App() {
           <IntegrationHubTab
             lang={state.lang}
             setToastMessage={state.setToastMessage}
+            setCompanyProfile={state.setCompanyProfile}
           />
         </Suspense>
       ) : state.activeModule === 'settings' ? (
         <Suspense fallback={<ModuleLoader />}>
-          <ProfileSettingsTab 
+          <ProfileSettingsTab
             lang={state.lang}
             currentUser={state.currentUser}
             setCurrentUser={state.setCurrentUser}
@@ -1924,6 +1995,9 @@ export default function App() {
             dispatches={state.salesDispatches}
             onUpdateLocations={state.setStorageLocations}
             onUpdateMovements={state.setStockMovements}
+            onUpdateBottlingRuns={state.setBottlingRuns}
+            onApplyStorageMovementCommandResponse={state.applyStorageMovementCommandResponse}
+            currentUserName={state.currentUser.fullName || state.currentUser.username}
             onDeleteLocation={state.handleDeleteStorageLocation}
             onDeleteMovement={state.handleDeleteStockMovement}
             setToastMessage={state.setToastMessage}
@@ -1949,6 +2023,7 @@ export default function App() {
             onUpdateMovements={state.setStockMovements}
             onUpdateDispatches={state.setSalesDispatches}
             onUpdateOrders={state.setSalesOrders}
+            onApplySalesStockCommandResponse={state.applySalesStockCommandResponse}
             currency={state.companyProfile.currency || 'GEL'}
             currentUserName={state.currentUser.fullName}
             setToastMessage={state.setToastMessage}
@@ -1956,9 +2031,8 @@ export default function App() {
             canCreateOrder={salesPermissions.canCreateOrder}
             canUpdateOrder={salesPermissions.canUpdateOrder}
             canCreateDispatch={salesPermissions.canCreateDispatch}
-            canDeleteDispatch={salesPermissions.canDeleteDispatch}
+            canReverseDispatch={salesPermissions.canReverseDispatch}
             canCreateStockMovement={salesPermissions.canCreateStockMovement}
-            canDeleteStockMovement={salesPermissions.canDeleteStockMovement}
             canViewCosts={salesPermissions.canViewCosts}
             canViewStorage={salesPermissions.canViewStorage}
             canViewBottling={salesPermissions.canViewBottling}
@@ -2005,7 +2079,7 @@ export default function App() {
         </Suspense>
       ) : (
         <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 flex flex-col lg:flex-row gap-8">
-          
+
           {/* Sticky sidebar */}
           <aside className={`shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-20' : 'lg:w-72'} lg:self-start lg:sticky lg:top-24 transition-[width] duration-300`}>
             <div className="lg:hidden rounded-2xl border border-[#e8dfd5] bg-white/90 p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
@@ -2143,7 +2217,7 @@ export default function App() {
               </div>
             ) : (
             <Suspense fallback={<ModuleLoader />}>
-            
+
             {/* A. DASHBOARD TAB */}
             {state.activeTab === 'dashboard' && (
               <WineryDashboardTab
@@ -2171,15 +2245,15 @@ export default function App() {
             {/* B. VESSELS TAB */}
             {state.activeTab === 'vessels' && (
               <div className="space-y-4 text-stone-800 animate-fade-in">
-                <TanksVessels 
-                  lang={state.lang} 
-                  vessels={state.vessels} 
-                  lots={state.lots} 
-                  onUpdateVessels={state.setVessels} 
+                <TanksVessels
+                  lang={state.lang}
+                  vessels={state.vessels}
+                  lots={state.lots}
+                  onUpdateVessels={state.setVessels}
                   {...cellarPermissions.vessels}
                   canExecuteTransfer={cellarPermissions.transfers.canExecuteTransfer}
-                  onSelectTank={state.setSelectedTankId} 
-                  selectedTankId={state.selectedTankId} 
+                  onSelectTank={state.setSelectedTankId}
+                  selectedTankId={state.selectedTankId}
                   setActiveTab={state.setActiveTab}
                   setPrefilledSourceId={state.setPrefilledSourceId}
                   setPrefilledDestId={state.setPrefilledDestId}
@@ -2215,7 +2289,20 @@ export default function App() {
                 intakes={state.grapeIntakes}
                 currentUserName={state.currentUser.fullName}
                 currency={state.companyProfile.currency || 'GEL'}
+                region={state.companyProfile.region || 'Kakheti'}
                 onReceiveGrapes={state.handleReceiveGrapes}
+                lots={state.lots}
+                costEntries={state.costEntries}
+                auditLogs={state.auditLogs}
+                onUpdateLots={state.setLots}
+                onUpdateVessels={state.setVessels}
+                onUpdateHarvests={state.setHarvests}
+                onUpdateIntakes={state.setGrapeIntakes}
+                onUpdateCostEntries={state.setCostEntries}
+                onUpdateAuditLogs={state.setAuditLogs}
+                onApplyHarvestIntakeCommandResponse={state.applyHarvestIntakeCommandResponse}
+                prefilledHarvestRecordId={state.prefilledIntakeHarvestId}
+                onPrefillConsumed={() => state.setPrefilledIntakeHarvestId(null)}
                 {...cellarPermissions.intake}
                 setActiveTab={state.setActiveTab}
                 setToastMessage={state.setToastMessage}
@@ -2224,13 +2311,13 @@ export default function App() {
 
             {/* C. WINE LOTS TAB */}
             {state.activeTab === 'lots' && (
-              <WineLotsTrace 
-                lang={state.lang} 
-                lots={state.lots} 
-                onUpdateLots={state.setLots} 
+              <WineLotsTrace
+                lang={state.lang}
+                lots={state.lots}
+                onUpdateLots={state.setLots}
                 canCreateLot={canAccess(state.currentUser.role, 'lots', 'create')}
                 canUpdateLot={canAccess(state.currentUser.role, 'lots', 'update')}
-                onOpenPassport={state.setPassportLotId} 
+                onOpenPassport={state.setPassportLotId}
                 vessels={state.vessels}
                 labLogs={state.labLogs}
                 costEntries={state.costEntries}
@@ -2272,8 +2359,18 @@ export default function App() {
                 vessels={state.vessels}
                 inventory={state.inventory}
                 ops={state.cellarOps}
+                costEntries={state.costEntries}
+                auditLogs={state.auditLogs}
                 currentUserName={state.currentUser.fullName}
+                currency={state.companyProfile.currency || 'GEL'}
                 onAddOperation={state.handleAddCellarOperation}
+                onUpdateLots={state.setLots}
+                onUpdateVessels={state.setVessels}
+                onUpdateInventory={state.setInventory}
+                onUpdateOperations={state.setCellarOps}
+                onUpdateCostEntries={state.setCostEntries}
+                onUpdateAuditLogs={state.setAuditLogs}
+                onApplyCellarOperationCommandResponse={state.applyCellarOperationCommandResponse}
                 {...cellarPermissions.operations}
                 setToastMessage={state.setToastMessage}
               />
@@ -2281,17 +2378,19 @@ export default function App() {
 
             {/* D. TRANSFERS & BLENDS */}
             {state.activeTab === 'transfers' && (
-              <TransfersTab 
-                lang={state.lang} 
-                vessels={state.vessels} 
-                lots={state.lots} 
-                onUpdateVessels={state.setVessels} 
-                onUpdateLots={state.setLots} 
+              <TransfersTab
+                lang={state.lang}
+                vessels={state.vessels}
+                lots={state.lots}
+                onUpdateVessels={state.setVessels}
+                onUpdateLots={state.setLots}
                 {...cellarPermissions.transfers}
                 prefilledSourceId={state.prefilledSourceId}
                 prefilledDestId={state.prefilledDestId}
                 pastTransfers={state.transfers}
                 onUpdateTransfers={state.setTransfers}
+                onApplyTransferCommandResponse={state.applyTransferCommandResponse}
+                onApplyTransferReversalCommandResponse={state.applyTransferReversalCommandResponse}
                 clearPrefilled={() => {
                   state.setPrefilledSourceId('');
                   state.setPrefilledDestId('');
@@ -2301,17 +2400,22 @@ export default function App() {
 
             {/* E. FERMENTATION FOLLOWUP */}
             {state.activeTab === 'fermentation' && (
-              <FermentationTab 
+              <FermentationTab
                 lang={state.lang}
                 vessels={state.vessels}
                 lots={state.lots}
                 fermLogs={state.fermLogs}
+                auditLogs={state.auditLogs}
                 currentUser={state.currentUser}
                 setActiveTab={state.setActiveTab}
                 {...cellarPermissions.fermentation}
                 onUpdateLots={state.setLots}
                 onUpdateVessels={state.setVessels}
                 onUpdateFermLogs={state.setFermLogs}
+                onUpdateAuditLogs={state.setAuditLogs}
+                onApplyFermentationCompletionCommandResponse={state.applyFermentationCompletionCommandResponse}
+                onApplyFermentationCompletionReversalCommandResponse={state.applyFermentationCompletionReversalCommandResponse}
+                setToastMessage={state.setToastMessage}
               />
             )}
 
@@ -2360,7 +2464,6 @@ export default function App() {
                 onUpdateLots={state.setLots}
                 history={state.bottlingRuns}
                 onUpdateHistory={state.setBottlingRuns}
-                onDeleteRun={state.handleDeleteBottlingRun}
                 inventory={state.inventory}
                 onUpdateInventory={state.setInventory}
                 costEntries={state.costEntries}
@@ -2368,6 +2471,7 @@ export default function App() {
                 storageLocations={state.storageLocations}
                 stockMovements={state.stockMovements}
                 onUpdateStockMovements={state.setStockMovements}
+                onApplyBottlingCommandResponse={state.applyBottlingCommandResponse}
                 currency={state.companyProfile.currency || 'GEL'}
                 currentUserName={state.currentUser.fullName}
                 setToastMessage={state.setToastMessage}
@@ -2377,8 +2481,8 @@ export default function App() {
             {/* G. WINEMAKING CALCULATORS */}
             {state.activeTab === 'calculators' && (
               <Suspense fallback={<ModuleLoader />}>
-                <EnoCalculators 
-                  lang={state.lang} 
+                <EnoCalculators
+                  lang={state.lang}
                   lots={state.lots}
                   vessels={state.vessels}
                   labLogs={state.labLogs}
@@ -2549,14 +2653,14 @@ export default function App() {
       {/* ONBOARDING CUSTOMIZATION WIZARD */}
       {state.isLoggedIn && showOnboarding && (
         <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <motion.div 
+          <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="bg-white/95 dark:bg-stone-950/95 border border-stone-200 dark:border-stone-850 max-w-2xl w-full max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-scale-up font-sans"
           >
             {/* Top decorative stripe */}
             <div className="h-1.5 bg-gradient-to-r from-[#801323] via-[#c5a059] to-emerald-800" />
-            
+
             <div className="px-8 py-6 border-b border-stone-200/80 dark:border-stone-850 bg-stone-50/50 dark:bg-stone-900/20">
               <h3 className="text-xl font-serif font-black text-[#4e0e15] dark:text-amber-100 flex items-center gap-2">
                 🍇 {needsRegistrationCompletion
@@ -2579,7 +2683,7 @@ export default function App() {
               const fd = new FormData(e.currentTarget);
               const modules = fd.getAll('enabledModules') as string[];
               const widgets = fd.getAll('enabledWidgets') as string[];
-              
+
               if (modules.length === 0) {
                 alert(state.lang === 'ka' ? 'გთხოვთ აირჩიოთ მინიმუმ ერთი აქტიური მოდული.' : 'Please enable at least one active module.');
                 return;
@@ -2620,7 +2724,7 @@ export default function App() {
                 }
                 return;
               }
-              
+
               await state.handleUpdateProfile({
                 enabledModules: modules,
                 enabledWidgets: widgets
@@ -2768,13 +2872,13 @@ export default function App() {
                   </div>
                 </div>
               )}
-              
+
               {/* Section 1: Modules Toggles */}
               <div className="space-y-3">
                 <h4 className="text-[10px] font-mono uppercase tracking-widest text-[#c5a059] font-black border-b border-stone-150 pb-1">
                   📦 {state.lang === 'ka' ? 'აქტიური მოდულები' : 'Active Winemaking Modules'}
                 </h4>
-                
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Viticulture Module (Vazi) */}
                   <label className="relative flex flex-col p-4 bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-800 rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all select-none">
@@ -2782,10 +2886,10 @@ export default function App() {
                       <span className="font-bold text-sm text-stone-900 dark:text-amber-100 flex items-center gap-1.5">
                         🚜 {state.lang === 'ka' ? 'მევენახეობა (ვაზი)' : 'Viticulture (Vazi / Vineyard)'}
                       </span>
-                      <input 
-                        type="checkbox" 
-                        name="enabledModules" 
-                        value="vazi" 
+                      <input
+                        type="checkbox"
+                        name="enabledModules"
+                        value="vazi"
                         defaultChecked={defaultEnabledModules.includes('vazi')}
                         className="h-4.5 w-4.5 rounded border-stone-300 text-emerald-805 focus:ring-emerald-800 accent-emerald-800 cursor-pointer"
                       />
@@ -2804,10 +2908,10 @@ export default function App() {
                       <span className="font-bold text-sm text-stone-900 dark:text-amber-100 flex items-center gap-1.5">
                         🍷 {state.lang === 'ka' ? 'მეღვინეობა (ღვინო)' : 'Winery (Gvino / Cellar)'}
                       </span>
-                      <input 
-                        type="checkbox" 
-                        name="enabledModules" 
-                        value="gvino" 
+                      <input
+                        type="checkbox"
+                        name="enabledModules"
+                        value="gvino"
                         defaultChecked={defaultEnabledModules.includes('gvino')}
                         className="h-4.5 w-4.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
                       />
@@ -2828,8 +2932,8 @@ export default function App() {
                   🏠 {state.lang === 'ka' ? 'მთავარი გვერდის ვიჯეტები' : 'Home Page Dashboard Widgets'}
                 </h4>
                 <p className="text-[10px] text-slate-400 font-sans">
-                  {state.lang === 'ka' 
-                    ? 'აირჩიეთ, თუ რომელი ბლოკები გამოჩნდეს მთავარ პორტალზე.' 
+                  {state.lang === 'ka'
+                    ? 'აირჩიეთ, თუ რომელი ბლოკები გამოჩნდეს მთავარ პორტალზე.'
                     : 'Choose what metrics appear on your main portal homepage.'
                   }
                 </p>
@@ -2844,10 +2948,10 @@ export default function App() {
                     { id: 'audit', label: state.lang === 'ka' ? '🛡️ საქმიანობის აუდიტის ჟურნალი' : '🛡️ Immutable Audit Trail Ledger History', module: null }
                   ].map(widget => (
                     <label key={widget.id} className="flex items-center gap-2.5 p-3.5 bg-stone-50/70 dark:bg-stone-900/30 border border-stone-150 dark:border-stone-800 rounded-xl hover:bg-stone-100/50 cursor-pointer select-none">
-                      <input 
-                        type="checkbox" 
-                        name="enabledWidgets" 
-                        value={widget.id} 
+                      <input
+                        type="checkbox"
+                        name="enabledWidgets"
+                        value={widget.id}
                         defaultChecked={defaultEnabledWidgets.includes(widget.id)}
                         className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600 cursor-pointer"
                       />
@@ -2901,7 +3005,7 @@ export default function App() {
       )}
 
       {/* OMNIPRESENT FLOATING AI WIDGET */}
-      {state.isLoggedIn && (
+      {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
         <>
           {/* Glowing floating orb button (hidden when drawer is open) */}
           <AnimatePresence>
@@ -3152,7 +3256,7 @@ function SyncTroubleshooterModal({
         tabIndex={-1}
         className="bg-white dark:bg-[#140d0e] max-w-md w-full rounded-2xl border border-stone-200 dark:border-[#2a191b] shadow-2xl overflow-hidden animate-scale-up text-stone-850 dark:text-stone-100 font-sans"
       >
-        
+
         {/* Header */}
         <div className="px-5 py-4 border-b border-stone-100 dark:border-stone-800 flex justify-between items-center bg-stone-50 dark:bg-stone-950/40">
           <h3 id="sync-troubleshooter-title" className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-2">
@@ -3170,7 +3274,7 @@ function SyncTroubleshooterModal({
 
         {/* Body */}
         <div className="p-6 space-y-5">
-          
+
           {/* Error detail */}
           <div className="p-4 bg-rose-50 dark:bg-rose-950/25 border border-rose-200/60 dark:border-rose-900/50 rounded-xl space-y-2">
             <span className="text-[10px] font-mono uppercase text-rose-700 dark:text-rose-455 font-bold tracking-wider">
@@ -3214,8 +3318,8 @@ function SyncTroubleshooterModal({
           <div className="p-3.5 bg-amber-50/50 dark:bg-amber-950/15 border border-amber-255/50 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 rounded-xl text-[11px] leading-relaxed flex gap-2 text-left">
             <span className="text-base leading-none">⚠️</span>
             <div>
-              <strong>{lang === 'ka' ? 'ყურადღება:' : 'Warning:'}</strong> {lang === 'ka' 
-                ? 'ლოკალური ცვლილებების გაუქმება სამუდამოდ წაშლის ყველა გაუსინქრონებელ ჩანაწერს და ჩამოტვირთავს სერვერის მიმდინარე ვერსიას.' 
+              <strong>{lang === 'ka' ? 'ყურადღება:' : 'Warning:'}</strong> {lang === 'ka'
+                ? 'ლოკალური ცვლილებების გაუქმება სამუდამოდ წაშლის ყველა გაუსინქრონებელ ჩანაწერს და ჩამოტვირთავს სერვერის მიმდინარე ვერსიას.'
                 : 'Discarding local changes will permanently erase all offline/unsynced mutations and overwrite local state with the server database.'}
             </div>
           </div>

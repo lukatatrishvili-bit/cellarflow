@@ -3,6 +3,8 @@ export {
   availableToSell,
   computeDispatchFinancials,
   isActiveReservation,
+  isActiveSalesDispatch,
+  isSalesDispatchReversal,
   reservationKey,
   reservedBottlesFor,
   reservedByLocationLot,

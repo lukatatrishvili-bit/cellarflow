@@ -3,8 +3,10 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
+  Building2,
   CheckCircle2,
   DatabaseZap,
+  ExternalLink,
   FileJson,
   GitBranch,
   Loader2,
@@ -12,6 +14,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   ShieldCheck,
 } from 'lucide-react';
 import {
@@ -27,10 +30,10 @@ import {
   cx,
 } from './ui/primitives';
 import type { Language } from '../lib/i18n';
+import type { CompanyProfile, WineAgencyVerificationEvidence } from '../lib/wineryState';
 import type {
   ConnectorConfigInput,
   FieldMappingInput,
-  IntegrationConnectorConfig,
   IntegrationConnectorDefinition,
   IntegrationDomainDefinition,
   IntegrationExternalReference,
@@ -41,7 +44,6 @@ import type {
   IntegrationSyncFormat,
   IntegrationSyncJob,
   IntegrationSyncEvent,
-  IntegrationConflictRecord,
   SourceOfTruthRule,
 } from '../lib/integrations';
 import {
@@ -54,6 +56,7 @@ import {
 interface IntegrationHubTabProps {
   lang?: Language;
   setToastMessage: (msg: string | null) => void;
+  setCompanyProfile?: (profile: CompanyProfile) => void;
 }
 
 interface HubResponse {
@@ -61,11 +64,56 @@ interface HubResponse {
   domains: IntegrationDomainDefinition[];
   sourceOfTruth: Record<IntegrationSyncDomain, SourceOfTruthRule>;
   hub: PublicHub;
+  wineAgency?: WineAgencyLinkState;
 }
 
 interface PublicHub extends Omit<IntegrationHubState, 'jobs'> {
   jobs: IntegrationSyncJob[];
 }
+
+interface WineAgencyRegistryEntry {
+  registrationNumber: string;
+  name: string;
+  legalForm?: string;
+  identificationCode?: string;
+  address?: string;
+  website?: string;
+  sourceUrl: string;
+  verifiedAt: string;
+}
+
+interface WineAgencyRegistryResponse {
+  ok: true;
+  results: WineAgencyRegistryEntry[];
+  sourceUrl: string;
+  verifiedAt: string;
+  officialApi: false;
+  transport: 'public_html_registry';
+  portalUrl: string;
+}
+
+interface WineAgencyIdentityMismatch {
+  field: 'registrationNumber' | 'identificationCode';
+  localValue: string;
+  registryValue: string;
+}
+
+interface WineAgencyLinkState {
+  verification: WineAgencyVerificationEvidence | null;
+  mismatches: WineAgencyIdentityMismatch[];
+  status: WineAgencyVerificationStatus;
+  portalUrl: string;
+}
+
+interface WineAgencyVerificationStatus {
+  state: 'not_linked' | 'current' | 'recheck_due' | 'identity_mismatch';
+  policy: 'cellarflow_internal';
+  recheckIntervalDays: number;
+  checkedAt?: string;
+  recheckDueAt?: string;
+}
+
+const WINE_AGENCY_PORTAL_URL = 'https://portal.wine.gov.ge/';
 
 const DEFAULT_MAPPING_ROWS: Array<Pick<FieldMappingInput, 'localField' | 'externalField' | 'required'>> = [
   { localField: 'localId', externalField: 'CellarFlowID', required: true },
@@ -90,6 +138,13 @@ function formatDate(value: string | null | undefined, ka: boolean): string {
   }
 }
 
+function wineAgencyStatusLabel(status: WineAgencyVerificationStatus | null, ka: boolean): string {
+  if (!status || status.state === 'not_linked') return ka ? 'არ არის დაკავშირებული' : 'Not linked';
+  if (status.state === 'identity_mismatch') return ka ? 'მონაცემები განსხვავდება' : 'Identity mismatch';
+  if (status.state === 'recheck_due') return ka ? 'ხელახლა გადამოწმება საჭიროა' : 'Re-check due';
+  return ka ? 'აქტუალურია' : 'Current';
+}
+
 function downloadArtifact(job: IntegrationSyncJob): void {
   if (!job.exportArtifact) return;
   const type = job.exportArtifact.format === 'json' ? 'application/json' : 'text/csv';
@@ -104,7 +159,7 @@ function downloadArtifact(job: IntegrationSyncJob): void {
   URL.revokeObjectURL(url);
 }
 
-export default function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationHubTabProps) {
+export default function IntegrationHubTab({ lang = 'en', setToastMessage, setCompanyProfile }: IntegrationHubTabProps) {
   const ka = lang === 'ka';
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -125,6 +180,17 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
   const [importPayload, setImportPayload] = React.useState('');
   const [secretValue, setSecretValue] = React.useState('');
   const [conflictNotes, setConflictNotes] = React.useState<Record<string, string>>({});
+  const [agencyRegistrationNumber, setAgencyRegistrationNumber] = React.useState('');
+  const [agencyCompanyName, setAgencyCompanyName] = React.useState('');
+  const [agencySearching, setAgencySearching] = React.useState(false);
+  const [agencyHasSearched, setAgencyHasSearched] = React.useState(false);
+  const [agencyResult, setAgencyResult] = React.useState<WineAgencyRegistryResponse | null>(null);
+  const [agencyError, setAgencyError] = React.useState<string | null>(null);
+  const [agencyVerification, setAgencyVerification] = React.useState<WineAgencyVerificationEvidence | null>(null);
+  const [agencyMismatches, setAgencyMismatches] = React.useState<WineAgencyIdentityMismatch[]>([]);
+  const [agencyStatus, setAgencyStatus] = React.useState<WineAgencyVerificationStatus | null>(null);
+  const [agencyPortalUrl, setAgencyPortalUrl] = React.useState(WINE_AGENCY_PORTAL_URL);
+  const [agencyLinkingRegistration, setAgencyLinkingRegistration] = React.useState<string | null>(null);
   const [mappingRows, setMappingRows] = React.useState<FieldMappingInput[]>(
     DEFAULT_MAPPING_ROWS.map((row) => ({
       domain: 'products',
@@ -153,6 +219,14 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
       setDomains(payload.domains || []);
       setSourceOfTruth(payload.sourceOfTruth || {});
       setHub(payload.hub);
+      const verification = payload.wineAgency?.verification || null;
+      setAgencyVerification(verification);
+      setAgencyMismatches(payload.wineAgency?.mismatches || []);
+      setAgencyStatus(payload.wineAgency?.status || null);
+      setAgencyPortalUrl(payload.wineAgency?.portalUrl || WINE_AGENCY_PORTAL_URL);
+      if (verification?.registrationNumber) {
+        setAgencyRegistrationNumber(current => current || verification.registrationNumber);
+      }
     } catch (err) {
       setToastMessage(`Integration Hub: ${err instanceof Error ? err.message : (ka ? 'ჩატვირთვა ვერ მოხერხდა' : 'Load failed')}`);
     } finally {
@@ -355,6 +429,79 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
     }
   };
 
+  const verifyWineAgencyRegistry = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const registrationNumber = agencyRegistrationNumber.trim();
+    const companyName = agencyCompanyName.trim();
+    if (!registrationNumber && !companyName) {
+      setAgencyError(ka ? 'შეიყვანეთ რეგისტრაციის ნომერი ან კომპანიის სახელი.' : 'Enter a registration number or company name.');
+      return;
+    }
+    setAgencySearching(true);
+    setAgencyHasSearched(true);
+    setAgencyError(null);
+    try {
+      const params = new URLSearchParams();
+      if (registrationNumber) params.set('registrationNumber', registrationNumber);
+      if (companyName) params.set('companyName', companyName);
+      const res = await fetch(`/api/integrations/wine-agency/registry?${params.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Wine Agency registry lookup failed.');
+      setAgencyResult(data as WineAgencyRegistryResponse);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Wine Agency registry lookup failed.';
+      setAgencyResult(null);
+      setAgencyError(message);
+    } finally {
+      setAgencySearching(false);
+    }
+  };
+
+  const linkWineAgencyRecord = async (entry: WineAgencyRegistryEntry) => {
+    setAgencyLinkingRegistration(entry.registrationNumber);
+    setAgencyError(null);
+    try {
+      const res = await fetch('/api/integrations/wine-agency/registry/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrationNumber: entry.registrationNumber }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Unable to link producer identity.');
+      setAgencyVerification(data.verification || null);
+      setAgencyMismatches(data.mismatches || []);
+      setAgencyStatus(data.status || null);
+      setAgencyPortalUrl(data.portalUrl || WINE_AGENCY_PORTAL_URL);
+      if (data.companyProfile && setCompanyProfile) setCompanyProfile(data.companyProfile as CompanyProfile);
+      setToastMessage(ka ? 'სააგენტოს მწარმოებლის ჩანაწერი პროფილთან დაკავშირებულია.' : 'Wine Agency producer record linked to the winery profile.');
+    } catch (error) {
+      setAgencyError(error instanceof Error ? error.message : 'Unable to link producer identity.');
+    } finally {
+      setAgencyLinkingRegistration(null);
+    }
+  };
+
+  const reverifyWineAgencyRecord = async () => {
+    if (!agencyVerification) return;
+    setAgencyLinkingRegistration(agencyVerification.registrationNumber);
+    setAgencyError(null);
+    try {
+      const res = await fetch('/api/integrations/wine-agency/registry/reverify', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Unable to re-check producer identity.');
+      setAgencyVerification(data.verification || null);
+      setAgencyMismatches(data.mismatches || []);
+      setAgencyStatus(data.status || null);
+      setAgencyPortalUrl(data.portalUrl || WINE_AGENCY_PORTAL_URL);
+      if (data.companyProfile && setCompanyProfile) setCompanyProfile(data.companyProfile as CompanyProfile);
+      setToastMessage(ka ? 'ღვინის სააგენტოს საჯარო ჩანაწერი ხელახლა გადამოწმდა.' : 'Wine Agency public record re-checked.');
+    } catch (error) {
+      setAgencyError(error instanceof Error ? error.message : 'Unable to re-check producer identity.');
+    } finally {
+      setAgencyLinkingRegistration(null);
+    }
+  };
+
   const updateMappingRow = (index: number, updates: Partial<FieldMappingInput>) => {
     setMappingRows((rows) => rows.map((row, i) => i === index ? { ...row, ...updates } : row));
   };
@@ -423,6 +570,174 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
           tone={openConflicts.length ? 'danger' : 'success'}
         />
       </div>
+
+      <SectionCard
+        title={ka ? 'ღვინის ეროვნული სააგენტოს რეესტრი' : 'National Wine Agency registry'}
+        subtitle={ka ? 'საჯარო მწარმოებელთა დირექტორიაში მხოლოდ წაკითხვის რეჟიმით გადამოწმება.' : 'Read-only verification against the public producer directory.'}
+        icon={Building2}
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <a
+              href="https://www.wine.gov.ge/En/WineCompaniesAndWineries"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-700 hover:underline dark:text-sky-300"
+            >
+              {ka ? 'ოფიციალური დირექტორია' : 'Official directory'}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+            <a
+              href={agencyPortalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-700 hover:underline dark:text-sky-300"
+            >
+              {ka ? 'სააგენტოს პორტალი' : 'Agency portal'}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          {agencyVerification && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/20">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 dark:text-emerald-100">
+                    <CheckCircle2 className="h-4 w-4" />
+                    {ka ? 'პროფილთან დაკავშირებული საჯარო ჩანაწერი' : 'Public record linked to winery profile'}
+                  </div>
+                  <div className="mt-2">
+                    <StatusBadge tone={agencyStatus?.state === 'current' ? 'success' : 'warning'}>
+                      {wineAgencyStatusLabel(agencyStatus, ka)}
+                    </StatusBadge>
+                  </div>
+                  <p className="mt-1 break-words text-sm font-bold text-stone-800 dark:text-stone-100">{agencyVerification.name}</p>
+                  <p className="mt-1 text-[11px] font-semibold text-stone-600 dark:text-stone-300">
+                    {ka ? 'რეგისტრაცია' : 'Registration'}: {agencyVerification.registrationNumber}
+                    {agencyVerification.identificationCode ? ` · ${ka ? 'საიდ. კოდი' : 'ID code'}: ${agencyVerification.identificationCode}` : ''}
+                  </p>
+                </div>
+                <div className="text-right text-[10px] font-semibold text-emerald-800 dark:text-emerald-200">
+                  <div>{ka ? 'ბოლოს გადამოწმდა' : 'Last verified'}</div>
+                  <div>{formatDate(agencyVerification.verifiedAt, ka)}</div>
+                  <button
+                    type="button"
+                    onClick={reverifyWineAgencyRecord}
+                    disabled={Boolean(agencyLinkingRegistration)}
+                    className="mt-2 inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-white/70 px-2 py-1 font-bold text-emerald-900 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-800 dark:bg-stone-950/40 dark:text-emerald-100"
+                  >
+                    <RefreshCw className={cx('h-3 w-3', agencyLinkingRegistration ? 'animate-spin' : '')} />
+                    {ka ? 'ხელახლა გადამოწმება' : 'Re-check now'}
+                  </button>
+                </div>
+              </div>
+              {agencyStatus?.state === 'recheck_due' && (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+                  {ka
+                    ? `CellarFlow-ის შიდა ${agencyStatus.recheckIntervalDays}-დღიანი გადამოწმების ვადა გავიდა. ეს სააგენტოს მოთხოვნა არ არის.`
+                    : `CellarFlow's internal ${agencyStatus.recheckIntervalDays}-day re-check is due. This is not an Agency requirement.`}
+                </div>
+              )}
+              {agencyMismatches.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+                  {ka ? 'პროფილის მონაცემები განსხვავდება საჯარო ჩანაწერისგან: ' : 'Profile data differs from the public record: '}
+                  {agencyMismatches.map(item => item.field === 'identificationCode'
+                    ? (ka ? 'საიდენტიფიკაციო კოდი' : 'identification code')
+                    : (ka ? 'რეგისტრაციის ნომერი' : 'registration number')).join(', ')}.
+                  {' '}{ka ? 'ადგილობრივი მნიშვნელობა ავტომატურად არ გადაგვიწერია.' : 'The existing local value was not overwritten automatically.'}
+                </div>
+              )}
+            </div>
+          )}
+          <InlineNotice tone="info">
+            {ka
+              ? 'ეს ფუნქცია ამოწმებს სააგენტოს საჯარო დირექტორიას. იგი არ შედის მწარმოებლის პორტალში, არ აგზავნის დეკლარაციებს და არ არის სააგენტოს ოფიციალური API.'
+              : 'This checks the Agency’s public directory. It does not access the producer portal, submit declarations, or claim to be an official Agency API.'}
+          </InlineNotice>
+          <form onSubmit={verifyWineAgencyRegistry} className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(160px,0.7fr)_minmax(220px,1.3fr)_auto] md:items-end">
+            <div>
+              <FieldLabel>{ka ? 'რეგისტრაციის ნომერი' : 'Registration number'}</FieldLabel>
+              <input
+                value={agencyRegistrationNumber}
+                onChange={(event) => setAgencyRegistrationNumber(event.target.value)}
+                inputMode="numeric"
+                maxLength={20}
+                aria-label={ka ? 'სააგენტოს რეგისტრაციის ნომერი' : 'Agency registration number'}
+                placeholder="1100"
+                className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-950"
+              />
+            </div>
+            <div>
+              <FieldLabel>{ka ? 'კომპანიის სახელი' : 'Company name'}</FieldLabel>
+              <input
+                value={agencyCompanyName}
+                onChange={(event) => setAgencyCompanyName(event.target.value)}
+                maxLength={120}
+                aria-label={ka ? 'სააგენტოს რეესტრში კომპანიის სახელი' : 'Company name in Agency registry'}
+                placeholder={ka ? 'მაგ. Badagoni' : 'e.g. Badagoni'}
+                className="w-full rounded-xl border border-[#e8dfd5] bg-white px-3 py-2 text-xs outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-950"
+              />
+            </div>
+            <ActionButton type="submit" disabled={agencySearching} className="w-full md:w-auto">
+              {agencySearching ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Search className="mr-1.5 h-3.5 w-3.5" />}
+              {agencySearching ? (ka ? 'მოწმდება' : 'Checking') : (ka ? 'გადამოწმება' : 'Verify')}
+            </ActionButton>
+          </form>
+
+          {agencyError && <InlineNotice tone="danger">{agencyError}</InlineNotice>}
+          {agencyHasSearched && !agencySearching && !agencyError && agencyResult?.results.length === 0 && (
+            <InlineNotice tone="neutral">
+              {ka ? 'საჯარო დირექტორიაში შესაბამისი მწარმოებელი ვერ მოიძებნა.' : 'No matching producer was found in the public directory.'}
+            </InlineNotice>
+          )}
+          {agencyResult && agencyResult.results.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-semibold text-stone-500 dark:text-stone-400">
+                <span>{ka ? `${agencyResult.results.length} ჩანაწერი` : `${agencyResult.results.length} record${agencyResult.results.length === 1 ? '' : 's'}`}</span>
+                <span>{ka ? 'გადამოწმდა' : 'Verified'} {formatDate(agencyResult.verifiedAt, ka)}</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                {agencyResult.results.map((entry) => (
+                  <article key={entry.registrationNumber} className="rounded-xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-800 dark:bg-stone-950/40">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h4 className="break-words text-sm font-bold text-stone-800 dark:text-stone-100">{entry.name}</h4>
+                        <p className="mt-1 text-[11px] font-semibold text-stone-500">
+                          {ka ? 'რეგისტრაცია' : 'Registration'}: {entry.registrationNumber}
+                          {entry.identificationCode ? ` · ${ka ? 'საიდ. კოდი' : 'ID code'}: ${entry.identificationCode}` : ''}
+                        </p>
+                      </div>
+                      <StatusBadge tone="success">{ka ? 'საჯარო ჩანაწერი' : 'Public record'}</StatusBadge>
+                    </div>
+                    {entry.address && <p className="mt-2 text-[11px] leading-relaxed text-stone-600 dark:text-stone-300">{entry.address}</p>}
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                      {entry.website ? (
+                        <a href={entry.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-sky-700 hover:underline dark:text-sky-300">
+                          {ka ? 'ვებგვერდი' : 'Website'} <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : <span />}
+                      <ActionButton
+                        tone={agencyVerification?.registrationNumber === entry.registrationNumber ? 'secondary' : 'brand'}
+                        disabled={Boolean(agencyLinkingRegistration)}
+                        onClick={() => linkWineAgencyRecord(entry)}
+                        className="px-3 py-1.5"
+                      >
+                        {agencyLinkingRegistration === entry.registrationNumber
+                          ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          : <Save className="mr-1.5 h-3.5 w-3.5" />}
+                        {agencyVerification?.registrationNumber === entry.registrationNumber
+                          ? (ka ? 'ხელახლა გადამოწმება' : 'Reverify')
+                          : (ka ? 'პროფილთან დაკავშირება' : 'Link to profile')}
+                      </ActionButton>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </SectionCard>
 
       <div className="flex flex-wrap gap-2 rounded-2xl border border-[#e8dfd5] bg-white/90 p-2 dark:border-stone-800 dark:bg-stone-900/90">
         {[
@@ -659,7 +974,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
                 const ruleText = sourceOfTruthDisplay(rule, lang);
                 return (
                 <div key={rule.domain} className="rounded-xl border border-stone-200 bg-stone-50/60 p-3 dark:border-stone-800 dark:bg-stone-950/30">
-                  <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-black uppercase text-stone-800 dark:text-amber-100">{integrationDomainLabel(rule.domain, lang)}</span>
                     <StatusBadge tone="info">{rule.domain}</StatusBadge>
                   </div>

@@ -89,7 +89,7 @@ export default function ProfileSettingsTab({
   const selectedLead = selectedDirectoryRecord ? directoryRecordToCrmLead(selectedDirectoryRecord, 'manual_directory_import') : null;
   const savedLeadIds = new Set(crmLeads.map(lead => lead.id));
 
-  const fetchMembers = async () => {
+  const fetchMembers = React.useCallback(async () => {
     if (!currentUser) return;
     setLoadingMembers(true);
     try {
@@ -104,11 +104,11 @@ export default function ProfileSettingsTab({
     } finally {
       setLoadingMembers(false);
     }
-  };
+  }, [currentUser]);
 
   React.useEffect(() => {
     fetchMembers();
-  }, [activeOrg?.id]);
+  }, [activeOrg?.id, fetchMembers]);
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -219,15 +219,15 @@ export default function ProfileSettingsTab({
               longitude: parseFloat(fd.get('longitude') as string) || 45.4740
             });
           }
-          
+
           const modules = fd.getAll('enabledModules') as string[];
           const widgets = fd.getAll('enabledWidgets') as string[];
-          
+
           if (modules.length === 0) {
             alert(lang === 'ka' ? 'გთხოვთ აირჩიოთ მინიმუმ ერთი აქტიური მოდული.' : 'Please enable at least one active module.');
             return;
           }
-          
+
           if (onUpdateProfile) {
             await onUpdateProfile({
               fullName: currentUser.fullName,
@@ -235,7 +235,7 @@ export default function ProfileSettingsTab({
               enabledWidgets: widgets
             });
           }
-          
+
           setToastMessage(lang === 'ka' ? 'პარამეტრები წარმატებით შეინახა!' : 'Preferences saved successfully!');
           }}
           className="space-y-4"
@@ -352,7 +352,7 @@ export default function ProfileSettingsTab({
               </div>
             )}
           </div>
-          
+
           {!canManageProfile && (
             <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[10.5px] font-semibold leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
               {lang === 'ka'
@@ -405,6 +405,18 @@ export default function ProfileSettingsTab({
               </div>
             </div>
           </div>
+
+          {companyProfile.wineAgencyVerification && (
+            <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[10.5px] font-semibold leading-relaxed text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-100">
+              <div className="font-black">
+                {lang === 'ka' ? 'ღვინის სააგენტოს საჯარო ჩანაწერი გადამოწმებულია' : 'Wine Agency public record verified'}
+              </div>
+              <div className="mt-1">
+                {companyProfile.wineAgencyVerification.name} · {companyProfile.wineAgencyVerification.registrationNumber}
+                {' · '}{lang === 'ka' ? 'გადამოწმდა' : 'verified'} {new Date(companyProfile.wineAgencyVerification.verifiedAt).toLocaleDateString(lang === 'ka' ? 'ka-GE' : undefined)}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'მწარმოებლის / რეგისტრაციის შენიშვნები' : 'Producer / registration notes'}</label>
@@ -464,29 +476,29 @@ export default function ProfileSettingsTab({
               {lang === 'ka' ? 'სათავო ოფისის GPS კოორდინატები' : 'Precise Manual Coordinates Control'}
             </span>
             <p className="text-[10px] leading-relaxed text-stone-600">
-              {lang === 'ka' 
-                ? 'ვებ ბრაუზერებში GPS სიზუსტე შეიძლება არასანდო იყოს. გთხოვთ ხელით მიუთითოთ ზუსტი კოორდინატები სატელიტური ამინდისა და დაავადებების რისკების სწორი მოდელირებისთვის.' 
+              {lang === 'ka'
+                ? 'ვებ ბრაუზერებში GPS სიზუსტე შეიძლება არასანდო იყოს. გთხოვთ ხელით მიუთითოთ ზუსტი კოორდინატები სატელიტური ამინდისა და დაავადებების რისკების სწორი მოდელირებისთვის.'
                 : 'System GPS location can be inaccurate inside web sandboxes. Explicitly defining manual coordinates enables highly granular satellite weather analysis and precise mildew risk indexing.'}
             </p>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Manual Latitude</label>
-                <input 
-                  type="number" 
-                  step="0.0001" 
-                  name="latitude" 
-                  defaultValue={companyProfile.latitude ?? 41.9056} 
-                  className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-800 font-mono outline-none focus:border-amber-500" 
+                <input
+                  type="number"
+                  step="0.0001"
+                  name="latitude"
+                  defaultValue={companyProfile.latitude ?? 41.9056}
+                  className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-800 font-mono outline-none focus:border-amber-500"
                 />
               </div>
               <div>
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">Manual Longitude</label>
-                <input 
-                  type="number" 
-                  step="0.0001" 
-                  name="longitude" 
-                  defaultValue={companyProfile.longitude ?? 45.4740} 
-                  className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-800 font-mono outline-none focus:border-amber-500" 
+                <input
+                  type="number"
+                  step="0.0001"
+                  name="longitude"
+                  defaultValue={companyProfile.longitude ?? 45.4740}
+                  className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-800 font-mono outline-none focus:border-amber-500"
                 />
               </div>
             </div>
@@ -502,12 +514,12 @@ export default function ProfileSettingsTab({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label htmlFor="operator-full-name" className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400">{lang === 'ka' ? 'ოპერატორის სრული სახელი' : 'Operator Full Name'}</label>
-              <input 
+              <input
                 id="operator-full-name"
-                type="text" 
+                type="text"
                 value={currentUser.fullName}
                 onChange={(e) => setCurrentUser({ ...currentUser, fullName: e.target.value })}
-                className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded text-stone-900 font-bold outline-none" 
+                className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded text-stone-900 font-bold outline-none"
               />
             </div>
             <div>
@@ -540,10 +552,10 @@ export default function ProfileSettingsTab({
           <div className="grid grid-cols-2 gap-4">
             {canUseVineyard && (
             <label className="flex items-start gap-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-xl cursor-pointer hover:border-emerald-500/50 transition-all select-none">
-              <input 
-                type="checkbox" 
-                name="enabledModules" 
-                value="vazi" 
+              <input
+                type="checkbox"
+                name="enabledModules"
+                value="vazi"
                 defaultChecked={(currentUser.enabledModules || ['vazi', 'gvino']).includes('vazi')}
                 className="h-4.5 w-4.5 rounded border-stone-300 text-emerald-800 focus:ring-emerald-800 accent-emerald-800 cursor-pointer mt-0.5"
               />
@@ -558,10 +570,10 @@ export default function ProfileSettingsTab({
 
             {canUseCellar && (
             <label className="flex items-start gap-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-xl cursor-pointer hover:border-[#801323]/50 transition-all select-none">
-              <input 
-                type="checkbox" 
-                name="enabledModules" 
-                value="gvino" 
+              <input
+                type="checkbox"
+                name="enabledModules"
+                value="gvino"
                 defaultChecked={(currentUser.enabledModules || ['vazi', 'gvino']).includes('gvino')}
                 className="h-4.5 w-4.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer mt-0.5"
               />
@@ -591,10 +603,10 @@ export default function ProfileSettingsTab({
               { id: 'audit', module: 'audit', label: lang === 'ka' ? '🛡️ აუდიტის ჟურნალი' : '🛡️ Immutable Audit Trail Ledger' }
             ].filter(widget => canViewAppDestination(effectiveRole, widget.module, widget.tab)).map(widget => (
               <label key={widget.id} className="flex items-center gap-2 p-3 bg-stone-50 border border-stone-150 rounded-xl hover:bg-stone-100/50 cursor-pointer select-none">
-                <input 
-                  type="checkbox" 
-                  name="enabledWidgets" 
-                  value={widget.id} 
+                <input
+                  type="checkbox"
+                  name="enabledWidgets"
+                  value={widget.id}
                   defaultChecked={(currentUser.enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit']).includes(widget.id)}
                   className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600 cursor-pointer"
                 />
@@ -615,15 +627,15 @@ export default function ProfileSettingsTab({
                 ⚡ {lang === 'ka' ? 'ენერგიის დამზოგი რეჟიმი' : 'Low Power UI Mode'}
               </span>
               <span className="block text-[9.5px] text-slate-400 dark:text-stone-550 leading-normal">
-                {lang === 'ka' 
-                  ? 'თიშავს ფონურ ანიმაციებს და ეფექტებს ბატარეისა და პროცესორის რესურსების დასაზოგად.' 
+                {lang === 'ka'
+                  ? 'თიშავს ფონურ ანიმაციებს და ეფექტებს ბატარეისა და პროცესორის რესურსების დასაზოგად.'
                   : 'Stops ambient drifting backdrops and complex visual effects to optimize CPU/GPU battery runtimes.'}
               </span>
             </div>
             <label className="relative inline-flex items-center cursor-pointer select-none">
-              <input 
-                type="checkbox" 
-                checked={manualLowPower} 
+              <input
+                type="checkbox"
+                checked={manualLowPower}
                 onChange={onToggleLowPower}
                 className="sr-only peer"
               />
@@ -633,7 +645,7 @@ export default function ProfileSettingsTab({
 
           <hr className="border-stone-100" />
 
-          <button 
+          <button
             type="submit"
             disabled={!canManageProfile && !onUpdateProfile}
             className="w-full bg-emerald-850 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -696,7 +708,7 @@ export default function ProfileSettingsTab({
           <h4 className="text-[9px] uppercase font-mono border-l-2 border-[#4e0e15] pl-2 font-black tracking-wider text-slate-400">
             {lang === 'ka' ? 'გუნდის წევრები' : 'Active Team Members'}
           </h4>
-          
+
           {loadingMembers ? (
             <div className="text-[10px] text-stone-400 animate-pulse">
               {lang === 'ka' ? 'იტვირთება წევრები…' : 'Loading team members…'}
@@ -819,8 +831,8 @@ export default function ProfileSettingsTab({
               📊 {lang === 'ka' ? 'მონაცემთა ბაზის ექსპორტი (JSON)' : 'Administrative Database Export (JSON)'}
             </h4>
             <p className="text-[10px] text-emerald-700/80 mt-1 dark:text-emerald-500">
-              {lang === 'ka' 
-                ? 'ჩამოტვირთეთ ყველა მომხმარებლის სრული საოპერაციო მონაცემები სამომავლო ანალიზისა და გაუმჯობესებისთვის. პაროლები და სენსიტიური გასაღებები ამოღებულია უსაფრთხოებისთვის.' 
+              {lang === 'ka'
+                ? 'ჩამოტვირთეთ ყველა მომხმარებლის სრული საოპერაციო მონაცემები სამომავლო ანალიზისა და გაუმჯობესებისთვის. პაროლები და სენსიტიური გასაღებები ამოღებულია უსაფრთხოებისთვის.'
                 : 'Download full agricultural data and user configurations across all profiles for future system improvements. Passwords and API secrets are automatically stripped for security.'}
             </p>
           </div>
@@ -841,15 +853,15 @@ export default function ProfileSettingsTab({
               ⚠️ {lang === 'ka' ? 'დემო მონაცემების გასუფთავება' : 'Initialize Clean Estate (Erase Demo Data)'}
             </h4>
             <p className="text-[10px] text-rose-700/80 mt-1">
-              {lang === 'ka' 
-                ? 'წაშლის ყველა სადემონსტრაციო ჭურჭელს, პარტიას, ჟურნალებსა და დავალებებს, რათა დაიწყოთ მუშაობა სუფთა ფურცლიდან.' 
+              {lang === 'ka'
+                ? 'წაშლის ყველა სადემონსტრაციო ჭურჭელს, პარტიას, ჟურნალებსა და დავალებებს, რათა დაიწყოთ მუშაობა სუფთა ფურცლიდან.'
                 : 'Permanently deletes all demo vessels, wine lots, fermentation history, viticulture blocks, and tasks so you can start with a clean slate.'}
             </p>
           </div>
           <button
             type="button"
             onClick={() => {
-              const confirmText = lang === 'ka' 
+              const confirmText = lang === 'ka'
                 ? 'დარწმუნებული ხართ, რომ გსურთ ყველა მონაცემის წაშლა? ამ მოქმედების გაუქმება შეუძლებელია.'
                 : 'Are you sure you want to erase all demo data? This action is permanent and cannot be undone.';
               if (window.confirm(confirmText)) {

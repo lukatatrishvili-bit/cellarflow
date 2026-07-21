@@ -1,16 +1,14 @@
 import express from 'express';
-import { checkWineryScope, requireMasterAdmin, isMasterAdmin } from '../middleware/auth';
+import { checkWineryScope, requireMasterAdmin, isMasterAdmin , loginLimiter, sessionCookie, parseCookies } from '../middleware/auth';
 import { getDeploymentStatus, applyRuntimeScaleReadinessProbe } from '../deploymentStatus';
 import {
   getDB,
   saveCoreMetadata,
   saveUserData,
   resetUserData,
-  getUserData,
   createEmptyUserData,
   deleteUserMetadataFromPostgres,
   refreshCoreMetadataFromPostgres,
-  getPrismaClientForAdmin,
   getPostgresReadinessProbe,
   forceSaveDB,
   reloadOrganizationDataFromPostgres,
@@ -19,7 +17,7 @@ import {
 } from '../db';
 import { getSeederData } from '../seedTestUser';
 import { getRecentClientErrors } from './telemetry';
-import { loginLimiter, sessionCookie, parseCookies } from '../middleware/auth';
+
 import {
   hashPassword,
   verifySessionToken,
@@ -40,6 +38,7 @@ import {
   summarizeCrmLeads,
   summarizeOrgData,
 } from '../adminOrgSummary';
+import { getOperationalTelemetrySnapshot } from '../operationalTelemetry';
 
 const router = express.Router();
 
@@ -216,6 +215,13 @@ router.get('/client-errors', async (req, res) => {
   const auth = await requireMasterAdmin(req, res);
   if (!auth) return;
   res.json({ ok: true, errors: getRecentClientErrors() });
+});
+
+// GET /api/admin/operational-metrics — bounded, payload-free sync/command signals.
+router.get('/operational-metrics', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+  res.json({ ok: true, ...getOperationalTelemetrySnapshot() });
 });
 
 // GET /api/admin/users
@@ -641,7 +647,7 @@ export async function seedTestUserHandler(req: express.Request, res: express.Res
 
     const seededData = getSeederData(orgId);
     db.orgData[orgId] = seededData;
-    
+
     await saveUserData('testuser1', seededData, { updatedBy: 'seed-testuser1' });
 
     const persisted = await reloadOrganizationDataFromPostgres(orgId);

@@ -90,6 +90,9 @@ describe('StorageTab action permissions', () => {
 
     expect(markup).toContain('Add location');
     expect(markup).toContain('Stock movement');
+    expect(markup).toContain('Relocate');
+    expect(markup).toContain('Adjust');
+    expect(markup).not.toContain('>Dispatch<');
     expect(markup).toContain('Delete location Main Warehouse');
     expect(markup).toContain('Delete movement 2026-09-10');
     expect(markup).not.toContain('Some storage actions are unavailable');

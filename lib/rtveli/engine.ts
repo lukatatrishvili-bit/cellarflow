@@ -8,6 +8,7 @@
  */
 
 import type { GrapeIntakeRecord, SupplierPayment, Vessel } from '../wineryState';
+import { isActiveHarvestIntake } from '../harvestIntakeIntegrity';
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -29,9 +30,10 @@ export function seasonOf(date: string | undefined): number {
 }
 
 /** Distinct seasons present in the intake log, newest first. */
-export function seasonYears(intakes: Array<Pick<GrapeIntakeRecord, 'date'>>): number[] {
+export function seasonYears(intakes: Array<Pick<GrapeIntakeRecord, 'date' | 'recordKind' | 'reversedAt' | 'reversedByCommandId'>>): number[] {
   const years = new Set<number>();
   for (const i of intakes) {
+    if (!isActiveHarvestIntake(i as GrapeIntakeRecord)) continue;
     const y = seasonOf(i.date);
     if (y > 0) years.add(y);
   }
@@ -62,6 +64,7 @@ export function computeSupplierLedger(
   const rows = new Map<string, SupplierLedgerRow>();
 
   for (const i of intakes) {
+    if (!isActiveHarvestIntake(i)) continue;
     if (i.source !== 'supplier' || seasonOf(i.date) !== season) continue;
     const name = (i.supplierName || '').trim();
     if (!name) continue;
@@ -126,7 +129,7 @@ export function computeSeasonStats(
   season: number,
   today: string = new Date().toISOString().slice(0, 10),
 ): SeasonStats {
-  const inSeason = intakes.filter(i => seasonOf(i.date) === season);
+  const inSeason = intakes.filter(i => isActiveHarvestIntake(i) && seasonOf(i.date) === season);
   const byVariety = new Map<string, { kg: number; brixKg: number; measuredKg: number }>();
   let totalKg = 0, supplierKg = 0, ownKg = 0, todayKg = 0, todayDeliveries = 0;
   let brixKgAll = 0, measuredKgAll = 0;

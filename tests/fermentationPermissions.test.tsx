@@ -123,6 +123,74 @@ describe('FermentationTab action permissions', () => {
     expect(markup).not.toContain('workspace role');
   });
 
+  it('honors the compound completion permission even when individual reading writes remain allowed', () => {
+    const markup = renderFermentation({
+      canCreateFermentationLog: true,
+      canUpdateFermentationLot: true,
+      canUpdateFermentationVessel: true,
+      canCompleteFermentation: false,
+    });
+
+    expect(markup).toContain('Standard Log Entry');
+    expect(markup).toContain('Log Today');
+    expect(markup).not.toContain('✓ Completed');
+    expect(markup).toContain('Marking fermentation campaigns complete is restricted');
+  });
+
+  it('offers append-only reopening only for eligible command-created completions', () => {
+    const completedLog: DailyFermLog = {
+      ...log,
+      commandId: 'cmd-fermentation-complete-ui',
+      recordKind: 'completion',
+      isCompletion: true,
+      completedAt: '2026-09-05T12:00:00.000Z',
+      completedBy: currentUser.fullName,
+      lastModified: '2026-09-05T12:00:00.000Z',
+      completionSnapshot: {
+        version: 1,
+        lot: { id: lot.id, stage: 'fermenting', currentVolume: 920, historyDescription: 'Completed' },
+        vessel: { id: vessel.id, currentVolume: 920, assignedLotId: lot.id, lastOperation: 'Filled' },
+        finalLog: {
+          id: log.id, date: log.date, temperature: log.temperature, density: log.density,
+          sugar: log.sugar, ph: log.ph, tastingNotes: log.tastingNotes,
+          capManagement: log.capManagement, additives: log.additives,
+        },
+        auditId: 'audit-fermentation-complete-ui',
+      },
+    };
+    const markup = renderFermentation({
+      lots: [{ ...lot, stage: 'stabilization' }],
+      fermLogs: [completedLog],
+      canReverseFermentationCompletion: true,
+      canDeleteFermentationLog: true,
+    });
+
+    expect(markup).toContain('Final reading');
+    expect(markup).toContain('Reopen');
+    expect(markup).not.toContain('title="Delete Entry"');
+  });
+
+  it('labels correction rows without presenting them as physical chemistry', () => {
+    const correction: DailyFermLog = {
+      ...log,
+      id: 'FERM-CORRECTION-1',
+      commandId: 'cmd-fermentation-complete-reversal-ui',
+      recordKind: 'reversal',
+      isCompletion: false,
+      reversalOfLogId: log.id,
+      reversalOfCommandId: 'cmd-fermentation-complete-ui',
+      reversalReason: 'Completion was premature.',
+      tastingNotes: 'Reversal of fermentation completion: Completion was premature.',
+      capManagement: 'correction',
+    };
+    const markup = renderFermentation({ fermLogs: [correction] });
+
+    expect(markup).toContain('Correction');
+    expect(markup).toContain('Completion was premature');
+    expect(markup).not.toContain(`${correction.density} SG`);
+    expect(markup).not.toContain('title="Delete Entry"');
+  });
+
   it('localizes the read-only guidance in Georgian', () => {
     const markup = renderFermentation({
       lang: 'ka',

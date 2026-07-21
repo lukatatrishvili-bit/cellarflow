@@ -31,6 +31,7 @@ describe('compound cellar workflow permissions', () => {
       canLinkHarvest: false,
       canFillDestinationVessel: true,
       canPostIntakeCost: false,
+      canReverseHarvestIntake: false,
     });
     expect(permissions.vessels).toEqual({
       canCreateVessel: true,
@@ -41,21 +42,24 @@ describe('compound cellar workflow permissions', () => {
       canLogCellarOperation: true,
       canUseOperationVessels: true,
       canConsumeOperationMaterials: false,
+      canReverseCellarOperation: false,
     });
     expect(permissions.transfers).toEqual({
       canExecuteTransfer: true,
       canSanitizeVessels: true,
-      canRollbackTransfer: true,
+      canReverseTransfer: true,
     });
     expect(permissions.fermentation).toEqual({
       canCreateFermentationLog: true,
       canUpdateFermentationLot: true,
       canUpdateFermentationVessel: true,
+      canCompleteFermentation: true,
+      canReverseFermentationCompletion: false,
       canDeleteFermentationLog: false,
     });
     expect(permissions.bottling).toEqual({
       canCreateBottling: true,
-      canDeleteBottling: false,
+      canReverseBottling: false,
       canUseBottlingCosting: false,
       canPlaceFinishedGoods: false,
     });
@@ -69,6 +73,7 @@ describe('compound cellar workflow permissions', () => {
       canLinkHarvest: false,
       canFillDestinationVessel: true,
       canPostIntakeCost: false,
+      canReverseHarvestIntake: false,
     });
     expect(permissions.vessels).toEqual({
       canCreateVessel: false,
@@ -79,16 +84,19 @@ describe('compound cellar workflow permissions', () => {
       canLogCellarOperation: false,
       canUseOperationVessels: true,
       canConsumeOperationMaterials: false,
+      canReverseCellarOperation: false,
     });
     expect(permissions.transfers).toEqual({
       canExecuteTransfer: false,
       canSanitizeVessels: true,
-      canRollbackTransfer: false,
+      canReverseTransfer: false,
     });
     expect(permissions.fermentation).toEqual({
       canCreateFermentationLog: true,
       canUpdateFermentationLot: false,
       canUpdateFermentationVessel: true,
+      canCompleteFermentation: false,
+      canReverseFermentationCompletion: false,
       canDeleteFermentationLog: false,
     });
     expect(Object.values(permissions.bottling).every(value => value === false)).toBe(true);
@@ -102,6 +110,7 @@ describe('compound cellar workflow permissions', () => {
       canLinkHarvest: true,
       canFillDestinationVessel: false,
       canPostIntakeCost: false,
+      canReverseHarvestIntake: false,
     });
   });
 
@@ -147,9 +156,8 @@ describe('compound sales workflow permissions', () => {
       canCreateOrder: false,
       canUpdateOrder: false,
       canCreateDispatch: false,
-      canDeleteDispatch: false,
+      canReverseDispatch: false,
       canCreateStockMovement: false,
-      canDeleteStockMovement: false,
       canViewCosts: true,
       canViewStorage: true,
       canViewBottling: true,
@@ -163,9 +171,8 @@ describe('compound sales workflow permissions', () => {
         permissions.canCreateOrder,
         permissions.canUpdateOrder,
         permissions.canCreateDispatch,
-        permissions.canDeleteDispatch,
+        permissions.canReverseDispatch,
         permissions.canCreateStockMovement,
-        permissions.canDeleteStockMovement,
       ].every(value => value === false)).toBe(true);
     }
   });
@@ -242,31 +249,31 @@ describe('workflow permission contracts match sync authorization', () => {
     expect(uiAllowsFulfillment).toBe(serverAllowsFulfillment);
   });
 
-  it.each(supportedRoles)('matches compound dispatch deletion for %s', (role) => {
+  it.each(supportedRoles)('matches append-only sales reversal writes for %s', (role) => {
     const userDb = {
       salesOrders: [{ id: 'order-1', status: 'fulfilled', dispatchId: 'dispatch-1' }],
       salesDispatches: [{ id: 'dispatch-1', salesOrderId: 'order-1', stockMovementId: 'movement-1' }],
       stockMovements: [{ id: 'movement-1', sourceRef: 'dispatch-1' }],
     };
-    const reopenedOrder = {
-      salesOrders: [{ id: 'order-1', status: 'reserved', dispatchId: null }],
+    const correction = {
+      salesOrders: [{ id: 'order-1', status: 'cancelled', dispatchId: 'dispatch-1' }],
+      salesDispatches: [
+        { id: 'dispatch-1', salesOrderId: 'order-1', stockMovementId: 'movement-1', reversedByCommandId: 'cmd-reversal' },
+        { id: 'dispatch-reversal', recordKind: 'reversal', stockMovementId: 'movement-return' },
+      ],
+      stockMovements: [
+        { id: 'movement-1', sourceRef: 'dispatch-1' },
+        { id: 'movement-return', sourceRef: 'dispatch-reversal', direction: 'in' },
+      ],
     };
-    const deletions = [
-      { id: 'dispatch-1', collection: 'salesDispatches' },
-      { id: 'movement-1', collection: 'stockMovements' },
-    ];
     const permissions = salesWorkflowPermissions(role);
-    const uiAllowsDeletion = permissions.canDeleteDispatch
-      && permissions.canDeleteStockMovement
-      && permissions.canUpdateOrder;
-    const serverAllowsDeletion = authorizeSyncPayload(
+    const serverAllowsCorrection = authorizeSyncPayload(
       role,
       userDb,
-      reopenedOrder,
+      correction,
       undefined,
-      deletions,
     ) === null;
 
-    expect(uiAllowsDeletion).toBe(serverAllowsDeletion);
+    expect(permissions.canReverseDispatch).toBe(serverAllowsCorrection);
   });
 });

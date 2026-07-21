@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
   Boxes,
@@ -105,7 +105,7 @@ export default function GlobalCommandPalette({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const close = () => onOpenChange(false);
+  const close = useCallback(() => onOpenChange(false), [onOpenChange]);
   useFocusTrap(dialogRef, { active: open, onClose: close });
 
   useEffect(() => {
@@ -121,11 +121,11 @@ export default function GlobalCommandPalette({
     }
   }, [open]);
 
-  const jump = (moduleId: string, tabId?: string) => {
+  const jump = useCallback((moduleId: string, tabId?: string) => {
     setActiveModule(moduleId);
     if (tabId) setActiveTab(tabId);
     close();
-  };
+  }, [close, setActiveModule, setActiveTab]);
 
   const commands = useMemo<CommandItem[]>(() => {
     const allModuleCommands: Array<CommandItem & { moduleId: string; tabId?: string }> = [
@@ -224,9 +224,9 @@ export default function GlobalCommandPalette({
     const dispatchCommands = canViewAppDestination(role, 'sales') ? dispatches.map<CommandItem>((dispatch) => ({
       id: `dispatch-${dispatch.id}`,
       kind: 'dispatch',
-      title: dispatch.customerName,
-      subtitle: `${dispatch.lotName} · ${(dispatch.bottles || 0).toLocaleString()} btl · ${dispatch.date}`,
-      keywords: `${dispatch.id} ${dispatch.customerName} ${dispatch.lotId} ${dispatch.lotName} dispatch sale revenue`,
+      title: `${dispatch.recordKind === 'reversal' ? (ka ? 'კორექცია: ' : 'Correction: ') : ''}${dispatch.customerName}`,
+      subtitle: `${dispatch.lotName} · ${(dispatch.bottles || 0).toLocaleString()} btl · ${dispatch.date}${dispatch.reversedByCommandId ? (ka ? ' · კორექტირებული' : ' · reversed') : ''}`,
+      keywords: `${dispatch.id} ${dispatch.customerName} ${dispatch.lotId} ${dispatch.lotName} dispatch sale revenue reversal correction return`,
       icon: Truck,
       run: () => jump('sales'),
     })) : [];
@@ -241,7 +241,24 @@ export default function GlobalCommandPalette({
       ...inventoryCommands,
       ...taskCommands,
     ];
-  }, [dispatches, inventory, lots, orders, role, tasks, vessels, ka]);
+  }, [
+    close,
+    dispatches,
+    inventory,
+    jump,
+    ka,
+    lang,
+    lots,
+    orders,
+    role,
+    setActiveModule,
+    setActiveTab,
+    setLineageLotId,
+    setPassportLotId,
+    setSelectedTankId,
+    tasks,
+    vessels,
+  ]);
 
   const results = useMemo(() => {
     const q = normalize(query);

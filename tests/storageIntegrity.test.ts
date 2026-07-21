@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { persistDeletionTombstone } from '../lib/deletionTombstones';
+import { persistDeletionTombstone, persistDeletionTombstones } from '../lib/deletionTombstones';
 import {
   isFinishedGoodsLot,
   storageLocationReferences,
@@ -162,6 +162,33 @@ describe('storage deletion integrity', () => {
 });
 
 describe('storage deletion tombstones', () => {
+  it('retains the original version evidence across durable retries', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    const original = {
+      id: 'mov-versioned',
+      collection: 'stockMovements',
+      baselineTimestamp: '2026-07-20T08:00:00.000Z',
+      baselineFingerprint: '0123abcd',
+      deletedAt: '2026-07-20T08:05:00.000Z',
+    };
+
+    expect(persistDeletionTombstones([original], storage)).toBe(true);
+    expect(persistDeletionTombstones([{
+      ...original,
+      deletedAt: '2026-07-20T08:06:00.000Z',
+    }], storage)).toBe(true);
+    expect(persistDeletionTombstones([{
+      ...original,
+      baselineTimestamp: '2026-07-20T09:00:00.000Z',
+      baselineFingerprint: 'deadbeef',
+    }], storage)).toBe(false);
+    expect(JSON.parse(values.get('vinea_deleted_ids') || '[]')).toEqual([original]);
+  });
+
   it('persists a unique deletion id and repairs malformed stored data', () => {
     const values = new Map<string, string>([['vinea_deleted_ids', '{bad-json']]);
     const storage = {

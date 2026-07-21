@@ -79,6 +79,19 @@ export function canViewAppDestination(role: unknown, moduleId: string, tabId?: s
   return canAccess(role, permissionModuleFor(moduleId, tabId), 'view');
 }
 
+export function canViewUserDestination(
+  user: { role: unknown; isMasterAdmin?: boolean },
+  moduleId: string,
+  tabId?: string,
+): boolean {
+  // The environment master account has no active winery by design. It must
+  // enter an organization through audited impersonation before tenant-scoped
+  // routes or screens become available.
+  if (user.isMasterAdmin === true) return moduleId === 'master-admin';
+  if (moduleId === 'master-admin') return false;
+  return canViewAppDestination(user.role, moduleId, tabId);
+}
+
 export function visibleWineryTabIds(role: unknown): WineryTabId[] {
   return WINERY_TAB_IDS.filter((tabId) => canViewAppDestination(role, 'gvino', tabId));
 }

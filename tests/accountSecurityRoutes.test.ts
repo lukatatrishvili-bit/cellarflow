@@ -85,6 +85,48 @@ afterAll(async () => {
 });
 
 describe.sequential('account security routes', () => {
+  it('issues master-console capability only to the real master session', async () => {
+    const db = resetDb();
+    const user = {
+      username: 'support-target',
+      email: 'support-target@example.com',
+      fullName: 'Support Target',
+      role: 'Winemaker',
+      language: 'en',
+      activeOrganizationId: 'org-support',
+      accountEnabled: true,
+      sessionVersion: 1,
+    };
+    db.users.push(user);
+    db.organizations.push({ id: 'org-support', name: 'Support Winery' });
+    db.memberships.push({
+      id: 'mem-support', userId: user.username, organizationId: 'org-support', role: 'Winemaker',
+    });
+
+    const masterToken = authModule.createSessionToken({ username: 'master', role: 'Owner/Admin' });
+    const masterResponse = await request('/api/auth/me', {
+      headers: { cookie: `maranios_session=${masterToken}` },
+    }, '198.51.100.9');
+    expect(masterResponse.status).toBe(200);
+    expect(await masterResponse.json()).toEqual(expect.objectContaining({
+      username: 'master',
+      isMasterAdmin: true,
+    }));
+
+    const supportToken = authModule.createSessionToken(
+      authModule.sessionPayloadForUser(user, 'Winemaker', { impersonatedBy: 'master' }),
+    );
+    const supportResponse = await request('/api/auth/me', {
+      headers: { cookie: `maranios_session=${supportToken}` },
+    }, '198.51.100.9');
+    expect(supportResponse.status).toBe(200);
+    expect(await supportResponse.json()).toEqual(expect.objectContaining({
+      username: user.username,
+      isMasterAdmin: false,
+      impersonatedBy: 'master',
+    }));
+  });
+
   it('keeps password-recovery responses neutral for existing and absent accounts', async () => {
     const db = resetDb();
     db.users.push({

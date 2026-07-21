@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Language } from '../lib/i18n';
-import { SyncQueueManager, IndexedDBQueue, type PendingConflictSyncIntent } from '../lib/syncQueue';
+import {
+  SyncQueueManager,
+  IndexedDBQueue,
+  type PendingConflictSyncIntent,
+} from '../lib/syncQueue';
 import type {
   Vessel,
   WineLot,
@@ -46,8 +50,11 @@ import {
 import { PDO_RULES } from '../lib/pdo';
 import { createDocumentAttachmentRecord, type DocumentAttachmentInput } from '../lib/attachments';
 import { createCrmLeadRecord, upsertCrmLeadRecord, type CrmLeadRecordInput } from '../lib/crm';
-import { persistDeletionTombstones, type DeletionTombstone } from '../lib/deletionTombstones';
-import { newerBottlingRunFor } from '../lib/bottlingIntegrity';
+import {
+  persistDeletionTombstones,
+  syncRecordFingerprint,
+  type DeletionTombstone,
+} from '../lib/deletionTombstones';
 import { createUniqueLotId, createUniqueRecordId } from '../lib/recordIds';
 import {
   createAiDraftQueueItems,
@@ -57,13 +64,27 @@ import {
   type AiDraftQueueStatus,
 } from '../lib/aiDraftActions';
 import { isKnownRole } from '../server/permissions';
-import {
-  buildResolvedSyncState,
-  resolveDeletionIntent,
-} from '../lib/syncConflictRecovery';
+import type {
+  BottlingCommandResponse,
+  CellarOperationCommandResponse,
+  FermentationCompletionCommandResponse,
+  FermentationCompletionReversalCommandResponse,
+  HarvestIntakeCommandResponse,
+  SalesStockCommandResponse,
+  StorageMovementCommandResponse,
+  TransferCommandResponse,
+  TransferReversalCommandResponse,
+} from '../lib/commands/client';
 
 interface RolePersistence {
   setItem(key: string, value: string): void;
+}
+
+export function cacheSafeUserProfile(user: UserProfile): UserProfile {
+  const cachedUser = { ...user };
+  delete cachedUser.isMasterAdmin;
+  delete cachedUser.impersonatedBy;
+  return cachedUser;
 }
 
 export function applyOrganizationSwitchRole(
@@ -78,7 +99,7 @@ export function applyOrganizationSwitchRole(
 
   const updatedUser: UserProfile = { ...currentUser, role };
   try {
-    storage?.setItem('vinea_curr_user', JSON.stringify(updatedUser));
+    storage?.setItem('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(updatedUser)));
   } catch {
     // React state remains authoritative when persistent storage is unavailable.
   }
@@ -111,9 +132,13 @@ export function applyLiveSessionProfile(
     ...(typeof candidate.registrationComplete === 'boolean'
       ? { registrationComplete: candidate.registrationComplete }
       : {}),
+    isMasterAdmin: candidate.isMasterAdmin === true,
+    ...(typeof candidate.impersonatedBy === 'string'
+      ? { impersonatedBy: candidate.impersonatedBy }
+      : { impersonatedBy: undefined }),
   };
   try {
-    storage?.setItem('vinea_curr_user', JSON.stringify(updatedUser));
+    storage?.setItem('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(updatedUser)));
   } catch {
     // React state remains authoritative when persistent storage is unavailable.
   }
@@ -355,7 +380,7 @@ export function useWineryState() {
 
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(createBlankCompanyProfile);
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
+  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'analytics' | 'master-admin'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Datasets
@@ -432,6 +457,7 @@ export function useWineryState() {
   const [prefilledTaskPriority, setPrefilledTaskPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [prefilledTaskDesc, setPrefilledTaskDesc] = useState('');
   const [prefilledSourceId, setPrefilledSourceId] = useState('');
+  const [prefilledIntakeHarvestId, setPrefilledIntakeHarvestId] = useState<string | null>(null);
   // Vessel preselected for the quick-operation form (QR scan / drawer action).
   const [prefilledOpVesselId, setPrefilledOpVesselId] = useState('');
   const [prefilledDestId, setPrefilledDestId] = useState('');
@@ -496,7 +522,7 @@ export function useWineryState() {
       setter(val);
       try { localStorage.setItem(localKey, serialized); } catch { /* ignore */ }
     };
-    
+
     setSafe(setVessels, data.vessels, 'vessels', 'cf_vessels');
     setSafe(setLots, data.lots, 'lots', 'cf_lots');
     setSafe(setFermLogs, data.fermlogs, 'fermLogs', 'cf_fermlogs');
@@ -629,6 +655,222 @@ export function useWineryState() {
         }
       }
     }
+  };
+
+  const applyTransferCommandResponse = (response: TransferCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    // A committed command remains recoverable even if the follow-up collection
+    // projection could not be attached to the response. Reconcile the exact
+    // entities from the durable result and let the normal server refresh repair
+    // anything unrelated on the next sync.
+    const result = response.result;
+    const changedLots = new Map(result.changedLots.map(lot => [lot.id, lot]));
+    const nextLots = lots.map(lot => changedLots.get(lot.id) || lot);
+    for (const lot of result.changedLots) {
+      if (!lots.some(existing => existing.id === lot.id)) nextLots.push(lot);
+    }
+    updateAllStates({
+      vessels: vessels.map(vessel => {
+        if (vessel.id === result.sourceVessel.id) return result.sourceVessel;
+        if (vessel.id === result.destinationVessel.id) return result.destinationVessel;
+        return vessel;
+      }),
+      lots: nextLots,
+      transfers: transfers.some(transfer => transfer.id === result.transfer.id)
+        ? transfers
+        : [result.transfer, ...transfers],
+    });
+  };
+
+  const applyTransferReversalCommandResponse = (response: TransferReversalCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    const changedVessels = new Map(result.changedVessels.map(vessel => [vessel.id, vessel]));
+    const changedLots = new Map(result.changedLots.map(lot => [lot.id, lot]));
+    const changedTransfers = new Map([
+      [result.originalTransfer.id, result.originalTransfer],
+      [result.reversalTransfer.id, result.reversalTransfer],
+    ]);
+    const nextTransfers = transfers.map(transfer => changedTransfers.get(transfer.id) || transfer);
+    if (!nextTransfers.some(transfer => transfer.id === result.reversalTransfer.id)) {
+      nextTransfers.unshift(result.reversalTransfer);
+    }
+    updateAllStates({
+      vessels: vessels.map(vessel => changedVessels.get(vessel.id) || vessel),
+      lots: lots.map(lot => changedLots.get(lot.id) || lot),
+      transfers: nextTransfers,
+    });
+  };
+
+  const applyBottlingCommandResponse = (response: BottlingCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    const changedInventory = new Map(result.updatedInventoryItems.map(item => [item.id, item]));
+    updateAllStates({
+      lots: lots.map(lot => lot.id === result.updatedLot.id ? result.updatedLot : lot),
+      bottlingRuns: bottlingRuns.some(run => run.id === result.run.id)
+        ? bottlingRuns
+        : [result.run, ...bottlingRuns],
+      inventory: inventory.map(item => changedInventory.get(item.id) || item),
+      costEntries: [
+        ...result.createdCostEntries.filter(entry => !costEntries.some(existing => existing.id === entry.id)),
+        ...costEntries,
+      ],
+      stockMovements: result.storageMovement && !stockMovements.some(item => item.id === result.storageMovement?.id)
+        ? [result.storageMovement, ...stockMovements]
+        : stockMovements,
+    });
+  };
+
+  const applySalesStockCommandResponse = (response: SalesStockCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    let nextOrders = salesOrders;
+    if (result.order) {
+      nextOrders = salesOrders.some(order => order.id === result.order?.id)
+        ? salesOrders.map(order => order.id === result.order?.id ? result.order as SalesOrderRecord : order)
+        : [result.order, ...salesOrders];
+    }
+    updateAllStates({
+      salesOrders: nextOrders,
+      salesDispatches: result.dispatch && !salesDispatches.some(item => item.id === result.dispatch?.id)
+        ? [result.dispatch, ...salesDispatches]
+        : salesDispatches,
+      stockMovements: result.stockMovement && !stockMovements.some(item => item.id === result.stockMovement?.id)
+        ? [result.stockMovement, ...stockMovements]
+        : stockMovements,
+    });
+  };
+
+  const applyStorageMovementCommandResponse = (response: StorageMovementCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const changedRun = response.result.updatedBottlingRun;
+    updateAllStates({
+      bottlingRuns: changedRun
+        ? bottlingRuns.map(run => run.id === changedRun.id ? changedRun : run)
+        : bottlingRuns,
+      stockMovements: [
+        ...response.result.movements.filter(movement => (
+          !stockMovements.some(existing => existing.id === movement.id)
+        )),
+        ...stockMovements,
+      ],
+    });
+  };
+
+  const applyHarvestIntakeCommandResponse = (response: HarvestIntakeCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      harvests: result.updatedHarvest
+        ? harvests.map(item => item.id === result.updatedHarvest?.id ? result.updatedHarvest as HarvestRecord : item)
+        : harvests,
+      lots: lots.some(item => item.id === result.lot.id) ? lots : [result.lot, ...lots],
+      vessels: result.updatedVessel
+        ? vessels.map(item => item.id === result.updatedVessel?.id ? result.updatedVessel as Vessel : item)
+        : vessels,
+      grapeIntakes: grapeIntakes.some(item => item.id === result.intake.id)
+        ? grapeIntakes
+        : [result.intake, ...grapeIntakes],
+      costEntries: result.costEntry && !costEntries.some(item => item.id === result.costEntry?.id)
+        ? [result.costEntry, ...costEntries]
+        : costEntries,
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyFermentationCompletionCommandResponse = (
+    response: FermentationCompletionCommandResponse,
+  ): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      lots: lots.map(item => item.id === result.lot.id ? result.lot : item),
+      vessels: vessels.map(item => item.id === result.vessel.id ? result.vessel : item),
+      fermlogs: fermLogs.map(item => item.id === result.finalLog.id ? result.finalLog : item),
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyFermentationCompletionReversalCommandResponse = (
+    response: FermentationCompletionReversalCommandResponse,
+  ): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      lots: lots.map(item => item.id === result.lot.id ? result.lot : item),
+      vessels: vessels.map(item => item.id === result.vessel.id ? result.vessel : item),
+      fermlogs: [
+        result.reversalLog,
+        ...fermLogs.map(item => item.id === result.originalLog.id ? result.originalLog : item),
+      ],
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyCellarOperationCommandResponse = (response: CellarOperationCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      lots: lots.map(item => item.id === result.lot.id ? result.lot : item),
+      vessels: result.vessel
+        ? vessels.map(item => item.id === result.vessel?.id ? result.vessel as Vessel : item)
+        : vessels,
+      inventory: result.inventoryItem
+        ? inventory.map(item => item.id === result.inventoryItem?.id ? result.inventoryItem as InventoryItem : item)
+        : inventory,
+      cellarOps: cellarOps.some(item => item.id === result.operation.id)
+        ? cellarOps
+        : [result.operation, ...cellarOps],
+      costEntries: result.costEntry && !costEntries.some(item => item.id === result.costEntry?.id)
+        ? [result.costEntry, ...costEntries]
+        : costEntries,
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
   };
 
   const discardLocalUnsyncedChanges = async () => {
@@ -792,7 +1034,7 @@ export function useWineryState() {
     localStorage.removeItem('cf_ai_drafts');
     localStorage.removeItem('vinea_company_profile');
     localStorage.removeItem('vinea_deleted_ids');
-    
+
     // Reset React state variables to initial values (clean slate for logout view)
     setVessels([]);
     setLots([]);
@@ -938,7 +1180,7 @@ export function useWineryState() {
       });
       if (res.ok) {
         const cleanDB = await res.json();
-        
+
         // Clear local storage cache
         localStorage.removeItem('cf_vessels');
         localStorage.removeItem('cf_lots');
@@ -1061,7 +1303,12 @@ export function useWineryState() {
     setIsLoggedIn(hasLocalSession);
     const storedUser = localStorage.getItem('vinea_curr_user');
     if (storedUser) {
-      try { setCurrentUser(JSON.parse(storedUser)); } catch { /* ignore */ }
+      try {
+        const cachedUser = JSON.parse(storedUser);
+        // Privileged/support-session capabilities are valid only when freshly
+        // issued by the server. Local storage must never restore them.
+        setCurrentUser(cacheSafeUserProfile(cachedUser));
+      } catch { /* ignore */ }
     }
     const storedCompany = localStorage.getItem('vinea_company_profile');
     if (storedCompany) {
@@ -1079,9 +1326,9 @@ export function useWineryState() {
           if (cancelled) return;
           setCurrentUser(user);
           setIsLoggedIn(true);
-          
+
           await fetchOrganizations();
-          
+
           const dbData = await SyncQueueManager.sync({});
           if (!cancelled && dbData) {
             updateAllStates(dbData);
@@ -1159,11 +1406,11 @@ export function useWineryState() {
   // Atomic sync to Local Storage with Auto-API sync wrappers
   const handleCollectionUpdate = (key: string, localKey: string, value: any) => {
     if (!isClient || !isLoggedIn || !hasHydrated.current) return;
-    
+
     // Auto-inject lastModified timestamps for arrays of objects
     let processedValue = value;
     const modifiedOrAddedItems: Array<{ item: any; baselineTimestamp?: string }> = [];
-    
+
     if (Array.isArray(value)) {
       let prevList: any[] = [];
       try {
@@ -1283,7 +1530,7 @@ export function useWineryState() {
     const currentStr = JSON.stringify(processedValue);
     if (hasHydrated.current && currentStr !== lastServerState.current[key]) {
       SyncQueueManager.markDirty(key);
-      
+
       // If offline, queue specific mutations in IndexedDB!
       if (!SyncQueueManager.isOnline()) {
         modifiedOrAddedItems.forEach(({ item, baselineTimestamp }) => {
@@ -1304,7 +1551,7 @@ export function useWineryState() {
         bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
         companyProfile
       };
-      
+
       triggerSync({
         ...currentFullState,
         [key]: processedValue
@@ -1337,7 +1584,10 @@ export function useWineryState() {
   useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_curr_user', JSON.stringify(currentUser)); }, [currentUser, isClient]);
+  useEffect(() => {
+    if (!isClient) return;
+    localStorage.setItem('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(currentUser)));
+  }, [currentUser, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_company_profile', JSON.stringify(companyProfile)); }, [companyProfile, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_active_module', activeModule); }, [activeModule, isClient]);
 
@@ -1355,7 +1605,7 @@ export function useWineryState() {
 
   // Input Sanitizer/Validator Helper for ID poisoning prevention
   const sanitizeId = (id: string): string => {
-    return id.trim().replace(/[^a-zA-Z0-9_\-]/g, '').substring(0, 128);
+    return id.trim().replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 128);
   };
 
   const handleToggleCoolingJacket = (vesselId: string) => {
@@ -1461,10 +1711,10 @@ export function useWineryState() {
   };
 
   const handleSendHarvestToGvino = (
-    blockId: string, 
-    harvestedKg: number, 
-    variety: string, 
-    vintage: number, 
+    blockId: string,
+    harvestedKg: number,
+    variety: string,
+    vintage: number,
     harvestedDate: string
   ): string => {
     if (!Number.isFinite(harvestedKg) || harvestedKg <= 0) {
@@ -1834,7 +2084,7 @@ export function useWineryState() {
     };
 
     setLabLogs([newLab, ...labLogs]);
-    
+
     // Auto-update wine lots
     const targetLot = lots.find(l => l.id === labLotId);
     if (targetLot) {
@@ -1886,7 +2136,50 @@ export function useWineryState() {
   };
 
   const recordDeletions = (records: DeletionTombstone[]): boolean => {
-    if (!persistDeletionTombstones(records, localStorage)) {
+    const collectionsByServerKey: Record<string, any[]> = {
+      vessels, lots, fermlogs: fermLogs, lablogs: labLogs, inventory, tasks, notes: notesList,
+      blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords, samplings,
+      harvests, irrigationLogs, fertilizerLogs, auditLogs, bottlingRuns, transfers,
+      grapeIntakes, cellarOps, costEntries, storageLocations, stockMovements,
+      salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments,
+      crmLeads, aiDrafts,
+    };
+    const capturedAt = new Date().toISOString();
+    const versionedRecords = records.map(record => {
+      const source = record.collection
+        ? collectionsByServerKey[record.collection]?.find(item => item?.id === record.id)
+        : undefined;
+      const clientCollectionKey = record.collection === 'fermlogs'
+        ? 'fermLogs'
+        : record.collection === 'lablogs'
+          ? 'labLogs'
+          : record.collection === 'notes' ? 'notesList' : record.collection;
+      let serverSource: any;
+      try {
+        const serverRecords = clientCollectionKey
+          ? JSON.parse(lastServerState.current[clientCollectionKey] || '[]')
+          : [];
+        if (Array.isArray(serverRecords)) {
+          serverSource = serverRecords.find(item => item?.id === record.id);
+        }
+      } catch {
+        // The current record still supplies fail-closed version evidence.
+      }
+      const baselineTimestamp = record.baselineTimestamp
+        || source?.baselineTimestamp
+        || serverSource?.lastModified
+        || source?.lastModified;
+      const baselineSource = serverSource || source;
+      return {
+        ...record,
+        ...(baselineTimestamp ? { baselineTimestamp } : {}),
+        ...(record.baselineFingerprint
+          ? { baselineFingerprint: record.baselineFingerprint }
+          : baselineSource ? { baselineFingerprint: syncRecordFingerprint(baselineSource) } : {}),
+        deletedAt: record.deletedAt || capturedAt,
+      };
+    });
+    if (!persistDeletionTombstones(versionedRecords, localStorage)) {
       setToastMessage(lang === 'ka'
         ? 'წაშლა ვერ დაიწყო, რადგან ამ მოწყობილობაზე ცვლილების უსაფრთხოდ შენახვა ვერ მოხერხდა. გაათავისუფლეთ საცავი ან განაახლეთ გვერდი და სცადეთ ხელახლა.'
         : 'Deletion could not start because this device could not save it safely. Free browser storage or refresh, then try again.');
@@ -1894,12 +2187,13 @@ export function useWineryState() {
     }
 
     if (!SyncQueueManager.isOnline()) {
-      records.forEach(({ id, collection }) => {
+      versionedRecords.forEach(({ id, collection, baselineTimestamp }) => {
         if (!collection) return;
         IndexedDBQueue.addMutation({
           action: 'delete',
           collection,
           recordId: id,
+          baselineTimestamp,
         });
       });
     }
@@ -1951,81 +2245,6 @@ export function useWineryState() {
     if (!recordDeletion(movementId, 'stockMovements')) return false;
     setStockMovements(prev => prev.filter(item => item.id !== movementId));
     setToastMessage(lang === 'ka' ? 'მარაგის მოძრაობა წაიშალა.' : 'Stock movement deleted.');
-    return true;
-  };
-
-  const handleDeleteBottlingRun = (runId: string): boolean => {
-    const run = bottlingRuns.find(item => item.id === runId);
-    if (!run) return false;
-    const lot = lots.find(item => item.id === run.lotId);
-    if (!lot || run.previousLotVolumeL === undefined || run.previousLotStage === undefined) {
-      setToastMessage(lang === 'ka'
-        ? 'ამ ძველი ჩამოსხმის უსაფრთხოდ გაუქმება შეუძლებელია, რადგან პარტიის აღდგენის სრული მონაცემები არ არის შენახული.'
-        : 'This legacy bottling run cannot be rolled back safely because its complete lot restoration snapshot is missing.');
-      return false;
-    }
-    const previousLotVolumeL = run.previousLotVolumeL;
-    const previousLotStage = run.previousLotStage;
-    const newerRun = newerBottlingRunFor(bottlingRuns, run.id);
-    if (newerRun) {
-      setToastMessage(lang === 'ka'
-        ? 'ჯერ ამავე პარტიის უფრო ახალი ჩამოსხმა გააუქმეთ. ისტორიული ჩანაწერების რიგის დარღვევა პარტიის მოცულობას შეცდომით აღადგენს.'
-        : 'Roll back the newest bottling run for this lot first. Reversing history out of order would restore an incorrect lot volume.');
-      return false;
-    }
-    const linkedMovement = stockMovements.find(movement => (
-      movement.id === run.storageMovementId || movement.sourceRef === run.id
-    ));
-
-    if (linkedMovement) {
-      const blockers = storageMovementDeletionBlockers(linkedMovement.id, {
-        movements: stockMovements,
-        bottlingRuns: bottlingRuns.filter(item => item.id !== run.id),
-        orders: salesOrders,
-        dispatches: salesDispatches,
-      });
-      if (blockers?.blocked) {
-        setToastMessage(lang === 'ka'
-          ? 'ჩამოსხმის გაუქმება ვერ მოხერხდება: დაკავშირებული მარაგის მოძრაობა საჭიროა შემდგომი გატანის, ჯავშნის ან სწორი ბალანსისთვის.'
-          : 'This bottling run cannot be rolled back because its stock movement is required by a later dispatch, reservation, or valid balance.');
-        return false;
-      }
-    }
-
-    if (typeof window !== 'undefined' && !window.confirm(lang === 'ka'
-      ? 'გავაუქმოთ ეს ჩამოსხმა? პარტიის მოცულობა, შეფუთვის მარაგი, ხარჯები და შენახვის მოძრაობა აღდგება. სინქრონიზაციის შემდეგ მოქმედების გაუქმება შეუძლებელია.'
-      : 'Roll back this bottling run? Lot volume, packaging stock, costs, and its storage movement will be restored. This cannot be undone after sync.')) {
-      return false;
-    }
-
-    const linkedCosts = costEntries.filter(entry => entry.sourceRef === run.id);
-    const deletions: DeletionTombstone[] = [
-      { id: run.id, collection: 'bottlingRuns' },
-      ...linkedCosts.map(entry => ({ id: entry.id, collection: 'costEntries' })),
-      ...(linkedMovement ? [{ id: linkedMovement.id, collection: 'stockMovements' }] : []),
-    ];
-    if (!recordDeletions(deletions)) return false;
-
-    setBottlingRuns(prev => prev.filter(item => item.id !== run.id));
-    setCostEntries(prev => prev.filter(entry => entry.sourceRef !== run.id));
-    if (linkedMovement) {
-      setStockMovements(prev => prev.filter(movement => movement.id !== linkedMovement.id));
-    }
-    if (run.packagingDeductions) {
-      setInventory(prev => prev.map(item => {
-        const restored = run.packagingDeductions?.[item.id] || 0;
-        return restored > 0
-          ? { ...item, stock: Math.round(((item.stock || 0) + restored) * 1000) / 1000 }
-          : item;
-      }));
-    }
-    setLots(prev => prev.map(item => item.id !== run.lotId ? item : {
-      ...item,
-      currentVolume: previousLotVolumeL,
-      stage: previousLotStage,
-      history: (item.history || []).filter(event => event.sourceRef !== run.id),
-    }));
-    setToastMessage(lang === 'ka' ? 'ჩამოსხმის ჩანაწერი უსაფრთხოდ გაუქმდა.' : 'Bottling run rolled back safely.');
     return true;
   };
 
@@ -2183,6 +2402,8 @@ export function useWineryState() {
       throw new Error('The original sync transaction could not be recovered. Local changes were kept.');
     }
 
+    const { buildResolvedSyncState, resolveDeletionIntent } = await import('../lib/syncConflictRecovery');
+
     const deletionIntent = resolveDeletionIntent(
       pendingIntent.payload,
       conflictsToResolve,
@@ -2193,13 +2414,14 @@ export function useWineryState() {
       ...deletionIntent.discardedLegacyIds.map(id => ({ id })),
     ];
     if (
-      discardedDeletions.length > 0
-      && !SyncQueueManager.discardPendingConflictDeletions(
+      (discardedDeletions.length > 0 || deletionIntent.retainedRecords.length > 0)
+      && !(await SyncQueueManager.reconcilePendingConflictDeletionRecords(
+        deletionIntent.retainedRecords,
         discardedDeletions,
         pendingIntent.organizationId,
-      )
+      ))
     ) {
-      throw new Error('The server-version choice could not be saved safely. Local changes were kept.');
+      throw new Error('The deletion conflict choices could not be saved safely. Local changes were kept.');
     }
 
     const inMemoryRetryPayload = { ...pendingIntent.payload };
@@ -2285,7 +2507,7 @@ export function useWineryState() {
     };
 
     await triggerSync(currentFullState);
-    
+
     setToastMessage(lang === 'ka' ? 'კონფლიქტები წარმატებით მოგვარდა!' : 'Conflicts resolved successfully!');
     } catch (error) {
       setLastSyncError(error instanceof Error ? error.message : 'Conflict resolution failed');
@@ -2311,7 +2533,7 @@ export function useWineryState() {
     companyProfile, setCompanyProfile,
     activeModule, setActiveModule,
     isSidebarCollapsed, setIsSidebarCollapsed,
-    
+
     // Data
     vessels, setVessels,
     lots, setLots,
@@ -2380,12 +2602,22 @@ export function useWineryState() {
     prefilledTaskPriority, setPrefilledTaskPriority,
     prefilledTaskDesc, setPrefilledTaskDesc,
     prefilledSourceId, setPrefilledSourceId,
+    prefilledIntakeHarvestId, setPrefilledIntakeHarvestId,
     prefilledOpVesselId, setPrefilledOpVesselId,
     prefilledDestId, setPrefilledDestId,
 
     // Actions
     sanitizeId,
     triggerSync,
+    applyTransferCommandResponse,
+    applyTransferReversalCommandResponse,
+    applyBottlingCommandResponse,
+    applySalesStockCommandResponse,
+    applyStorageMovementCommandResponse,
+    applyHarvestIntakeCommandResponse,
+    applyFermentationCompletionCommandResponse,
+    applyFermentationCompletionReversalCommandResponse,
+    applyCellarOperationCommandResponse,
     handleToggleCoolingJacket,
     handleAdjustTargetTemp,
     handleToggleSanitation,
@@ -2422,7 +2654,6 @@ export function useWineryState() {
     handleDeleteNote,
     handleDeleteStorageLocation,
     handleDeleteStockMovement,
-    handleDeleteBottlingRun,
     handleAddInventory,
     handleAuthLogin,
     handleDemoLogin,

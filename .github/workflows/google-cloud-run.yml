@@ -158,6 +158,7 @@ jobs:
 
           docker exec \
             --env "PRODUCTION_SMOKE_BASE_URL=http://127.0.0.1:3000" \
+            --env "PRODUCTION_SMOKE_EXPECT_READINESS=not-ready" \
             "$HEALTHY_CONTAINER" npm run test:production-smoke
 
           docker push "$IMAGE_TAG"
@@ -189,6 +190,9 @@ jobs:
       REGION: ${{ inputs.region }}
       SERVICE: ${{ inputs.service }}
       CLOUDSQL_INSTANCE: ${{ inputs.cloudsql_instance }}
+      CLOUDSQL_BACKUP_START_TIME: "02:00"
+      CLOUDSQL_RETAINED_BACKUPS: "30"
+      CLOUDSQL_TRANSACTION_LOG_DAYS: "7"
       GCS_BUCKET: ${{ inputs.gcs_bucket }}
       GCS_DB_OBJECT: ${{ inputs.gcs_db_object }}
       DEMO_LOGIN_ENABLED: ${{ inputs.demo_login_enabled }}
@@ -257,6 +261,30 @@ jobs:
 
           echo "RUNTIME_SERVICE_ACCOUNT=${RUNTIME_SERVICE_ACCOUNT}" >> "$GITHUB_ENV"
 
+      - name: Enforce Cloud SQL backup and PITR policy
+        if: env.CLOUDSQL_INSTANCE != ''
+        run: |
+          set -euo pipefail
+          IFS=':' read -r SQL_PROJECT SQL_REGION SQL_INSTANCE SQL_EXTRA <<< "$CLOUDSQL_INSTANCE"
+          if [ -z "$SQL_PROJECT" ] || [ -z "$SQL_REGION" ] || [ -z "$SQL_INSTANCE" ] || [ -n "${SQL_EXTRA:-}" ]; then
+            echo "cloudsql_instance must use PROJECT:REGION:INSTANCE format."
+            exit 1
+          fi
+          if [ "$SQL_PROJECT" != "$PROJECT_ID" ] || [ "$SQL_REGION" != "$REGION" ]; then
+            echo "Cloud SQL project and region must match the deployment target."
+            exit 1
+          fi
+
+          gcloud sql instances patch "$SQL_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --backup-location "$REGION" \
+            --backup-start-time "$CLOUDSQL_BACKUP_START_TIME" \
+            --retained-backups-count "$CLOUDSQL_RETAINED_BACKUPS" \
+            --retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS" \
+            --enable-point-in-time-recovery \
+            --retain-backups-on-delete \
+            --quiet
+
       - name: Run controlled database migrations
         run: |
           set -euo pipefail
@@ -274,6 +302,7 @@ jobs:
             --tasks 1
             --max-retries 0
             --task-timeout 10m
+            --execute-now
             --wait
           )
 
@@ -357,6 +386,8 @@ jobs:
 
           curl --fail --silent --show-error --retry 10 --retry-all-errors \
             --retry-delay 2 "$SERVICE_URL/api/health"
+          curl --fail --silent --show-error --retry 10 --retry-all-errors \
+            --retry-delay 2 "$SERVICE_URL/api/ready"
           echo "LATEST_REVISION=$LATEST_REVISION" >> "$GITHUB_ENV"
 
       - name: Deployment summary
@@ -369,5 +400,6 @@ jobs:
             echo "- Commit: \`$GITHUB_SHA\`"
             echo "- Image: \`$IMAGE_URI\`"
             echo "- Migration job: \`$MIGRATION_JOB\`"
+            echo "- Cloud SQL backup policy: 30 daily backups, 7-day PITR logs (02:00 UTC)"
             echo "- URL: $SERVICE_URL"
           } >> "$GITHUB_STEP_SUMMARY"

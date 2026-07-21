@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildResolvedSyncState } from '../lib/syncConflictRecovery';
+import { syncRecordFingerprint } from '../lib/deletionTombstones';
+import { buildResolvedSyncState, resolveDeletionIntent } from '../lib/syncConflictRecovery';
 
 describe('compound sync conflict recovery', () => {
   it('overlays every clean fulfillment sibling on the authoritative server snapshot', () => {
@@ -161,6 +162,30 @@ describe('compound sync conflict recovery', () => {
 
     expect(serverChoice.tasks).toEqual([{ id: 'task-1', title: 'Server', lastModified: 'T2' }]);
     expect(localChoice.tasks).toEqual([]);
+  });
+
+  it('rebases a retained deletion onto the server version selected for removal', () => {
+    const serverTask = { id: 'task-1', title: 'Remote edit', lastModified: '2026-07-20T09:00:00.000Z' };
+    const attempted = {
+      collection: 'tasks',
+      id: 'task-1',
+      baselineTimestamp: '2026-07-20T08:00:00.000Z',
+      baselineFingerprint: '0123abcd',
+      deletedAt: '2026-07-20T08:05:00.000Z',
+    };
+
+    const resolved = resolveDeletionIntent(
+      { deletedRecords: [attempted] },
+      [{ collection: 'tasks', recordId: 'task-1', local: null, server: serverTask }],
+      { 'tasks-task-1': 'local' },
+    );
+
+    expect(resolved.retainedRecords).toEqual([{
+      ...attempted,
+      baselineTimestamp: serverTask.lastModified,
+      baselineFingerprint: syncRecordFingerprint(serverTask),
+    }]);
+    expect(resolved.discardedRecords).toEqual([]);
   });
 
   it('requires an explicit choice for every conflict', () => {

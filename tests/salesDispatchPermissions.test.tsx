@@ -2,10 +2,9 @@ import React, { type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import SalesDispatchTab, {
-  canDeleteSalesDispatch,
   canFulfillSalesOrder,
   canRecordSalesDispatch,
-  planSalesDispatchDeletion,
+  canReverseSalesDispatch,
   type SalesDispatchActionPermissions,
 } from '../components/SalesDispatchTab';
 import type { SalesDispatchRecord, SalesOrderRecord, WineLot } from '../lib/wineryState';
@@ -50,7 +49,9 @@ const dispatchMovement: StockMovement = {
   locationId: location.id,
   direction: 'out',
   bottles: 20,
-  reason: 'dispatch',
+  commandId: 'cmd-sale-1',
+  lastModified: '2026-09-16T10:00:00.000Z',
+  reason: 'sale',
   sourceRef: 'sale-1',
 };
 
@@ -79,6 +80,9 @@ const order: SalesOrderRecord = {
 
 const dispatch: SalesDispatchRecord = {
   id: 'sale-1',
+  commandId: 'cmd-sale-1',
+  recordKind: 'dispatch',
+  lastModified: '2026-09-16T10:00:00.000Z',
   date: '2026-09-16',
   customerName: 'Kakheti Distribution',
   lotId: lot.id,
@@ -101,9 +105,8 @@ const allActions: SalesDispatchActionPermissions = {
   canCreateOrder: true,
   canUpdateOrder: true,
   canCreateDispatch: true,
-  canDeleteDispatch: true,
+  canReverseDispatch: true,
   canCreateStockMovement: true,
-  canDeleteStockMovement: true,
 };
 
 function props(overrides: Partial<ComponentProps<typeof SalesDispatchTab>> = {}): ComponentProps<typeof SalesDispatchTab> {
@@ -144,9 +147,8 @@ describe('SalesDispatchTab action permissions', () => {
       canCreateOrder: false,
       canUpdateOrder: false,
       canCreateDispatch: false,
-      canDeleteDispatch: false,
+      canReverseDispatch: false,
       canCreateStockMovement: false,
-      canDeleteStockMovement: false,
     });
 
     expect(markup).toContain('Sales data is read-only');
@@ -159,7 +161,7 @@ describe('SalesDispatchTab action permissions', () => {
     expect(markup).not.toContain('Record dispatch now');
     expect(markup).not.toContain('Fulfill into dispatch');
     expect(markup).not.toContain('Cancel reservation');
-    expect(markup).not.toContain('Delete dispatch');
+    expect(markup).not.toContain('Correct and return stock');
   });
 
   it('preserves every existing workflow control by default', () => {
@@ -171,7 +173,8 @@ describe('SalesDispatchTab action permissions', () => {
     expect(markup).toContain('Record dispatch');
     expect(markup).toContain('Fulfill into dispatch');
     expect(markup).toContain('Cancel reservation');
-    expect(markup).toContain('Delete dispatch');
+    expect(markup).toContain('Correct and return stock');
+    expect(markup).not.toContain('Delete dispatch');
     expect(markup).not.toContain('Some sales actions or finance details are unavailable');
   });
 
@@ -180,8 +183,7 @@ describe('SalesDispatchTab action permissions', () => {
       canUpdateOrder: false,
       canCreateDispatch: true,
       canCreateStockMovement: false,
-      canDeleteDispatch: false,
-      canDeleteStockMovement: false,
+      canReverseDispatch: false,
     });
 
     expect(markup).toContain('Some sales actions or finance details are unavailable for your role');
@@ -189,7 +191,7 @@ describe('SalesDispatchTab action permissions', () => {
     expect(markup).not.toContain('Record dispatch now');
     expect(markup).not.toContain('Fulfill into dispatch');
     expect(markup).not.toContain('Cancel reservation');
-    expect(markup).not.toContain('Delete dispatch');
+    expect(markup).not.toContain('Correct and return stock');
   });
 
   it('hides cost-derived metrics when cost visibility is unavailable', () => {
@@ -208,9 +210,8 @@ describe('SalesDispatchTab action permissions', () => {
       canCreateOrder: false,
       canUpdateOrder: false,
       canCreateDispatch: false,
-      canDeleteDispatch: false,
+      canReverseDispatch: false,
       canCreateStockMovement: false,
-      canDeleteStockMovement: false,
     });
 
     expect(markup).toContain('გაყიდვების მონაცემები მხოლოდ სანახავია');
@@ -231,52 +232,11 @@ describe('sales compound-write permission helpers', () => {
     expect(canFulfillSalesOrder({ ...allActions, canUpdateOrder: false })).toBe(false);
   });
 
-  it('requires only the permissions for linked records when deleting a dispatch', () => {
-    expect(canDeleteSalesDispatch(dispatch, true, allActions)).toBe(true);
-    expect(canDeleteSalesDispatch(dispatch, true, { ...allActions, canDeleteStockMovement: false })).toBe(false);
-    expect(canDeleteSalesDispatch(dispatch, false, { ...allActions, canDeleteStockMovement: false })).toBe(true);
-
-    const fulfilledDispatch = { ...dispatch, salesOrderId: order.id };
-    expect(canDeleteSalesDispatch(fulfilledDispatch, true, { ...allActions, canUpdateOrder: false })).toBe(false);
-  });
-
-  it('plans both dispatch and linked-stock tombstones only after the compound check passes', () => {
-    expect(planSalesDispatchDeletion(dispatch, [dispatchMovement, receipt], allActions)).toEqual({
-      deletedIds: [dispatch.id, dispatchMovement.id],
-      stockMovementIds: [dispatchMovement.id],
-      salesOrderIds: [],
-    });
-    expect(planSalesDispatchDeletion(
-      dispatch,
-      [dispatchMovement, receipt],
-      { ...allActions, canDeleteStockMovement: false },
-    )).toBeNull();
-    expect(planSalesDispatchDeletion(
-      dispatch,
-      [receipt],
-      { ...allActions, canDeleteStockMovement: false },
-    )?.deletedIds).toEqual([dispatch.id]);
-  });
-
-  it('finds legacy movement and order links from either side of the relationship', () => {
-    const legacyDispatch = { ...dispatch, stockMovementId: 'missing-movement' };
-    const reverseLinkedOrder = { ...order, status: 'fulfilled' as const, dispatchId: legacyDispatch.id };
-
-    expect(planSalesDispatchDeletion(
-      legacyDispatch,
-      [dispatchMovement, receipt],
-      allActions,
-      [reverseLinkedOrder],
-    )).toEqual({
-      deletedIds: [legacyDispatch.id, dispatchMovement.id],
-      stockMovementIds: [dispatchMovement.id],
-      salesOrderIds: [reverseLinkedOrder.id],
-    });
-    expect(planSalesDispatchDeletion(
-      legacyDispatch,
-      [dispatchMovement, receipt],
-      { ...allActions, canUpdateOrder: false },
-      [reverseLinkedOrder],
-    )).toBeNull();
+  it('offers correction only for active command-created dispatches with the compound permission', () => {
+    expect(canReverseSalesDispatch(dispatch, allActions)).toBe(true);
+    expect(canReverseSalesDispatch(dispatch, { ...allActions, canReverseDispatch: false })).toBe(false);
+    expect(canReverseSalesDispatch({ ...dispatch, commandId: undefined }, allActions)).toBe(false);
+    expect(canReverseSalesDispatch({ ...dispatch, recordKind: 'reversal' }, allActions)).toBe(false);
+    expect(canReverseSalesDispatch({ ...dispatch, reversedByCommandId: 'cmd-reversal' }, allActions)).toBe(false);
   });
 });

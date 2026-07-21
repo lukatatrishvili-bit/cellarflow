@@ -1,22 +1,38 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Language } from '../lib/i18n';
-import type { WineLot, Vessel, DailyFermLog, UserProfile } from '../lib/wineryState';
-import { 
-  Plus, 
-  Trash2, 
-  Flame, 
-  Droplet, 
-  Compass, 
-  Activity, 
-  CheckCircle, 
-  Thermometer, 
-  TrendingDown, 
+import type { WineLot, Vessel, DailyFermLog, MaraniOSAuditLog, UserProfile } from '../lib/wineryState';
+import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
+import {
+  applyFermentationCompletionCommand,
+  type FermentationCompletionCommandPayload,
+} from '../lib/commands/fermentationCompletion';
+import type { FermentationCompletionReversalCommandPayload } from '../lib/commands/fermentationCompletionReversal';
+import {
+  isCompletableFermentationReading,
+  isFermentationCompletionReversal,
+  isPhysicalFermentationReading,
+} from '../lib/fermentationIntegrity';
+import {
+  CommandRequestError,
+  createFermentationCompletionCommandIntent,
+  createFermentationCompletionReversalCommandIntent,
+  pendingFermentationCompletionCommandIntent,
+  pendingFermentationCompletionReversalCommandIntent,
+  submitFermentationCompletionCommand,
+  submitFermentationCompletionReversalCommand,
+  type FermentationCompletionCommandResponse,
+  type FermentationCompletionReversalCommandResponse,
+} from '../lib/commands/client';
+import {
+  Trash2,
+  Flame,
+  Activity,
+  TrendingDown,
   Hourglass,
   FlaskConical,
   MessageSquare,
-  Sparkles,
   Info,
   X
 } from 'lucide-react';
@@ -27,14 +43,21 @@ interface Props {
   vessels: Vessel[];
   lots: WineLot[];
   fermLogs: DailyFermLog[];
+  auditLogs?: MaraniOSAuditLog[];
   currentUser: UserProfile;
   setActiveTab: (tab: string) => void;
   onUpdateLots: (newLots: WineLot[]) => void;
   onUpdateVessels: (newVessels: Vessel[]) => void;
   onUpdateFermLogs: (newLogs: DailyFermLog[]) => void;
+  onUpdateAuditLogs?: (newLogs: MaraniOSAuditLog[]) => void;
+  onApplyFermentationCompletionCommandResponse?: (response: FermentationCompletionCommandResponse) => void;
+  onApplyFermentationCompletionReversalCommandResponse?: (response: FermentationCompletionReversalCommandResponse) => void;
+  setToastMessage?: (message: string) => void;
   canCreateFermentationLog?: boolean;
   canUpdateFermentationLot?: boolean;
   canUpdateFermentationVessel?: boolean;
+  canCompleteFermentation?: boolean;
+  canReverseFermentationCompletion?: boolean;
   canDeleteFermentationLog?: boolean;
 }
 
@@ -59,22 +82,31 @@ export function dispatchFermentationReadingUpdates(
   return true;
 }
 
-export default function FermentationTab({ 
-  lang, 
-  vessels, 
-  lots, 
-  fermLogs, 
+export default function FermentationTab({
+  lang,
+  vessels,
+  lots,
+  fermLogs,
+  auditLogs = [],
   currentUser,
   setActiveTab,
-  onUpdateLots, 
-  onUpdateVessels, 
+  onUpdateLots,
+  onUpdateVessels,
   onUpdateFermLogs,
+  onUpdateAuditLogs,
+  onApplyFermentationCompletionCommandResponse,
+  onApplyFermentationCompletionReversalCommandResponse,
+  setToastMessage,
   canCreateFermentationLog = true,
   canUpdateFermentationLot = true,
   canUpdateFermentationVessel = true,
+  canCompleteFermentation,
+  canReverseFermentationCompletion = false,
   canDeleteFermentationLog = true,
 }: Props) {
-  const permissionNotice = !canCreateFermentationLog && !canUpdateFermentationLot && !canDeleteFermentationLog
+  const canComplete = canCompleteFermentation
+    ?? (canUpdateFermentationLot && canUpdateFermentationVessel);
+  const permissionNotice = !canCreateFermentationLog && !canComplete && !canDeleteFermentationLog
     ? (lang === 'ka'
       ? 'დუღილის მონაცემები თქვენი როლისთვის მხოლოდ სანახავია. შეგიძლიათ შეამოწმოთ ტელემეტრია, მრუდები და სრული ჟურნალი.'
       : 'Fermentation data is read-only for your workspace role. You can still review telemetry, curves, and the complete journal.')
@@ -82,7 +114,7 @@ export default function FermentationTab({
       !canCreateFermentationLog
         ? (lang === 'ka' ? 'თქვენს როლს ახალი მაჩვენებლების ჩაწერა არ შეუძლია.' : 'Your role cannot record new readings.')
         : '',
-      !canUpdateFermentationLot
+      !canComplete
         ? (lang === 'ka' ? 'დუღილის დასრულებულად მონიშვნა შეზღუდულია.' : 'Marking fermentation campaigns complete is restricted.')
         : '',
       !canDeleteFermentationLog
@@ -92,10 +124,11 @@ export default function FermentationTab({
 
   // Active fermenting lots
   const activeFerments = lots.filter(l => l.stage === 'fermenting');
+  const physicalFermLogs = fermLogs.filter(isPhysicalFermentationReading);
 
   // Chart lot selector state
   const [chartLotId, setChartLotId] = useState<string>(
-    activeFerments[0]?.id || (fermLogs.length > 0 ? fermLogs[0].lotId : '')
+    activeFerments[0]?.id || (physicalFermLogs.length > 0 ? physicalFermLogs[0].lotId : '')
   );
 
   // Expanded log input for specific lot card
@@ -115,6 +148,36 @@ export default function FermentationTab({
   const [showGeneralForm, setShowGeneralForm] = useState(false);
   const [generalLotId, setGeneralLotId] = useState('');
   const [formError, setFormError] = useState('');
+  const [pendingCompletion, setPendingCompletion] = useState<PendingCommandIntent<FermentationCompletionCommandPayload> | null>(null);
+  const [completionError, setCompletionError] = useState<string | null>(null);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [pendingCompletionReversal, setPendingCompletionReversal] = useState<PendingCommandIntent<FermentationCompletionReversalCommandPayload> | null>(null);
+  const [completionReversalError, setCompletionReversalError] = useState<string | null>(null);
+  const [completionReversalTargetId, setCompletionReversalTargetId] = useState<string | null>(null);
+  const [completionReversalReason, setCompletionReversalReason] = useState('');
+  const [isReversingCompletion, setIsReversingCompletion] = useState(false);
+
+  useEffect(() => {
+    const restored = pendingFermentationCompletionCommandIntent();
+    if (!restored) return;
+    setPendingCompletion(restored);
+    setCompletionError(lang === 'ka'
+      ? 'წინა დუღილის დასრულების შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანება ხელახლა გაგზავნეთ.'
+      : 'A previous fermentation completion is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [lang]);
+
+  useEffect(() => {
+    const restored = pendingFermentationCompletionReversalCommandIntent();
+    if (!restored) return;
+    setPendingCompletionReversal(restored);
+    setCompletionReversalTargetId(
+      fermLogs.find(log => log.commandId === restored.payload.originalCommandId)?.id || null,
+    );
+    setCompletionReversalReason(restored.payload.reason);
+    setCompletionReversalError(lang === 'ka'
+      ? 'წინა დასრულების გაუქმების შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანება ხელახლა გაგზავნეთ.'
+      : 'A previous completion reversal is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [fermLogs, lang]);
 
   // Committing log entry
   const handleCommitLog = (lotId: string, tankId: string) => {
@@ -129,6 +192,7 @@ export default function FermentationTab({
 
     const newLog: DailyFermLog = {
       id: `flog-${Date.now()}`,
+      recordKind: 'reading',
       tankId: tankId,
       lotId: lotId,
       date: new Date().toISOString().split('T')[0],
@@ -183,9 +247,9 @@ export default function FermentationTab({
     setLogTankId(associatedVessel ? associatedVessel.id : '');
     setFormError(associatedVessel ? '' : (lang === 'ka' ? 'ჩანაწერის შენახვამდე მიაბით პარტია ჭურჭელს.' : 'Assign this lot to a vessel before saving a fermentation reading.'));
     setExpLogFormLotId(lot.id);
-    
+
     // Default reasonable entries
-    const lotLogs = fermLogs.filter(log => log.lotId === lot.id);
+    const lotLogs = physicalFermLogs.filter(log => log.lotId === lot.id);
     if (lotLogs.length > 0) {
       const lastLog = lotLogs[0];
       setLogTemp(lastLog.temperature);
@@ -200,41 +264,183 @@ export default function FermentationTab({
     }
   };
 
-  // Mark fermentation as finished (transition lot stage for stabilization or barrel aging)
+  const finishCompletionCommand = () => {
+    setPendingCompletion(null);
+    setCompletionError(null);
+  };
+
+  const applyCompletionLocally = (
+    intent: PendingCommandIntent<FermentationCompletionCommandPayload>,
+  ) => {
+    if (!onUpdateAuditLogs) {
+      setCompletionError(lang === 'ka'
+        ? 'აუდიტის ჟურნალი მიუწვდომელია; დუღილი არ შეცვლილა.'
+        : 'The audit ledger is unavailable; fermentation was not changed.');
+      return;
+    }
+    const applied = applyFermentationCompletionCommand(
+      { lots, vessels, fermlogs: fermLogs, auditLogs },
+      intent.payload,
+      {
+        commandId: intent.commandId,
+        actorUsername: currentUser.username,
+        performedAt: new Date(intent.capturedAt),
+      },
+    );
+    onUpdateLots(applied.state.lots);
+    onUpdateVessels(applied.state.vessels);
+    onUpdateFermLogs(applied.state.fermlogs);
+    onUpdateAuditLogs(applied.state.auditLogs);
+    setToastMessage?.(lang === 'ka'
+      ? `დუღილი დასრულდა: ${applied.result.lot.name} → სტაბილიზაცია`
+      : `Fermentation completed: ${applied.result.lot.name} → stabilization`);
+    finishCompletionCommand();
+  };
+
+  const executeCompletionCommand = async (
+    intent: PendingCommandIntent<FermentationCompletionCommandPayload>,
+  ) => {
+    setCompletionError(null);
+    if (!onApplyFermentationCompletionCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingCompletion) {
+        setCompletionError(lang === 'ka'
+          ? 'დაუდასტურებელი დასრულების აღდგენას ინტერნეტთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged fermentation completion requires a server connection.');
+        return;
+      }
+      try {
+        applyCompletionLocally(intent);
+      } catch (error) {
+        setCompletionError(error instanceof Error ? error.message : 'Fermentation completion validation failed.');
+      }
+      return;
+    }
+
+    setPendingCompletion(intent);
+    setIsCompleting(true);
+    try {
+      const response = await submitFermentationCompletionCommand(intent);
+      onApplyFermentationCompletionCommandResponse(response);
+      setToastMessage?.(lang === 'ka'
+        ? `დუღილი დასრულდა: ${response.result.lot.name} → სტაბილიზაცია`
+        : `Fermentation completed: ${response.result.lot.name} → stabilization`);
+      finishCompletionCommand();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingCompletion) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyCompletionLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCompletionError(fallbackError instanceof Error
+            ? fallbackError.message
+            : 'Fermentation completion validation failed.');
+          setPendingCompletion(null);
+          return;
+        }
+      }
+      setCompletionError(error instanceof Error ? error.message : 'Fermentation completion failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingCompletion(null);
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const finishCompletionReversal = () => {
+    setPendingCompletionReversal(null);
+    setCompletionReversalError(null);
+    setCompletionReversalTargetId(null);
+    setCompletionReversalReason('');
+  };
+
+  const executeCompletionReversalCommand = async (
+    intent: PendingCommandIntent<FermentationCompletionReversalCommandPayload>,
+  ) => {
+    setCompletionReversalError(null);
+    if (!onApplyFermentationCompletionReversalCommandResponse || !SyncQueueManager.isOnline()) {
+      setCompletionReversalError(lang === 'ka'
+        ? 'დუღილის დასრულების გაუქმებას სერვერთან კავშირი სჭირდება.'
+        : 'Reversing fermentation completion requires a server connection.');
+      return;
+    }
+
+    setPendingCompletionReversal(intent);
+    setIsReversingCompletion(true);
+    try {
+      const response = await submitFermentationCompletionReversalCommand(intent);
+      onApplyFermentationCompletionReversalCommandResponse(response);
+      setToastMessage?.(lang === 'ka'
+        ? `დუღილი ხელახლა გაიხსნა: ${response.result.lot.name}`
+        : `Fermentation reopened: ${response.result.lot.name}`);
+      finishCompletionReversal();
+    } catch (error) {
+      setCompletionReversalError(error instanceof Error ? error.message : 'Fermentation-completion reversal failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingCompletionReversal(null);
+    } finally {
+      setIsReversingCompletion(false);
+    }
+  };
+
+  const startCompletionReversal = (log: DailyFermLog) => {
+    if (!canReverseFermentationCompletion || !log.commandId || log.reversedByCommandId
+      || isFermentationCompletionReversal(log)) return;
+    setCompletionReversalTargetId(log.id);
+    setCompletionReversalReason('');
+    setCompletionReversalError(null);
+  };
+
+  const confirmCompletionReversal = () => {
+    const log = fermLogs.find(item => item.id === completionReversalTargetId);
+    const reason = completionReversalReason.trim();
+    if (!log?.commandId || !reason || isReversingCompletion) {
+      if (!reason) {
+        setCompletionReversalError(lang === 'ka'
+          ? 'შეიყვანეთ გაუქმების მიზეზი.'
+          : 'Enter a reason for reopening this fermentation.');
+      }
+      return;
+    }
+    void executeCompletionReversalCommand(createFermentationCompletionReversalCommandIntent({
+      originalCommandId: log.commandId,
+      reason,
+    }));
+  };
+
+  // Promote the latest recorded measurement to final evidence and transition
+  // the lot, vessel, and audit trail as one durable business event.
   const finishFermentationStage = (lotId: string) => {
-    if (!canUpdateFermentationLot) return;
+    if (!canComplete || pendingCompletion || isCompleting) return;
+    const associatedVessel = vessels.find(vessel => vessel.assignedLotId === lotId);
+    const finalLog = fermLogs.find(log => (
+      log.lotId === lotId
+      && log.tankId === associatedVessel?.id
+      && isCompletableFermentationReading(log)
+    ));
+    if (!associatedVessel || !finalLog) {
+      setCompletionError(lang === 'ka'
+        ? 'დასრულებამდე შეინახეთ საბოლოო მაჩვენებელი პარტიის მიბმულ ჭურჭელში.'
+        : 'Save a final reading in the lot’s assigned vessel before completing fermentation.');
+      return;
+    }
     const confirmFinish = window.confirm(lang === 'ka'
       ? 'დავასრულოთ პირველადი დუღილი და პარტია გადავიდეს სტაბილიზაციაზე?'
       : 'Mark this primary fermentation as completed and move the lot to stabilization?');
     if (!confirmFinish) return;
-
-    onUpdateLots(
-      lots.map(l => {
-        if (l.id === lotId) {
-          return {
-            ...l,
-            stage: 'stabilization' as any,
-            history: [
-              {
-                date: new Date().toISOString().split('T')[0],
-                type: lang === 'ka' ? 'დუღილი დასრულდა' : 'Fermentation Concluded',
-                description: lang === 'ka'
-                  ? 'პირველადი დუღილი სრულად დასრულდა. მშრალი სტატუსი დადასტურებულია. გადატანილია ან სტაბილიზებულია MLF მეორადი ინოკულაციისთვის.'
-                  : 'Primary yeast fermentation fully concluded. Dry status verified. Transferred or stabilized for MLF secondary inoculation.',
-                operator: currentUser.fullName
-              },
-              ...(l.history || [])
-            ]
-          };
-        }
-        return l;
-      })
-    );
+    void executeCompletionCommand(createFermentationCompletionCommandIntent({
+      lotId,
+      vesselId: associatedVessel.id,
+      finalLogId: finalLog.id,
+      operator: currentUser.fullName,
+    }));
   };
 
   // Delete a logged entry
   const handleDeleteLog = (logId: string) => {
     if (!canDeleteFermentationLog) return;
+    const selected = fermLogs.find(log => log.id === logId);
+    if (!selected || selected.commandId) return;
     if (window.confirm(lang === 'ka' ? 'წავშალოთ ეს დუღილის ჩანაწერი ისტორიული ჟურნალიდან?' : 'Delete this primary fermentation tracking point from historical ledger?')) {
       onUpdateFermLogs(fermLogs.filter(log => log.id !== logId));
     }
@@ -242,7 +448,7 @@ export default function FermentationTab({
 
   // Math helper stats
   const isSluggish = (lotId: string): boolean => {
-    const lLogs = fermLogs.filter(log => log.lotId === lotId);
+    const lLogs = physicalFermLogs.filter(log => log.lotId === lotId);
     if (lLogs.length < 2) return false;
     const latest = lLogs[0];
     const prev = lLogs[1];
@@ -261,10 +467,99 @@ export default function FermentationTab({
           <p>{permissionNotice}</p>
         </div>
       )}
-      
+
+      {completionError && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-950" role="alert">
+          <span>{completionError}</span>
+          {pendingCompletion && (
+            <button
+              type="button"
+              disabled={isCompleting}
+              onClick={() => void executeCompletionCommand(pendingCompletion)}
+              className="rounded-lg bg-[#4e0e15] px-3 py-1.5 font-bold text-white disabled:cursor-wait disabled:opacity-60"
+            >
+              {isCompleting
+                ? (lang === 'ka' ? 'მოწმდება…' : 'Checking…')
+                : (lang === 'ka' ? 'იგივე ბრძანების ხელახლა გაგზავნა' : 'Resubmit same command')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {completionReversalError && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-950" role="alert">
+          <span>{completionReversalError}</span>
+          {pendingCompletionReversal && (
+            <button
+              type="button"
+              disabled={isReversingCompletion}
+              onClick={() => void executeCompletionReversalCommand(pendingCompletionReversal)}
+              className="rounded-lg bg-[#4e0e15] px-3 py-1.5 font-bold text-white disabled:cursor-wait disabled:opacity-60"
+            >
+              {isReversingCompletion
+                ? (lang === 'ka' ? 'მოწმდება…' : 'Checking…')
+                : (lang === 'ka' ? 'იგივე ბრძანების ხელახლა გაგზავნა' : 'Resubmit same command')}
+            </button>
+          )}
+        </div>
+      )}
+
+      {completionReversalTargetId && (
+        <section className="rounded-xl border border-rose-200 bg-rose-50/70 p-4" aria-label="Fermentation completion correction">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-rose-950">
+                {lang === 'ka' ? 'დუღილის დასრულების გაუქმება' : 'Reopen completed fermentation'}
+              </h3>
+              <p className="mt-1 text-[11px] text-rose-800">
+                {lang === 'ka'
+                  ? 'საბოლოო მაჩვენებელი დარჩება ჟურნალში, ხოლო პარტია დაბრუნდება აქტიურ დუღილზე. შემდგომი სამუშაოების არსებობისას ბრძანება უსაფრთხოდ დაიბლოკება.'
+                  : 'The final reading remains in the journal while the lot returns to active fermentation. The command is safely blocked if later cellar work depends on the completion.'}
+              </p>
+            </div>
+            {!pendingCompletionReversal && (
+              <button
+                type="button"
+                onClick={() => {
+                  setCompletionReversalTargetId(null);
+                  setCompletionReversalReason('');
+                  setCompletionReversalError(null);
+                }}
+                className="rounded-full p-1 text-rose-500 hover:bg-rose-100"
+                aria-label={lang === 'ka' ? 'დახურვა' : 'Close'}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <label className="mt-3 block text-[10px] font-bold uppercase tracking-wide text-rose-900" htmlFor="fermentation-reversal-reason">
+            {lang === 'ka' ? 'გაუქმების მიზეზი' : 'Correction reason'}
+          </label>
+          <textarea
+            id="fermentation-reversal-reason"
+            value={completionReversalReason}
+            disabled={Boolean(pendingCompletionReversal)}
+            maxLength={500}
+            onChange={event => setCompletionReversalReason(event.target.value)}
+            className="mt-1 min-h-20 w-full rounded-lg border border-rose-200 bg-white p-2 text-xs text-stone-800 outline-none focus:border-rose-500 disabled:bg-stone-100"
+            placeholder={lang === 'ka' ? 'მაგ. დასრულება შეცდომით დაფიქსირდა' : 'e.g. Completion was recorded prematurely'}
+          />
+          <button
+            type="button"
+            disabled={isReversingCompletion || Boolean(pendingCompletionReversal) || !completionReversalReason.trim()}
+            onClick={confirmCompletionReversal}
+            className="mt-2 rounded-lg bg-rose-800 px-3 py-2 text-[11px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isReversingCompletion
+              ? (lang === 'ka' ? 'უქმდება…' : 'Reopening…')
+              : (lang === 'ka' ? 'დასრულების გაუქმება' : 'Reopen fermentation')}
+          </button>
+        </section>
+      )}
+
       {/* High-end stats widgets */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        
+
         <div className="p-4 bg-white border border-[#e8dfd5] rounded-xl shadow-xs flex items-center justify-between">
           <div className="space-y-1">
             <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block">{lang === 'ka' ? 'აქტიური დუღილი' : 'Active Ferments'}</span>
@@ -309,7 +604,7 @@ export default function FermentationTab({
 
       {/* Main interactive workflow and layouts grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        
+
         {/* Left column: Active Fermentations progress list with in-line input forms */}
         <div className="xl:col-span-4 space-y-4">
           <div className="flex items-center justify-between border-b border-[#e8dfd5] pb-2">
@@ -480,13 +775,16 @@ export default function FermentationTab({
           <div className="space-y-3 max-h-[620px] overflow-y-auto pr-1">
             {activeFerments.map(lot => {
               const associatedVessel = vessels.find(v => v.assignedLotId === lot.id);
-              const lotLogs = fermLogs.filter(log => log.lotId === lot.id);
+              const lotLogs = physicalFermLogs.filter(log => log.lotId === lot.id);
               const latestLog = lotLogs[0];
+              const completableLog = lotLogs.find(log => (
+                log.tankId === associatedVessel?.id && isCompletableFermentationReading(log)
+              ));
               const isFormExp = canCreateFermentationLog && expLogFormLotId === lot.id;
 
               return (
-                <div 
-                  key={lot.id} 
+                <div
+                  key={lot.id}
                   className={`p-4 bg-white border border-[#e8dfd5] rounded-xl hover:shadow-xs transition-shadow space-y-4 ${
                     isFormExp ? 'ring-1.5 ring-[#4e0e15]' : ''
                   }`}
@@ -556,7 +854,7 @@ export default function FermentationTab({
                   )}
 
                   {/* Actions Bar */}
-                  {(canCreateFermentationLog || canUpdateFermentationLot) && (
+                  {(canCreateFermentationLog || canComplete) && (
                     <div className="flex items-center gap-1.5 border-t border-dashed border-stone-205 pt-3">
                       {canCreateFermentationLog && (
                         <button
@@ -566,12 +864,18 @@ export default function FermentationTab({
                           📝 {lang === 'ka' ? 'დღის ჩანაწერი' : 'Log Today'}
                         </button>
                       )}
-                      {canUpdateFermentationLot && (
+                      {canComplete && (
                         <button
                           onClick={() => finishFermentationStage(lot.id)}
-                          className="px-2.5 py-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded transition-colors cursor-pointer"
+                          disabled={!completableLog || Boolean(pendingCompletion) || isCompleting}
+                          title={!completableLog
+                            ? (lang === 'ka' ? 'ჯერ შეინახეთ საბოლოო მაჩვენებელი' : 'Save a final reading first')
+                            : undefined}
+                          className="px-2.5 py-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          ✓ {lang === 'ka' ? 'დასრულება' : 'Completed'}
+                          ✓ {isCompleting && pendingCompletion?.payload.lotId === lot.id
+                            ? (lang === 'ka' ? 'სრულდება…' : 'Completing…')
+                            : (lang === 'ka' ? 'დასრულება' : 'Completed')}
                         </button>
                       )}
                     </div>
@@ -689,7 +993,7 @@ export default function FermentationTab({
                 </div>
               );
             })}
-            
+
             {activeFerments.length === 0 && (
               <div className="p-8 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-500">
                 <p className="font-serif italic">{lang === 'ka' ? 'აქტიური დუღილის კამპანიები არ არის.' : 'No active fermentation campaigns.'}</p>
@@ -710,7 +1014,7 @@ export default function FermentationTab({
 
         {/* Right column: Charts & Ledgers */}
         <div className="xl:col-span-8 space-y-6">
-          
+
           {/* Interactive curves visualizer */}
           <div className="p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-xs text-stone-850 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-3">
@@ -728,7 +1032,7 @@ export default function FermentationTab({
                   className="text-xs font-semibold px-3 py-1 bg-[#FAF8F5] border border-stone-200 rounded-lg outline-none w-full sm:w-56 cursor-pointer"
                 >
                   <option value="">{lang === 'ka' ? '-- აირჩიეთ პარტია გრაფიკისთვის --' : '-- Choose Lot to Chart --'}</option>
-                  {Array.from(new Set(fermLogs.map(l => l.lotId))).map(lId => {
+                  {Array.from(new Set(physicalFermLogs.map(l => l.lotId))).map(lId => {
                     const associatedLot = lots.find(lt => lt.id === lId);
                     return (
                       <option key={lId} value={lId}>
@@ -741,7 +1045,7 @@ export default function FermentationTab({
             </div>
 
             {chartLotId ? (
-              <FermentationCurveChart logs={fermLogs} selectedLotId={chartLotId} lang={lang} />
+              <FermentationCurveChart logs={physicalFermLogs} selectedLotId={chartLotId} lang={lang} />
             ) : (
               <div className="py-24 text-center border-2 border-dashed border-stone-100 text-stone-400 italic">
                 {lang === 'ka' ? 'აირჩიეთ ღვინის პარტია ზემოთ მოცემული სიიდან კინეტიკური მრუდების სანახავად.' : 'Select a wine lot from the dropdown options above to inspect visual kinetic curves.'}
@@ -758,17 +1062,45 @@ export default function FermentationTab({
             <div className="space-y-4 max-h-[360px] overflow-y-auto pr-1">
               {fermLogs.map(log => {
                 const lot = lots.find(l => l.id === log.lotId);
+                const isCorrection = isFermentationCompletionReversal(log);
+                const isReversedCompletion = log.isCompletion === true && Boolean(log.reversedByCommandId || log.reversedAt);
+                const canReopen = canReverseFermentationCompletion
+                  && log.recordKind === 'completion'
+                  && Boolean(log.commandId && log.completionSnapshot)
+                  && !isReversedCompletion;
                 return (
-                  <div key={log.id} className="p-3.5 bg-stone-50 border border-stone-150 rounded-xl hover:border-slate-305 transition-colors">
+                  <div key={log.id} className={`p-3.5 border rounded-xl transition-colors ${isCorrection ? 'border-rose-200 bg-rose-50/60' : 'border-stone-150 bg-stone-50 hover:border-slate-305'}`}>
                     <div className="flex items-center justify-between text-xs font-bold text-slate-705">
-                      <span className="flex items-center gap-1.5 font-sans">
+                      <span className="flex flex-wrap items-center gap-1.5 font-sans">
                         <span className="text-purple-900">🍇</span>
                         <strong>{lot ? lot.name : log.lotId}</strong>
                         <span className="text-[10px] bg-white border px-1.5 py-0.2 rounded text-slate-455 font-mono">{lang === 'ka' ? 'ჭურჭელი' : 'Vessel'}: {log.tankId}</span>
+                        {log.isCompletion && !isCorrection && (
+                          <span className={`rounded border px-1.5 py-0.5 text-[9px] uppercase ${isReversedCompletion ? 'border-stone-300 bg-stone-100 text-stone-500' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                            {isReversedCompletion
+                              ? (lang === 'ka' ? 'გაუქმებული დასრულება' : 'Completion reversed')
+                              : (lang === 'ka' ? 'საბოლოო მაჩვენებელი' : 'Final reading')}
+                          </span>
+                        )}
+                        {isCorrection && (
+                          <span className="rounded border border-rose-200 bg-white px-1.5 py-0.5 text-[9px] uppercase text-rose-800">
+                            {lang === 'ka' ? 'შესწორება' : 'Correction'}
+                          </span>
+                        )}
                       </span>
-                      <div className="flex items-center gap-3">
+                      <div className="flex shrink-0 items-center gap-2">
                         <span className="text-[10px] text-slate-400 font-mono">{log.date}</span>
-                        {canDeleteFermentationLog && (
+                        {canReopen && (
+                          <button
+                            type="button"
+                            title={lang === 'ka' ? 'დუღილის ხელახლა გახსნა' : 'Reopen fermentation'}
+                            onClick={() => startCompletionReversal(log)}
+                            className="rounded border border-rose-200 bg-white px-2 py-1 text-[9px] font-bold text-rose-800 hover:bg-rose-100"
+                          >
+                            {lang === 'ka' ? 'გაუქმება' : 'Reopen'}
+                          </button>
+                        )}
+                        {canDeleteFermentationLog && !log.commandId && (
                           <button
                             title={lang === 'ka' ? 'ჩანაწერის წაშლა' : 'Delete Entry'}
                             onClick={() => handleDeleteLog(log.id)}
@@ -780,15 +1112,15 @@ export default function FermentationTab({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-slate-500 font-mono mt-2 bg-white/70 p-2 border rounded-lg">
+                    {!isCorrection && <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-slate-500 font-mono mt-2 bg-white/70 p-2 border rounded-lg">
                       <div className="flex items-baseline gap-1">{lang === 'ka' ? 'ტემპ.' : 'Temp'}: <strong className="text-stone-800 text-xs font-black">{log.temperature} °C</strong></div>
                       <div className="flex items-baseline gap-1">{lang === 'ka' ? 'სიმკვრივე' : 'Density'}: <strong className="text-stone-850 text-xs font-bold">{log.density} SG</strong></div>
                       <div className="flex items-baseline gap-1 font-sans">{lang === 'ka' ? 'შაქარი' : 'Sugar'}: <strong className="text-stone-800 font-bold block">{log.sugar} g/L</strong></div>
                       <div className="flex items-baseline gap-1">pH: <strong className="text-slate-700 text-xs">{log.ph}</strong></div>
-                    </div>
+                    </div>}
 
                     {/* Cap & Additives specs block */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2 text-[10px] text-stone-600 font-medium">
+                    {!isCorrection && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2 text-[10px] text-stone-600 font-medium">
                       <div className="bg-[#FAF8F5] px-2.5 py-1.5 border border-stone-200/50 rounded-lg flex items-center gap-1.5">
                         <span className="font-bold underline text-[#4e0e15] uppercase text-[8px] font-mono shrink-0">{lang === 'ka' ? 'ქუდი:' : 'Cap Ops:'}</span>
                         <span className="truncate">{log.capManagement || (lang === 'ka' ? 'ქუდის ოპერაციები არ ჩაწერილა' : 'No active skin operations logged')}</span>
@@ -797,7 +1129,7 @@ export default function FermentationTab({
                         <span className="font-bold underline text-indigo-750 uppercase text-[8px] font-mono shrink-0">{lang === 'ka' ? 'დანამატები:' : 'Additives:'}</span>
                         <span className="truncate">{log.additives || (lang === 'ka' ? 'არაფერი' : 'None')}</span>
                       </div>
-                    </div>
+                    </div>}
 
                     <p className="text-[11px] text-stone-600 italic bg-white p-2.5 border border-slate-100 rounded-lg mt-2 font-serif">
                       &quot;{log.tastingNotes}&quot;

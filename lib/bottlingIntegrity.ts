@@ -8,6 +8,17 @@ const parsedTime = (value: string | undefined): number => {
   return Number.isFinite(time) ? time : 0;
 };
 
+export function isBottlingRunReversal(run: Pick<BottlingRunRecord, 'recordKind'>): boolean {
+  return run.recordKind === 'reversal';
+}
+
+/** Active production excludes both compensating entries and their reversed originals. */
+export function isActiveBottlingRun(
+  run: Pick<BottlingRunRecord, 'recordKind' | 'reversedByCommandId' | 'reversedAt'>,
+): boolean {
+  return !isBottlingRunReversal(run) && !run.reversedByCommandId && !run.reversedAt;
+}
+
 export function bottlingRunIdTimestamp(run: Pick<BottlingRunRecord, 'id'>): number {
   const match = run.id.match(EMBEDDED_TIMESTAMP);
   if (!match) return 0;
@@ -55,7 +66,7 @@ export function newerBottlingRunFor(
   const target = history[targetIndex];
   const ordered = history
     .map((run, index) => ({ run, index }))
-    .filter(entry => entry.run.lotId === target.lotId)
+    .filter(entry => entry.run.lotId === target.lotId && isActiveBottlingRun(entry.run))
     .sort((left, right) => (
       compareBottlingRunsNewestFirst(left.run, right.run) || left.index - right.index
     ));

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyLiveSessionProfile } from '../hooks/useWineryState';
+import { applyLiveSessionProfile, cacheSafeUserProfile } from '../hooks/useWineryState';
 import type { UserProfile } from '../lib/wineryState';
 
 const owner: UserProfile = {
@@ -31,8 +31,28 @@ describe('live session profile refresh', () => {
       language: 'ka',
       enabledModules: ['dashboard', 'reports'],
     });
-    expect(storage.setItem).toHaveBeenCalledWith('vinea_curr_user', JSON.stringify(updated));
+    expect(storage.setItem).toHaveBeenCalledWith('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(updated!)));
     expect(owner.role).toBe('Owner/Admin');
+  });
+
+  it('never restores or persists server-issued master and impersonation capabilities', () => {
+    const privileged: UserProfile = {
+      ...owner,
+      isMasterAdmin: true,
+      impersonatedBy: 'root-admin',
+    };
+    const storage = { setItem: vi.fn() };
+
+    expect(cacheSafeUserProfile(privileged)).toEqual(owner);
+
+    const refreshed = applyLiveSessionProfile(privileged, {
+      username: owner.username,
+      role: owner.role,
+      isMasterAdmin: false,
+    }, storage);
+    expect(refreshed?.isMasterAdmin).toBe(false);
+    expect(refreshed?.impersonatedBy).toBeUndefined();
+    expect(storage.setItem).toHaveBeenCalledWith('vinea_curr_user', JSON.stringify(owner));
   });
 
   it('rejects malformed roles and a profile for a different session user', () => {

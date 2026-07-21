@@ -67,7 +67,7 @@ export function getHistoricalContext(username: string): string {
       const vessels = (userData.vessels || []).filter((v: any) => v.assignedLotId === l.id);
       const vesselNames = vessels.map((v: any) => `${v.name} (${v.type})`).join(', ') || "Not in vessel";
       context += `  - Lot "${l.id}" (${l.name}, ${l.variety}, Vintage ${l.vintage}, Vol: ${l.currentVolume} L): Stage is "${l.stage}". Stored in: ${vesselNames}.\n`;
-      
+
       // Add recent chemistry
       const chemistry = (userData.lablogs || [])
         .filter((c: any) => c.lotId === l.id)

@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { persistDeletionTombstone } from '../lib/deletionTombstones';
+import { persistDeletionTombstone, persistDeletionTombstones } from '../lib/deletionTombstones';
 import {
   IndexedDBQueue,
+  MAX_PENDING_COMMAND_INTENT_CHARS,
+  MAX_PENDING_COMMAND_INTENTS,
   PENDING_CHANGES_SWITCH_CODE,
+  PENDING_COMMANDS_BASE_KEY,
   SyncQueueManager,
   WORKSPACE_TRANSITION_STORAGE_KEY,
 } from '../lib/syncQueue';
@@ -364,6 +367,37 @@ describe('SyncQueueManager organization-state recovery', () => {
     ]);
   });
 
+  it('rebases a local deletion choice in both durable recovery records atomically', async () => {
+    localStorage.setItem('cellarflow_org_state_org_id', 'org-1');
+    const original = {
+      collection: 'tasks',
+      id: 'task-local',
+      baselineTimestamp: '2026-07-20T08:00:00.000Z',
+      baselineFingerprint: '0123abcd',
+      deletedAt: '2026-07-20T08:05:00.000Z',
+    };
+    expect(persistDeletionTombstones([original], localStorage)).toBe(true);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      hasConflicts: true,
+      conflicts: [{ collection: 'tasks', recordId: 'task-local', local: null }],
+      serverDb: { tasks: [{ id: 'task-local', title: 'Remote edit' }] },
+    })));
+    await SyncQueueManager.sync({});
+    const rebased = {
+      ...original,
+      baselineTimestamp: '2026-07-20T09:00:00.000Z',
+      baselineFingerprint: 'deadbeef',
+    };
+
+    await expect(SyncQueueManager.reconcilePendingConflictDeletionRecords([rebased], [], 'org-1'))
+      .resolves.toBe(true);
+
+    expect(JSON.parse(localStorage.getItem('vinea_deleted_ids:org-1') || '[]')).toEqual([rebased]);
+    const intent = SyncQueueManager.getPendingConflictSyncIntent('org-1');
+    expect(intent?.payload.deletedRecords).toEqual([rebased]);
+    expect(await SyncQueueManager.isPendingConflictSyncIntentCurrent(intent!)).toBe(true);
+  });
+
   it('rejects a stale recovery snapshot after a newer local edit is recorded', async () => {
     localStorage.setItem('cellarflow_org_state_org_id', 'org-1');
     SyncQueueManager.markDirty('tasks');
@@ -515,6 +549,12 @@ describe('SyncQueueManager organization-state recovery', () => {
   it('keeps pending writes when a successful response body is unreadable', async () => {
     localStorage.setItem('cellarflow_org_state_org_id', 'org-1');
     localStorage.setItem('vinea_dirty_collections', JSON.stringify(['tasks']));
+    localStorage.setItem('cellarflow_pending_commands:org-1', JSON.stringify([{
+      commandId: 'cmd-transfer-discard-0001',
+      commandType: 'cellar.transfer',
+      payload: {},
+      capturedAt: '2026-07-20T08:00:00.000Z',
+    }]));
     persistDeletionTombstone('task-deleted', localStorage, 'tasks');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })));
 
@@ -538,6 +578,146 @@ describe('SyncQueueManager organization-state recovery', () => {
     expect(IndexedDBQueue.clearMutations).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem('vinea_dirty_collections')).toBeNull();
     expect(localStorage.getItem('vinea_deleted_ids:org-1')).toBeNull();
+    expect(localStorage.getItem('cellarflow_pending_commands:org-1')).toBeNull();
+  });
+
+  it('persists a command intent before sending and retains organization headers', async () => {
+    localStorage.setItem('cellarflow_org_state_org_id', 'org-1');
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(
+      { ok: true },
+      { headers: { 'X-CellarFlow-Org-State-Version': '12', 'X-CellarFlow-Org-Id': 'org-1' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const intent = {
+      commandId: 'cmd-transfer-pending-0001',
+      commandType: 'cellar.transfer',
+      payload: { transferId: 'xfer-pending-0001' },
+      capturedAt: '2026-07-20T08:00:00.000Z',
+    };
+
+    await SyncQueueManager.executeCommandRequest('/api/commands/cellar.transfer', intent);
+
+    expect(SyncQueueManager.getPendingCommandIntents()).toEqual([intent]);
+    expect(fetchMock).toHaveBeenCalledWith('/api/commands/cellar.transfer', expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({
+        'X-CellarFlow-Org-Id': 'org-1',
+        'X-CellarFlow-Queue-Age-Ms': expect.stringMatching(/^\d+$/),
+      }),
+      body: JSON.stringify({ commandId: intent.commandId, payload: intent.payload }),
+    }));
+    expect(localStorage.getItem('cellarflow_org_state_version')).toBe('12');
+
+    SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+    expect(SyncQueueManager.getPendingCommandIntents()).toEqual([]);
+  });
+
+  it('rejects a new command when the durable recovery queue is full', async () => {
+    localStorage.setItem('cellarflow_org_state_org_id', 'org-1');
+    const queued = Array.from({ length: MAX_PENDING_COMMAND_INTENTS }, (_, index) => ({
+      commandId: `cmd-queued-${index}`,
+      commandType: 'cellar.transfer',
+      payload: { transferId: `transfer-${index}` },
+      capturedAt: '2026-07-20T08:00:00.000Z',
+    }));
+    localStorage.setItem(`${PENDING_COMMANDS_BASE_KEY}:org-1`, JSON.stringify(queued));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await SyncQueueManager.executeCommandRequest('/api/commands/cellar.transfer', {
+      commandId: 'cmd-one-too-many',
+      commandType: 'cellar.transfer',
+      payload: { transferId: 'transfer-one-too-many' },
+      capturedAt: '2026-07-20T08:01:00.000Z',
+    });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'pending_command_queue_full', retryable: false },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(SyncQueueManager.getPendingCommandIntents()).toEqual(queued);
+  });
+
+  it('rejects an oversized recovery intent before making a request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await SyncQueueManager.executeCommandRequest('/api/commands/cellar.transfer', {
+      commandId: 'cmd-too-large',
+      commandType: 'cellar.transfer',
+      payload: { notes: 'x'.repeat(MAX_PENDING_COMMAND_INTENT_CHARS) },
+      capturedAt: '2026-07-20T08:01:00.000Z',
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'pending_command_intent_too_large', retryable: false },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(SyncQueueManager.getPendingCommandIntents()).toEqual([]);
+  });
+
+  it('allows an idempotent command replacement when the queue is at capacity', async () => {
+    localStorage.setItem('cellarflow_org_state_org_id', 'org-1');
+    const queued = Array.from({ length: MAX_PENDING_COMMAND_INTENTS }, (_, index) => ({
+      commandId: `cmd-retry-${index}`,
+      commandType: 'cellar.transfer',
+      payload: { attempt: 1 },
+      capturedAt: '2026-07-20T08:00:00.000Z',
+    }));
+    localStorage.setItem(`${PENDING_COMMANDS_BASE_KEY}:org-1`, JSON.stringify(queued));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const replacement = {
+      ...queued[0],
+      payload: { attempt: 2 },
+      capturedAt: '2026-07-20T08:05:00.000Z',
+    };
+
+    const response = await SyncQueueManager.executeCommandRequest('/api/commands/cellar.transfer', replacement);
+
+    expect(response.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(SyncQueueManager.getPendingCommandIntents()).toHaveLength(MAX_PENDING_COMMAND_INTENTS);
+    expect(SyncQueueManager.getPendingCommandIntents()).toContainEqual(replacement);
+  });
+
+  it('fails closed when durable browser storage cannot save the intent', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    });
+
+    const response = await SyncQueueManager.executeCommandRequest('/api/commands/cellar.transfer', {
+      commandId: 'cmd-no-storage',
+      commandType: 'cellar.transfer',
+      payload: { transferId: 'transfer-no-storage' },
+      capturedAt: '2026-07-20T08:01:00.000Z',
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'pending_command_persistence_failed', retryable: false },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps command intent durable when the network fails after submission starts', async () => {
+    localStorage.setItem('cellarflow_org_state_org_id', 'org-1');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connection reset')));
+    const intent = {
+      commandId: 'cmd-transfer-pending-0002',
+      commandType: 'cellar.transfer',
+      payload: { transferId: 'xfer-pending-0002' },
+      capturedAt: '2026-07-20T08:01:00.000Z',
+    };
+
+    await expect(SyncQueueManager.executeCommandRequest('/api/commands/cellar.transfer', intent))
+      .rejects.toThrow('connection reset');
+    expect(SyncQueueManager.getPendingCommandIntents()).toEqual([intent]);
   });
 
   it('keeps every pending change when discard receives a partial 200 snapshot', async () => {
@@ -616,6 +796,25 @@ describe('SyncQueueManager organization-state recovery', () => {
     expect(SyncQueueManager.getDirtyCollections()).toEqual(new Set(['tasks']));
     expect(localStorage.getItem('cellarflow_org_state_org_id')).toBe('org-old');
     expect(SyncQueueManager.getWorkspaceTransitionMarker()).toBeNull();
+  });
+
+  it('refuses an organization switch while a command result is unacknowledged', async () => {
+    localStorage.setItem('cellarflow_org_state_org_id', 'org-old');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    const intent = {
+      commandId: 'cmd-transfer-switch-0001',
+      commandType: 'cellar.transfer',
+      payload: { transferId: 'xfer-switch-0001' },
+      capturedAt: '2026-07-20T08:02:00.000Z',
+    };
+    await expect(SyncQueueManager.executeCommandRequest('/api/commands/cellar.transfer', intent)).rejects.toThrow();
+    const switchOperation = vi.fn(async () => jsonResponse({ organizationId: 'org-new' }));
+
+    const result = await SyncQueueManager.switchOrganizationContext(switchOperation);
+
+    expect(result.status).toBe(409);
+    expect(switchOperation).not.toHaveBeenCalled();
+    expect(SyncQueueManager.getPendingCommandIntents()).toEqual([intent]);
   });
 
   it('refuses an organization switch while deletion tombstones are pending', async () => {

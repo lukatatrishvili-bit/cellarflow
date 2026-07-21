@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canViewAppDestination,
+  canViewUserDestination,
   firstVisibleWineryTab,
   permissionModuleFor,
   visibleWineryTabIds,
@@ -43,5 +44,17 @@ describe('permission-aware app navigation', () => {
     expect(firstVisibleWineryTab('Viticulturist')).toBe('dashboard');
     expect(canViewAppDestination('Viticulturist', 'gvino', 'vessels')).toBe(false);
     expect(canViewAppDestination('Viticulturist', 'gvino', 'intake')).toBe(true);
+  });
+
+  it('keeps the raw master account in the system console until it impersonates a winery', () => {
+    const master = { role: 'Owner/Admin', isMasterAdmin: true };
+    expect(canViewUserDestination(master, 'master-admin')).toBe(true);
+    expect(canViewUserDestination(master, 'portal')).toBe(false);
+    expect(canViewUserDestination(master, 'integrations')).toBe(false);
+    expect(canViewUserDestination(master, 'settings')).toBe(false);
+
+    const impersonatedOwner = { role: 'Owner/Admin', isMasterAdmin: false };
+    expect(canViewUserDestination(impersonatedOwner, 'master-admin')).toBe(false);
+    expect(canViewUserDestination(impersonatedOwner, 'integrations')).toBe(true);
   });
 });

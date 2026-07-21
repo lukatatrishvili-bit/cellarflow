@@ -1,8 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { Wine, Package, AlertTriangle, CheckCircle2, Trash2, FileDown } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Wine, Package, AlertTriangle, CheckCircle2, RotateCcw, FileDown, X } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { WineLot, BottlingRunRecord, InventoryItem } from '../lib/wineryState';
-import { deductStock } from '../lib/wineryOperations';
 import {
   classifyInventoryCostCategory,
   computeBottlingCostPosting,
@@ -10,24 +9,36 @@ import {
   type BottlingPackagingSelections,
   type CostEntry,
 } from '../lib/costing';
-import { stockMovementFromBottlingRun, type StockMovement, type StorageLocation } from '../lib/storage';
+import type { StockMovement, StorageLocation } from '../lib/storage';
 import {
   bottlingPackagingShortfalls,
   compareBottlingRunsNewestFirst,
+  isActiveBottlingRun,
 } from '../lib/bottlingIntegrity';
-import { createUniqueRecordId } from '../lib/recordIds';
+import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
+import { applyBottlingCommand, BOTTLING_FORMATS, type BottlingCommandPayload } from '../lib/commands/bottling';
+import type { BottlingReversalCommandPayload } from '../lib/commands/bottlingReversal';
+import {
+  CommandRequestError,
+  createBottlingCommandIntent,
+  createBottlingReversalCommandIntent,
+  pendingBottlingCommandIntent,
+  pendingBottlingReversalCommandIntent,
+  submitBottlingCommand,
+  submitBottlingReversalCommand,
+  type BottlingCommandResponse,
+} from '../lib/commands/client';
 
 interface Props {
   lang: Language;
   canCreateBottling?: boolean;
-  canDeleteBottling?: boolean;
+  canReverseBottling?: boolean;
   canUseBottlingCosting?: boolean;
   canPlaceFinishedGoods?: boolean;
   lots: WineLot[];
   onUpdateLots: (lots: WineLot[]) => void;
   history: BottlingRunRecord[];
   onUpdateHistory: (runs: BottlingRunRecord[]) => void;
-  onDeleteRun: (runId: string) => boolean | void;
   inventory: InventoryItem[];
   onUpdateInventory: (inventory: InventoryItem[]) => void;
   costEntries: CostEntry[];
@@ -35,6 +46,7 @@ interface Props {
   storageLocations: StorageLocation[];
   stockMovements: StockMovement[];
   onUpdateStockMovements: (movements: StockMovement[]) => void;
+  onApplyBottlingCommandResponse?: (response: BottlingCommandResponse) => void;
   currency: string;
   currentUserName: string;
   setToastMessage?: (m: string) => void;
@@ -42,13 +54,12 @@ interface Props {
 
 /** Official bottle formats from Annex №7 (ჩამოსხმის აქტი). */
 export const BOTTLE_FORMATS: Array<{ key: string; litres: number; labelKa: string; kind: 'bottle' | 'ceramic' }> = [
-  { key: '0.75', litres: 0.75, labelKa: '0.75 ლ', kind: 'bottle' },
-  { key: '0.5', litres: 0.5, labelKa: '0.5 ლ', kind: 'bottle' },
-  { key: '0.375', litres: 0.375, labelKa: '0.375 ლ', kind: 'bottle' },
-  { key: '0.2', litres: 0.2, labelKa: '0.2 ლ', kind: 'bottle' },
-  { key: '1.5', litres: 1.5, labelKa: '1.5 ლ (მაგნუმი)', kind: 'bottle' },
-  { key: '3.0', litres: 3.0, labelKa: '3.0 ლ', kind: 'bottle' },
-  { key: 'ceramic', litres: 0.75, labelKa: 'კერამიკა 0.75 ლ', kind: 'ceramic' },
+  ...BOTTLING_FORMATS.map(format => ({
+    ...format,
+    labelKa: format.key === 'ceramic'
+      ? 'კერამიკა 0.75 ლ'
+      : `${format.key} ლ${format.key === '1.5' ? ' (მაგნუმი)' : ''}`,
+  })),
 ];
 
 export type BottlingRun = BottlingRunRecord;
@@ -80,14 +91,13 @@ const PACKAGING_COMPONENTS: Array<{ key: BottlingPackagingComponent; en: string;
 export default function BottlingTab({
   lang,
   canCreateBottling = true,
-  canDeleteBottling = true,
+  canReverseBottling = true,
   canUseBottlingCosting = true,
   canPlaceFinishedGoods = true,
   lots,
   onUpdateLots,
   history,
   onUpdateHistory,
-  onDeleteRun,
   inventory,
   onUpdateInventory,
   costEntries,
@@ -95,15 +105,24 @@ export default function BottlingTab({
   storageLocations,
   stockMovements,
   onUpdateStockMovements,
+  onApplyBottlingCommandResponse,
   currency,
   currentUserName,
   setToastMessage,
 }: Props) {
   const ka = lang === 'ka';
 
+  const [pendingIntent, setPendingIntent] = useState<PendingCommandIntent<BottlingCommandPayload> | null>(null);
+  const [pendingReversalIntent, setPendingReversalIntent] = useState<PendingCommandIntent<BottlingReversalCommandPayload> | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReversing, setIsReversing] = useState(false);
+  const [reversalRunId, setReversalRunId] = useState('');
+  const [reversalReason, setReversalReason] = useState('');
+
   const bottleable = useMemo(
-    () => lots.filter(l => l.currentVolume > 0 && l.stage !== 'sold'),
-    [lots],
+    () => lots.filter(l => (l.currentVolume > 0 && l.stage !== 'sold') || l.id === pendingIntent?.payload.lotId),
+    [lots, pendingIntent?.payload.lotId],
   );
 
   const [lotId, setLotId] = useState(bottleable[0]?.id || '');
@@ -115,6 +134,36 @@ export default function BottlingTab({
   const [bottlesPerBox, setBottlesPerBox] = useState('6');
   const [bottlingServiceCost, setBottlingServiceCost] = useState('');
   const [storageLocationId, setStorageLocationId] = useState('');
+
+  useEffect(() => {
+    const restored = pendingBottlingCommandIntent();
+    if (!restored) return;
+    setPendingIntent(restored);
+    setLotId(restored.payload.lotId);
+    setDate(restored.payload.date);
+    setLotNumber(restored.payload.lotNumber);
+    setOperator(restored.payload.operator);
+    setCounts({ ...restored.payload.formats });
+    setPackagingSelections({ ...restored.payload.packagingSelections });
+    setBottlesPerBox(String(restored.payload.bottlesPerBox));
+    setBottlingServiceCost(String(restored.payload.bottlingServiceCost || ''));
+    setStorageLocationId(restored.payload.storageLocationId);
+    setCommandError(ka
+      ? 'წინა ჩამოსხმის შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანების უსაფრთხოდ აღსადგენად ხელახლა გაგზავნეთ.'
+      : 'A previous bottling run is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [ka]);
+
+  useEffect(() => {
+    const restored = pendingBottlingReversalCommandIntent();
+    if (!restored) return;
+    const original = history.find(run => run.commandId === restored.payload.originalCommandId);
+    setPendingReversalIntent(restored);
+    setReversalRunId(original?.id || '');
+    setReversalReason(restored.payload.reason);
+    setCommandError(ka
+      ? 'წინა ჩამოსხმის შესწორება ჯერ არ არის დადასტურებული. იმავე ბრძანების უსაფრთხოდ აღსადგენად ხელახლა გაგზავნეთ.'
+      : 'A previous bottling correction is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [history, ka]);
 
   const lot = lots.find(l => l.id === lotId) || null;
   const availableL = lot ? lot.currentVolume : 0;
@@ -159,7 +208,7 @@ export default function BottlingTab({
     [costPreview.deductions, inventory],
   );
   const hasPackagingShortfall = overdrawnPackaging.length > 0;
-  const canSubmit = !!lot && !overfill && !noBottles && !hasPackagingShortfall;
+  const canSubmit = Boolean(pendingIntent) || (!!lot && !overfill && !noBottles && !hasPackagingShortfall);
   const orderedHistory = useMemo(
     () => [...history].sort(compareBottlingRunsNewestFirst),
     [history],
@@ -182,115 +231,185 @@ export default function BottlingTab({
 
   const resetForm = () => { setCounts({}); setLotNumber(''); setBottlingServiceCost(''); };
 
-  const handleBottle = () => {
-    if (!canCreateBottling || !lot || !canSubmit) return;
-    const remaining = round1(availableL - volumeBottledL);
-    const fullyBottled = remaining <= 0.5; // essentially emptied
-
-    const breakdown = BOTTLE_FORMATS
-      .filter(f => (counts[f.key] || 0) > 0)
-      .map(f => `${counts[f.key]}×${f.labelKa}`)
-      .join(', ');
-    const runId = createUniqueRecordId('bot', history.map(item => item.id));
-
-    const updatedLots = lots.map(l => l.id !== lot.id ? l : {
-      ...l,
-      currentVolume: Math.max(0, remaining),
-      stage: fullyBottled ? 'bottled' as const : l.stage,
-      history: [
-        { date, type: 'bottling', description: `${ka ? 'ჩამოსხმა' : 'Bottling'}: ${breakdown}${lotNumber ? ` (ლოტი ${lotNumber})` : ''}`, operator: operator || (ka ? 'უცნობი' : 'Unknown'), sourceRef: runId },
-        ...(l.history || []),
-      ],
-    });
-    onUpdateLots(updatedLots);
-
-    const storageMovement = stockMovementFromBottlingRun({
-      runId,
-      date,
-      lotId: lot.id,
-      locationId: effectiveStorageLocationId,
-      bottles: totalUnits,
-      lotName: lot.name,
-    });
-    const costPosting = computeBottlingCostPosting({
-      runId,
-      date,
-      lotId: lot.id,
-      totalUnits,
-      packagingSelections: effectivePackagingSelections,
-      inventory,
-      bottlesPerBox: parseInt(bottlesPerBox) || 6,
-      bottlingServiceCost: effectiveBottlingServiceCost,
-      currency,
-      createdBy: operator || currentUserName,
-    });
-
-    const run: BottlingRunRecord = {
-      id: runId,
-      createdAt: new Date().toISOString(),
-      lotId: lot.id,
-      lotName: lot.name,
-      date,
-      lotNumber,
-      operator,
-      formats: { ...counts },
-      totalBottles,
-      totalCeramic,
-      volumeBottledL,
-      previousLotVolumeL: availableL,
-      previousLotStage: lot.stage,
-      ...(Object.keys(effectivePackagingSelections).length > 0 ? { packagingMaterialIds: { ...effectivePackagingSelections } } : {}),
-      ...(Object.keys(costPosting.deductions).length > 0 ? { packagingDeductions: costPosting.deductions } : {}),
-      ...(parseInt(bottlesPerBox) > 0 ? { bottlesPerBox: parseInt(bottlesPerBox) } : {}),
-      ...(costPosting.packagingCostTotal > 0 ? { packagingCostTotal: costPosting.packagingCostTotal } : {}),
-      ...(costPosting.bottlingServiceCost > 0 ? { bottlingServiceCost: costPosting.bottlingServiceCost } : {}),
-      ...(storageMovement ? {
-        storageLocationId: storageMovement.locationId,
-        storageMovementId: storageMovement.id,
-        placedInStorageBottles: storageMovement.bottles,
-      } : {}),
-    };
-    const next = [run, ...history];
-    onUpdateHistory(next);
-    saveBottlingHistory(next);
-    if (canPlaceFinishedGoods && storageMovement) {
-      onUpdateStockMovements([storageMovement, ...stockMovements]);
-    }
-    if (canUseBottlingCosting && Object.keys(costPosting.deductions).length > 0) {
-      onUpdateInventory(inventory.map(item => {
-        const used = costPosting.deductions[item.id] || 0;
-        return used > 0 ? { ...item, stock: deductStock(item.stock, used) } : item;
-      }));
-    }
-    if (canUseBottlingCosting && costPosting.entries.length > 0) {
-      onUpdateCostEntries([...costPosting.entries, ...costEntries]);
-    }
-    setToastMessage?.(ka
-      ? `ჩამოსხმა აღირიცხა: ${totalBottles + totalCeramic} ერთეული (${volumeBottledL} ლ)`
-      : `Bottling recorded: ${totalBottles + totalCeramic} units (${volumeBottledL} L)`);
+  const finishCommand = () => {
+    setPendingIntent(null);
+    setCommandError(null);
     resetForm();
-    if (fullyBottled) {
-      const stillBottleable = updatedLots.filter(l => l.currentVolume > 0 && l.stage !== 'sold');
-      setLotId(stillBottleable[0]?.id || '');
+  };
+
+  const applyBottlingLocally = (intent: PendingCommandIntent<BottlingCommandPayload>) => {
+    const applied = applyBottlingCommand(
+      { lots, bottlingRuns: history, inventory, costEntries, storageLocations, stockMovements },
+      intent.payload,
+      {
+        commandId: intent.commandId,
+        actorUsername: currentUserName,
+        currency,
+        performedAt: new Date(),
+      },
+    );
+    onUpdateLots(applied.state.lots);
+    onUpdateHistory(applied.state.bottlingRuns);
+    saveBottlingHistory(applied.state.bottlingRuns);
+    onUpdateInventory(applied.state.inventory);
+    onUpdateCostEntries(applied.state.costEntries);
+    onUpdateStockMovements(applied.state.stockMovements);
+    setToastMessage?.(ka
+      ? `ჩამოსხმა აღირიცხა: ${applied.result.receipt.totalUnits} ერთეული (${applied.result.receipt.volumeBottledL} ლ)`
+      : `Bottling recorded: ${applied.result.receipt.totalUnits} units (${applied.result.receipt.volumeBottledL} L)`);
+    finishCommand();
+    if (applied.result.receipt.remainingLotVolumeL <= 0.5) {
+      setLotId(applied.state.lots.find(item => item.currentVolume > 0 && item.stage !== 'sold')?.id || '');
     }
   };
 
-  const deleteRun = (id: string) => {
-    if (!canDeleteBottling) return;
-    onDeleteRun(id);
+  const handleBottleCommand = async () => {
+    if (!canCreateBottling || (!pendingIntent && (!lot || !canSubmit))) return;
+    const intent = pendingIntent || createBottlingCommandIntent({
+      lotId,
+      date,
+      lotNumber,
+      operator: operator || currentUserName,
+      formats: { ...counts },
+      packagingSelections: { ...effectivePackagingSelections },
+      bottlesPerBox: parseInt(bottlesPerBox) || 6,
+      bottlingServiceCost: effectiveBottlingServiceCost,
+      storageLocationId: effectiveStorageLocationId,
+    });
+
+    setCommandError(null);
+    if (!onApplyBottlingCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingIntent) {
+        setCommandError(ka
+          ? 'დაუდასტურებელი ჩამოსხმის აღდგენას ინტერნეტთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged bottling run requires a server connection.');
+        return;
+      }
+      try {
+        applyBottlingLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Bottling validation failed.');
+      }
+      return;
+    }
+
+    setPendingIntent(intent);
+    setIsSubmitting(true);
+    try {
+      const response = await submitBottlingCommand(intent);
+      onApplyBottlingCommandResponse(response);
+      setToastMessage?.(ka
+        ? `ჩამოსხმა აღირიცხა: ${response.result.receipt.totalUnits} ერთეული (${response.result.receipt.volumeBottledL} ლ)`
+        : `Bottling recorded: ${response.result.receipt.totalUnits} units (${response.result.receipt.volumeBottledL} L)`);
+      finishCommand();
+      if (response.result.receipt.remainingLotVolumeL <= 0.5) {
+        const authoritativeLots = response.collections?.lots || lots;
+        setLotId(authoritativeLots.find(item => item.currentVolume > 0 && item.stage !== 'sold')?.id || '');
+      }
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingIntent) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyBottlingLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error ? fallbackError.message : 'Bottling validation failed.');
+          setPendingIntent(null);
+          return;
+        }
+      }
+      setCommandError(error instanceof Error ? error.message : 'Bottling command failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingIntent(null);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const reversalRun = history.find(run => run.id === reversalRunId) || null;
+
+  const applyReversalResponse = (response: Awaited<ReturnType<typeof submitBottlingReversalCommand>>) => {
+    if (response.collections) {
+      onUpdateLots(response.collections.lots);
+      onUpdateHistory(response.collections.bottlingRuns);
+      saveBottlingHistory(response.collections.bottlingRuns);
+      onUpdateInventory(response.collections.inventory);
+      onUpdateCostEntries(response.collections.costEntries);
+      onUpdateStockMovements(response.collections.stockMovements);
+      return;
+    }
+    const replaceById = <T extends { id: string }>(current: T[], changed: T[]) => {
+      const changedById = new Map(changed.map(item => [item.id, item]));
+      return [...changed, ...current.filter(item => !changedById.has(item.id))];
+    };
+    const nextRuns = replaceById(history, [response.result.reversalRun, response.result.originalRun]);
+    onUpdateLots(replaceById(lots, [response.result.updatedLot]));
+    onUpdateHistory(nextRuns);
+    saveBottlingHistory(nextRuns);
+    onUpdateInventory(replaceById(inventory, response.result.updatedInventoryItems));
+    onUpdateCostEntries(replaceById(costEntries, [
+      ...response.result.reversalCostEntries,
+      ...response.result.updatedOriginalCostEntries,
+    ]));
+    if (response.result.storageReturnMovement) {
+      onUpdateStockMovements(replaceById(stockMovements, [response.result.storageReturnMovement]));
+    }
+  };
+
+  const handleReverseRun = async () => {
+    if (!canReverseBottling || isReversing) return;
+    const original = pendingReversalIntent
+      ? history.find(run => run.commandId === pendingReversalIntent.payload.originalCommandId)
+      : reversalRun;
+    const reason = pendingReversalIntent?.payload.reason || reversalReason.trim();
+    if (!original?.commandId || !reason) {
+      setCommandError(ka ? 'შესწორების მიზეზი სავალდებულოა.' : 'A correction reason is required.');
+      return;
+    }
+    if (!onApplyBottlingCommandResponse || !SyncQueueManager.isOnline()) {
+      setCommandError(ka
+        ? 'ჩამოსხმის შესწორებას სჭირდება სერვერთან კავშირი.'
+        : 'Bottling corrections require a server connection.');
+      return;
+    }
+    const intent = pendingReversalIntent || createBottlingReversalCommandIntent({
+      originalCommandId: original.commandId,
+      reason,
+    });
+    setPendingReversalIntent(intent);
+    setCommandError(null);
+    setIsReversing(true);
+    try {
+      const response = await submitBottlingReversalCommand(intent);
+      applyReversalResponse(response);
+      setPendingReversalIntent(null);
+      setReversalRunId('');
+      setReversalReason('');
+      setToastMessage?.(ka
+        ? `ჩამოსხმა შესწორდა: აღდგენილია ${response.result.receipt.restoredVolumeL} ლ`
+        : `Bottling corrected: ${response.result.receipt.restoredVolumeL} L restored`);
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : 'Bottling reversal failed.');
+      if (error instanceof CommandRequestError && !error.retryable) {
+        setPendingReversalIntent(null);
+      }
+    } finally {
+      setIsReversing(false);
+    }
   };
 
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
   const inputCls = 'w-full bg-stone-50 border border-stone-200 px-2.5 py-2 rounded-lg text-xs font-semibold text-stone-700 outline-none focus:border-[#4e0e15] dark:bg-stone-900 dark:border-stone-800';
   const fmtMoney = (n: number) => `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
-  const bottlingAccessNotice = !canCreateBottling && !canDeleteBottling
+  const bottlingAccessNotice = !canCreateBottling && !canReverseBottling
     ? (ka
       ? 'მხოლოდ ნახვის წვდომა: შეგიძლიათ ჩამოსხმის ისტორიისა და დანართ №7-ის მონაცემების ნახვა, თუმცა ჩანაწერის შექმნა ან გაუქმება არ შეგიძლიათ.'
-      : 'Read-only access: you can review bottling history and Annex №7 data, but you cannot record or roll back bottling runs.')
-    : canCreateBottling && !canDeleteBottling
+      : 'Read-only access: you can review bottling history and Annex №7 data, but you cannot record runs or append corrections.')
+    : canCreateBottling && !canReverseBottling
       ? (ka
-        ? 'შეგიძლიათ ჩამოსხმის აღრიცხვა, თუმცა ისტორიული ჩანაწერის წაშლა და დაკავშირებული მოძრაობების გაუქმება მხოლოდ უფლებამოსილ მფლობელს შეუძლია.'
-        : 'You can record bottling runs, but only an authorized owner can delete a historical run and reverse its linked movements.')
+        ? 'შეგიძლიათ ჩამოსხმის აღრიცხვა, თუმცა ყველა დაკავშირებულ რეესტრში შესწორების დამატება მხოლოდ უფლებამოსილ მფლობელს შეუძლია.'
+        : 'You can record bottling runs, but only an authorized owner can append a correction across the linked ledgers.')
       : !canCreateBottling
         ? (ka
           ? 'ახალი ჩამოსხმის აღრიცხვა თქვენი როლისთვის მიუწვდომელია; უფლებამოსილი ისტორიული მოქმედებები კვლავ ხელმისაწვდომია.'
@@ -344,6 +463,7 @@ export default function BottlingTab({
             </div>
           ) : (
             <>
+              <fieldset disabled={Boolean(pendingIntent) || isSubmitting} className="contents">
               <div>
                 <label className={labelCls}>{ka ? 'ღვინის ლოტი' : 'Wine lot'}</label>
                 <select value={lotId} onChange={e => { setLotId(e.target.value); resetForm(); }} className={inputCls}>
@@ -473,9 +593,17 @@ export default function BottlingTab({
                 </div>
               )}
 
-              <button onClick={handleBottle} disabled={!canSubmit} aria-describedby={hasPackagingShortfall ? 'bottling-packaging-shortfall' : undefined}
+              </fieldset>
+              {commandError && (
+                <div role="alert" className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900">
+                  {commandError}
+                </div>
+              )}
+              <button onClick={handleBottleCommand} disabled={!canSubmit || isSubmitting} aria-describedby={hasPackagingShortfall ? 'bottling-packaging-shortfall' : undefined}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#4e0e15] hover:bg-[#34070a] disabled:opacity-50 disabled:cursor-not-allowed text-amber-50 rounded-xl text-xs font-bold uppercase tracking-wide cursor-pointer transition-colors">
-                <CheckCircle2 className="w-4 h-4" /> {ka ? 'ჩამოსხმის აღრიცხვა' : 'Record bottling'}
+                <CheckCircle2 className="w-4 h-4" /> {pendingIntent
+                  ? (ka ? 'იგივე ჩამოსხმის ხელახლა გაგზავნა' : 'Resubmit bottling run')
+                  : (ka ? 'ჩამოსხმის აღრიცხვა' : 'Record bottling')}
               </button>
             </>
           )}
@@ -492,6 +620,43 @@ export default function BottlingTab({
               <FileDown className="w-3 h-3" /> {ka ? 'დანართი №7' : 'Annex №7'}
             </span>
           </div>
+          {(reversalRun || pendingReversalIntent) && (
+            <div className="border-b border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/60 dark:bg-amber-950/20">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-amber-950 dark:text-amber-100">
+                    {ka ? 'ჩამოსხმის შესწორება' : 'Correct bottling run'}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+                    {ka
+                      ? 'თავდაპირველი ჩანაწერი დარჩება აუდიტის ისტორიაში. მოცულობა, შეფუთვა, ხარჯი და საწყობის მიღება აღდგება მხოლოდ თუ შემდგომი დამოკიდებული სამუშაო არ არსებობს.'
+                      : 'The original remains in the audit trail. Lot volume, packaging, cost, and the original warehouse receipt are compensated only if no later work depends on them.'}
+                  </p>
+                </div>
+                {!pendingReversalIntent && (
+                  <button type="button" onClick={() => { setReversalRunId(''); setReversalReason(''); setCommandError(null); }}
+                    aria-label={ka ? 'დახურვა' : 'Close correction'} className="text-amber-700 hover:text-amber-950 dark:text-amber-300">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              <label className="mt-3 block text-[9px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                {ka ? 'შესწორების მიზეზი' : 'Correction reason'}
+                <textarea value={reversalReason} onChange={event => setReversalReason(event.target.value)}
+                  disabled={Boolean(pendingReversalIntent)} maxLength={500} rows={2}
+                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-medium normal-case tracking-normal text-stone-800 outline-none focus:border-amber-600 disabled:opacity-70 dark:border-amber-900 dark:bg-stone-950 dark:text-amber-50"
+                  placeholder={ka ? 'რატომ არის ეს შესწორება საჭირო?' : 'Why is this correction required?'} />
+              </label>
+              <button type="button" onClick={handleReverseRun}
+                disabled={isReversing || (!pendingReversalIntent && !reversalReason.trim())}
+                className="mt-2 inline-flex items-center gap-2 rounded-lg bg-amber-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 disabled:opacity-50 dark:bg-amber-700">
+                <RotateCcw className="h-3.5 w-3.5" />
+                {pendingReversalIntent
+                  ? (ka ? 'იმავე შესწორების ხელახლა გაგზავნა' : 'Resubmit same correction')
+                  : (ka ? 'შესწორების დადასტურება' : 'Confirm correction')}
+              </button>
+            </div>
+          )}
           {history.length === 0 ? (
             <div className="text-center py-12 text-stone-400 text-xs font-semibold">
               {ka ? 'ჯერ არ არის ჩამოსხმა აღრიცხული' : 'No bottling runs recorded yet'}
@@ -505,27 +670,34 @@ export default function BottlingTab({
                     <th className="p-2.5">{ka ? 'ლოტი' : 'Lot'}</th>
                     <th className="p-2.5 text-right">{ka ? 'ბოთლი' : 'Bottles'}</th>
                     <th className="p-2.5 text-right">{ka ? 'მოცულობა' : 'Volume'}</th>
-                    {canDeleteBottling && <th className="p-2.5"><span className="sr-only">{ka ? 'მოქმედებები' : 'Actions'}</span></th>}
+                    {canReverseBottling && <th className="p-2.5"><span className="sr-only">{ka ? 'მოქმედებები' : 'Actions'}</span></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
                   {orderedHistory.map(r => (
-                    <tr key={r.id} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
+                    <tr key={r.id} className={`hover:bg-stone-50/50 dark:hover:bg-white/5 ${r.recordKind === 'reversal' || r.reversedByCommandId ? 'opacity-65' : ''}`}>
                       <td className="p-2.5 font-mono text-stone-500">{r.date}</td>
-                      <td className="p-2.5 font-bold text-stone-800 dark:text-amber-50">{r.lotName}<span className="block text-[9px] font-mono text-stone-400">{r.lotNumber || r.lotId}</span></td>
-                      <td className="p-2.5 text-right font-bold">{r.totalBottles}{r.totalCeramic ? ` +${r.totalCeramic}🏺` : ''}</td>
-                      <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300">{r.volumeBottledL} L</td>
-                      {canDeleteBottling && (
+                      <td className="p-2.5 font-bold text-stone-800 dark:text-amber-50">
+                        {r.lotName}
+                        {r.recordKind === 'reversal' && <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[8px] uppercase text-amber-800">{ka ? 'შესწორება' : 'Correction'}</span>}
+                        {r.reversedByCommandId && <span className="ml-2 rounded bg-stone-200 px-1.5 py-0.5 text-[8px] uppercase text-stone-600">{ka ? 'გაუქმებული' : 'Reversed'}</span>}
+                        <span className="block text-[9px] font-mono text-stone-400">{r.lotNumber || r.lotId}</span>
+                      </td>
+                      <td className="p-2.5 text-right font-bold">{r.recordKind === 'reversal' ? '−' : ''}{r.totalBottles}{r.totalCeramic ? ` +${r.totalCeramic}🏺` : ''}</td>
+                      <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300">{r.recordKind === 'reversal' ? '−' : ''}{r.volumeBottledL} L</td>
+                      {canReverseBottling && (
                         <td className="p-2.5 text-right">
-                          <button
-                            type="button"
-                            onClick={() => deleteRun(r.id)}
-                            title={ka ? 'წაშლა' : 'Delete'}
-                            aria-label={ka ? `${r.lotName} ჩამოსხმის ჩანაწერის წაშლა` : `Delete bottling run for ${r.lotName}`}
-                            className="text-stone-300 hover:text-rose-600 cursor-pointer transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                          </button>
+                          {isActiveBottlingRun(r) && r.commandId && (
+                            <button
+                              type="button"
+                              onClick={() => { setReversalRunId(r.id); setReversalReason(''); setCommandError(null); }}
+                              title={ka ? 'შესწორება' : 'Correct'}
+                              aria-label={ka ? `${r.lotName} ჩამოსხმის შესწორება` : `Correct bottling run for ${r.lotName}`}
+                              className="text-stone-300 hover:text-amber-700 cursor-pointer transition-colors"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>

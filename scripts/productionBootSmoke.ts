@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distIndexPath = path.join(rootDir, 'dist', 'index.html');
+type ReadinessExpectation = 'ready' | 'not-ready';
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -93,9 +94,44 @@ async function waitForHealth(
   throw new Error(`Production server did not become healthy within 20 seconds.${output}`);
 }
 
-async function assertProductionHttpContract(baseUrl: string, healthResponse: Response): Promise<void> {
+async function assertProductionHttpContract(
+  baseUrl: string,
+  healthResponse: Response,
+  expectedReadiness: ReadinessExpectation,
+): Promise<void> {
   if (JSON.stringify(await healthResponse.json()) !== JSON.stringify({ ok: true })) {
     throw new Error('Health endpoint returned an unexpected payload.');
+  }
+
+  const readinessResponse = await fetch(`${baseUrl}/api/ready`);
+  const readinessPayload = await readinessResponse.json() as {
+    ok?: boolean;
+    database?: { status?: string; schemaReady?: boolean; failureClass?: string };
+    optionalIntegrations?: { status?: string };
+  };
+  const readinessJson = JSON.stringify(readinessPayload);
+  if (!/no-store/i.test(readinessResponse.headers.get('cache-control') || '')) {
+    throw new Error('Readiness responses must not be cached.');
+  }
+  if (/"(?:target|errors|warnings)"\s*:/.test(readinessJson)) {
+    throw new Error('Public readiness disclosed internal infrastructure diagnostics.');
+  }
+  if (expectedReadiness === 'ready') {
+    if (
+      readinessResponse.status !== 200
+      || readinessPayload.ok !== true
+      || readinessPayload.database?.status !== 'ready'
+      || readinessPayload.database.schemaReady !== true
+    ) {
+      throw new Error(`Production readiness check failed: ${readinessJson}`);
+    }
+  } else if (
+    readinessResponse.status !== 503
+    || readinessPayload.ok !== false
+    || readinessPayload.database?.status !== 'not_ready'
+    || readinessPayload.database.failureClass !== 'production_local_storage_unsafe'
+  ) {
+    throw new Error(`Unsafe local production storage did not fail readiness: ${readinessJson}`);
   }
 
   const routeResponse = await fetch(`${baseUrl}/cellar/lots/lot-1`);
@@ -143,7 +179,7 @@ async function assertHealthyProductionBoot(databasePath: string): Promise<void> 
 
   try {
     const healthResponse = await waitForHealth(baseUrl, processHandle);
-    await assertProductionHttpContract(baseUrl, healthResponse);
+    await assertProductionHttpContract(baseUrl, healthResponse, 'not-ready');
   } finally {
     await stopServer(processHandle.child);
   }
@@ -175,9 +211,12 @@ async function assertMissingSecretFailsClosed(databasePath: string): Promise<voi
 async function main(): Promise<void> {
   const externalBaseUrl = process.env.PRODUCTION_SMOKE_BASE_URL?.replace(/\/+$/, '');
   if (externalBaseUrl) {
+    const expectedReadiness = process.env.PRODUCTION_SMOKE_EXPECT_READINESS === 'not-ready'
+      ? 'not-ready'
+      : 'ready';
     const healthResponse = await waitForHealth(externalBaseUrl);
-    await assertProductionHttpContract(externalBaseUrl, healthResponse);
-    console.log('Production HTTP smoke passed: health, SPA fallback, API 404, and cache policy.');
+    await assertProductionHttpContract(externalBaseUrl, healthResponse, expectedReadiness);
+    console.log('Production HTTP smoke passed: liveness, readiness, SPA fallback, API 404, and cache policy.');
     return;
   }
 
@@ -190,7 +229,7 @@ async function main(): Promise<void> {
   try {
     await assertHealthyProductionBoot(databasePath);
     await assertMissingSecretFailsClosed(databasePath);
-    console.log('Production boot smoke passed: health, SPA fallback, API 404, cache policy, and secret fail-fast.');
+    console.log('Production boot smoke passed: liveness, fail-closed readiness, SPA fallback, API 404, cache policy, and secret fail-fast.');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

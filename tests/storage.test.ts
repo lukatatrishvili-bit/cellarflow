@@ -63,6 +63,29 @@ describe('unstored', () => {
     expect(res.L1).toBe(300); // 1300 produced − 1000 stored
     expect(res.L2).toBe(500); // none stored yet
   });
+
+  it('does not count the inbound leg of an internal relocation as new production placement', () => {
+    const res = unstored(
+      { L1: 100 },
+      [
+        M({ lotId: 'L1', direction: 'in', bottles: 60, reason: 'receive' }),
+        M({ lotId: 'L1', locationId: 'W1', direction: 'out', bottles: 20, reason: 'transfer' }),
+        M({ lotId: 'L1', locationId: 'W2', direction: 'in', bottles: 20, reason: 'transfer' }),
+      ],
+    );
+    expect(res.L1).toBe(40);
+  });
+
+  it('nets a bottling correction against its original receipt', () => {
+    const res = unstored(
+      { L1: 80 },
+      [
+        M({ lotId: 'L1', direction: 'in', bottles: 100, reason: 'bottling' }),
+        M({ lotId: 'L1', direction: 'out', bottles: 100, reason: 'bottling_reversal' }),
+      ],
+    );
+    expect(res.L1).toBe(80);
+  });
 });
 
 describe('stockMovementFromBottlingRun', () => {

@@ -7,20 +7,13 @@ import { inventoryCategoryLabel } from '../lib/enumLabels';
 import {
   Plus,
   Trash2,
-  Tag,
   Package,
-  FileText,
-  TrendingDown,
-  Scale,
-  Filter,
   Building2,
-  DollarSign,
   Edit3,
   Save,
   X,
   AlertTriangle,
   FolderPlus,
-  Compass,
   CheckCircle,
   HelpCircle
 } from 'lucide-react';

@@ -131,4 +131,37 @@ describe('year comparison analytics', () => {
   it('discovers available years from real records', () => {
     expect(availableComparisonYears(input)).toEqual([2027, 2026, 2025]);
   });
+
+  it('keeps returned stock while excluding a reversed sale and its correction from revenue', () => {
+    const original = input.salesDispatches[0];
+    const correctedInput = {
+      ...input,
+      stockMovements: [
+        ...input.stockMovements,
+        movement({
+          id: 'return-26', lotId: 'LOT-2026', date: '2027-04-02', direction: 'in',
+          bottles: 120, reason: 'sale_reversal', sourceRef: 'sale-26-reversal',
+        }),
+      ],
+      salesDispatches: [
+        { ...original, reversedByCommandId: 'cmd-sale-reversal', reversedAt: '2027-04-02T10:00:00.000Z' },
+        {
+          ...original,
+          id: 'sale-26-reversal',
+          recordKind: 'reversal' as const,
+          date: '2027-04-02',
+          stockMovementId: 'return-26',
+          reversalOfDispatchId: original.id,
+          reversalOfCommandId: 'cmd-sale-original',
+        },
+        input.salesDispatches[1],
+      ] as SalesDispatchRecord[],
+    };
+
+    const bucket = buildYearBucket(correctedInput, 2026, 'vintage');
+    expect(bucket.dispatchedBottles).toBe(0);
+    expect(bucket.revenue).toBe(0);
+    expect(bucket.cogs).toBe(0);
+    expect(bucket.stockOnHandBottles).toBe(900);
+  });
 });

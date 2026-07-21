@@ -858,6 +858,7 @@ export function getSeederData(orgId: string): UserDataState {
   ];
 
   return {
+    syncDeletionLedger: [],
     companyProfile: {
       companyName: 'ყვარლის სადემონსტრაციო მარანი',
       wineryName: WINERY_NAME,

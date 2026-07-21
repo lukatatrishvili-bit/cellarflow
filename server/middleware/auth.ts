@@ -161,7 +161,7 @@ export function checkWineryScope(capability: Capability) {
     if (!can(auth.role, capability)) {
       return res.status(403).json({ error: `Forbidden: ${capability} access required.` });
     }
-    
+
     const db = getDB();
     const user = db.users.find(u => u.username === auth.username);
     if (!user) {
@@ -179,13 +179,13 @@ export function checkWineryScope(capability: Capability) {
         error: 'The active organization changed before this request completed. Reload the current organization state and retry.',
       });
     }
-    
+
     (req as any).wineryContext = {
       username: auth.username,
       role: auth.role,
       organizationId,
     };
-    
+
     next();
   };
 }

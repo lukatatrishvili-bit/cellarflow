@@ -4,7 +4,11 @@ import {
   sessionCookie,
   clearSessionCookie,
   checkWineryScope,
-} from '../middleware/auth';
+
+  accountRecoveryLimiter,
+  invitationLimiter,
+  loginLimiter,
+  oauthCallbackLimiter} from '../middleware/auth';
 import {
   verifySessionToken,
   createSessionToken,
@@ -39,12 +43,6 @@ import {
   demoAccountConfig,
 } from '../config';
 import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from '../oauthConfigPolicy';
-import {
-  accountRecoveryLimiter,
-  invitationLimiter,
-  loginLimiter,
-  oauthCallbackLimiter,
-} from '../middleware/auth';
 import { isKnownRole, type Role } from '../permissions';
 import { auditSecurityEvent } from '../securityAudit';
 import type { SharedLoginLimiter } from '../loginLimiter';
@@ -163,6 +161,7 @@ function publicUser(user: any, extra: Record<string, unknown> = {}) {
     enabledModules: modules,
     enabledWidgets: selectedWidgets(user.enabledWidgets, modules),
     registrationComplete: user.registrationComplete ?? true,
+    isMasterAdmin: false,
     ...extra,
   };
 }
@@ -268,7 +267,7 @@ authRouter.post('/register', async (req, res) => {
   }
 
   const verification = generateVerificationToken();
-  
+
   const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
   const org = { id: orgId, name: normalizedCompanyProfile.companyName };
   ensureDbCollections(db);
@@ -555,6 +554,7 @@ authRouter.post('/login', async (req, res) => {
           enabledModules: ['vazi', 'gvino'],
           enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'],
           registrationComplete: true,
+          isMasterAdmin: true,
         });
       }
     }
@@ -562,7 +562,7 @@ authRouter.post('/login', async (req, res) => {
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  
+
   const user = db.users.find(u => u.username === identifier || u.email === identifier);
   if (!user || !userAccountIsEnabled(user) || !verifyPassword(passcode, user.passwordHash)) {
     await loginLimiter.recordFailure(limiterKey);
@@ -605,9 +605,11 @@ authRouter.post('/demo', async (_req, res) => {
     const user = await ensureDemoAccount();
     if (!user || !userAccountIsEnabled(user)) return res.status(404).json({ error: 'Demo login is unavailable.' });
 
-    const token = createSessionToken(sessionPayloadForUser(user, user.role), false);
+    const db = getDB();
+    const effectiveRole = activeMembershipRole(db, user);
+    const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), false);
     res.setHeader('Set-Cookie', sessionCookie(token, 86400));
-    res.json(publicUser(user, { isDemo: true, registrationComplete: true }));
+    res.json(publicUser(user, { role: effectiveRole, isDemo: true, registrationComplete: true }));
   } catch (err) {
     console.error('Demo login failed:', err);
     res.status(500).json({ error: 'Demo workspace could not be opened.' });
@@ -617,7 +619,7 @@ authRouter.post('/demo', async (_req, res) => {
 authRouter.get('/google/login', (req, res) => {
   const db = getDB() as any;
   const { clientId, clientSecret } = getGoogleOAuthCreds(db);
-  
+
   const reconfigure = req.query.reset === 'true' || req.query.reconfigure === 'true';
   const redirectUri = getRedirectUri(req);
   const runtimeConfigAllowed = isRuntimeOAuthConfigAllowed();
@@ -654,7 +656,7 @@ authRouter.get('/google/login', (req, res) => {
     `);
     return;
   }
-  
+
   if (!clientId || !clientSecret || reconfigure) {
     const displayClientId = db.googleConfig?.clientId || '';
 
@@ -726,14 +728,14 @@ authRouter.get('/google/login', (req, res) => {
     `);
     return;
   }
-  
-  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
+
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
     `response_type=code` +
     `&client_id=${encodeURIComponent(clientId)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=openid%20email%20profile` +
     `&state=google_auth`;
-  
+
   res.redirect(authUrl);
 });
 
@@ -746,12 +748,12 @@ authRouter.post('/google/configure', async (req, res) => {
   if (!clientId || !clientSecret) {
     return res.status(400).send('Client ID and Client Secret are required');
   }
-  
+
   const db = getDB() as any;
   if (!db.googleConfig) db.googleConfig = {};
   db.googleConfig.clientId = String(clientId).trim();
   db.googleConfig.clientSecret = String(clientSecret).trim();
-  
+
   await saveCoreMetadata('auth-google-config');
 
   const trimmedClientId = String(clientId).trim();
@@ -766,7 +768,7 @@ authRouter.post('/google/configure', async (req, res) => {
     ip: clientIp(req),
     metadata: { provider: 'google' },
   });
-  
+
   res.redirect('/api/auth/google/login');
 });
 
@@ -777,11 +779,11 @@ authRouter.get('/google/callback', async (req, res) => {
   if (!code) {
     return res.status(400).send('Authorization code missing');
   }
-  
+
   const db = getDB() as any;
   const { clientId, clientSecret } = getGoogleOAuthCreds(db);
   const redirectUri = getRedirectUri(req);
-  
+
   try {
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -794,7 +796,7 @@ authRouter.get('/google/callback', async (req, res) => {
         grant_type: 'authorization_code'
       }).toString()
     });
-    
+
     if (!tokenRes.ok) {
       console.error(`[auth] Google token exchange failed with status ${tokenRes.status}.`);
       await auditSecurityEvent({
@@ -804,14 +806,14 @@ authRouter.get('/google/callback', async (req, res) => {
       });
       return res.status(502).send('OAuth provider authentication failed');
     }
-    
+
     const tokenData = await tokenRes.json() as any;
     const accessToken = tokenData.access_token;
-    
+
     const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
-    
+
     if (!userinfoRes.ok) {
       console.error(`[auth] Google user information request failed with status ${userinfoRes.status}.`);
       await auditSecurityEvent({
@@ -821,15 +823,15 @@ authRouter.get('/google/callback', async (req, res) => {
       });
       return res.status(502).send('OAuth provider authentication failed');
     }
-    
+
     const userinfo = await userinfoRes.json() as any;
     const email = userinfo.email;
     const fullName = userinfo.name || 'Google User';
-    
+
     if (!email) {
       return res.status(400).send('Email not returned by Google');
     }
-    
+
     await refreshCoreMetadataFromPostgres();
     const dbData = getDB();
     const cleanEmail = email.toLowerCase().trim();
@@ -844,21 +846,21 @@ authRouter.get('/google/callback', async (req, res) => {
       });
       return res.status(403).send('This account is unavailable');
     }
-    
+
     let username = '';
     if (user) {
       username = user.username;
     } else {
       const emailPrefix = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
-      let baseUsername = emailPrefix || 'google_user';
+      const baseUsername = emailPrefix || 'google_user';
       username = baseUsername;
-      
+
       let suffix = 1;
       while (dbData.users.some(u => u.username === username)) {
         username = `${baseUsername}_${suffix}`;
         suffix++;
       }
-      
+
       user = {
         username,
         email: cleanEmail,
@@ -877,7 +879,7 @@ authRouter.get('/google/callback', async (req, res) => {
       const org = { id: orgId, name: `${fullName || username}'s Estate` };
       const membership = { id: 'mem_' + Math.random().toString(36).substr(2, 9), userId: username, organizationId: orgId, role: 'Owner/Admin' };
       user.activeOrganizationId = orgId;
-      
+
       ensureDbCollections(dbData);
       dbData.organizations.push(org);
       dbData.memberships.push(membership);
@@ -886,7 +888,7 @@ authRouter.get('/google/callback', async (req, res) => {
       await saveCoreMetadata('auth-google-register');
       await saveUserData(username, dbData.orgData[orgId]);
     }
-    
+
     const effectiveRole = activeMembershipRole(dbData, user);
     const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), true);
     res.setHeader('Set-Cookie', sessionCookie(token, 2592000));
@@ -899,7 +901,7 @@ authRouter.get('/google/callback', async (req, res) => {
       ip: clientIp(req),
       metadata: { provider: 'google' },
     });
-    
+
     res.redirect((user as any).registrationComplete === false ? '/?complete_registration=1' : '/');
   } catch (err) {
     console.error(`[auth] OAuth callback failed (${err instanceof Error ? err.name : 'unknown_error'}).`);
@@ -921,11 +923,11 @@ authRouter.get('/me', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
-  
+
   if (!session) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  
+
   const envAdmin = cleanEnv(process.env.ADMIN_USERNAME).toLowerCase();
   if (envAdmin && String(session.username).trim().toLowerCase() === envAdmin) {
     return res.json({
@@ -937,6 +939,7 @@ authRouter.get('/me', async (req, res) => {
       enabledModules: ['vazi', 'gvino'],
       enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'],
       registrationComplete: true,
+      isMasterAdmin: true,
     });
   }
 
@@ -951,7 +954,7 @@ authRouter.get('/me', async (req, res) => {
   ))) {
     return res.status(401).json({ error: 'Session is no longer authorized for the active organization' });
   }
-  
+
   res.json(publicUser(user, {
     role: activeMembershipRole(db, user),
     ...(session.impersonatedBy ? { impersonatedBy: session.impersonatedBy } : {})
@@ -1029,18 +1032,18 @@ authRouter.post('/update_profile', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
-  
+
   if (!session) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  
+
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
   if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
-  
+
   const { fullName, language, enabledModules, enabledWidgets } = req.body;
   if (fullName !== undefined) user.fullName = cleanText(fullName) || user.fullName;
   if (language !== undefined) user.language = normalizeLanguage(language);
@@ -1058,9 +1061,9 @@ authRouter.post('/update_profile', async (req, res) => {
     const modules = selectedModules((user as any).enabledModules, DEFAULT_MODULES);
     (user as any).enabledWidgets = selectedWidgets(enabledWidgets, modules);
   }
-  
+
   await saveCoreMetadata('auth-update-profile');
-  
+
   res.json(publicUserForActiveOrganization(db, user));
 });
 

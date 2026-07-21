@@ -65,7 +65,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
     const maxTemp = data.daily.tempMax;
     const precipSum = data.daily.precipSum;
     const windMax = data.daily.windMax;
-    
+
     let probability = 0;
     if (code === 96 || code === 99) {
       probability = code === 99 ? 95 : 80;
@@ -80,10 +80,10 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
     } else if (precipSum > 0 && maxTemp > 15) {
       probability = 5;
     }
-    
+
     let level: 'None' | 'Low' | 'Moderate' | 'High' | 'Critical' = 'None';
     let color = 'text-stone-750';
-    
+
     if (probability >= 80) {
       level = 'Critical';
       color = 'text-red-700 font-extrabold';
@@ -97,7 +97,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
       level = 'Low';
       color = 'text-emerald-700 font-bold';
     }
-    
+
     return { probability, level, color };
   }, [data]);
 
@@ -277,7 +277,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
                     {ka ? 'Meteored კონვექციური გაფრთხილება: სეტყვის რისკი!' : 'Meteored Convective Alert: Hail Risk'}
                   </strong>
                   <span>
-                    {ka 
+                    {ka
                       ? `ატმოსფერული არასტაბილურობის მაჩვენებელი მიუთითებს სეტყვის ${hailRisk.probability}%-იან ალბათობაზე. რეკომენდებულია დამცავი ბადეების გააქტიურება ან ანტისეტყვის სისტემების მომზადება.`
                       : `Atmospheric instability indices report a ${hailRisk.probability}% probability of convective hail. Vine canopy damage risk is ${hailRisk.level.toUpperCase()}. Recommend checking anti-hail rockets (Shildi systems) or preparing protective netting.`
                     }

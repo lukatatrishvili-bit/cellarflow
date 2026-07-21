@@ -218,7 +218,7 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
 
   if (labLike) {
     drafts.push(makeDraft('lab_check', content, {
-      title: lot 
+      title: lot
         ? (isKa ? `ქიმიის გადამოწმება ${lot.name}-სთვის` : `Verify chemistry for ${lot.name}`)
         : (isKa ? 'ღვინის ქიმიის გადამოწმება' : 'Verify wine chemistry'),
       priority: so2Like || urgentLike ? 'high' : 'medium',
@@ -236,7 +236,7 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
 
   if (so2Like) {
     drafts.push(makeDraft('so2_calculation', content, {
-      title: lot 
+      title: lot
         ? (isKa ? `SO2-ის გაანგარიშება ${lot.name}-სთვის` : `Review SO2 calculation for ${lot.name}`)
         : (isKa ? 'SO2-ის გაანგარიშება' : 'Review SO2 calculation'),
       priority: 'high',
@@ -255,13 +255,13 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
 
   if (cellarLike) {
     drafts.push(makeDraft('cellar_operation', content, {
-      title: lot 
+      title: lot
         ? (isKa ? `მარნის ოპერაცია ${lot.name}-სთვის` : `Review cellar operation for ${lot.name}`)
         : (isKa ? 'მარნის ოპერაცია' : 'Review cellar operation'),
       priority: urgentLike ? 'high' : 'medium',
       targetModule: 'operations',
-      description: isKa 
-        ? 'გადააქციეთ ასისტენტის რეკომენდაცია განსახილველ მარნის ოპერაციის პროექტად, სანამ დანიშნავთ შემსრულებლებს ან შეცვლით რეზერვუარებს.' 
+      description: isKa
+        ? 'გადააქციეთ ასისტენტის რეკომენდაცია განსახილველ მარნის ოპერაციის პროექტად, სანამ დანიშნავთ შემსრულებლებს ან შეცვლით რეზერვუარებს.'
         : 'Turn the assistant recommendation into a reviewed cellar-operation draft before assigning operators or changing vessels.',
       warnings: [],
       payload: {
@@ -276,8 +276,8 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
       title: isKa ? 'ვენახის წამლობის რეკომენდაცია' : 'Review vineyard protection recommendation',
       priority: urgentLike || hasAny(text, ['mildew', 'botrytis', 'high risk', 'ჭრაქი', 'ნაცარი']) ? 'high' : 'medium',
       targetModule: 'vazi',
-      description: isKa 
-        ? 'გადააქციეთ ვენახის რეკომენდაცია შემოწმებულ ფიტოსანიტარულ ან წამლობის გეგმის პროექტად ნაკვეთზე მავნებლების წნევისა და ეტიკეტის შეზღუდვების დადასტურების შემდეგ.' 
+      description: isKa
+        ? 'გადააქციეთ ვენახის რეკომენდაცია შემოწმებულ ფიტოსანიტარულ ან წამლობის გეგმის პროექტად ნაკვეთზე მავნებლების წნევისა და ეტიკეტის შეზღუდვების დადასტურების შემდეგ.'
         : 'Convert the vineyard recommendation into a checked scouting or spray-plan draft after confirming field pressure and label constraints.',
       warnings: [isKa ? SPRAY_WARNING_KA : SPRAY_WARNING],
       payload: {
@@ -292,8 +292,8 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
       title: isKa ? 'შესაბამისობის და დოკუმენტების რისკები' : 'Review compliance and document risk',
       priority: urgentLike || hasAny(text, ['missing', 'expired', 'rejected', 'გამოტოვებული', 'ვადაგასული']) ? 'high' : 'medium',
       targetModule: 'documents',
-      description: isKa 
-        ? 'შექმენით მხოლოდ განსახილველი შესაბამისობის გაფრთხილება, რათა ოფიციალური ფაილები, დეკლარაციები და სერტიფიკატის მონაცემები გადამოწმდეს პირველად ჩანაწერებთან.' 
+      description: isKa
+        ? 'შექმენით მხოლოდ განსახილველი შესაბამისობის გაფრთხილება, რათა ოფიციალური ფაილები, დეკლარაციები და სერტიფიკატის მონაცემები გადამოწმდეს პირველად ჩანაწერებთან.'
         : 'Create a review-only compliance warning so official files, declarations, and certification data can be checked against source records.',
       warnings: [isKa ? COMPLIANCE_WARNING_KA : COMPLIANCE_WARNING],
       payload: {
@@ -307,8 +307,8 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
       title: isKa ? 'ოფიციალური დოკუმენტის ცარიელი ველები' : 'Explain missing official document fields',
       priority: hasAny(text, ['critical', 'export', 'submission', 'submit', 'კრიტიკული', 'ექსპორტი']) ? 'high' : 'medium',
       targetModule: 'documents',
-      description: isKa 
-        ? 'მოამზადეთ მხოლოდ განსახილველი განმარტება დოკუმენტის ცარიელ ველებზე, მათ სავარაუდო პირველად წყაროებზე და იმაზე, თუ რა უნდა შეივსოს ექსპორტამდე.' 
+      description: isKa
+        ? 'მოამზადეთ მხოლოდ განსახილველი განმარტება დოკუმენტის ცარიელ ველებზე, მათ სავარაუდო პირველად წყაროებზე და იმაზე, თუ რა უნდა შეივსოს ექსპორტამდე.'
         : 'Prepare a review-only explanation of missing official document fields, their likely source records, and what must be entered before export or submission.',
       warnings: [isKa ? COMPLIANCE_WARNING_KA : COMPLIANCE_WARNING],
       payload: {
@@ -319,13 +319,13 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
 
   if (passportLike) {
     drafts.push(makeDraft('lot_passport_summary', content, {
-      title: lot 
+      title: lot
         ? (isKa ? `ლოტის პასპორტის რეზიუმე ${lot.name}-სთვის` : `Draft lot passport summary for ${lot.name}`)
         : (isKa ? 'ლოტის პასპორტის რეზიუმე' : 'Draft lot passport summary'),
       priority: 'low',
       targetModule: 'lots',
-      description: isKa 
-        ? 'მოამზადეთ მხოლოდ განსახილველი ლოტის პასპორტის რეზიუმე გენეალოგიის, მიღების, ლაბორატორიის, მარნისა და დოკუმენტების ჩანაწერებიდან.' 
+      description: isKa
+        ? 'მოამზადეთ მხოლოდ განსახილველი ლოტის პასპორტის რეზიუმე გენეალოგიის, მიღების, ლაბორატორიის, მარნისა და დოკუმენტების ჩანაწერებიდან.'
         : 'Prepare a review-only lot passport summary from lineage, intake, lab, cellar, and document records.',
       warnings: [isKa ? COMPLIANCE_WARNING_KA : COMPLIANCE_WARNING],
       payload: {
@@ -337,13 +337,13 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
 
   if (drafts.length === 0 || hasAny(text, ['todo', 'task', 'action', 'next step', 'protocol', 'checklist', 'schedule', 'დავალება', 'ნაბიჯი', 'გეგმა'])) {
     drafts.unshift(makeDraft('task', content, {
-      title: urgentLike 
-        ? (isKa ? 'სასწრაფო AI-რეკომენდებული დავალება' : 'Review urgent AI-recommended task') 
+      title: urgentLike
+        ? (isKa ? 'სასწრაფო AI-რეკომენდებული დავალება' : 'Review urgent AI-recommended task')
         : (isKa ? 'AI-რეკომენდებული დავალება' : 'Review AI-recommended task'),
       priority: urgentLike ? 'high' : 'medium',
       targetModule: 'tasks',
-      description: isKa 
-        ? 'შექმენით დავალების პროექტი ასისტენტის რეკომენდაციიდან ადამიანური გადამოწმების შემდეგ.' 
+      description: isKa
+        ? 'შექმენით დავალების პროექტი ასისტენტის რეკომენდაციიდან ადამიანური გადამოწმების შემდეგ.'
         : 'Create a task draft from the assistant recommendation after a human review.',
       warnings: [],
       payload: {
@@ -357,8 +357,8 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
 
 export function formatDraftTaskDescription(action: AiDraftAction, lang?: string): string {
   const isKa = lang === 'ka';
-  const warningText = action.warnings.length > 0 
-    ? `\n\n${isKa ? 'შენიშვნები' : 'Review notes'}:\n- ${action.warnings.join('\n- ')}` 
+  const warningText = action.warnings.length > 0
+    ? `\n\n${isKa ? 'შენიშვნები' : 'Review notes'}:\n- ${action.warnings.join('\n- ')}`
     : '';
   const prefix = isKa ? 'AI პროექტი' : 'AI draft action';
   return `${prefix} (${draftActionLabel(action.type, lang)}): ${action.description}${warningText}`;

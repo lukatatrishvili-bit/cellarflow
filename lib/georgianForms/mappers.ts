@@ -9,9 +9,11 @@
  */
 
 import type { ExportContext, DocRow, FormTemplate } from './types';
-import type { VineyardBlock, WineLot, HarvestRecord, CellarOperation } from '../wineryState';
+import type { VineyardBlock, WineLot, CellarOperation } from '../wineryState';
 import { CELLAR_OPERATIONS } from '../wineryOperations';
-import { applyRunningBalance, litresToDal, round2, toNum } from './balance';
+import { applyRunningBalance, litresToDal, round2 } from './balance';
+import { isActiveBottlingRun, isBottlingRunReversal } from '../bottlingIntegrity';
+import { harvestIntakeLedgerSign, isHarvestIntakeReversal } from '../harvestIntakeIntegrity';
 
 type Mapper = (ctx: ExportContext) => DocRow[];
 
@@ -44,10 +46,6 @@ function splitLocation(block: VineyardBlock): { municipality: string; community:
   // Heuristic: [village, municipality/region, country] — keep it transparent.
   if (parts.length >= 2) return { municipality: parts[1] || '', community: '', village: parts[0] || '' };
   return { municipality: parts[0] || '', community: '', village: '' };
-}
-
-function blockName(ctx: ExportContext, blockId: string): string {
-  return ctx.blocks.find(b => b.id === blockId)?.name || blockId;
 }
 
 function latestSugarForBlock(ctx: ExportContext, blockId: string): number | '' {
@@ -117,6 +115,7 @@ const mapGrapeReception: Mapper = (ctx) => {
 
   if (intakes.length > 0) {
     return intakes.map((g, i): DocRow => {
+      const sign = harvestIntakeLedgerSign(g);
       const block = ctx.blocks.find(b => b.id === g.blockId);
       const supplier = g.source === 'supplier'
         ? (g.supplierName || '')
@@ -133,12 +132,13 @@ const mapGrapeReception: Mapper = (ctx) => {
           g.microzone || block?.microzone,
         ].filter(Boolean).join(', ') || block?.locationName || (g.source === 'supplier' ? (g.supplierName || '') : ''),
         transport: [g.transportName, g.transportNumber].filter(Boolean).join(' / '),
-        brutto: g.grossWeightKg != null ? round2(g.grossWeightKg) : '',
-        tara: g.tareWeightKg != null ? round2(g.tareWeightKg) : '',
-        netto: g.netWeightKg != null ? round2(g.netWeightKg) : '',
+        brutto: g.grossWeightKg != null ? round2(sign * g.grossWeightKg) : '',
+        tara: g.tareWeightKg != null ? round2(sign * g.tareWeightKg) : '',
+        netto: g.netWeightKg != null ? round2(sign * g.netWeightKg) : '',
         analysisNo: g.labAnalysisNumber || '',
         sugar: g.brix ? round2(g.brix) : '',
         note: [
+          isHarvestIntakeReversal(g) ? `CORRECTION of ${g.reversalOfIntakeId || ''}: ${g.reversalReason || ''}` : '',
           g.weighingDocumentNumber ? `weighing ${g.weighingDocumentNumber}` : '',
           g.cadastralCode || block?.cadastralCode ? `cadastre ${g.cadastralCode || block?.cadastralCode}` : '',
           g.supplierIdCode ? `supplier ID ${g.supplierIdCode}` : '',
@@ -189,6 +189,16 @@ const mapWineMovement: Mapper = (ctx) => {
         outgoing: 0,
         balance: 0,
         note: `${lot.name} (${lot.id})`,
+      });
+    }
+    if (lot.voidedAt && inRange(lot.voidedAt, ctx)) {
+      rows.push({
+        date: lot.voidedAt.slice(0, 10),
+        fromTo: 'Accounting correction',
+        incoming: 0,
+        outgoing: litresToDal(lot.initialVolume || 0),
+        balance: 0,
+        note: `VOID ${lot.id}: ${lot.voidReason || ''}`.trim(),
       });
     }
   }
@@ -260,9 +270,10 @@ const mapWineBlending: Mapper = (ctx) => {
 
 /** Real bottling runs recorded by the Bottling tab (localStorage, guarded for tests). */
 /** Bottling runs in range (+ optional lot filter), oldest first. */
-function bottlingRunsInRange(ctx: ExportContext) {
+function bottlingRunsInRange(ctx: ExportContext, auditLedger = false) {
   return (ctx.bottlingRuns || [])
-    .filter(r => (!ctx.lotId || r.lotId === ctx.lotId) && inRange(r.date, ctx))
+    .filter(r => (auditLedger || isActiveBottlingRun(r))
+      && (!ctx.lotId || r.lotId === ctx.lotId) && inRange(r.date, ctx))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
@@ -312,7 +323,7 @@ const mapBottling: Mapper = (ctx) => {
 // are not tracked yet, so outgoing stays 0 and the balance is goods on hand.
 const mapWarehouse: Mapper = (ctx) => {
   const ka = ctx.lang === 'ka';
-  const runs = bottlingRunsInRange(ctx);
+  const runs = bottlingRunsInRange(ctx, true);
   const dispatches = (ctx.salesDispatches || [])
     .filter(d => (!ctx.lotId || d.lotId === ctx.lotId) && inRange(d.date, ctx));
 
@@ -322,6 +333,7 @@ const mapWarehouse: Mapper = (ctx) => {
     // runs (falling back to a standard 0.75 L bottle).
     const volAgg = new Map<string, { litres: number; units: number }>();
     for (const r of (ctx.bottlingRuns || [])) {
+      if (isBottlingRunReversal(r)) continue;
       const units = (r.totalBottles || 0) + (r.totalCeramic || 0);
       if (units <= 0 || !(r.volumeBottledL > 0)) continue;
       const a = volAgg.get(r.lotId) || { litres: 0, units: 0 };
@@ -336,20 +348,23 @@ const mapWarehouse: Mapper = (ctx) => {
 
     const rows: DocRow[] = [];
     for (const r of runs) {
+      const isCorrection = isBottlingRunReversal(r);
       rows.push({
         date: r.date.slice(0, 10),
-        fromTo: `${ka ? 'ჩამოსხმა' : 'Bottling'} / ${r.lotName}${r.lotNumber ? ` (${r.lotNumber})` : ''}`,
-        incoming: litresToDal(r.volumeBottledL || 0),
-        outgoing: 0,
+        fromTo: `${isCorrection ? (ka ? 'ჩამოსხმის კორექცია' : 'Bottling correction') : (ka ? 'ჩამოსხმა' : 'Bottling')} / ${r.lotName}${r.lotNumber ? ` (${r.lotNumber})` : ''}`,
+        incoming: isCorrection ? 0 : litresToDal(r.volumeBottledL || 0),
+        outgoing: isCorrection ? litresToDal(r.volumeBottledL || 0) : 0,
         balance: 0,
       });
     }
     for (const d of dispatches) {
+      const isReturn = d.recordKind === 'reversal';
+      const quantityDal = litresToDal((d.bottles || 0) * litresPerBottle(d.lotId));
       rows.push({
         date: (d.date || '').slice(0, 10),
-        fromTo: `${ka ? 'რეალიზაცია' : 'Sale'} / ${d.customerName || d.lotName || ''}`.trim(),
-        incoming: 0,
-        outgoing: litresToDal((d.bottles || 0) * litresPerBottle(d.lotId)),
+        fromTo: `${isReturn ? (ka ? 'დაბრუნება / კორექცია' : 'Return / correction') : (ka ? 'რეალიზაცია' : 'Sale')} / ${d.customerName || d.lotName || ''}`.trim(),
+        incoming: isReturn ? quantityDal : 0,
+        outgoing: isReturn ? 0 : quantityDal,
         balance: 0,
       });
     }
@@ -415,8 +430,13 @@ const mapMaterials: Mapper = (ctx) => {
       continue;
     }
 
-    const totalOut = usage.reduce((acc, o) => acc + (o.dose || 0), 0);
-    const opening = round2(i.stock + totalOut); // assumes no purchases inside the range
+    const totalOut = usage.reduce((acc, o) => (
+      acc + (o.recordKind === 'reversal' ? 0 : (o.dose || 0))
+    ), 0);
+    const totalIn = usage.reduce((acc, o) => (
+      acc + (o.recordKind === 'reversal' ? (o.dose || 0) : 0)
+    ), 0);
+    const opening = round2(i.stock + totalOut - totalIn); // assumes no purchases inside the range
     const block: DocRow[] = [{
       date: ctx.dateRange.from,
       docNo: '',
@@ -426,12 +446,13 @@ const mapMaterials: Mapper = (ctx) => {
       balance: 0,
     }];
     for (const o of usage) {
+      const correction = o.recordKind === 'reversal';
       block.push({
         date: (o.date || '').slice(0, 10),
         docNo: o.id,
-        fromTo: `${ka ? 'გამოყენება' : 'used'} — ${o.lotName} (${opLabel(o, ctx.lang)})`,
-        incoming: 0,
-        outgoing: round2(o.dose || 0),
+        fromTo: `${correction ? (ka ? 'შესწორება' : 'correction') : (ka ? 'გამოყენება' : 'used')} — ${o.lotName} (${opLabel(o, ctx.lang)})`,
+        incoming: correction ? round2(o.dose || 0) : 0,
+        outgoing: correction ? 0 : round2(o.dose || 0),
         balance: 0,
       });
     }
@@ -453,7 +474,7 @@ const mapProcessingSummary: Mapper = (ctx) => {
     if (typeof s === 'number') e.sugars.push(s);
     byVariety.set(v, e);
   }
-  for (const lot of ctx.lots) {
+  for (const lot of ctx.lots.filter(item => !item.voidedAt)) {
     const v = lot.variety || 'უცნობი';
     const e = byVariety.get(v) || { tons: 0, sugars: [], wineDal: 0 };
     e.wineDal += litresToDal(lot.initialVolume || 0);
@@ -494,7 +515,7 @@ const mapWineTurnover: Mapper = (ctx) => {
       outExport: 0, // TODO: sales channels not tracked
       outDomestic: 0,
       outBlend: 0,
-      outCategory: 0,
+      outCategory: lot.voidedAt ? produced : 0,
       outDistill: 0,
       closeBalance: closing,
     };

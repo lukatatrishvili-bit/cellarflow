@@ -1,22 +1,39 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, CellarTransferRecord } from '../lib/wineryState';
-import { 
-  RefreshCw, 
-  ShieldAlert, 
-  ArrowRight, 
-  ShieldCheck, 
-  CheckCircle2, 
-  Trash2, 
-  Flame, 
-  Droplet,
+import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
+import {
+  applyTransferCommand,
+  type TransferCommandPayload,
+  type TransferCommandResult,
+} from '../lib/commands/transfer';
+import {
+  applyTransferReversalCommand,
+  type TransferReversalCommandPayload,
+} from '../lib/commands/transferReversal';
+import {
+  CommandRequestError,
+  createTransferCommandIntent,
+  createTransferReversalCommandIntent,
+  pendingTransferCommandIntent,
+  pendingTransferReversalCommandIntent,
+  submitTransferCommand,
+  submitTransferReversalCommand,
+  type TransferCommandResponse,
+  type TransferReversalCommandResponse,
+} from '../lib/commands/client';
+import {
+  ShieldAlert,
+  ArrowRight,
+  ShieldCheck,
+  CheckCircle2,
+  RotateCcw,
+  X,
   Shuffle,
   Compass,
   Sparkles,
-  Info,
   Check,
   User,
   Activity
@@ -33,20 +50,21 @@ interface Props {
   clearPrefilled?: () => void;
   pastTransfers: CellarTransferRecord[];
   onUpdateTransfers: (transfers: CellarTransferRecord[]) => void;
+  onApplyTransferCommandResponse?: (response: TransferCommandResponse) => void;
+  onApplyTransferReversalCommandResponse?: (response: TransferReversalCommandResponse) => void;
   canExecuteTransfer?: boolean;
   canSanitizeVessels?: boolean;
-  canRollbackTransfer?: boolean;
+  canReverseTransfer?: boolean;
 }
 
 type TransferRecord = CellarTransferRecord;
 
-export default function TransfersTab({ 
-  lang, vessels, lots, onUpdateVessels, onUpdateLots, 
+export default function TransfersTab({
+  lang, vessels, lots, onUpdateVessels, onUpdateLots,
   prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers,
-  canExecuteTransfer = true, canSanitizeVessels = true, canRollbackTransfer = true,
+  onApplyTransferCommandResponse, onApplyTransferReversalCommandResponse,
+  canExecuteTransfer = true, canSanitizeVessels = true, canReverseTransfer = true,
 }: Props) {
-  const t = translations[lang];
-
   // Transfer input states
   const [sourceId, setSourceId] = useState<string>('');
   const [destId, setDestId] = useState<string>('');
@@ -56,9 +74,47 @@ export default function TransfersTab({
   const [operatorName, setOperatorName] = useState<string>('');
   const [reasonCategory, setReasonCategory] = useState<'racking' | 'blend' | 'filtration' | 'bottling'>('racking');
   const [operationReceipt, setOperationReceipt] = useState<string | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingIntent, setPendingIntent] = useState<PendingCommandIntent<TransferCommandPayload> | null>(null);
+  const [isReversing, setIsReversing] = useState(false);
+  const [reversalTargetId, setReversalTargetId] = useState<string | null>(null);
+  const [reversalReason, setReversalReason] = useState('');
+  const [pendingReversalIntent, setPendingReversalIntent] = useState<PendingCommandIntent<TransferReversalCommandPayload> | null>(null);
+
+  useEffect(() => {
+    const restored = pendingTransferCommandIntent();
+    if (!restored) return;
+    setPendingIntent(restored);
+    setSourceId(restored.payload.sourceVesselId);
+    setDestId(restored.payload.destinationVesselId);
+    setTransferVol(restored.payload.volumeLiters);
+    setLossVol(restored.payload.lossLiters);
+    setOperatorName(restored.payload.operator);
+    setReasonCategory(restored.payload.category);
+    setPumpModel(restored.payload.pump);
+    setCommandError(lang === 'ka'
+      ? 'წინა გადაღების შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანების უსაფრთხოდ აღსადგენად დააჭირეთ ხელახლა გაგზავნას.'
+      : 'A previous transfer is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [lang]);
+
+  useEffect(() => {
+    const restored = pendingTransferReversalCommandIntent();
+    if (!restored) return;
+    setPendingReversalIntent(restored);
+    setReversalReason(restored.payload.reason);
+    const original = pastTransfers.find(record => record.commandId === restored.payload.originalCommandId);
+    setReversalTargetId(original?.id || null);
+    setCommandError(lang === 'ka'
+      ? 'წინა დაბრუნების შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანების უსაფრთხოდ აღსადგენად ხელახლა გაგზავნეთ.'
+      : 'A previous reversal is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [lang, pastTransfers]);
 
   // Apply prefilled values when redirected from map drop
   useEffect(() => {
+    // An unacknowledged online command is immutable until replay resolves it.
+    // Do not let navigation autofill overwrite the durable recovery payload.
+    if (pendingTransferCommandIntent()) return;
     if (prefilledSourceId) {
       setSourceId(prefilledSourceId);
       // Auto-set transfer volume to source's volume as a sensible default
@@ -85,21 +141,23 @@ export default function TransfersTab({
 
   // Safety assessments
   const sourceIsEmpty = sourceVessel ? sourceVessel.currentVolume === 0 : true;
-  const sourceHasInsufficient = sourceVessel ? sourceVessel.currentVolume < transferVol : true;
-  
+  const sourceHasInsufficient = sourceVessel ? transferVol <= 0 || sourceVessel.currentVolume < transferVol : true;
+
   const destCapRemaining = destVessel ? destVessel.capacity - destVessel.currentVolume : 0;
-  const destWillOverflow = destVessel ? transferVol > destCapRemaining : true;
+  const arrivalVolume = Math.max(0, transferVol - lossVol);
+  const destWillOverflow = destVessel ? arrivalVolume > destCapRemaining : true;
+  const lossIsInvalid = lossVol < 0 || lossVol >= transferVol;
+  const destinationNeedsCleaning = Boolean(destVessel && destVessel.currentVolume === 0 && destVessel.cleaningStatus !== 'clean');
 
   // Wet blend warning
-  const showsBlendAlert = sourceVessel && destVessel && 
-                      sourceVessel.assignedLotId && destVessel.assignedLotId && 
+  const showsBlendAlert = sourceVessel && destVessel &&
+                      sourceVessel.assignedLotId && destVessel.assignedLotId &&
                       sourceVessel.assignedLotId !== destVessel.assignedLotId;
 
   // Let's make an advanced calculation of resulting enological metrics (Weighted blend model!)
   const getBlendedPrediction = () => {
     if (!sourceVessel || !destVessel) return null;
     const sourceLot = lots.find(l => l.id === sourceVessel.assignedLotId);
-    const destLot = lots.find(l => l.id === destVessel.assignedLotId);
 
     if (!sourceLot) return null;
 
@@ -142,137 +200,106 @@ export default function TransfersTab({
   const predictedBlend = getBlendedPrediction();
 
   // Execute transfer state
-  const handleExecuteTransfer = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canExecuteTransfer) return;
-    if (!sourceVessel || !destVessel) return;
-    if (sourceIsEmpty || sourceHasInsufficient || destWillOverflow) return;
-
-    const opDate = new Date().toISOString().split('T')[0];
-    const sourceLot = lots.find(l => l.id === sourceVessel.assignedLotId);
-    const destLot = lots.find(l => l.id === destVessel.assignedLotId);
-
-    // Calc volumes
-    const finalSourceVolume = sourceVessel.currentVolume - transferVol;
-    const finalTransferArrival = transferVol - lossVol;
-    const finalDestVolume = destVessel.currentVolume + finalTransferArrival;
-
-    let finalDestLotId = destVessel.assignedLotId || sourceVessel.assignedLotId;
-    let newLots = [...lots];
-
-    let detailedReceiptText = '';
-
-    // Blended Genealogy
-    if (showsBlendAlert && sourceLot && destLot) {
-      const blendedLotId = `B-${sourceLot.id}-${destLot.id}`.slice(0, 15);
-      const blendedName = `Assembly: ${sourceLot.name} / ${destLot.name}`;
-      
-      const prevDestAmount = destVessel.currentVolume;
-      const pctSource = parseFloat((finalTransferArrival / (prevDestAmount + finalTransferArrival) * 100).toFixed(1));
-      const pctDest = parseFloat((prevDestAmount / (prevDestAmount + finalTransferArrival) * 100).toFixed(1));
-
-      const blendedLot: WineLot = {
-        id: blendedLotId,
-        name: blendedName,
-        vintage: Math.max(sourceLot.vintage, destLot.vintage),
-        variety: `${sourceLot.variety} (${pctSource}%) / ${destLot.variety} (${pctDest}%)`,
-        vineyardBlock: `Combined inside ${destVessel.id}`,
-        region: destLot.region,
-        initialVolume: prevDestAmount + finalTransferArrival,
-        currentVolume: prevDestAmount + finalTransferArrival,
-        wineClass: destLot.wineClass,
-        stage: 'aging',
-        createdAt: opDate,
-        history: [
-          {
-            date: opDate,
-            type: 'Genealogy Merge Blend',
-            description: `Merged ${finalTransferArrival}L of ${sourceLot.name} (${pctSource}%) with ${prevDestAmount}L of ${destLot.name} (${pctDest}%). Predicted ABV: ${predictedBlend?.abv}%, pH: ${predictedBlend?.ph}.`,
-            operator: operatorName || 'Cuviste master'
-          },
-          ...(destLot.history || [])
-        ]
-      };
-
-      newLots.push(blendedLot);
-      finalDestLotId = blendedLotId;
-      detailedReceiptText = lang === 'ka'
-        ? `შეიქმნა ახალი კუპაჟის პარტია: „${blendedLotId}“ (${pctSource}% წყარო / ${pctDest}% მიმღები). სავარაუდო ABV: ${predictedBlend?.abv}%, pH: ${predictedBlend?.ph}.`
-        : `Merged into brand-new genealogy lot: "${blendedLotId}" (${pctSource}% source / ${pctDest}% dest). Predicted ABV: ${predictedBlend?.abv}%, pH: ${predictedBlend?.ph}.`;
-      setOperationReceipt(detailedReceiptText);
-    } else {
-      // Normal single lot move
-      if (sourceLot) {
-        newLots = lots.map(l => {
-          if (l.id === sourceLot.id) {
-            return {
-              ...l,
-              currentVolume: Math.max(0, l.currentVolume - lossVol),
-              history: [
-                {
-                  date: opDate,
-                  type: 'Liquid Transfer',
-                  description: `Pumped ${transferVol}L out of ${sourceVessel.id} to ${destVessel.id}. Logged loss: ${lossVol}L. Hoses sanitized.`,
-                  operator: operatorName || 'Cuviste'
-                },
-                ...(l.history || [])
-              ]
-            };
-          }
-          return l;
-        });
-      }
-      detailedReceiptText = lang === 'ka'
-        ? `${transferVol}ლ წარმატებით გადავიდა ${destVessel.id}-ში. ღვინო მიენიჭა პარტიას ${finalDestLotId}.`
-        : `Successfully racked ${transferVol}L into ${destVessel.id}. Transferred wine assigned to lot ${finalDestLotId}.`;
-      setOperationReceipt(detailedReceiptText);
+  const localizedReceipt = (result: TransferCommandResult): string => {
+    if (result.receipt.kind === 'blend') {
+      return lang === 'ka'
+        ? `შეიქმნა ახალი კუპაჟის პარტია „${result.receipt.destinationLotId}“: ${result.receipt.arrivalLiters} ლ წყაროდან და ${result.destinationVessel.currentVolume - result.receipt.arrivalLiters} ლ მიმღები ჭურჭლიდან.`
+        : `Created blend lot “${result.receipt.destinationLotId}”: ${result.receipt.arrivalLiters} L arrived from the source vessel.`;
     }
+    return lang === 'ka'
+      ? `${result.receipt.volumeLiters} ლ წარმატებით გადაიტუმბა ${result.receipt.destinationVesselId}-ში; მიღებულია ${result.receipt.arrivalLiters} ლ.`
+      : `Transferred ${result.receipt.volumeLiters} L into ${result.receipt.destinationVesselId}; ${result.receipt.arrivalLiters} L arrived.`;
+  };
 
-    // Update Vessels
-    const newVessels = vessels.map(v => {
-      if (v.id === sourceVessel.id) {
-        return {
-          ...v,
-          currentVolume: finalSourceVolume,
-          assignedLotId: finalSourceVolume === 0 ? null : v.assignedLotId,
-          cleaningStatus: finalSourceVolume === 0 ? 'dirty' as const : v.cleaningStatus,
-          lastOperation: `Transferred raw wine to ${destVessel.id}`
-        };
-      }
-      if (v.id === destVessel.id) {
-        return {
-          ...v,
-          currentVolume: finalDestVolume,
-          assignedLotId: finalDestLotId,
-          lastOperation: `Received wine transfer from ${sourceVessel.id}`
-        };
-      }
-      return v;
-    });
-
-    onUpdateVessels(newVessels);
-    onUpdateLots(newLots);
-
-    // Add to transfers history ledger
-    const newRecord: TransferRecord = {
-      id: `xfer-${Date.now()}`,
-      sourceId: sourceVessel.id,
-      destId: destVessel.id,
-      volume: transferVol,
-      loss: lossVol,
-      operator: operatorName || 'Cellar Crew',
-      category: reasonCategory,
-      date: opDate,
-      pump: pumpModel,
-      details: detailedReceiptText
-    };
-
-    saveTransfers([newRecord, ...pastTransfers]);
-
-    // Reset Form Fields
+  const resetTransferForm = () => {
     setSourceId('');
     setDestId('');
     setOperatorName('');
+    setPendingIntent(null);
+    setCommandError(null);
+  };
+
+  const applyTransferLocally = (intent: PendingCommandIntent<TransferCommandPayload>) => {
+    const applied = applyTransferCommand(
+      { vessels, lots, transfers: pastTransfers },
+      intent.payload,
+      {
+        commandId: intent.commandId,
+        actorUsername: intent.payload.operator || 'Cellar Crew',
+        performedAt: new Date(),
+      },
+    );
+    onUpdateVessels(applied.state.vessels);
+    onUpdateLots(applied.state.lots);
+    saveTransfers(applied.state.transfers);
+    setOperationReceipt(localizedReceipt(applied.result));
+    resetTransferForm();
+  };
+
+  const handleExecuteTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canExecuteTransfer || pendingReversalIntent) return;
+    if (!pendingIntent && (!sourceVessel || !destVessel || sourceIsEmpty || sourceHasInsufficient
+      || destWillOverflow || lossIsInvalid || destinationNeedsCleaning)) return;
+
+    const intent = pendingIntent || createTransferCommandIntent({
+      sourceVesselId: sourceId,
+      destinationVesselId: destId,
+      volumeLiters: transferVol,
+      lossLiters: lossVol,
+      operator: operatorName || 'Cellar Crew',
+      category: reasonCategory,
+      pump: pumpModel,
+    });
+
+    setCommandError(null);
+    if (!onApplyTransferCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingIntent) {
+        setCommandError(lang === 'ka'
+          ? 'დაუდასტურებელი ბრძანების აღდგენას ინტერნეტთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged transfer requires a server connection.');
+        return;
+      }
+      try {
+        applyTransferLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Transfer validation failed.');
+      }
+      return;
+    }
+
+    setPendingIntent(intent);
+    setIsSubmitting(true);
+    try {
+      const response = await submitTransferCommand(intent);
+      onApplyTransferCommandResponse(response);
+      setOperationReceipt(localizedReceipt(response.result));
+      resetTransferForm();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingIntent) {
+        // The server rejected before claiming or mutating anything. This is the
+        // development/JSON-backend compatibility path and is safe to queue via
+        // the established whole-state sync flow.
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyTransferLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error ? fallbackError.message : 'Transfer validation failed.');
+          setPendingIntent(null);
+          return;
+        }
+      }
+      const message = error instanceof Error ? error.message : 'Transfer command failed.';
+      setCommandError(message);
+      if (error instanceof CommandRequestError && !error.retryable) {
+        setPendingIntent(null);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Quick sanitation of vessels
@@ -291,39 +318,94 @@ export default function TransfersTab({
     onUpdateVessels(updated);
   };
 
-  // Undo / Rollback a transfer log entry (for winemaker convenience if typo was made)
-  const handleRollbackTransfer = (record: TransferRecord) => {
-    if (!canRollbackTransfer) return;
-    const confirmRollback = window.confirm(
-      `Do you want to ROLLBACK the transfer of ${record.volume}L from ${record.sourceId} to ${record.destId}? This will attempt to restore previous volume levels in the vessels.`
+  const clearReversalForm = () => {
+    setPendingReversalIntent(null);
+    setReversalTargetId(null);
+    setReversalReason('');
+  };
+
+  const applyTransferReversalLocally = (
+    intent: PendingCommandIntent<TransferReversalCommandPayload>,
+  ) => {
+    const applied = applyTransferReversalCommand(
+      { vessels, lots, transfers: pastTransfers },
+      intent.payload,
+      {
+        commandId: intent.commandId,
+        actorUsername: 'Cellar Crew',
+        performedAt: new Date(),
+      },
     );
-    if (!confirmRollback) return;
+    onUpdateVessels(applied.state.vessels);
+    onUpdateLots(applied.state.lots);
+    saveTransfers(applied.state.transfers);
+    setOperationReceipt(lang === 'ka'
+      ? `გადაღება ${applied.result.originalTransfer.id} დაბრუნებულია და მაკორექტირებელი ჩანაწერი შენახულია.`
+      : `Transfer ${applied.result.originalTransfer.id} was reversed with an immutable correction record.`);
+    clearReversalForm();
+  };
 
-    // Restore volumes
-    const restoredVessels = vessels.map(v => {
-      if (v.id === record.sourceId) {
-        return {
-          ...v,
-          currentVolume: v.currentVolume + record.volume,
-          cleaningStatus: 'clean' as const,
-          lastOperation: `Restored post transaction rollback of ${record.id}`
-        };
-      }
-      if (v.id === record.destId) {
-        return {
-          ...v,
-          currentVolume: Math.max(0, v.currentVolume - (record.volume - record.loss)),
-          lastOperation: `Restored post transaction rollback of ${record.id}`
-        };
-      }
-      return v;
+  const handleReverseTransfer = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!canReverseTransfer || pendingIntent) return;
+    const original = reversalTargetId
+      ? pastTransfers.find(record => record.id === reversalTargetId)
+      : pastTransfers.find(record => record.commandId === pendingReversalIntent?.payload.originalCommandId);
+    if (!original?.commandId || original.recordKind === 'reversal' || original.reversedByCommandId) return;
+
+    const intent = pendingReversalIntent || createTransferReversalCommandIntent({
+      originalCommandId: original.commandId,
+      reason: reversalReason,
     });
+    setCommandError(null);
 
-    onUpdateVessels(restoredVessels);
-    saveTransfers(pastTransfers.filter(x => x.id !== record.id));
-    alert(lang === 'ka'
-      ? 'ჭურჭლის მოცულობა უსაფრთხოდ აღდგა გადაღებამდელ მდგომარეობაზე. წმენდის ჟურნალი განახლდა.'
-      : 'Vessel liquid volume was safely restored to original pre-transfer baseline. Cleaning logs annotated.');
+    if (!onApplyTransferReversalCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingReversalIntent) {
+        setCommandError(lang === 'ka'
+          ? 'დაუდასტურებელი დაბრუნების აღდგენას სერვერთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged reversal requires a server connection.');
+        return;
+      }
+      try {
+        applyTransferReversalLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Transfer reversal validation failed.');
+      }
+      return;
+    }
+
+    setPendingReversalIntent(intent);
+    setIsReversing(true);
+    try {
+      const response = await submitTransferReversalCommand(intent);
+      onApplyTransferReversalCommandResponse(response);
+      setOperationReceipt(lang === 'ka'
+        ? `გადაღება ${response.result.originalTransfer.id} დაბრუნებულია და მაკორექტირებელი ჩანაწერი შენახულია.`
+        : `Transfer ${response.result.originalTransfer.id} was reversed with an immutable correction record.`);
+      clearReversalForm();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingReversalIntent) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyTransferReversalLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error
+            ? fallbackError.message
+            : 'Transfer reversal validation failed.');
+          setPendingReversalIntent(null);
+          return;
+        }
+      }
+      setCommandError(error instanceof Error ? error.message : 'Transfer reversal command failed.');
+      if (error instanceof CommandRequestError && !error.retryable) {
+        setPendingReversalIntent(null);
+      }
+    } finally {
+      setIsReversing(false);
+    }
   };
 
   // 1. Global Recommendations (Idle state)
@@ -347,7 +429,7 @@ export default function TransfersTab({
     underfilled.forEach(v => {
       const lot = lots.find(l => l.id === v.assignedLotId);
       if (!lot) return;
-      
+
       // Look for a smaller vessel (like a barrel) with the same lot to top it off
       const potentialTopper = vessels.find(s => s.id !== v.id && s.assignedLotId === v.assignedLotId && s.currentVolume > 0 && s.currentVolume < (v.capacity - v.currentVolume));
       if (potentialTopper) {
@@ -398,7 +480,7 @@ export default function TransfersTab({
       const v1 = occupied[i];
       const lot1 = lots.find(l => l.id === v1.assignedLotId);
       if (!lot1) continue;
-      
+
       for (let j = i + 1; j < occupied.length; j++) {
         const v2 = occupied[j];
         if (v1.assignedLotId === v2.assignedLotId) {
@@ -449,13 +531,13 @@ export default function TransfersTab({
   const destinationScores = React.useMemo(() => {
     if (!sourceId || !sourceVessel) return [];
     const sourceLot = lots.find(l => l.id === sourceVessel.assignedLotId);
-    
+
     return vessels
       .filter(v => v.id !== sourceId)
       .map(v => {
         const lot = lots.find(l => l.id === v.assignedLotId);
         const freeSpace = v.capacity - v.currentVolume;
-        
+
         let score = 50; // base score
         const reasons: string[] = [];
         const reasonsKa: string[] = [];
@@ -548,23 +630,26 @@ export default function TransfersTab({
     ? [
         !canExecuteTransfer && 'ტრანსფერის შესრულება',
         !canSanitizeVessels && 'ჭურჭლის სანიტარიზაცია',
-        !canRollbackTransfer && 'ტრანსფერის ჩანაწერის დაბრუნება',
+        !canReverseTransfer && 'ტრანსფერის ჩანაწერის დაბრუნება',
       ].filter((label): label is string => Boolean(label))
     : [
         !canExecuteTransfer && 'initiate transfers',
         !canSanitizeVessels && 'sanitize vessels',
-        !canRollbackTransfer && 'roll back transfer records',
+        !canReverseTransfer && 'reverse transfer records',
       ].filter((label): label is string => Boolean(label));
   const restrictedActionsText = lang === 'ka' || restrictedActionLabels.length < 2
     ? restrictedActionLabels.join(', ')
     : restrictedActionLabels.length === 2
       ? `${restrictedActionLabels[0]} or ${restrictedActionLabels[1]}`
       : `${restrictedActionLabels.slice(0, -1).join(', ')}, or ${restrictedActionLabels.at(-1)}`;
-  const isTransferReadOnly = !canExecuteTransfer && !canSanitizeVessels && !canRollbackTransfer;
+  const isTransferReadOnly = !canExecuteTransfer && !canSanitizeVessels && !canReverseTransfer;
+  const reversalTarget = reversalTargetId
+    ? pastTransfers.find(record => record.id === reversalTargetId)
+    : pastTransfers.find(record => record.commandId === pendingReversalIntent?.payload.originalCommandId);
 
   return (
     <div className="space-y-6 text-stone-850">
-      
+
       {/* Intro info box */}
       <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -599,10 +684,10 @@ export default function TransfersTab({
       )}
 
       <div className="grid grid-cols-1 2xl:grid-cols-12 gap-6 items-start">
-        
+
         {/* Left column: Visual Tank Selectors */}
         <div className="2xl:col-span-4 space-y-4">
-          
+
           {/* Source Vessel selector */}
           <div className="bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs space-y-3">
             <h3 className="text-xs font-mono font-bold uppercase text-slate-400 border-b border-stone-100 pb-2">
@@ -618,12 +703,13 @@ export default function TransfersTab({
                   <div
                     key={v.id}
                     onClick={() => {
+                      if (pendingIntent || isSubmitting) return;
                       setSourceId(v.id);
                       setTransferVol(v.currentVolume); // default to whole volume
                     }}
                     className={`p-3 border rounded-xl cursor-pointer hover:bg-stone-50 transition-all ${
-                      isSelected 
-                        ? 'bg-[#4e0e15]/5 border-[#4e0e15] ring-2 ring-[#4e0e15]/10' 
+                      isSelected
+                        ? 'bg-[#4e0e15]/5 border-[#4e0e15] ring-2 ring-[#4e0e15]/10'
                         : 'bg-[#FAF8F5]/80 border-[#e8dfd5] hover:border-slate-350'
                     }`}
                   >
@@ -646,8 +732,8 @@ export default function TransfersTab({
                       <span>{percentFull}% {lang === 'ka' ? 'სავსე' : 'Full'}</span>
                     </div>
                     <div className="w-full bg-stone-200 h-1.5 rounded-full overflow-hidden mt-1">
-                      <div 
-                        className="bg-[#801323] h-full" 
+                      <div
+                        className="bg-[#801323] h-full"
                         style={{ width: `${percentFull}%` }}
                       />
                     </div>
@@ -672,10 +758,13 @@ export default function TransfersTab({
                 return (
                   <div
                     key={v.id}
-                    onClick={() => setDestId(v.id)}
+                    onClick={() => {
+                      if (pendingIntent || isSubmitting) return;
+                      setDestId(v.id);
+                    }}
                     className={`p-3 border rounded-xl cursor-pointer hover:bg-stone-50 transition-all ${
-                      isSelected 
-                        ? 'bg-[#4e0e15]/5 border-[#4e0e15] ring-2 ring-[#4e0e15]/10' 
+                      isSelected
+                        ? 'bg-[#4e0e15]/5 border-[#4e0e15] ring-2 ring-[#4e0e15]/10'
                         : 'bg-[#FAF8F5]/80 border-[#e8dfd5] hover:border-slate-350'
                     }`}
                   >
@@ -698,8 +787,8 @@ export default function TransfersTab({
                       <span>{percentFull}% {lang === 'ka' ? 'სავსე' : 'Full'}</span>
                     </div>
                     <div className="w-full bg-stone-200 h-1.5 rounded-full overflow-hidden mt-1">
-                      <div 
-                        className="bg-sky-600 h-full" 
+                      <div
+                        className="bg-sky-600 h-full"
                         style={{ width: `${percentFull}%` }}
                       />
                     </div>
@@ -754,7 +843,7 @@ export default function TransfersTab({
           {/* 🔮 SMART TRANSFER ADVISOR */}
           <div className="bg-[#FAF8F5] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-850 rounded-xl p-4 space-y-3.5 shadow-2xs relative overflow-hidden text-stone-850 dark:text-stone-100">
             <div className="absolute -right-6 -bottom-6 text-4xl opacity-[0.06] select-none pointer-events-none">🔮</div>
-            
+
             <div className="flex items-center justify-between border-b border-[#e8dfd5]/60 dark:border-stone-800 pb-2">
               <h3 className="text-xs font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-1.5 uppercase">
                 <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
@@ -773,6 +862,7 @@ export default function TransfersTab({
                     key={rec.id}
                     type="button"
                     onClick={() => {
+                      if (pendingIntent || isSubmitting) return;
                       setSourceId(rec.sourceId);
                       setDestId(rec.destId);
                       setTransferVol(rec.volume);
@@ -809,26 +899,29 @@ export default function TransfersTab({
               /* Contextual Destination Scores */
               <div className="space-y-2.5">
                 <p className="text-[10.5px] text-slate-550 dark:text-stone-400 italic leading-normal text-left font-medium">
-                  {lang === 'ka' 
-                    ? `მონაცემების ანალიზი ჭურჭლისთვის ${sourceId} (${sourceVessel?.currentVolume}ლ). აირჩიეთ მიმღები ჭურჭელი მაღალი თავსებადობით:` 
+                  {lang === 'ka'
+                    ? `მონაცემების ანალიზი ჭურჭლისთვის ${sourceId} (${sourceVessel?.currentVolume}ლ). აირჩიეთ მიმღები ჭურჭელი მაღალი თავსებადობით:`
                     : `Analyzing best recipients for ${sourceId} holding ${sourceVessel?.currentVolume}L. Select a recommended destination:`}
                 </p>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {destinationScores.slice(0, 4).map(({ vessel, score, reasons, reasonsKa }) => {
                     const isSelected = destId === vessel.id;
                     const scoreColor = score >= 80 ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200' :
                                        score >= 50 ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/20 border-amber-200' :
                                        'text-rose-600 bg-rose-50 dark:bg-rose-950/20 border-rose-200';
-                    
+
                     return (
                       <button
                         key={vessel.id}
                         type="button"
-                        onClick={() => setDestId(vessel.id)}
+                        onClick={() => {
+                          if (pendingIntent || isSubmitting) return;
+                          setDestId(vessel.id);
+                        }}
                         className={`p-3 bg-white hover:bg-stone-50 dark:bg-[#140d0e] dark:hover:bg-stone-950 border rounded-xl text-left transition-all cursor-pointer shadow-3xs flex flex-col justify-between h-full group ${
-                          isSelected 
-                            ? 'border-[#4e0e15] dark:border-amber-450 ring-2 ring-[#4e0e15]/10 dark:ring-amber-400/10' 
+                          isSelected
+                            ? 'border-[#4e0e15] dark:border-amber-450 ring-2 ring-[#4e0e15]/10 dark:ring-amber-400/10'
                             : 'border-[#e8dfd5] dark:border-stone-800 hover:border-slate-350'
                         }`}
                       >
@@ -839,7 +932,7 @@ export default function TransfersTab({
                               {score}% {lang === 'ka' ? 'თავსებადობა' : 'Match'}
                             </span>
                           </div>
-                          
+
                           <div className="space-y-1">
                             {(lang === 'ka' ? reasonsKa : reasons).slice(0, 2).map((reason, idx) => (
                               <div key={idx} className="flex items-start gap-1 text-[9.5px] leading-relaxed text-stone-600 dark:text-stone-400 font-serif">
@@ -849,7 +942,7 @@ export default function TransfersTab({
                             ))}
                           </div>
                         </div>
-                        
+
                         <div className="pt-2.5 mt-2 border-t border-stone-100 dark:border-stone-800 w-full flex justify-between items-center text-[9px] font-mono font-semibold text-slate-400">
                           <span>{lang === 'ka' ? 'ტევადობა' : 'Cap'}: {vessel.capacity}L</span>
                           <span>{vessel.capacity - vessel.currentVolume}L {lang === 'ka' ? 'თავისუფალი' : 'free'}</span>
@@ -866,9 +959,9 @@ export default function TransfersTab({
               </div>
             )}
           </div>
-          
+
           <div className="grid grid-cols-1 2xl:grid-cols-12 gap-6 items-start">
-            
+
             {/* Controller main inputs */}
             {canExecuteTransfer && (
               <div className="2xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
@@ -877,7 +970,7 @@ export default function TransfersTab({
               </h3>
 
               <form onSubmit={handleExecuteTransfer} className="space-y-3.5">
-                
+
                 {/* Visual arrow indicator or active selected summary */}
                 <div className="p-3 bg-stone-50 border border-stone-200/50 rounded-xl flex items-center justify-center gap-4 text-xs font-semibold">
                   <div className="text-center flex-1">
@@ -903,6 +996,7 @@ export default function TransfersTab({
                     <input
                       type="number"
                       required
+                      disabled={Boolean(pendingIntent) || isSubmitting}
                       value={transferVol}
                       onChange={(e) => setTransferVol(parseFloat(e.target.value) || 0)}
                       className="w-full px-2.5 py-1.5 text-xs bg-[#FAF8F5] border border-slate-205 rounded font-mono outline-none"
@@ -913,6 +1007,7 @@ export default function TransfersTab({
                     <input
                       type="number"
                       required
+                      disabled={Boolean(pendingIntent) || isSubmitting}
                       value={lossVol}
                       onChange={(e) => setLossVol(parseFloat(e.target.value) || 0)}
                       className="w-full px-2.5 py-1.5 text-xs bg-[#FAF8F5] border border-slate-205 rounded font-mono outline-none"
@@ -920,12 +1015,25 @@ export default function TransfersTab({
                   </div>
                 </div>
 
+                {(lossIsInvalid || destinationNeedsCleaning) && !pendingIntent && (
+                  <p role="alert" className="rounded-lg border border-amber-250 bg-amber-50 px-3 py-2 text-[10px] font-medium text-amber-950">
+                    {destinationNeedsCleaning
+                      ? (lang === 'ka'
+                        ? 'ცარიელი მიმღები ჭურჭელი ღვინის მიღებამდე უნდა გაიწმინდოს.'
+                        : 'The empty destination vessel must be cleaned before it can receive wine.')
+                      : (lang === 'ka'
+                        ? 'დანაკარგი უნდა იყოს არაუარყოფითი და გადასატან მოცულობაზე ნაკლები.'
+                        : 'Process loss must be non-negative and smaller than the transferred volume.')}
+                  </p>
+                )}
+
                 <div className="grid grid-cols-2 gap-3.5">
                   <div>
                     <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">{lang === 'ka' ? 'ტუმბოს მოდელი / შლანგის ნიშანი' : 'Pump Model / Hose Tag'}</label>
                     <input
                       type="text"
                       required
+                      disabled={Boolean(pendingIntent) || isSubmitting}
                       value={pumpModel}
                       onChange={(e) => setPumpModel(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs bg-[#FAF8F5] border border-slate-205 rounded outline-none"
@@ -934,6 +1042,7 @@ export default function TransfersTab({
                   <div>
                     <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">{lang === 'ka' ? 'ოპერაციის კატეგორია' : 'Operation Category'}</label>
                     <select
+                      disabled={Boolean(pendingIntent) || isSubmitting}
                       value={reasonCategory}
                       onChange={(e) => setReasonCategory(e.target.value as any)}
                       className="w-full px-2.5 py-1.5 text-xs bg-[#FAF8F5] border border-slate-205 rounded outline-none cursor-pointer"
@@ -951,6 +1060,7 @@ export default function TransfersTab({
                   <input
                     type="text"
                     required
+                    disabled={Boolean(pendingIntent) || isSubmitting}
                     placeholder={lang === 'ka' ? 'მაგ. ნ. გელაშვილი' : 'e.g. S. Rossi'}
                     value={operatorName}
                     onChange={(e) => setOperatorName(e.target.value)}
@@ -960,10 +1070,22 @@ export default function TransfersTab({
 
                 <button
                   type="submit"
-                  disabled={sourceIsEmpty || sourceHasInsufficient || destWillOverflow || !sourceId || !destId}
+                  disabled={isSubmitting || Boolean(pendingReversalIntent) || (!pendingIntent && (
+                    sourceIsEmpty
+                    || sourceHasInsufficient
+                    || destWillOverflow
+                    || lossIsInvalid
+                    || destinationNeedsCleaning
+                    || !sourceId
+                    || !destId
+                  ))}
                   className="w-full py-2 bg-[#4e0e15] text-white hover:bg-[#6b151e] shadow-xs text-xs font-bold rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
-                  {lang === 'ka' ? 'დადასტურება და გადაღების დაწყება' : 'Confirm & Initiate Fluid Pump'}
+                  {isSubmitting
+                    ? (lang === 'ka' ? 'მუშავდება…' : 'Processing…')
+                    : pendingIntent
+                      ? (lang === 'ka' ? 'იგივე ბრძანების უსაფრთხოდ აღდგენა' : 'Recover the same transfer safely')
+                      : (lang === 'ka' ? 'დადასტურება და გადაღების დაწყება' : 'Confirm & Initiate Fluid Pump')}
                 </button>
 
               </form>
@@ -975,15 +1097,21 @@ export default function TransfersTab({
                 </div>
               )}
 
+              {commandError && (
+                <div role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950">
+                  {commandError}
+                </div>
+              )}
+
               </div>
             )}
 
             {/* Safety parameters & Blending calculations panel */}
             <div className={`${canExecuteTransfer ? '2xl:col-span-5' : '2xl:col-span-12'} space-y-4`}>
-              
+
               <div className="bg-[#FAF8F5] p-4 border border-stone-200 rounded-xl space-y-4">
                 <h4 className="text-xs font-mono font-bold uppercase text-stone-700 tracking-wider">{lang === 'ka' ? 'უსაფრთხოებისა და თავსებადობის შემოწმება' : 'Safety & Compatibility Check'}</h4>
-                
+
                 <div className="space-y-3">
                   {/* Liquid verification block */}
                   <div className="flex items-start gap-2.5 text-xs leading-tight">
@@ -1057,21 +1185,78 @@ export default function TransfersTab({
 
           </div>
 
-          {/* Core movement ledgers journal with undo support */}
+          {/* Append-only movement ledger with command-owned corrections */}
           <div className="p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-xs space-y-3 text-stone-850">
             <h3 className="text-sm font-serif font-bold text-stone-900 border-b border-stone-100 pb-2 flex items-center justify-between">
               <span>{lang === 'ka' ? 'გადაადგილებების ჟურნალი' : 'Winery Translocation Movement Logs Ledger'}</span>
               <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-[#FAF8F5] border font-bold text-slate-400">{pastTransfers.length} {lang === 'ka' ? 'ჩანაწერი' : 'Recorded'}</span>
             </h3>
 
+            {reversalTarget && (
+              <form
+                onSubmit={handleReverseTransfer}
+                className="space-y-3 rounded-xl border border-rose-200 bg-rose-50/70 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-rose-950">
+                      {lang === 'ka'
+                        ? `გადაღების დაბრუნება: ${reversalTarget.id}`
+                        : `Reverse transfer ${reversalTarget.id}`}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-rose-800">
+                      {lang === 'ka'
+                        ? 'სისტემა აღადგენს ჭურჭლებსა და პარტიებს მხოლოდ მაშინ, თუ ამ გადაღების შემდეგ ისინი არ შეცვლილა. საწყისი ჩანაწერი ისტორიაში დარჩება.'
+                        : 'Vessels and lots are restored only if nothing changed them after this transfer. The original entry remains in the audit ledger.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={Boolean(pendingReversalIntent) || isReversing}
+                    onClick={clearReversalForm}
+                    aria-label={lang === 'ka' ? 'დახურვა' : 'Close reversal form'}
+                    className="rounded p-1 text-rose-500 hover:bg-rose-100 disabled:opacity-40"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <label className="block text-[11px] font-bold text-rose-950">
+                  {lang === 'ka' ? 'დაბრუნების მიზეზი' : 'Correction reason'}
+                  <textarea
+                    required
+                    maxLength={500}
+                    disabled={Boolean(pendingReversalIntent) || isReversing}
+                    value={reversalReason}
+                    onChange={event => setReversalReason(event.target.value)}
+                    placeholder={lang === 'ka'
+                      ? 'მაგ. არასწორი ჭურჭელი იყო არჩეული'
+                      : 'Example: the wrong destination vessel was selected'}
+                    className="mt-1 min-h-20 w-full resize-y rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-normal text-stone-900 outline-none focus:border-rose-500 disabled:bg-rose-100/50"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={isReversing || !reversalReason.trim()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-rose-800 px-3 py-2 text-xs font-bold text-white hover:bg-rose-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RotateCcw className={`h-3.5 w-3.5 ${isReversing ? 'animate-spin' : ''}`} />
+                  {isReversing
+                    ? (lang === 'ka' ? 'ბრუნდება…' : 'Reversing…')
+                    : pendingReversalIntent
+                      ? (lang === 'ka' ? 'იგივე ბრძანების აღდგენა' : 'Recover same command')
+                      : (lang === 'ka' ? 'მაკორექტირებელი დაბრუნება' : 'Post reversal correction')}
+                </button>
+              </form>
+            )}
+
             <div className="space-y-3.5 max-h-[360px] overflow-y-auto pr-1">
               {pastTransfers.map(record => (
-                <div key={record.id} className="p-3.5 bg-[#FAF8F5] border border-stone-200 hover:border-slate-350 transition-color rounded-xl flex flex-col justify-between md:flex-row gap-3 items-start md:items-center">
+                <div key={record.id} className={`p-3.5 bg-[#FAF8F5] border hover:border-slate-350 transition-color rounded-xl flex flex-col justify-between md:flex-row gap-3 items-start md:items-center ${reversalTargetId === record.id ? 'border-rose-400 ring-1 ring-rose-200' : 'border-stone-200'}`}>
                   <div className="space-y-1 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-[10px] font-mono font-bold text-[#801323] uppercase bg-red-50 px-1.5 py-0.2 rounded">
                         {lang === 'ka'
-                          ? ({racking: 'გადაღება', blend: 'კუპაჟი', filtration: 'ფილტრაცია', bottling: 'ჩამოსხმა'} as Record<string, string>)[record.category] || record.category
+                          ? ({racking: 'გადაღება', blend: 'კუპაჟი', filtration: 'ფილტრაცია', bottling: 'ჩამოსხმა', reversal: 'კორექცია'} as Record<string, string>)[record.category] || record.category
                           : record.category}
                       </span>
                       <span className="font-sans font-black text-xs text-stone-900 flex items-center gap-1">
@@ -1093,18 +1278,49 @@ export default function TransfersTab({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
                       <User className="w-3.5 h-3.5" /> {record.operator}
                     </span>
-                    {canRollbackTransfer && (
-                      <button
-                        title={lang === 'ka' ? 'მოქმედების გაუქმება' : 'Rollback / Undo Movement'}
-                        onClick={() => handleRollbackTransfer(record)}
-                        className="p-1.5 hover:bg-rose-50 rounded text-slate-300 hover:text-red-650 transition-colors cursor-pointer"
+                    {record.recordKind === 'reversal' ? (
+                      <span className="inline-flex items-center gap-1 rounded bg-violet-50 px-1.5 py-1 text-[9px] font-bold text-violet-800">
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        {lang === 'ka' ? 'კორექცია' : 'Correction'}
+                      </span>
+                    ) : record.reversedByCommandId ? (
+                      <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-1 text-[9px] font-bold text-rose-900">
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        {lang === 'ka' ? 'დაბრუნებული' : 'Reversed'}
+                      </span>
+                    ) : record.commandId ? (
+                      <>
+                      <span
+                        title={lang === 'ka' ? 'ატომურად ჩაწერილი ოპერაცია' : 'Atomically recorded operation'}
+                        className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-1 text-[9px] font-bold text-emerald-800"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        {lang === 'ka' ? 'დაცული' : 'Protected'}
+                      </span>
+                      {canReverseTransfer && record.reversalSnapshot && (
+                      <button
+                        type="button"
+                        disabled={Boolean(pendingReversalIntent) || Boolean(pendingIntent) || isReversing}
+                        title={lang === 'ka' ? 'მაკორექტირებელი დაბრუნება' : 'Post a reversal correction'}
+                        onClick={() => {
+                          setReversalTargetId(record.id);
+                          setReversalReason('');
+                          setCommandError(null);
+                        }}
+                        className="rounded p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <RotateCcw className="h-4 w-4" />
                       </button>
+                      )}
+                      </>
+                    ) : (
+                      <span className="rounded bg-stone-200 px-1.5 py-1 text-[9px] font-bold text-stone-600">
+                        {lang === 'ka' ? 'ძველი ჩანაწერი' : 'Legacy read-only'}
+                      </span>
                     )}
                   </div>
                 </div>

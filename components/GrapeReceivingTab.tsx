@@ -1,13 +1,32 @@
-import React, { useMemo, useState } from 'react';
-import { Grape, CheckCircle2, AlertTriangle, ArrowRight, Sprout, Truck } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Grape, CheckCircle2, AlertTriangle, ArrowRight, Sprout, Truck, RotateCcw, X } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type {
-  WineLot, Vessel, VineyardBlock, HarvestRecord, GrapeIntakeRecord,
+  WineLot, Vessel, VineyardBlock, HarvestRecord, GrapeIntakeRecord, MaraniOSAuditLog,
   WineClass, GrapeSource, GrapeIntakeCondition,
 } from '../lib/wineryState';
 import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryOperations';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS, inferWineClassForVariety } from '../lib/georgianWineKnowledge';
 import { EmptyState } from './ui/primitives';
+import type { CostEntry } from '../lib/costing';
+import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
+import {
+  applyHarvestIntakeCommand,
+  type HarvestIntakeCommandPayload,
+  type HarvestIntakeInput,
+} from '../lib/commands/harvestIntake';
+import type { HarvestIntakeReversalCommandPayload } from '../lib/commands/harvestIntakeReversal';
+import { isActiveHarvestIntake, isHarvestIntakeReversal } from '../lib/harvestIntakeIntegrity';
+import {
+  CommandRequestError,
+  createHarvestIntakeCommandIntent,
+  createHarvestIntakeReversalCommandIntent,
+  pendingHarvestIntakeCommandIntent,
+  pendingHarvestIntakeReversalCommandIntent,
+  submitHarvestIntakeCommand,
+  submitHarvestIntakeReversalCommand,
+  type HarvestIntakeCommandResponse,
+} from '../lib/commands/client';
 
 interface Props {
   lang: Language;
@@ -17,7 +36,20 @@ interface Props {
   intakes: GrapeIntakeRecord[];
   currentUserName: string;
   currency: string;
+  region?: string;
   onReceiveGrapes: (input: Omit<GrapeIntakeRecord, 'id' | 'createdLotId' | 'netWeightKg' | 'estimatedVolumeL'>) => string;
+  lots?: WineLot[];
+  costEntries?: CostEntry[];
+  auditLogs?: MaraniOSAuditLog[];
+  onUpdateLots?: (lots: WineLot[]) => void;
+  onUpdateVessels?: (vessels: Vessel[]) => void;
+  onUpdateHarvests?: (harvests: HarvestRecord[]) => void;
+  onUpdateIntakes?: (intakes: GrapeIntakeRecord[]) => void;
+  onUpdateCostEntries?: (entries: CostEntry[]) => void;
+  onUpdateAuditLogs?: (logs: MaraniOSAuditLog[]) => void;
+  onApplyHarvestIntakeCommandResponse?: (response: HarvestIntakeCommandResponse) => void;
+  prefilledHarvestRecordId?: string | null;
+  onPrefillConsumed?: () => void;
   /** Compound permission for the intake, lot, and audit writes. */
   canReceiveGrapes?: boolean;
   /** Optional vineyard update performed when a planned harvest is linked. */
@@ -26,6 +58,8 @@ interface Props {
   canFillDestinationVessel?: boolean;
   /** Optional cost-ledger create performed when fruit pricing is entered. */
   canPostIntakeCost?: boolean;
+  /** Append-only intake compensation permission. */
+  canReverseHarvestIntake?: boolean;
   setActiveTab?: (t: string) => void;
   setToastMessage?: (m: string) => void;
 }
@@ -80,12 +114,17 @@ const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flat
 
 export default function GrapeReceivingTab({
   lang, vessels, blocks, harvests, intakes, currentUserName,
-  currency,
+  currency, region = 'Kakheti',
   onReceiveGrapes, setActiveTab, setToastMessage,
+  lots = [], costEntries = [], auditLogs = [],
+  onUpdateLots, onUpdateVessels, onUpdateHarvests, onUpdateIntakes,
+  onUpdateCostEntries, onUpdateAuditLogs, onApplyHarvestIntakeCommandResponse,
+  prefilledHarvestRecordId, onPrefillConsumed,
   canReceiveGrapes = true,
   canLinkHarvest = true,
   canFillDestinationVessel = true,
   canPostIntakeCost = true,
+  canReverseHarvestIntake = false,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
@@ -124,6 +163,13 @@ export default function GrapeReceivingTab({
   const [destinationVesselId, setDest] = useState('');
   const [operator, setOperator] = useState('');
   const [notes, setNotes] = useState('');
+  const [pendingIntent, setPendingIntent] = useState<PendingCommandIntent<HarvestIntakeCommandPayload> | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingReversalIntent, setPendingReversalIntent] = useState<PendingCommandIntent<HarvestIntakeReversalCommandPayload> | null>(null);
+  const [reversalIntakeId, setReversalIntakeId] = useState('');
+  const [reversalReason, setReversalReason] = useState('');
+  const [isReversing, setIsReversing] = useState(false);
 
   // Own-vineyard harvests not yet received into the winery.
   const pendingHarvests = useMemo(
@@ -143,10 +189,24 @@ export default function GrapeReceivingTab({
   const destVessel = vessels.find(v => v.id === permittedDestinationVesselId) || null;
   const freeCapacity = destVessel ? round1(destVessel.capacity - destVessel.currentVolume) : 0;
   const overfill = !!destVessel && estVolumeL > freeCapacity + 0.001;
+  const destinationUnavailable = !!destVessel && (
+    destVessel.cleaningStatus !== 'clean'
+    || destVessel.currentVolume > 0.001
+    || Boolean(destVessel.assignedLotId)
+  );
+  const eligibleVessels = useMemo(
+    () => vessels.filter(vessel => (
+      (vessel.cleaningStatus === 'clean' && vessel.currentVolume <= 0.001 && !vessel.assignedLotId)
+      || vessel.id === pendingIntent?.payload.intake.destinationVesselId
+    )),
+    [pendingIntent?.payload.intake.destinationVesselId, vessels],
+  );
 
   const varietyOk = variety.trim().length > 0;
   const sourceOk = source === 'own' ? !!blockId : supplierName.trim().length > 0;
-  const canSubmit = canReceiveGrapes && varietyOk && sourceOk && net > 0 && yieldPct > 0 && !overfill;
+  const canSubmit = !pendingReversalIntent && !isReversing && (Boolean(pendingIntent) || (
+    canReceiveGrapes && varietyOk && sourceOk && net > 0 && yieldPct > 0 && !overfill && !destinationUnavailable
+  ));
 
   const restrictedOptionalActions = [
     !canLinkHarvest ? (ka ? 'დაგეგმილი მოსავლის მიბმა' : 'planned-harvest linking') : null,
@@ -176,15 +236,84 @@ export default function GrapeReceivingTab({
     const h = harvests.find(x => x.id === id);
     if (!h) return;
     setSource('own');
-    setBlockId(h.blockId);
+    applyBlock(h.blockId);
     setVariety(h.variety);
     const inferredClass = inferWineClassForVariety(h.variety);
     if (inferredClass) setWineClass(inferredClass);
-    const b = blocks.find(x => x.id === h.blockId);
-    if (b) setBlockId(b.id);
     if (h.estimatedTons) setGross(String(Math.round((h.actualHarvestedKg || h.estimatedTons * 1000))));
     if (h.temperatureAtHarvest != null) setTemp(String(h.temperatureAtHarvest));
+    setDate(h.actualHarvestDate || h.estimatedHarvestDate || today);
+    setVintage(Number((h.actualHarvestDate || h.estimatedHarvestDate || today).slice(0, 4)) || thisYear);
+    setPicking(h.pickingMethod);
+    setCondition(h.grapeCondition === ' fair' ? 'fair' : h.grapeCondition);
   };
+
+  const restoreCapturedIntake = (input: HarvestIntakeInput) => {
+    setSource(input.source);
+    setBlockId(input.blockId || '');
+    setSupplierName(input.supplierName || '');
+    setSupplierIdCode(input.supplierIdCode || '');
+    setHarvestRecordId(input.harvestRecordId || '');
+    setVariety(input.variety);
+    setVintage(input.vintage);
+    setDate(input.date);
+    setTransportName(input.transportName || '');
+    setTransportNumber(input.transportNumber || '');
+    setWeighingDocumentNumber(input.weighingDocumentNumber || '');
+    setLabAnalysisNumber(input.labAnalysisNumber || '');
+    setCadastralCode(input.cadastralCode || '');
+    setMunicipality(input.municipality || '');
+    setCommunity(input.community || '');
+    setVillage(input.village || '');
+    setMicrozone(input.microzone || '');
+    setGross(String(input.grossWeightKg));
+    setTare(String(input.tareWeightKg));
+    setBrix(String(input.brix));
+    setPh(String(input.ph));
+    setTa(String(input.titratableAcidity));
+    setTemp(String(input.temperatureC));
+    setCondition(input.condition);
+    setPicking(input.pickingMethod);
+    setWineClass(input.wineClass);
+    setYield(String(input.juiceYieldPct));
+    setCostPerKg(input.costPerKg ? String(input.costPerKg) : '');
+    setTotalCost(input.totalCost ? String(input.totalCost) : '');
+    setPaymentStatus(input.paymentStatus || 'not_applicable');
+    setDest(input.destinationVesselId || '');
+    setOperator(input.operator);
+    setNotes(input.notes || '');
+  };
+
+  useEffect(() => {
+    const restored = pendingHarvestIntakeCommandIntent();
+    if (!restored) return;
+    setPendingIntent(restored);
+    restoreCapturedIntake(restored.payload.intake);
+    setCommandError(ka
+      ? 'წინა მიღების შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანება ხელახლა გაგზავნეთ.'
+      : 'A previous grape intake is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [ka]);
+
+  useEffect(() => {
+    const restored = pendingHarvestIntakeReversalCommandIntent();
+    if (!restored) return;
+    const original = intakes.find(item => item.commandId === restored.payload.originalCommandId);
+    setPendingReversalIntent(restored);
+    setReversalIntakeId(original?.id || '');
+    setReversalReason(restored.payload.reason);
+    setCommandError(ka
+      ? 'A previous intake correction is not yet acknowledged. Resubmit the same correction.'
+      : 'A previous intake correction is not yet acknowledged. Resubmit the same correction.');
+  }, [intakes, ka]);
+
+  useEffect(() => {
+    if (!prefilledHarvestRecordId || !canLinkHarvest || pendingHarvestIntakeCommandIntent()) return;
+    applyHarvest(prefilledHarvestRecordId);
+    onPrefillConsumed?.();
+    // Consume only when the parent supplies a new harvest id; depending on the
+    // form-population callbacks would replay the prefill after every field set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefilledHarvestRecordId]);
 
   const handleVarietyChange = (value: string) => {
     setVariety(value);
@@ -200,8 +329,7 @@ export default function GrapeReceivingTab({
     setPaymentStatus('not_applicable');
   };
 
-  const handleSubmit = () => {
-    if (!canReceiveGrapes || !canSubmit) return;
+  const preparedIntakeInput = (): ReceiveGrapesInput => {
     const block = blocks.find(b => b.id === blockId);
     const preparedInput: ReceiveGrapesInput = {
       date,
@@ -241,15 +369,182 @@ export default function GrapeReceivingTab({
       operator: operator.trim() || currentUserName,
       notes: notes.trim(),
     };
-    const lotId = onReceiveGrapes(restrictOptionalIntakeWrites(preparedInput, {
+    return restrictOptionalIntakeWrites(preparedInput, {
       canLinkHarvest,
       canFillDestinationVessel,
       canPostIntakeCost,
-    }));
-    setToastMessage?.(ka
-      ? `მიღება აღირიცხა: ${net.toLocaleString()} კგ ${variety} → ლოტი ${lotId}`
-      : `Intake recorded: ${net.toLocaleString()} kg ${variety} → lot ${lotId}`);
+    });
+  };
+
+  const finishCommand = () => {
+    setPendingIntent(null);
+    setCommandError(null);
     resetForm();
+  };
+
+  const applyIntakeLocally = (intent: PendingCommandIntent<HarvestIntakeCommandPayload>) => {
+    const hasCommandBindings = Boolean(
+      onUpdateLots && onUpdateVessels && onUpdateHarvests && onUpdateIntakes
+      && onUpdateCostEntries && onUpdateAuditLogs,
+    );
+    if (!hasCommandBindings) {
+      const lotId = onReceiveGrapes(intent.payload.intake as ReceiveGrapesInput);
+      setToastMessage?.(ka
+        ? `მიღება აღირიცხა: ${net.toLocaleString()} კგ ${variety} → ლოტი ${lotId}`
+        : `Intake recorded: ${net.toLocaleString()} kg ${variety} → lot ${lotId}`);
+      finishCommand();
+      return;
+    }
+
+    const applied = applyHarvestIntakeCommand(
+      { blocks, harvests, lots, vessels, grapeIntakes: intakes, costEntries, auditLogs },
+      intent.payload,
+      {
+        commandId: intent.commandId,
+        actorUsername: currentUserName,
+        currency,
+        region,
+        performedAt: new Date(intent.capturedAt),
+      },
+    );
+    onUpdateLots?.(applied.state.lots);
+    onUpdateVessels?.(applied.state.vessels);
+    onUpdateHarvests?.(applied.state.harvests);
+    onUpdateIntakes?.(applied.state.grapeIntakes);
+    onUpdateCostEntries?.(applied.state.costEntries);
+    onUpdateAuditLogs?.(applied.state.auditLogs);
+    setToastMessage?.(ka
+      ? `მიღება აღირიცხა: ${applied.result.receipt.netWeightKg.toLocaleString()} კგ ${applied.result.intake.variety} → ლოტი ${applied.result.lot.id}`
+      : `Intake recorded: ${applied.result.receipt.netWeightKg.toLocaleString()} kg ${applied.result.intake.variety} → lot ${applied.result.lot.id}`);
+    finishCommand();
+  };
+
+  const executeIntakeCommand = async (intent: PendingCommandIntent<HarvestIntakeCommandPayload>) => {
+    setCommandError(null);
+    if (!onApplyHarvestIntakeCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingIntent) {
+        setCommandError(ka
+          ? 'დაუდასტურებელი მიღების აღდგენას ინტერნეტთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged grape intake requires a server connection.');
+        return;
+      }
+      try {
+        applyIntakeLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Grape intake validation failed.');
+      }
+      return;
+    }
+
+    setPendingIntent(intent);
+    setIsSubmitting(true);
+    try {
+      const response = await submitHarvestIntakeCommand(intent);
+      onApplyHarvestIntakeCommandResponse(response);
+      setToastMessage?.(ka
+        ? `მიღება აღირიცხა: ${response.result.receipt.netWeightKg.toLocaleString()} კგ ${response.result.intake.variety} → ლოტი ${response.result.lot.id}`
+        : `Intake recorded: ${response.result.receipt.netWeightKg.toLocaleString()} kg ${response.result.intake.variety} → lot ${response.result.lot.id}`);
+      finishCommand();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingIntent) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyIntakeLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error ? fallbackError.message : 'Grape intake validation failed.');
+          setPendingIntent(null);
+          return;
+        }
+      }
+      setCommandError(error instanceof Error ? error.message : 'Grape intake command failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingIntent(null);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const reversalIntake = intakes.find(item => item.id === reversalIntakeId) || null;
+
+  const applyReversalResponse = (
+    response: Awaited<ReturnType<typeof submitHarvestIntakeReversalCommand>>,
+  ) => {
+    if (response.collections) {
+      onUpdateHarvests?.(response.collections.harvests);
+      onUpdateLots?.(response.collections.lots);
+      onUpdateVessels?.(response.collections.vessels);
+      onUpdateIntakes?.(response.collections.grapeIntakes);
+      onUpdateCostEntries?.(response.collections.costEntries);
+      onUpdateAuditLogs?.(response.collections.auditLogs);
+      return;
+    }
+    const replaceById = <T extends { id: string }>(current: T[], changed: T[]) => {
+      const changedIds = new Set(changed.map(item => item.id));
+      return [...changed, ...current.filter(item => !changedIds.has(item.id))];
+    };
+    const result = response.result;
+    onUpdateLots?.(replaceById(lots, [result.voidedLot]));
+    if (result.updatedVessel) onUpdateVessels?.(replaceById(vessels, [result.updatedVessel]));
+    if (result.updatedHarvest) onUpdateHarvests?.(replaceById(harvests, [result.updatedHarvest]));
+    onUpdateIntakes?.(replaceById(intakes, [result.reversalIntake, result.originalIntake]));
+    onUpdateCostEntries?.(replaceById(costEntries, [
+      ...(result.reversalCostEntry ? [result.reversalCostEntry] : []),
+      ...(result.updatedOriginalCostEntry ? [result.updatedOriginalCostEntry] : []),
+    ]));
+    onUpdateAuditLogs?.(replaceById(auditLogs, [result.auditLog]));
+  };
+
+  const handleReverseIntake = async () => {
+    if (!canReverseHarvestIntake || isReversing) return;
+    const original = pendingReversalIntent
+      ? intakes.find(item => item.commandId === pendingReversalIntent.payload.originalCommandId)
+      : reversalIntake;
+    const reason = pendingReversalIntent?.payload.reason || reversalReason.trim();
+    if (!original?.commandId || !reason) {
+      setCommandError(ka ? 'A correction reason is required.' : 'A correction reason is required.');
+      return;
+    }
+    if (!onApplyHarvestIntakeCommandResponse || !SyncQueueManager.isOnline()) {
+      setCommandError(ka
+        ? 'Intake corrections require a server connection.'
+        : 'Intake corrections require a server connection.');
+      return;
+    }
+    const intent = pendingReversalIntent || createHarvestIntakeReversalCommandIntent({
+      originalCommandId: original.commandId,
+      reason,
+    });
+    setPendingReversalIntent(intent);
+    setCommandError(null);
+    setIsReversing(true);
+    try {
+      const response = await submitHarvestIntakeReversalCommand(intent);
+      applyReversalResponse(response);
+      setPendingReversalIntent(null);
+      setReversalIntakeId('');
+      setReversalReason('');
+      setToastMessage?.(ka
+        ? 'Intake corrected and linked harvest, lot, vessel, cost, and audit ledgers restored.'
+        : 'Intake corrected and linked harvest, lot, vessel, cost, and audit ledgers restored.');
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : 'Grape-intake reversal failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingReversalIntent(null);
+    } finally {
+      setIsReversing(false);
+    }
+  };
+
+  const handleSubmit = () => {
+    if (!canReceiveGrapes || !canSubmit) return;
+    if (pendingIntent) {
+      void executeIntakeCommand(pendingIntent);
+      return;
+    }
+    const preparedInput = preparedIntakeInput();
+    const { currency: _ignoredCurrency, commandId: _ignoredCommandId, lastModified: _ignoredLastModified, ...intake } = preparedInput;
+    void executeIntakeCommand(createHarvestIntakeCommandIntent(intake as HarvestIntakeInput));
   };
 
   const openLot = (_lotId: string) => {
@@ -317,6 +612,27 @@ export default function GrapeReceivingTab({
         </div>
       )}
 
+      {(pendingIntent || pendingReversalIntent || commandError) && (
+        <div role={commandError ? 'alert' : 'status'} className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+          <span>{commandError || (ka
+            ? 'ყურძნის მიღება სერვერის დადასტურებას ელოდება.'
+            : 'The grape intake is waiting for server acknowledgement.')}</span>
+          {(pendingIntent || pendingReversalIntent) && (
+            <button
+              type="button"
+              onClick={() => pendingReversalIntent
+                ? void handleReverseIntake()
+                : pendingIntent && void executeIntakeCommand(pendingIntent)}
+              disabled={isSubmitting || isReversing}
+              className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
+            >
+              {pendingReversalIntent ? 'Resubmit same correction' : (ka ? 'იგივე მიღების ხელახლა გაგზავნა' : 'Resubmit same intake')}
+            </button>
+          )}
+        </div>
+      )}
+
+      <fieldset disabled={Boolean(pendingIntent) || isSubmitting} className="contents">
       <div className={canReceiveGrapes ? 'grid grid-cols-1 2xl:grid-cols-[1.1fr_1fr] gap-4' : 'grid grid-cols-1 gap-4'}>
         {/* ── Intake form ───────────────────────────────── */}
         {canReceiveGrapes && (
@@ -530,7 +846,7 @@ export default function GrapeReceivingTab({
               <label className={labelCls}>{ka ? 'დანიშნულების ჭურჭელი' : 'Destination vessel'}</label>
               <select value={destinationVesselId} onChange={e => setDest(e.target.value)} className={inputCls}>
                 <option value="">{ka ? '— მოგვიანებით —' : '— assign later —'}</option>
-                {vessels.map(v => (
+                {eligibleVessels.map(v => (
                   <option key={v.id} value={v.id}>{v.id} — {round1(v.capacity - v.currentVolume)} L {ka ? 'თავისუფ.' : 'free'}</option>
                 ))}
               </select>
@@ -579,6 +895,40 @@ export default function GrapeReceivingTab({
             </span>
             <span className="text-[9px] font-mono text-stone-400">{intakes.length} {ka ? 'ჩანაწერი' : 'records'}</span>
           </div>
+          {canReverseHarvestIntake && (reversalIntake || pendingReversalIntent) && (
+            <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold">
+                    {ka ? 'Correct grape intake' : 'Correct grape intake'}
+                    {reversalIntake ? ` · ${reversalIntake.variety}` : ''}
+                  </p>
+                  <p className="mt-0.5 text-[10px] font-medium text-amber-800/80 dark:text-amber-200/80">
+                    The original receipt remains in the audit trail; linked state is restored with compensating records.
+                  </p>
+                </div>
+                {!pendingReversalIntent && (
+                  <button type="button" onClick={() => { setReversalIntakeId(''); setReversalReason(''); }}
+                    aria-label="Close correction" className="text-amber-700 hover:text-amber-950 dark:text-amber-300">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              <label className="mt-3 block text-[9px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                {ka ? 'Correction reason' : 'Correction reason'}
+                <textarea value={reversalReason} onChange={event => setReversalReason(event.target.value)}
+                  disabled={Boolean(pendingReversalIntent)} maxLength={500} rows={2}
+                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-medium normal-case tracking-normal text-stone-800 outline-none focus:border-amber-600 disabled:opacity-70 dark:border-amber-900 dark:bg-stone-950 dark:text-amber-50"
+                  placeholder="Why is this correction required?" />
+              </label>
+              <button type="button" onClick={handleReverseIntake}
+                disabled={isReversing || (!pendingReversalIntent && !reversalReason.trim())}
+                className="mt-2 inline-flex items-center gap-2 rounded-lg bg-amber-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 disabled:opacity-50 dark:bg-amber-700">
+                <RotateCcw className="h-3.5 w-3.5" />
+                {pendingReversalIntent ? 'Resubmit same correction' : 'Confirm correction'}
+              </button>
+            </div>
+          )}
           {intakes.length === 0 ? (
             <>
             <EmptyState
@@ -607,6 +957,7 @@ export default function GrapeReceivingTab({
                     <th className="p-2.5 text-right">{ka ? 'ნეტო' : 'Net'}</th>
                     <th className="p-2.5 text-right">{ka ? 'ტკბილი' : 'Must'}</th>
                     <th className="p-2.5">{ka ? 'პარტია' : 'Batch'}</th>
+                    {canReverseHarvestIntake && <th className="p-2.5 text-right">{ka ? 'Action' : 'Action'}</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
@@ -615,19 +966,33 @@ export default function GrapeReceivingTab({
                       <td className="p-2.5 font-mono text-stone-500 whitespace-nowrap">{r.date}</td>
                       <td className="p-2.5">
                         <span className="font-bold text-stone-800 dark:text-amber-50">{r.variety}</span>
+                        {isHarvestIntakeReversal(r) && <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-800">Correction</span>}
+                        {r.reversedByCommandId && <span className="ml-1.5 rounded bg-stone-200 px-1.5 py-0.5 text-[8px] font-bold uppercase text-stone-600">Reversed</span>}
                         <span className="block text-[9px] font-mono text-stone-400">
                           {r.source === 'own' ? `🌿 ${r.blockName || (ka ? 'ვენახი' : 'block')}` : `🚚 ${r.supplierName || (ka ? 'მომწოდებელი' : 'supplier')}`}
                           {r.brix ? ` · ${r.brix}°Bx` : ''}
                         </span>
                       </td>
-                      <td className="p-2.5 text-right font-bold whitespace-nowrap">{(r.netWeightKg ?? 0).toLocaleString()} kg</td>
-                      <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300 whitespace-nowrap">{(r.estimatedVolumeL ?? 0).toLocaleString()} L</td>
+                      <td className="p-2.5 text-right font-bold whitespace-nowrap">{isHarvestIntakeReversal(r) ? '-' : ''}{(r.netWeightKg ?? 0).toLocaleString()} kg</td>
+                      <td className="p-2.5 text-right font-mono text-[#4e0e15] dark:text-amber-300 whitespace-nowrap">{isHarvestIntakeReversal(r) ? '-' : ''}{(r.estimatedVolumeL ?? 0).toLocaleString()} L</td>
                       <td className="p-2.5">
                         <button onClick={() => openLot(r.createdLotId)}
                           className="text-[10px] font-mono text-[#4e0e15] hover:underline cursor-pointer flex items-center gap-0.5 dark:text-amber-300">
                           {r.createdLotId} <ArrowRight className="w-3 h-3" />
                         </button>
                       </td>
+                      {canReverseHarvestIntake && (
+                        <td className="p-2.5 text-right">
+                          {isActiveHarvestIntake(r) && r.commandId && r.reversalSnapshot && (
+                            <button type="button"
+                              onClick={() => { setReversalIntakeId(r.id); setReversalReason(''); setCommandError(null); }}
+                              title="Correct" aria-label={`Correct intake ${r.id}`}
+                              className="text-stone-300 hover:text-amber-700 cursor-pointer transition-colors">
+                              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -636,6 +1001,7 @@ export default function GrapeReceivingTab({
           )}
         </div>
       </div>
+      </fieldset>
     </div>
   );
 }

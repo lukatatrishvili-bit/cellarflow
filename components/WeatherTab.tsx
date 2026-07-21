@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Sun, CloudSun, CloudRain, Wind, Droplets, AlertTriangle, 
-  CheckCircle, XCircle, Info, Calendar, RotateCw, MapPin, 
-  ShieldAlert, Sparkles, Thermometer, Flame, Snowflake,
-  Bot, TrendingUp, Layers, HelpCircle, ArrowRight
+import {
+  Sun, CloudSun, CloudRain, Wind, Droplets, AlertTriangle, Info, Calendar, RotateCw, MapPin,
+  ShieldAlert, Sparkles, Flame, Snowflake,
+  Bot, TrendingUp, Layers
 } from 'lucide-react';
-import { 
+import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
-  BarChart, Bar, Legend, LineChart, Line, Cell
+  BarChart, Bar, Legend, Cell
 } from 'recharts';
 import ReactMarkdown from 'react-markdown';
 import type { VineyardBlock } from '../lib/wineryState';
@@ -273,8 +272,8 @@ function getPowderyDirective(risk: number, lang: string): string {
     : "Low threat. Safe weather windows. No immediate spray required. Continue routine monitoring.";
 }
 
-export default function WeatherTab({ 
-  lang, 
+export default function WeatherTab({
+  lang,
   blocks,
   setActiveModule,
   setActiveTab,
@@ -521,7 +520,7 @@ export default function WeatherTab({
 
   useEffect(() => {
     if (activeBlock) {
-      const match = varietyPresets.find(v => 
+      const match = varietyPresets.find(v =>
         v.name.toLowerCase() === activeBlock.grapeVariety.toLowerCase() ||
         activeBlock.grapeVariety.toLowerCase().includes(v.name.toLowerCase())
       );
@@ -551,7 +550,7 @@ export default function WeatherTab({
       }> = [];
       const nowIdx = new Date().getHours();
       for (let i = 0; i < 24; i++) {
-        const timeStr = data.hourly.time[nowIdx + i] 
+        const timeStr = data.hourly.time[nowIdx + i]
           ? new Date(data.hourly.time[nowIdx + i]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           : `${nowIdx + i}:00`;
         hourlyData.push({
@@ -612,10 +611,10 @@ export default function WeatherTab({
       const twoDaysAgo = new Date();
       twoDaysAgo.setDate(today.getDate() - 3);
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
-      
+
       const end2026 = formatDate(twoDaysAgo);
       const start2026 = '2026-04-01';
-      
+
       const url2024 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=2024-04-01&end_date=2024-10-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
       const url2025 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=2025-04-01&end_date=2025-10-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
       const url2026 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=${start2026}&end_date=${end2026}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
@@ -676,7 +675,7 @@ export default function WeatherTab({
         const ytdItems = dailyList.filter(isYtd);
         const totalGdd = Math.round(ytdItems.reduce((acc, item) => acc + item.gdd, 0));
         const totalRain = Math.round(ytdItems.reduce((acc, item) => acc + item.precip, 0));
-        const meanTemp = ytdItems.length > 0 
+        const meanTemp = ytdItems.length > 0
           ? Number((ytdItems.reduce((acc, item) => acc + item.avgTemp, 0) / ytdItems.length).toFixed(1))
           : 18.0;
         return { gdd: totalGdd, rain: totalRain, temp: meanTemp };
@@ -731,7 +730,7 @@ export default function WeatherTab({
 
         const sumGdd = (items: any[]) => Math.round(items.reduce((acc, item) => acc + item.gdd, 0));
         const sumRain = (items: any[]) => Math.round(items.reduce((acc, item) => acc + item.precip, 0));
-        const avgTemp = (items: any[]) => items.length > 0 
+        const avgTemp = (items: any[]) => items.length > 0
           ? Number((items.reduce((acc, item) => acc + item.avgTemp, 0) / items.length).toFixed(1))
           : 0;
 
@@ -825,19 +824,19 @@ export default function WeatherTab({
     if (!weatherData) return [];
     return weatherData.daily.map(day => {
       const avgTemp = (day.tempMax + day.tempMin) / 2;
-      
+
       let downy = 10;
       if (avgTemp > 10 && day.popMax > 25) {
         downy = Math.min(100, Math.round(25 + (day.popMax - 25) * 0.9 + (10 - Math.abs(avgTemp - 20)) * 2.5));
       } else if (avgTemp > 12) {
         downy = 20;
       }
-      
+
       let powdery = 15;
       if (avgTemp >= 15 && avgTemp <= 28) {
         powdery = Math.min(100, Math.round(30 + (13 - Math.abs(avgTemp - 23)) * 4.5 - (day.popMax > 50 ? 15 : 0)));
       }
-      
+
       return {
         date: day.date.split(',')[0],
         downy,
@@ -864,8 +863,8 @@ export default function WeatherTab({
       const gddInfo = `Accumulated GDD: ${finalCumulativeGdd}°C, Required GDD for ${selectedVariety}: ${activeVarietyConfig.requiredGdd}°C. Predicted days to physiological maturity: ${daysToRipeness} days.`;
       const currentStats = `REAL-TIME TELEMETRY STATUS: Temp ${weatherData?.currentTemp}°C, Humidity ${weatherData?.currentHumidity}%, Wind: ${weatherData?.currentWind} km/h, Precipitation Code: ${weatherData?.weatherCode}.`;
       const phenologyInfo = `OBSERVED PHENOLOGICAL PHASE: ${activePhenologyConfig.label.en} (${activePhenologyConfig.detail.en}).`;
-      
-      const forecastSummary = weatherData 
+
+      const forecastSummary = weatherData
         ? `Upcoming 5-day forecast limits: ${weatherData.daily.map(d => `${d.date}: Max ${d.tempMax}°C / Min ${d.tempMin}°C, Rain chance ${d.popMax}%`).join('; ')}`
         : 'No 5-day forecast available.';
 
@@ -912,6 +911,9 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
       fetchWeatherData(activeBlock.latitude, activeBlock.longitude);
       fetchHistoricalData(activeBlock.latitude, activeBlock.longitude);
     }
+    // Fetch only when the selected block changes. The request helpers update
+    // this component's state and are intentionally not effect dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBlock]);
 
   // Decode WMO weather code to text & icon
@@ -945,7 +947,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
       status = 'danger';
       labelText = t.spray_danger;
       if (currentWind > 18) {
-        message = currentLang === 'ka' 
+        message = currentLang === 'ka'
           ? `ქარის სიჩქარეა ${currentWind} კმ/სთ, რამაც შეიძლება გამოიწვიოს პრეპარატის დრიფტი (არათანაბარი გადანაწილება). შესხურება დაუშვებელია.`
           : `High winds of ${currentWind} km/h introduce extreme chemical drift risks. Spraying is prohibited.`;
       } else if (rainNow) {
@@ -985,7 +987,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
   // Harvest Decision Engine
   const harvestAnalysis = useMemo(() => {
     if (!weatherData) return null;
-    const { currentTemp, currentHumidity } = weatherData;
+    const { currentTemp } = weatherData;
     const { daily } = weatherData;
 
     // Check if harvest is in season. Harvest is inactive if it's before August (month < 7)
@@ -1092,7 +1094,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
             <div className="lg:col-span-1 bg-gradient-to-br from-white to-stone-50/20 border border-[#e8dfd5]/65 rounded-3xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.03)] hover:shadow-[0_12px_40px_rgb(0,0,0,0.06)] flex flex-col justify-between space-y-6 relative overflow-hidden transition-all duration-300 hover:scale-[1.01]">
               <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#801323] to-[#4e0e15]" />
               <div className="absolute -right-10 -bottom-10 w-24 h-24 bg-[#801323]/5 rounded-full blur-2xl pointer-events-none" />
-              
+
               <div className="space-y-4 relative z-10">
                 <div className="flex justify-between items-start">
                   <div>
@@ -1183,14 +1185,14 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
             {/* DECISION SUPPORT MATRIX PANEL */}
             <div className="lg:col-span-2 space-y-6">
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                 {/* Spraying decision Card */}
                 {sprayingAnalysis && (
                   <div className={`p-5 rounded-3xl border flex flex-col justify-between space-y-3.5 transition-all duration-300 hover:scale-[1.015] ${
-                    sprayingAnalysis.status === 'optimal' 
-                      ? 'bg-gradient-to-br from-emerald-50/70 to-emerald-50/20 border-emerald-250/60 shadow-[0_8px_30px_rgba(16,185,129,0.04)] hover:shadow-[0_12px_35px_rgba(16,185,129,0.08)] hover:border-emerald-300 text-emerald-950' 
+                    sprayingAnalysis.status === 'optimal'
+                      ? 'bg-gradient-to-br from-emerald-50/70 to-emerald-50/20 border-emerald-250/60 shadow-[0_8px_30px_rgba(16,185,129,0.04)] hover:shadow-[0_12px_35px_rgba(16,185,129,0.08)] hover:border-emerald-300 text-emerald-950'
                       : sprayingAnalysis.status === 'caution'
                       ? 'bg-gradient-to-br from-amber-50/70 to-amber-50/20 border-amber-250/60 shadow-[0_8px_30px_rgba(245,158,11,0.04)] hover:shadow-[0_12px_35px_rgba(245,158,11,0.08)] hover:border-amber-300 text-amber-950'
                       : 'bg-gradient-to-br from-rose-50/70 to-rose-50/20 border-rose-250/60 shadow-[0_8px_30px_rgba(239,68,68,0.04)] hover:shadow-[0_12px_35px_rgba(239,68,68,0.08)] hover:border-rose-300 text-rose-950'
@@ -1205,7 +1207,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                         </span>
                       </div>
                       <p className="text-xs font-semibold leading-relaxed mt-3">{sprayingAnalysis.message}</p>
-                      
+
                       {canCreateTask && sprayingAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
                         <button
                           onClick={() => {
@@ -1215,11 +1217,11 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                             const temp = weatherData?.currentTemp ?? '';
                             const wind = weatherData?.currentWind ?? '';
                             const hum = weatherData?.currentHumidity ?? '';
-                            
-                            const title = currentLang === 'ka' 
+
+                            const title = currentLang === 'ka'
                               ? `ფუნგიციდებით წამლობა - ${blockName}`
                               : `Spray Fungicide Campaign - ${blockName}`;
-                            
+
                             const desc = currentLang === 'ka'
                               ? `წამლობის კამპანია დაგეგმილია აგრო-მეტეო ტელემეტრიის საფუძველზე. ნაკვეთი: ${blockName} (${variety}). მიმდინარე მიკროკლიმატური პირობები: ტემპერატურა ${temp}°C, ქარი ${wind} კმ/სთ, ტენიანობა ${hum}%. დაავადების რისკის წნევაა: ${diseasePressureIndex === 'high' ? 'მაღალი' : diseasePressureIndex === 'medium' ? 'საშუალო' : 'დაბალი'}.`
                               : `Spraying campaign scheduled based on agro-weather telemetry. Block: ${blockName} (${variety}). Current Conditions: Temp ${temp}°C, Wind ${wind} km/h, Humidity ${hum}%. Disease risk pressure is ${diseasePressureIndex.toUpperCase()}.`;
@@ -1252,8 +1254,8 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                 {/* Harvesting decision Card */}
                 {harvestAnalysis && (
                   <div className={`p-5 rounded-3xl border flex flex-col justify-between space-y-3.5 transition-all duration-300 hover:scale-[1.015] ${
-                    harvestAnalysis.status === 'optimal' 
-                      ? 'bg-gradient-to-br from-emerald-50/70 to-emerald-50/20 border-emerald-250/60 shadow-[0_8px_30px_rgba(16,185,129,0.04)] hover:shadow-[0_12px_35px_rgba(16,185,129,0.08)] hover:border-emerald-300 text-emerald-950' 
+                    harvestAnalysis.status === 'optimal'
+                      ? 'bg-gradient-to-br from-emerald-50/70 to-emerald-50/20 border-emerald-250/60 shadow-[0_8px_30px_rgba(16,185,129,0.04)] hover:shadow-[0_12px_35px_rgba(16,185,129,0.08)] hover:border-emerald-300 text-emerald-950'
                       : harvestAnalysis.status === 'caution'
                       ? 'bg-gradient-to-br from-amber-50/70 to-amber-50/20 border-amber-250/60 shadow-[0_8px_30px_rgba(245,158,11,0.04)] hover:shadow-[0_12px_35px_rgba(245,158,11,0.08)] hover:border-amber-300 text-amber-950'
                       : harvestAnalysis.status === 'inactive'
@@ -1264,19 +1266,19 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       <div className="flex justify-between items-center border-b border-black/5 pb-2">
                         <h4 className="text-[10.5px] font-mono uppercase font-black text-stone-605">{t.harvest_decision}</h4>
                         <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-black uppercase text-white shadow-3xs ${
-                          harvestAnalysis.status === 'optimal' 
-                            ? 'bg-emerald-800' 
-                            : harvestAnalysis.status === 'caution' 
-                            ? 'bg-amber-600' 
-                            : harvestAnalysis.status === 'inactive' 
-                            ? 'bg-stone-500' 
+                          harvestAnalysis.status === 'optimal'
+                            ? 'bg-emerald-800'
+                            : harvestAnalysis.status === 'caution'
+                            ? 'bg-amber-600'
+                            : harvestAnalysis.status === 'inactive'
+                            ? 'bg-stone-500'
                             : 'bg-red-700'
                         }`}>
                           {harvestAnalysis.labelText}
                         </span>
                       </div>
                       <p className="text-xs font-semibold leading-relaxed mt-3">{harvestAnalysis.message}</p>
-                      
+
                       {canCreateTask && harvestAnalysis.status === 'optimal' && setActiveModule && setActiveTab && setPrefilledTaskTitle && setPrefilledTaskPriority && setPrefilledTaskDesc && (
                         <button
                           onClick={() => {
@@ -1285,11 +1287,11 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                             const variety = activeBlock?.grapeVariety || '';
                             const temp = weatherData?.currentTemp ?? '';
                             const hum = weatherData?.currentHumidity ?? '';
-                            
+
                             const title = currentLang === 'ka'
                               ? `ყურძნის კრეფა - ${blockName}`
                               : `Harvest Picking - ${blockName}`;
-                            
+
                             const desc = currentLang === 'ka'
                               ? `მოსავლის კრეფის კამპანია დაგეგმილია აგრო-კლიმატური პარამეტრების საფუძველზე. ნაკვეთი: ${blockName} (${variety}). ჯიში: ${selectedVariety} (${activeVarietyConfig.type === 'red' ? 'წითელი' : activeVarietyConfig.type === 'white' ? 'თეთრი' : 'ქარვისფერი'}). მიმდინარე აქტიური ტემპერატურების ჯამი (GDD): ${finalCumulativeGdd}°C (მიზნობრივი ზღვარი: ${activeVarietyConfig.requiredGdd}°C GDD). მეტეო პარამეტრები: ტემპერატურა ${temp}°C, ტენიანობა ${hum}%.`
                               : `Harvest campaign scheduled based on viticultural agro-meteorological metrics. Block: ${blockName} (${variety}). Variety: ${selectedVariety} (${activeVarietyConfig.type}). Current heat sum: ${finalCumulativeGdd}°C GDD vs Target threshold: ${activeVarietyConfig.requiredGdd}°C GDD. Telemetry: Temp ${temp}°C, Humidity ${hum}%.`;
@@ -1335,10 +1337,10 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                 <div className="self-center shrink-0">
                   <span className={`px-4 py-1.5 font-mono text-[10px] tracking-wider uppercase font-extrabold rounded-full border shadow-3xs ${
-                    diseasePressureIndex === 'high' 
-                      ? 'bg-rose-50 text-rose-700 border-rose-200' 
+                    diseasePressureIndex === 'high'
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
                       : diseasePressureIndex === 'medium'
-                      ? 'bg-amber-50 text-amber-700 border-amber-200' 
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
                       : 'bg-emerald-50 text-emerald-800 border-emerald-100'
                   }`}>
                     {diseasePressureIndex === 'high' ? t.risk_high : diseasePressureIndex === 'medium' ? t.risk_med : t.risk_low}
@@ -1501,10 +1503,10 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                     <span>{Math.min(100, Math.round((finalCumulativeGdd / activeVarietyConfig.requiredGdd) * 100))}% {({ en: 'reached', ka: 'მიღწეულია', it: 'raggiunto', fr: 'atteint', de: 'erreicht' })[lang] || 'reached'}</span>
                   </div>
                   <div className="w-full h-3 bg-stone-100/60 rounded-full overflow-hidden border border-stone-200/50 shadow-inner">
-                    <div 
+                    <div
                       className={`h-full transition-all duration-500 rounded-full relative overflow-hidden bg-gradient-to-r ${
-                        finalCumulativeGdd >= activeVarietyConfig.requiredGdd 
-                          ? 'from-emerald-500 to-emerald-700' 
+                        finalCumulativeGdd >= activeVarietyConfig.requiredGdd
+                          ? 'from-emerald-500 to-emerald-700'
                           : 'from-amber-450 via-emerald-500 to-emerald-650'
                       }`}
                       style={{ width: `${Math.min(100, (finalCumulativeGdd / activeVarietyConfig.requiredGdd) * 100)}%` }}
@@ -1512,7 +1514,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent animate-pulse" style={{ animationDuration: '2.5s' }} />
                     </div>
                   </div>
-                  
+
                   {/* Manual Phenology Phase Label */}
                   <div className="flex items-center gap-1.5 pt-1 text-[10px] text-stone-500">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1540,7 +1542,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                 </div>
 
                 <p className="text-xs text-stone-600 leading-relaxed">
-                  {lang === 'ka' 
+                  {lang === 'ka'
                     ? `მიმდინარე ინფექციის კერების და რისკების ანალიზი წარმოებს რეალურ დროში, ${activeBlock?.name || 'Vinea'} ნაკვეთის კოორდინატებზე დაფუძნებული ციფრული მეტეოროლოგიური ტელემეტრიის საფუძველზე. სისტემა აფასებს Plasmopara (ჭრაქი), Oidium (ნაცარი) და Botrytis (ლპობა) გამრავლებას გარემო ფაქტორების მიხედვით.`
                     : `Infection risks and physiological pathogen pressures are assessed live, based on precise GPS grid meteorological telemetry for the ${activeBlock?.name || 'Vinea'} block. The bio-pathological model continuously recalculates Plasmopara viticola, Uncinula necator, and Botrytis cinerea outbreak potential from active humidity, canopy leaf wetness indicators, and temperature gradients.`}
                 </p>
@@ -1568,13 +1570,13 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                 {/* RISK GAUGES */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
-                  
+
                   {/* Downy Mildew Risk Gauge */}
                   <div className={`p-4 rounded-2xl border transition-all duration-300 hover:scale-[1.02] ${
-                    infectionMetrics.downyRisk > 60 
-                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]' 
-                      : infectionMetrics.downyRisk > 30 
-                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]' 
+                    infectionMetrics.downyRisk > 60
+                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]'
+                      : infectionMetrics.downyRisk > 30
+                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]'
                       : 'bg-gradient-to-br from-emerald-50/60 to-emerald-50/10 border-emerald-100 text-emerald-950 shadow-[0_4px_15px_rgba(16,185,129,0.03)]'
                   }`}>
                     <span className="text-[9px] font-mono uppercase text-stone-550 block font-bold">Downy Mildew</span>
@@ -1591,10 +1593,10 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                   {/* Powdery Mildew Risk Gauge */}
                   <div className={`p-4 rounded-2xl border transition-all duration-300 hover:scale-[1.02] ${
-                    infectionMetrics.powderyRisk > 60 
-                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]' 
-                      : infectionMetrics.powderyRisk > 30 
-                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]' 
+                    infectionMetrics.powderyRisk > 60
+                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]'
+                      : infectionMetrics.powderyRisk > 30
+                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]'
                       : 'bg-gradient-to-br from-emerald-50/60 to-emerald-50/10 border-emerald-100 text-emerald-950 shadow-[0_4px_15px_rgba(16,185,129,0.03)]'
                   }`}>
                     <span className="text-[9px] font-mono uppercase text-stone-550 block font-bold">Powdery Mildew</span>
@@ -1611,10 +1613,10 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                   {/* Botrytis bunch rot */}
                   <div className={`p-4 rounded-2xl border transition-all duration-300 hover:scale-[1.02] ${
-                    infectionMetrics.botrytisRisk > 60 
-                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]' 
-                      : infectionMetrics.botrytisRisk > 30 
-                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]' 
+                    infectionMetrics.botrytisRisk > 60
+                      ? 'bg-gradient-to-br from-rose-50/60 to-rose-50/10 border-rose-200 text-rose-950 font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.03)]'
+                      : infectionMetrics.botrytisRisk > 30
+                      ? 'bg-gradient-to-br from-amber-50/60 to-amber-50/10 border-amber-200 text-amber-950 shadow-[0_4px_15px_rgba(245,158,11,0.03)]'
                       : 'bg-gradient-to-br from-emerald-50/60 to-emerald-50/10 border-emerald-100 text-emerald-950 shadow-[0_4px_15px_rgba(16,185,129,0.03)]'
                   }`}>
                     <span className="text-[9px] font-mono uppercase text-stone-550 block font-bold">Botrytis Rot</span>
@@ -1641,19 +1643,19 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                     </span>
                     <span className="text-[9px] font-mono text-slate-400 font-bold uppercase">{lang === 'ka' ? 'ბიოკინეტიკური მოდელირება' : 'Bio-Kinetically Calibrated'}</span>
                   </div>
-                  
+
                   <div className="grid grid-cols-5 gap-2 text-center">
                     {forecastPathogenRisks.map((risk, idx) => {
                       const maxRisk = Math.max(risk.downy, risk.powdery);
                       const isSelected = selectedForecastIdx === idx;
-                      const riskColor = maxRisk > 60 
-                        ? (isSelected ? 'text-rose-900 bg-rose-100 border-rose-350 ring-2 ring-rose-400' : 'text-rose-700 bg-rose-50/50 border-rose-200') 
-                        : maxRisk > 30 
-                        ? (isSelected ? 'text-amber-900 bg-amber-100 border-amber-350 ring-2 ring-amber-450' : 'text-amber-700 bg-amber-50/50 border-amber-200') 
+                      const riskColor = maxRisk > 60
+                        ? (isSelected ? 'text-rose-900 bg-rose-100 border-rose-350 ring-2 ring-rose-400' : 'text-rose-700 bg-rose-50/50 border-rose-200')
+                        : maxRisk > 30
+                        ? (isSelected ? 'text-amber-900 bg-amber-100 border-amber-350 ring-2 ring-amber-450' : 'text-amber-700 bg-amber-50/50 border-amber-200')
                         : (isSelected ? 'text-emerald-950 bg-emerald-100 border-emerald-300 ring-2 ring-emerald-450' : 'text-emerald-800 bg-emerald-50/50 border-emerald-100');
                       return (
-                        <div 
-                          key={idx} 
+                        <div
+                          key={idx}
                           onClick={() => setSelectedForecastIdx(idx)}
                           onMouseEnter={() => setSelectedForecastIdx(idx)}
                           className={`p-2.5 rounded-xl border flex flex-col justify-between space-y-1.5 transition-all duration-200 cursor-pointer hover:scale-103 ${riskColor}`}
@@ -1727,7 +1729,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
               <div className="bg-gradient-to-br from-[#1c080b] to-[#0c0304] border border-[#4e0e15]/30 p-6 rounded-3xl shadow-xl space-y-4 relative overflow-hidden">
                 <div className="absolute -right-16 -top-16 w-36 h-36 bg-[#801323]/10 rounded-full blur-3xl pointer-events-none" />
                 <div className="absolute -left-16 -bottom-16 w-36 h-36 bg-[#c2185b]/5 rounded-full blur-3xl pointer-events-none" />
-                
+
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#4e0e15]/20 pb-3 relative z-10">
                   <div className="flex items-center gap-2.5">
                     <div className="p-2.5 bg-[#4e0e15] border border-[#801323]/35 text-white rounded-xl shadow-md">
@@ -1821,7 +1823,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                     <div key={i} className="bg-gradient-to-b from-white to-stone-50/40 border border-[#e8dfd5]/60 rounded-2xl p-4 text-center flex flex-col justify-between space-y-2 hover:shadow-md hover:scale-[1.03] transition-all duration-300 relative overflow-hidden group">
                       <div className="absolute top-0 left-0 right-0 h-[3px] bg-stone-100 group-hover:bg-[#801323] transition-all duration-300" />
                       <span className="text-[10px] font-mono text-slate-400 font-bold block">{day.date}</span>
-                      
+
                       <div className="mx-auto py-1 transition-transform duration-300 group-hover:scale-110">
                         {dayDeco.icon}
                       </div>
@@ -1871,8 +1873,8 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       type="button"
                       onClick={() => setHistViewMode('ytd')}
                       className={`px-2.5 py-1 text-[9px] font-sans font-bold rounded-md transition-all cursor-pointer ${
-                        histViewMode === 'ytd' 
-                          ? 'bg-white text-stone-800 shadow-2xs font-extrabold' 
+                        histViewMode === 'ytd'
+                          ? 'bg-white text-stone-800 shadow-2xs font-extrabold'
                           : 'text-stone-500 hover:text-stone-850'
                       }`}
                     >
@@ -1882,8 +1884,8 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                       type="button"
                       onClick={() => setHistViewMode('monthly')}
                       className={`px-2.5 py-1 text-[9px] font-sans font-bold rounded-md transition-all cursor-pointer ${
-                        histViewMode === 'monthly' 
-                          ? 'bg-white text-stone-800 shadow-2xs font-extrabold' 
+                        histViewMode === 'monthly'
+                          ? 'bg-white text-stone-800 shadow-2xs font-extrabold'
                           : 'text-stone-500 hover:text-stone-855'
                       }`}
                     >
@@ -1893,21 +1895,21 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                   {/* Metric Switcher */}
                   <div className="flex bg-stone-100 p-0.5 rounded-lg border border-stone-200">
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setHistMetric('gdd')}
                       className={`px-2 py-1 text-[9px] font-mono font-bold rounded-md transition-all cursor-pointer ${histMetric === 'gdd' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
                     >
                       GDD
                     </button>
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setHistMetric('rain')}
                       className={`px-2 py-1 text-[9px] font-mono font-bold rounded-md transition-all cursor-pointer ${histMetric === 'rain' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
                     >
                       Rain
                     </button>
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setHistMetric('temp')}
                       className={`px-2 py-1 text-[9px] font-mono font-bold rounded-md transition-all cursor-pointer ${histMetric === 'temp' ? 'bg-[#4e0e15] text-white shadow-2xs' : 'bg-transparent text-stone-500 hover:text-stone-800'}`}
@@ -1972,7 +1974,7 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
                     <h4 className="font-serif font-black text-xs text-stone-900 leading-tight">{activeMetricLabel?.title}</h4>
                     <p className="text-[10px] text-stone-500 leading-normal">{activeMetricLabel?.desc}</p>
                   </div>
-                  
+
                   <div className="border-t border-stone-200/50 pt-3 space-y-1.5 text-[9.5px]">
                     <div className="flex justify-between items-center text-stone-600">
                       <span>Weather Provider:</span>

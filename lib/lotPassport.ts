@@ -20,6 +20,8 @@ import type { StorageLocation, StockMovement } from './storage';
 import { molecularSO2 } from './alerts';
 import { evaluateLotCompliance, type ComplianceReadiness } from './compliance';
 import { checkPdoEligibility, getPdoRule, type PdoCheckResult } from './pdo';
+import { isHarvestIntakeReversal } from './harvestIntakeIntegrity';
+import { isFermentationCompletionReversal } from './fermentationIntegrity';
 
 export interface PassportData {
   lot: WineLot;
@@ -205,7 +207,7 @@ export function buildPassportHtml(data: PassportData): string {
 
   const generatedAt = new Date().toLocaleString();
   const intakes = grapeIntakes.filter(intake => intake.createdLotId === lot.id);
-  const primaryIntake = intakes[0];
+  const primaryIntake = intakes.find(intake => !isHarvestIntakeReversal(intake)) || intakes[0];
   const block = findBlock(lot, intakes, blocks);
   const lotHarvests = harvests.filter(h =>
     h.associatedLotId === lot.id || intakes.some(intake => intake.harvestRecordId && intake.harvestRecordId === h.id),
@@ -253,14 +255,36 @@ export function buildPassportHtml(data: PassportData): string {
 
   const timeline = buildTimeline([
     ...lotHarvests.map(h => ({ date: h.actualHarvestDate || h.estimatedHarvestDate, type: 'Harvest', detail: `${h.variety} ${fmt(h.actualHarvestedKg || h.estimatedTons)} ${h.actualHarvestedKg ? 'kg' : 't estimated'}`, ref: h.id })),
-    ...intakes.map(i => ({ date: i.date, type: 'Grape intake', detail: `${i.variety}, ${fmt(i.netWeightKg)} kg, ${fmt(i.brix)} Brix`, ref: i.id })),
+    ...intakes.map(i => ({
+      date: i.date,
+      type: isHarvestIntakeReversal(i) ? 'Grape intake correction' : 'Grape intake',
+      detail: `${isHarvestIntakeReversal(i) ? '-' : ''}${fmt(i.netWeightKg)} kg ${i.variety}${i.reversalReason ? `; ${i.reversalReason}` : `, ${fmt(i.brix)} Brix`}`,
+      ref: i.id,
+    })),
     { date: lot.createdAt, type: 'Wine lot created', detail: `${lot.name}, ${fmt(lot.initialVolume)} L`, ref: lot.id },
-    ...ops.map(op => ({ date: op.date, type: 'Cellar operation', detail: `${op.customLabel || op.type.replace(/_/g, ' ')} ${op.materialName ? `- ${op.materialName}` : ''}`, ref: op.id })),
+    ...ops.map(op => ({
+      date: op.date,
+      type: op.recordKind === 'reversal'
+        ? 'Cellar operation correction'
+        : op.reversedByCommandId ? 'Cellar operation (reversed)' : 'Cellar operation',
+      detail: `${op.customLabel || op.type.replace(/_/g, ' ')} ${op.materialName ? `- ${op.materialName}` : ''}${op.reversalReason ? ` — ${op.reversalReason}` : ''}`,
+      ref: op.id,
+    })),
     ...xfers.map(t => ({ date: t.date, type: 'Transfer', detail: `${t.sourceId} to ${t.destId}, ${fmt(t.volume)} L`, ref: t.id })),
-    ...runs.map(run => ({ date: run.date, type: 'Bottling', detail: `${fmt((run.totalBottles || 0) + (run.totalCeramic || 0))} bottles, lot no. ${run.lotNumber}`, ref: run.id })),
+    ...runs.map(run => ({
+      date: run.date,
+      type: run.recordKind === 'reversal' ? 'Bottling correction' : (run.reversedByCommandId ? 'Bottling (reversed)' : 'Bottling'),
+      detail: `${run.recordKind === 'reversal' ? '-' : ''}${fmt((run.totalBottles || 0) + (run.totalCeramic || 0))} bottles, lot no. ${run.lotNumber}${run.reversalReason ? ` — ${run.reversalReason}` : ''}`,
+      ref: run.id,
+    })),
     ...movements.map(m => ({ date: m.date, type: `Stock ${m.direction}`, detail: `${fmt(m.bottles)} bottles at ${storageLocations.find(l => l.id === m.locationId)?.name || m.locationId}`, ref: m.id })),
     ...orders.map(o => ({ date: o.orderDate, type: 'Sales order', detail: `${o.customerName}, ${fmt(o.bottles)} bottles, ${o.status}`, ref: o.orderNumber || o.id })),
-    ...dispatches.map(d => ({ date: d.date, type: 'Dispatch', detail: `${d.customerName}, ${fmt(d.bottles)} bottles, ${fmt(d.revenue)} ${d.currency}`, ref: d.id })),
+    ...dispatches.map(d => ({
+      date: d.date,
+      type: d.recordKind === 'reversal' ? 'Sales return / correction' : d.reversedByCommandId ? 'Dispatch (reversed)' : 'Dispatch',
+      detail: `${d.customerName}, ${fmt(d.bottles)} bottles, ${fmt(d.revenue)} ${d.currency}${d.reversalReason ? `, ${d.reversalReason}` : ''}`,
+      ref: d.id,
+    })),
     ...certs.map(c => ({ date: c.issueDate || c.sampleDate, type: 'Certification', detail: `${c.applicationStatus}${c.certificateNumber ? `, certificate ${c.certificateNumber}` : ''}`, ref: c.id })),
   ]);
 
@@ -304,10 +328,13 @@ export function buildPassportHtml(data: PassportData): string {
     `
     : '<div class="notice warn">No certification record is linked to this lot yet.</div>';
 
-  const fermRows = tableRows(ferm, 'No fermentation logs recorded.', f => `
+  const fermRows = tableRows(ferm, 'No fermentation logs recorded.', f => isFermentationCompletionReversal(f) ? `
+    <tr>
+      <td>${esc(safeDate(f.date))}</td><td colspan="4">Correction</td><td>${esc(f.reversalReason || f.tastingNotes)}</td>
+    </tr>` : `
     <tr>
       <td>${esc(safeDate(f.date))}</td><td>${esc(f.temperature)}</td><td>${esc(f.density)}</td>
-      <td>${esc(f.sugar)}</td><td>${esc(f.ph)}</td><td>${esc(f.capManagement)}</td>
+      <td>${esc(f.sugar)}</td><td>${esc(f.ph)}</td><td>${esc(f.reversedByCommandId ? 'Final reading (completion reversed)' : f.capManagement)}</td>
     </tr>`);
 
   const labRows = tableRows(labs, 'No laboratory analyses recorded.', l => {
@@ -463,7 +490,13 @@ export function buildPassportHtml(data: PassportData): string {
           ...runs.map(run => ({ date: run.date, event: 'Bottling', ref: run.id, qty: `${fmt((run.totalBottles || 0) + (run.totalCeramic || 0))} bottles`, place: run.storageLocationId || '-' })),
           ...movements.map(m => ({ date: m.date, event: `Stock ${m.direction}`, ref: m.id, qty: `${fmt(m.bottles)} bottles`, place: storageLocations.find(l => l.id === m.locationId)?.name || m.locationId })),
           ...orders.map(o => ({ date: o.orderDate, event: `Order ${o.status}`, ref: o.orderNumber || o.id, qty: `${fmt(o.bottles)} bottles`, place: o.customerName })),
-          ...dispatches.map(d => ({ date: d.date, event: 'Dispatch', ref: d.id, qty: `${fmt(d.bottles)} bottles`, place: d.customerName })),
+          ...dispatches.map(d => ({
+            date: d.date,
+            event: d.recordKind === 'reversal' ? 'Sales return / correction' : d.reversedByCommandId ? 'Dispatch (reversed)' : 'Dispatch',
+            ref: d.id,
+            qty: `${fmt(d.bottles)} bottles`,
+            place: d.customerName,
+          })),
         ].sort((a, b) => safeDate(a.date).localeCompare(safeDate(b.date))), 'No bottling, storage, or sales records linked yet.', item => `
           <tr><td>${esc(safeDate(item.date))}</td><td>${esc(item.event)}</td><td>${esc(item.ref)}</td><td>${esc(item.qty)}</td><td>${esc(item.place)}</td></tr>
         `)}

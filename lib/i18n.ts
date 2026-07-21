@@ -258,7 +258,7 @@ export const translations = {
     nav_audit: 'Audit Trail',
     nav_settings: 'Settings',
     nav_logout: 'Logout',
-    
+
     // Landing sign-in page
     signin_title: 'VinOS Unified Sign In',
     signin_subtitle: 'Unified Vineyard (Vazi) & Winery (Gvino) Cloud Management',
@@ -579,7 +579,7 @@ export const translations = {
     nav_audit: 'აუდიტის ისტორია',
     nav_settings: 'პარამეტრები',
     nav_logout: 'გამოსვლა',
-    
+
     // Landing sign-in page
     signin_title: 'VinOS - ავტორიზაცია',
     signin_subtitle: 'ვენახების (ვაზი) და მარნის (ღვინო) ერთიანი მართვის სისტემა',
@@ -900,7 +900,7 @@ export const translations = {
     nav_audit: 'Registro Audit',
     nav_settings: 'Impostazioni',
     nav_logout: 'Disconnetti',
-    
+
     // Landing sign-in page
     signin_title: 'Accesso Unificato VinOS',
     signin_subtitle: 'Gestione Cloud integrata di Vigneti (Vazi) e Cantine (Gvino)',
@@ -1221,7 +1221,7 @@ export const translations = {
     nav_audit: 'Journal d\'Audit',
     nav_settings: 'Configuration',
     nav_logout: 'Déconnexion',
-    
+
     // Landing sign-in page
     signin_title: 'Connexion Unifiée VinOS',
     signin_subtitle: 'Gestion Cloud unifiée des vignobles (Vazi) et des caves (Gvino)',
@@ -1542,7 +1542,7 @@ export const translations = {
     nav_audit: 'Audit-Trail',
     nav_settings: 'Einstellungen',
     nav_logout: 'Abmelden',
-    
+
     // Landing sign-in page
     signin_title: 'VinOS Zentrale Anmeldung',
     signin_subtitle: 'Integrierte Cloud-Verwaltung für Weinberge (Vazi) und Weinkeller (Gvino)',

@@ -569,8 +569,8 @@ export default function AiWinemaker({
       {/* Chat messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gradient-to-b from-[#FAF8F5] to-white">
         {messages.map((m, idx) => (
-          <div 
-            key={idx} 
+          <div
+            key={idx}
             className={`flex gap-3 max-w-[85%] ${m.role === 'user' ? 'ml-auto flex-row-reverse' : ''}`}
           >
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs shrink-0 select-none ${
@@ -677,8 +677,8 @@ export default function AiWinemaker({
                   {lang === 'ka' ? 'AI მარნის სამუშაო დავალება' : 'AI Cellar Work Order'}
                 </strong>
               </div>
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={() => setShowOrderModal(false)}
                 className="text-stone-400 hover:text-stone-700 cursor-pointer"
               >
@@ -717,7 +717,7 @@ export default function AiWinemaker({
                         />
                       </div>
                     </div>
-                    
+
                     <div className="flex items-center justify-between border-t border-stone-100 pt-1.5 text-[9.5px]">
                       <span className="text-slate-400 font-mono">{lang === 'ka' ? 'პრიორიტეტი:' : 'Priority:'}</span>
                       <select

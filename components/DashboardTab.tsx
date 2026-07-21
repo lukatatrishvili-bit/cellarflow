@@ -22,12 +22,11 @@ import SetupJourney from './SetupJourney';
 import {
   computeSetupJourney, isSetupJourneyDismissed, setSetupJourneyDismissed, type SetupStep,
 } from '../lib/onboarding';
-import { 
-  Wind, Sprout, AlertTriangle, FileText, CheckCircle2, 
-  Activity, Thermometer, ShieldAlert, Sliders, ClipboardList, CheckSquare 
+import { AlertTriangle, CheckCircle2
 } from 'lucide-react';
 import { computeAlerts } from '../lib/alerts';
 import { alertSeverityLabel } from '../lib/enumLabels';
+import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
 import { CountUp } from './motion';
 import { localizedRoleLabel } from '../lib/roleLabels';
 import { canAccess, type PermissionAction, type PermissionModule } from '../server/permissions';
@@ -137,7 +136,9 @@ export default function DashboardTab({
   const overdueTasks = pendingTasks.filter((task) => task.dueDate < today);
   const activeFerments = lots.filter((lot) => lot.stage === 'fermenting');
   const fermentsMissingReading = activeFerments.filter(
-    (lot) => !fermLogs.some((log) => log.lotId === lot.id && log.date === today)
+    (lot) => !fermLogs.some((log) => (
+      log.lotId === lot.id && log.date === today && isPhysicalFermentationReading(log)
+    ))
   );
   const unassignedLots = lots.filter(
     (lot) => lot.currentVolume > 0 && !vessels.some((vessel) => vessel.assignedLotId === lot.id)
@@ -211,7 +212,7 @@ export default function DashboardTab({
       <div className="bg-gradient-to-r from-white via-white to-[#fbfaf8] dark:from-[#110b0c] dark:via-[#110b0c] dark:to-[#1a1113] border border-stone-200/90 dark:border-stone-850 rounded-3xl p-8 lg:p-10 shadow-[0_4px_30px_rgba(78,14,21,0.02)] relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
         {/* Elegant side color-stripe indicator */}
         <div className="absolute top-0 bottom-0 left-0 w-2 bg-gradient-to-b from-[#801323] to-[#4e0e15]" />
-        
+
         <div className="space-y-2.5 pl-3">
           <span className="text-[10px] uppercase tracking-widest bg-[#fcf8f6] dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 text-[#4e0e15] dark:text-amber-200 px-4 py-1.5 rounded-full font-black inline-block">
             📢 {t.portal_hq || 'Estate Headquarters'}
@@ -219,7 +220,7 @@ export default function DashboardTab({
           <h2 className="text-3xl lg:text-4xl font-display font-black text-stone-950 dark:text-amber-100 tracking-tight uppercase leading-none mt-1">{t.portal_welcome || 'Welcome to MaraniOS'}</h2>
           <p className="text-sm lg:text-base text-stone-600 dark:text-stone-400 font-sans mt-2">{t.portal_status_p || 'Real-time status indicators across your agricultural blocks & fermentation vats'}</p>
         </div>
-        
+
         <div className="flex flex-wrap gap-3 text-[11px] font-mono pl-3 md:pl-0 items-center">
           {/* Precision Live Clock */}
           <div className="bg-[#FAF8F5]/85 dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 px-5 py-3 rounded-2xl text-left shadow-2xs">
@@ -370,10 +371,10 @@ export default function DashboardTab({
 
       {/* Module launch deck bentogrid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 text-stone-900">
-        
+
         {/* Vazi Module Card */}
         {enabledModules.includes('vazi') && canViewVineyard && (
-          <motion.div 
+          <motion.div
             whileHover={{ y: -4, shadow: '0 20px 40px rgba(16,185,129,0.08)' }}
             className={`p-8 lg:p-10 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-sm duration-300 space-y-6 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-300 transition-all cursor-pointer ${
               !(enabledModules.includes('gvino') && canViewCellar) ? 'lg:col-span-2' : ''
@@ -390,7 +391,7 @@ export default function DashboardTab({
                   {blocks.length} {lang === 'ka' ? 'ჩაწერილი ნაკვეთი' : `${blocks.length === 1 ? 'BLOCK' : 'BLOCKS'} RECORDED`}
                 </span>
               </div>
-              
+
               <h3 className="text-2xl font-display font-black text-stone-950 dark:text-amber-100 leading-tight flex items-center gap-2">🚜 {t.portal_vazi_title || 'Vazi Vineyard Operations'}</h3>
               <p className="text-sm text-stone-600 dark:text-stone-400 leading-relaxed font-medium">
                 {t.portal_vazi_desc || 'Trace canopy development, heat sum Growing Degree Days predictions, scouting downy/powdery pathogens, and pre-harvest grape sugar maturation curves.'}
@@ -432,7 +433,7 @@ export default function DashboardTab({
 
         {/* Gvino Module Card */}
         {enabledModules.includes('gvino') && canViewCellar && (
-          <motion.div 
+          <motion.div
             whileHover={{ y: -4, shadow: '0 20px 40px rgba(78,14,21,0.08)' }}
             className={`p-8 lg:p-10 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-sm duration-300 space-y-6 flex flex-col justify-between relative overflow-hidden group hover:border-rose-300 transition-all cursor-pointer ${
               !(enabledModules.includes('vazi') && canViewVineyard) ? 'lg:col-span-2' : ''
@@ -449,7 +450,7 @@ export default function DashboardTab({
                   {vessels.filter((vessel) => vessel.currentVolume > 0).length} {lang === 'ka' ? 'აქტიური ჭურჭელი' : 'ACTIVE VESSELS'}
                 </span>
               </div>
-              
+
               <h3 className="text-2xl font-display font-black text-[#4e0e15] dark:text-amber-100 leading-tight flex items-center gap-2">🍷 {t.portal_gvino_title || 'Gvino Cellar & Production'}</h3>
               <p className="text-sm text-stone-600 dark:text-stone-400 leading-relaxed font-medium">
                 {t.portal_gvino_desc || 'Manage stainless steel fermenters fill index, direct transfers log, lab Free & Total SO2 levels, additives calibration, and the Winemaker AI assistant.'}
@@ -490,7 +491,7 @@ export default function DashboardTab({
 
       {/* Customizable Grid widgets - OVERHAULED to 3-column desktop layout */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 text-stone-900">
-        
+
         {/* Widget 1: Safety & Chemistry alerts */}
         {enabledWidgets.includes('chemistry') && enabledModules.includes('gvino') && canViewCellarTab('labs') && (
           <div className="p-7 lg:p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-2xs space-y-5 flex flex-col justify-between">
@@ -604,7 +605,7 @@ export default function DashboardTab({
                   lots.filter(l => l.stage === 'fermenting').map(lot => {
                     const vessel = vessels.find(v => v.assignedLotId === lot.id);
                     const latestLog = fermLogs
-                      .filter((log) => log.lotId === lot.id)
+                      .filter((log) => log.lotId === lot.id && isPhysicalFermentationReading(log))
                       .sort((a, b) => b.date.localeCompare(a.date))[0];
                     return (
                       <div key={lot.id} className="p-4 bg-stone-50/50 dark:bg-stone-950/40 border border-stone-200 dark:border-stone-800 rounded-2xl flex justify-between items-center hover-glow transition-all">
@@ -664,8 +665,8 @@ export default function DashboardTab({
                 {pendingTasks.length > 0 ? (
                   pendingTasks.map(task => (
                     <div key={task.id} className="flex items-start gap-3 border-b border-stone-100 dark:border-stone-850 pb-3 last:border-0 font-medium">
-                      <input 
-                        type="checkbox" 
+                      <input
+                        type="checkbox"
                         checked={task.status === 'completed'}
                         onChange={() => { if (canUpdateTasks) onToggleTaskStatus(task.id); }}
                         disabled={!canUpdateTasks}
@@ -695,7 +696,7 @@ export default function DashboardTab({
               <h4 className="font-display font-black text-sm text-[#4e0e15] dark:text-amber-100 border-b border-stone-100 dark:border-stone-800 pb-3.5 flex items-center gap-2 uppercase tracking-wider">
                 🛡️ {t.portal_audit_history || 'Immutable Audit Trail Ledger History'}
               </h4>
-              
+
               <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1 no-scrollbar" tabIndex={0}>
                 {auditLogs.length > 0 ? (
                   auditLogs.slice(0, 10).map(log => (

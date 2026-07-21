@@ -3,12 +3,39 @@ import {
   Grape, Droplets, FlaskConical, Thermometer, RefreshCw, ArrowDownToLine,
   ArrowRightLeft, Combine, ShieldCheck, Beaker, Filter, Snowflake, Container,
   Package, Sparkles, Wrench, Plus, CheckCircle2, ClipboardList, AlertTriangle,
+  RotateCcw, X,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
-import type { WineLot, Vessel, InventoryItem, CellarOperation, CellarOperationType } from '../lib/wineryState';
+import type {
+  WineLot,
+  Vessel,
+  InventoryItem,
+  CellarOperation,
+  CellarOperationType,
+  MaraniOSAuditLog,
+} from '../lib/wineryState';
 import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
+import type { CostEntry } from '../lib/costing';
+import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
+import {
+  applyCellarOperationCommand,
+  type CellarOperationCommandPayload,
+  type CellarOperationInput,
+} from '../lib/commands/cellarOperation';
+import type { CellarOperationReversalCommandPayload } from '../lib/commands/cellarOperationReversal';
+import { isActiveCellarOperation } from '../lib/cellarOperationIntegrity';
+import {
+  CommandRequestError,
+  createCellarOperationCommandIntent,
+  createCellarOperationReversalCommandIntent,
+  pendingCellarOperationCommandIntent,
+  pendingCellarOperationReversalCommandIntent,
+  submitCellarOperationCommand,
+  submitCellarOperationReversalCommand,
+  type CellarOperationCommandResponse,
+} from '../lib/commands/client';
 
-export type CellarOperationInput = Omit<CellarOperation, 'id' | 'lotName' | 'volumeBeforeL' | 'materialName' | 'unit'>;
+export type { CellarOperationInput } from '../lib/commands/cellarOperation';
 
 export interface CellarOperationMutationAccess {
   canLogCellarOperation: boolean;
@@ -42,8 +69,18 @@ interface Props {
   vessels: Vessel[];
   inventory: InventoryItem[];
   ops: CellarOperation[];
+  costEntries?: CostEntry[];
+  auditLogs?: MaraniOSAuditLog[];
   currentUserName: string;
+  currency?: string;
   onAddOperation: (input: CellarOperationInput) => string;
+  onUpdateLots?: (lots: WineLot[]) => void;
+  onUpdateVessels?: (vessels: Vessel[]) => void;
+  onUpdateInventory?: (inventory: InventoryItem[]) => void;
+  onUpdateOperations?: (operations: CellarOperation[]) => void;
+  onUpdateCostEntries?: (entries: CostEntry[]) => void;
+  onUpdateAuditLogs?: (logs: MaraniOSAuditLog[]) => void;
+  onApplyCellarOperationCommandResponse?: (response: CellarOperationCommandResponse) => void;
   setToastMessage?: (m: string) => void;
   /** Requires operations:create + lots:update because every log updates both collections. */
   canLogCellarOperation?: boolean;
@@ -51,6 +88,8 @@ interface Props {
   canUseOperationVessels?: boolean;
   /** Enables material consumption, which also updates inventory and may create a cost entry. */
   canConsumeOperationMaterials?: boolean;
+  /** Enables append-only restoration across every operation ledger. */
+  canReverseCellarOperation?: boolean;
   /** Vessel to preselect (QR scan / vessel-drawer quick action). Applied once. */
   prefillVesselId?: string;
   clearPrefill?: () => void;
@@ -66,16 +105,20 @@ const OP_ICONS: Record<CellarOperationType, React.ComponentType<{ className?: st
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 export default function CellarOperationsTab({
-  lang, lots, vessels, inventory, ops, currentUserName, onAddOperation, setToastMessage,
+  lang, lots, vessels, inventory, ops, costEntries = [], auditLogs = [], currentUserName,
+  currency = 'GEL', onAddOperation, onUpdateLots, onUpdateVessels, onUpdateInventory,
+  onUpdateOperations, onUpdateCostEntries, onUpdateAuditLogs,
+  onApplyCellarOperationCommandResponse, setToastMessage,
   prefillVesselId, clearPrefill,
   canLogCellarOperation = true,
   canUseOperationVessels = true,
   canConsumeOperationMaterials = true,
+  canReverseCellarOperation = true,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
 
-  const activeLots = useMemo(() => lots.filter(l => l.stage !== 'sold'), [lots]);
+  const activeLots = useMemo(() => lots.filter(l => !l.voidedAt && l.stage !== 'sold'), [lots]);
 
   const [type, setType] = useState<CellarOperationType>('measurement');
   const [customLabel, setCustomLabel] = useState('');
@@ -88,6 +131,13 @@ export default function CellarOperationsTab({
   const [date, setDate] = useState(today);
   const [operator, setOperator] = useState('');
   const [notes, setNotes] = useState('');
+  const [pendingIntent, setPendingIntent] = useState<PendingCommandIntent<CellarOperationCommandPayload> | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingReversalIntent, setPendingReversalIntent] = useState<PendingCommandIntent<CellarOperationReversalCommandPayload> | null>(null);
+  const [reversalOperationId, setReversalOperationId] = useState('');
+  const [reversalReason, setReversalReason] = useState('');
+  const [isReversing, setIsReversing] = useState(false);
 
   const meta = CELLAR_OPERATIONS.find(o => o.key === type)!;
   const lot = lots.find(l => l.id === lotId) || null;
@@ -95,14 +145,52 @@ export default function CellarOperationsTab({
     ? inventory.find(i => i.id === materialId) || null
     : null;
 
+  const restoreCapturedOperation = (input: CellarOperationInput) => {
+    setType(input.type);
+    setCustomLabel(input.customLabel || '');
+    setLotId(input.lotId);
+    setVesselId(input.vesselId || '');
+    setVesselToId(input.vesselToId || '');
+    setMaterialId(input.materialId || '');
+    setDose(input.dose != null ? String(input.dose) : '');
+    setVolumeAfter(input.volumeAfterL != null ? String(input.volumeAfterL) : '');
+    setDate(input.date);
+    setOperator(input.operator);
+    setNotes(input.notes || '');
+  };
+
+  useEffect(() => {
+    const restored = pendingCellarOperationCommandIntent();
+    if (!restored) return;
+    setPendingIntent(restored);
+    restoreCapturedOperation(restored.payload.operation);
+    setCommandError(ka
+      ? 'წინა ოპერაციის შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანება ხელახლა გაგზავნეთ.'
+      : 'A previous cellar operation is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [ka]);
+
+  useEffect(() => {
+    const restored = pendingCellarOperationReversalCommandIntent();
+    if (!restored) return;
+    const original = ops.find(item => item.commandId === restored.payload.originalCommandId);
+    setPendingReversalIntent(restored);
+    setReversalOperationId(original?.id || '');
+    setReversalReason(restored.payload.reason);
+    setCommandError(ka
+      ? 'წინა ოპერაციის შესწორება ჯერ არ არის დადასტურებული. ხელახლა გაგზავნეთ იგივე შესწორება.'
+      : 'A previous operation correction is not yet acknowledged. Resubmit the same correction safely.');
+  }, [ka, ops]);
+
   // Default the batch to the first active lot.
   useEffect(() => {
+    if (pendingCellarOperationCommandIntent()) return;
     if (!lotId && activeLots.length) setLotId(activeLots[0].id);
   }, [activeLots, lotId]);
 
   // Scanned / drawer-selected vessel: apply once, selecting its batch too.
   const prefillGuard = useRef(false);
   useEffect(() => {
+    if (pendingCellarOperationCommandIntent()) return;
     if (!prefillVesselId) return;
     const vessel = vessels.find(v => v.id === prefillVesselId);
     if (vessel) {
@@ -117,6 +205,7 @@ export default function CellarOperationsTab({
 
   // When the batch changes, default the vessel to the one holding it and prefill volume.
   useEffect(() => {
+    if (pendingCellarOperationCommandIntent()) return;
     if (!lot) return;
     if (prefillGuard.current) {
       // A scanned vessel was just applied — don't overwrite it (the vessel may
@@ -131,6 +220,7 @@ export default function CellarOperationsTab({
 
   // When switching to a volume op, seed the "after" field with the current volume.
   useEffect(() => {
+    if (pendingCellarOperationCommandIntent()) return;
     if (meta.affectsVolume && lot && !volumeAfter) setVolumeAfter(String(round1(lot.currentVolume)));
     if (!meta.affectsVolume) setVolumeAfter('');
     if (!meta.needsMaterial) { setMaterialId(''); setDose(''); }
@@ -144,9 +234,171 @@ export default function CellarOperationsTab({
   const overDraw = canConsumeOperationMaterials && !!material && doseNum > material.stock + 0.0001;
 
   const customOk = type !== 'custom' || customLabel.trim().length > 0;
-  const canSubmit = canLogCellarOperation && !!lot && customOk && !overfill;
+  const canSubmit = canLogCellarOperation && !!lot && customOk && !overfill && !overDraw
+    && !pendingIntent && !pendingReversalIntent && !isSubmitting && !isReversing;
 
   const resetSoft = () => { setDose(''); setNotes(''); setCustomLabel(''); };
+
+  const finishCommand = () => {
+    setPendingIntent(null);
+    setCommandError(null);
+    resetSoft();
+  };
+
+  const applyOperationLocally = (intent: PendingCommandIntent<CellarOperationCommandPayload>) => {
+    const hasCommandBindings = Boolean(
+      onUpdateLots && onUpdateVessels && onUpdateInventory && onUpdateOperations
+      && onUpdateCostEntries && onUpdateAuditLogs,
+    );
+    if (!hasCommandBindings) {
+      onAddOperation(intent.payload.operation);
+      setToastMessage?.(ka ? 'ოპერაცია აღირიცხა.' : 'Operation logged.');
+      finishCommand();
+      return;
+    }
+
+    const applied = applyCellarOperationCommand(
+      { lots, vessels, inventory, cellarOps: ops, costEntries, auditLogs },
+      intent.payload,
+      {
+        commandId: intent.commandId,
+        actorUsername: currentUserName,
+        currency,
+        performedAt: new Date(intent.capturedAt),
+      },
+    );
+    onUpdateLots?.(applied.state.lots);
+    onUpdateVessels?.(applied.state.vessels);
+    onUpdateInventory?.(applied.state.inventory);
+    onUpdateOperations?.(applied.state.cellarOps);
+    onUpdateCostEntries?.(applied.state.costEntries);
+    onUpdateAuditLogs?.(applied.state.auditLogs);
+    setToastMessage?.(ka
+      ? `ოპერაცია აღირიცხა: ${applied.result.operation.lotName}`
+      : `Operation logged: ${applied.result.operation.lotName}`);
+    finishCommand();
+  };
+
+  const executeOperationCommand = async (intent: PendingCommandIntent<CellarOperationCommandPayload>) => {
+    setCommandError(null);
+    if (!onApplyCellarOperationCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingIntent) {
+        setCommandError(ka
+          ? 'დაუდასტურებელი ოპერაციის აღდგენას ინტერნეტთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged cellar operation requires a server connection.');
+        return;
+      }
+      try {
+        applyOperationLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Cellar operation validation failed.');
+      }
+      return;
+    }
+
+    setPendingIntent(intent);
+    setIsSubmitting(true);
+    try {
+      const response = await submitCellarOperationCommand(intent);
+      onApplyCellarOperationCommandResponse(response);
+      setToastMessage?.(ka
+        ? `ოპერაცია აღირიცხა: ${response.result.operation.lotName}`
+        : `Operation logged: ${response.result.operation.lotName}`);
+      finishCommand();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingIntent) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyOperationLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error
+            ? fallbackError.message
+            : 'Cellar operation validation failed.');
+          setPendingIntent(null);
+          return;
+        }
+      }
+      setCommandError(error instanceof Error ? error.message : 'Cellar operation failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingIntent(null);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const reversalOperation = ops.find(item => item.id === reversalOperationId) || null;
+
+  const applyReversalResponse = (
+    response: Awaited<ReturnType<typeof submitCellarOperationReversalCommand>>,
+  ) => {
+    if (response.collections) {
+      onUpdateLots?.(response.collections.lots);
+      onUpdateVessels?.(response.collections.vessels);
+      onUpdateInventory?.(response.collections.inventory);
+      onUpdateOperations?.(response.collections.cellarOps);
+      onUpdateCostEntries?.(response.collections.costEntries);
+      onUpdateAuditLogs?.(response.collections.auditLogs);
+      return;
+    }
+    const replaceById = <T extends { id: string }>(current: T[], changed: T[]) => {
+      const changedById = new Map(changed.map(item => [item.id, item]));
+      return [...changed, ...current.filter(item => !changedById.has(item.id))];
+    };
+    const result = response.result;
+    onUpdateLots?.(replaceById(lots, [result.updatedLot]));
+    if (result.updatedVessel) onUpdateVessels?.(replaceById(vessels, [result.updatedVessel]));
+    if (result.updatedInventoryItem) {
+      onUpdateInventory?.(replaceById(inventory, [result.updatedInventoryItem]));
+    }
+    onUpdateOperations?.(replaceById(ops, [result.reversalOperation, result.originalOperation]));
+    onUpdateCostEntries?.(replaceById(costEntries, [
+      ...(result.reversalCostEntry ? [result.reversalCostEntry] : []),
+      ...(result.updatedOriginalCostEntry ? [result.updatedOriginalCostEntry] : []),
+    ]));
+    onUpdateAuditLogs?.(replaceById(auditLogs, [result.auditLog]));
+  };
+
+  const handleReverseOperation = async () => {
+    if (!canReverseCellarOperation || isReversing) return;
+    const original = pendingReversalIntent
+      ? ops.find(item => item.commandId === pendingReversalIntent.payload.originalCommandId)
+      : reversalOperation;
+    const reason = pendingReversalIntent?.payload.reason || reversalReason.trim();
+    if (!original?.commandId || !reason) {
+      setCommandError(ka ? 'შესწორების მიზეზი სავალდებულოა.' : 'A correction reason is required.');
+      return;
+    }
+    if (!onApplyCellarOperationCommandResponse || !SyncQueueManager.isOnline()) {
+      setCommandError(ka
+        ? 'ოპერაციის შესწორებას სერვერთან კავშირი სჭირდება.'
+        : 'Operation corrections require a server connection.');
+      return;
+    }
+    const intent = pendingReversalIntent || createCellarOperationReversalCommandIntent({
+      originalCommandId: original.commandId,
+      reason,
+    });
+    setPendingReversalIntent(intent);
+    setCommandError(null);
+    setIsReversing(true);
+    try {
+      const response = await submitCellarOperationReversalCommand(intent);
+      applyReversalResponse(response);
+      setPendingReversalIntent(null);
+      setReversalOperationId('');
+      setReversalReason('');
+      setToastMessage?.(ka
+        ? 'ოპერაცია შესწორდა და დაკავშირებული რეესტრები აღდგა.'
+        : 'Operation corrected and linked ledgers restored.');
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : 'Cellar-operation reversal failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingReversalIntent(null);
+    } finally {
+      setIsReversing(false);
+    }
+  };
 
   const handleSubmit = () => {
     if (!canSubmit || !lot) return;
@@ -168,10 +420,7 @@ export default function CellarOperationsTab({
       canConsumeOperationMaterials,
     });
     if (!input) return;
-    onAddOperation(input);
-    const label = type === 'custom' ? customLabel.trim() : (ka ? meta.ka : meta.en);
-    setToastMessage?.(ka ? `ოპერაცია აღირიცხა: ${label} — ${lot.name}` : `Operation logged: ${label} — ${lot.name}`);
-    resetSoft();
+    void executeOperationCommand(createCellarOperationCommandIntent(input));
   };
 
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
@@ -230,10 +479,36 @@ export default function CellarOperationsTab({
         </div>
       )}
 
+      {commandError && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
+          <span>{commandError}</span>
+          {(pendingIntent || pendingReversalIntent) && (
+            <button
+              type="button"
+              disabled={isSubmitting || isReversing}
+              onClick={() => pendingReversalIntent
+                ? void handleReverseOperation()
+                : pendingIntent && void executeOperationCommand(pendingIntent)}
+              className="rounded-lg bg-[#4e0e15] px-3 py-1.5 font-bold text-white disabled:cursor-wait disabled:opacity-60"
+            >
+              {isSubmitting || isReversing
+                ? (ka ? 'მოწმდება…' : 'Checking…')
+                : pendingReversalIntent
+                  ? (ka ? 'იგივე შესწორების ხელახლა გაგზავნა' : 'Resubmit same correction')
+                  : (ka ? 'იგივე ბრძანების ხელახლა გაგზავნა' : 'Resubmit same command')}
+            </button>
+          )}
+        </div>
+      )}
+
       <div className={`grid grid-cols-1 ${canLogCellarOperation ? '2xl:grid-cols-[1.15fr_1fr]' : ''} gap-4`}>
         {/* ── Operation form ────────────────────────────── */}
         {canLogCellarOperation && (
-          <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
+          <fieldset
+            disabled={Boolean(pendingIntent || pendingReversalIntent) || isSubmitting || isReversing}
+            aria-busy={isSubmitting || isReversing}
+            className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 disabled:opacity-70 dark:bg-stone-900 dark:border-stone-800"
+          >
           {/* Operation type picker */}
           <div>
             <label className={labelCls}>{ka ? 'ოპერაციის ტიპი' : 'Operation type'}</label>
@@ -343,9 +618,9 @@ export default function CellarOperationsTab({
               </div>
 
               {overDraw && (
-                <div className="flex items-center gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 dark:bg-amber-950/30">
+                <div className="flex items-center gap-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  {ka ? 'რაოდენობა აღემატება მარაგს — ნაშთი ნულამდე დაიყვანება.' : 'Amount exceeds stock — inventory will be clamped to zero.'}
+                  {ka ? 'რაოდენობა აღემატება მარაგს — ოპერაცია არ შეინახება.' : 'Amount exceeds stock — the operation will not be saved.'}
                 </div>
               )}
               {overfill && (
@@ -361,7 +636,7 @@ export default function CellarOperationsTab({
               </button>
             </>
           )}
-          </div>
+          </fieldset>
         )}
 
         {/* ── Recent operations ─────────────────────────── */}
@@ -372,6 +647,45 @@ export default function CellarOperationsTab({
             </span>
             <span className="text-[9px] font-mono text-stone-400">{ops.length} {ka ? 'ჩანაწერი' : 'records'}</span>
           </div>
+          {canReverseCellarOperation && (reversalOperation || pendingReversalIntent) && (
+            <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold">
+                    {ka ? 'ოპერაციის შესწორება' : 'Correct operation'}
+                    {reversalOperation ? ` · ${reversalOperation.lotName}` : ''}
+                  </p>
+                  <p className="mt-0.5 text-[10px] font-medium text-amber-800/80 dark:text-amber-200/80">
+                    {ka
+                      ? 'საწყისი ჩანაწერი დარჩება აუდიტში; სისტემა აღადგენს დაკავშირებულ მდგომარეობას და დაამატებს საკომპენსაციო ჩანაწერებს.'
+                      : 'The original remains in the audit trail; linked state is restored with compensating records.'}
+                  </p>
+                </div>
+                {!pendingReversalIntent && (
+                  <button type="button" onClick={() => { setReversalOperationId(''); setReversalReason(''); }}
+                    aria-label={ka ? 'დახურვა' : 'Close correction'}
+                    className="text-amber-700 hover:text-amber-950 dark:text-amber-300">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              <label className="mt-3 block text-[9px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                {ka ? 'შესწორების მიზეზი' : 'Correction reason'}
+                <textarea value={reversalReason} onChange={event => setReversalReason(event.target.value)}
+                  disabled={Boolean(pendingReversalIntent)} maxLength={500} rows={2}
+                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-medium normal-case tracking-normal text-stone-800 outline-none focus:border-amber-600 disabled:opacity-70 dark:border-amber-900 dark:bg-stone-950 dark:text-amber-50"
+                  placeholder={ka ? 'რატომ არის ეს შესწორება საჭირო?' : 'Why is this correction required?'} />
+              </label>
+              <button type="button" onClick={handleReverseOperation}
+                disabled={isReversing || (!pendingReversalIntent && !reversalReason.trim())}
+                className="mt-2 inline-flex items-center gap-2 rounded-lg bg-amber-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 disabled:opacity-50 dark:bg-amber-700">
+                <RotateCcw className="h-3.5 w-3.5" />
+                {pendingReversalIntent
+                  ? (ka ? 'იგივე შესწორების ხელახლა გაგზავნა' : 'Resubmit same correction')
+                  : (ka ? 'შესწორების დადასტურება' : 'Confirm correction')}
+              </button>
+            </div>
+          )}
           {ops.length === 0 ? (
             <div className="text-center py-12 text-stone-400 text-xs font-semibold px-6">
               <ClipboardList className="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -388,27 +702,43 @@ export default function CellarOperationsTab({
                     <th className="p-2.5">{ka ? 'ოპერაცია' : 'Operation'}</th>
                     <th className="p-2.5">{ka ? 'პარტია' : 'Batch'}</th>
                     <th className="p-2.5">{ka ? 'დეტალი' : 'Detail'}</th>
+                    {canReverseCellarOperation && <th className="p-2.5"><span className="sr-only">{ka ? 'მოქმედებები' : 'Actions'}</span></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
                   {ops.map(o => {
                     const Icon = OP_ICONS[o.type] || Plus;
                     const detail = [
-                      o.materialName && o.dose ? `${o.materialName} ${o.dose}${o.unit || ''}` : '',
+                      o.materialName && o.dose ? `${o.materialName} ${o.recordKind === 'reversal' ? '−' : ''}${o.dose}${o.unit || ''}` : '',
                       o.vesselId ? (o.vesselToId ? `${o.vesselId}→${o.vesselToId}` : o.vesselId) : '',
                       o.volumeAfterL != null && o.volumeBeforeL != null && o.volumeAfterL !== o.volumeBeforeL ? `${round1(o.volumeBeforeL)}→${round1(o.volumeAfterL)} L` : '',
                       o.notes,
                     ].filter(Boolean).join(' · ');
                     return (
-                      <tr key={o.id} className="hover:bg-stone-50/50 dark:hover:bg-white/5">
+                      <tr key={o.id} className={`hover:bg-stone-50/50 dark:hover:bg-white/5 ${o.recordKind === 'reversal' || o.reversedByCommandId ? 'opacity-65' : ''}`}>
                         <td className="p-2.5 font-mono text-stone-500 whitespace-nowrap">{(o.date || '').slice(0, 10)}</td>
                         <td className="p-2.5">
                           <span className="font-bold text-stone-800 dark:text-amber-50 flex items-center gap-1">
                             <Icon className="w-3 h-3 text-[#4e0e15] dark:text-amber-300" /> {opLabel(o.type, o.customLabel)}
                           </span>
+                          {o.recordKind === 'reversal' && <span className="mt-1 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-800">{ka ? 'შესწორება' : 'Correction'}</span>}
+                          {o.reversedByCommandId && <span className="mt-1 inline-block rounded bg-stone-200 px-1.5 py-0.5 text-[8px] font-bold uppercase text-stone-600">{ka ? 'გაუქმებული' : 'Reversed'}</span>}
                         </td>
                         <td className="p-2.5 text-stone-600 dark:text-stone-300">{o.lotName}</td>
                         <td className="p-2.5 text-stone-400 font-mono text-[10px]">{detail || '—'}</td>
+                        {canReverseCellarOperation && (
+                          <td className="p-2.5 text-right">
+                            {isActiveCellarOperation(o) && o.commandId && o.reversalSnapshot && (
+                              <button type="button"
+                                onClick={() => { setReversalOperationId(o.id); setReversalReason(''); setCommandError(null); }}
+                                title={ka ? 'შესწორება' : 'Correct'}
+                                aria-label={ka ? `${o.lotName} ოპერაციის შესწორება` : `Correct operation for ${o.lotName}`}
+                                className="text-stone-300 hover:text-amber-700 cursor-pointer transition-colors">
+                                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                              </button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}

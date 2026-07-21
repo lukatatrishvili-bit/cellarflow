@@ -286,7 +286,7 @@ describe('mergeCollections — field-level merge resolution', () => {
     const db: any = {
       vessels: [item('v1', { temperature: 20, cleaningStatus: 'clean', lastModified: 'T0' })]
     };
-    
+
     // 1. Client B syncs first, modifying cleaningStatus (setting lastModified to T1)
     // Server database state transitions from T0 to T1
     const conflicts1 = mergeCollections(db, {
@@ -296,7 +296,7 @@ describe('mergeCollections — field-level merge resolution', () => {
     expect(db.vessels[0].cleaningStatus).toBe('dirty');
     expect(db.vessels[0].temperature).toBe(20);
     expect(db.vessels[0].lastModified).toBe('T1');
-    
+
     // 2. Client A syncs next, modifying temperature based on T0 (setting lastModified to T2)
     // Client A's baseline is T0, server is now T1.
     // Modified fields do not overlap: Client A edited temperature (20 -> 18), Server/Client B edited cleaningStatus (clean -> dirty).
@@ -313,17 +313,17 @@ describe('mergeCollections — field-level merge resolution', () => {
     const db: any = {
       vessels: [item('v1', { temperature: 20, cleaningStatus: 'clean', lastModified: 'T0' })]
     };
-    
+
     // Client B modifies temperature to 25
     mergeCollections(db, {
       vessels: [item('v1', { temperature: 25, cleaningStatus: 'clean', lastModified: 'T1', baselineTimestamp: 'T0' })]
     });
-    
+
     // Client A modifies temperature to 18 based on T0
     const conflicts = mergeCollections(db, {
       vessels: [item('v1', { temperature: 18, cleaningStatus: 'clean', lastModified: 'T2', baselineTimestamp: 'T0' })]
     });
-    
+
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0].recordId).toBe('v1');
     expect(db.vessels[0].temperature).toBe(25); // server version wins, conflict reported

@@ -6,6 +6,8 @@ export interface CellarWorkflowPermissions {
     canLinkHarvest: boolean;
     canFillDestinationVessel: boolean;
     canPostIntakeCost: boolean;
+    /** Append-only compensation across harvest, lot, vessel, cost, and audit ledgers. */
+    canReverseHarvestIntake: boolean;
   };
   vessels: {
     canCreateVessel: boolean;
@@ -16,21 +18,27 @@ export interface CellarWorkflowPermissions {
     canLogCellarOperation: boolean;
     canUseOperationVessels: boolean;
     canConsumeOperationMaterials: boolean;
+    /** Append-only compensation across lot, vessel, inventory, cost, and audit ledgers. */
+    canReverseCellarOperation: boolean;
   };
   transfers: {
     canExecuteTransfer: boolean;
     canSanitizeVessels: boolean;
-    canRollbackTransfer: boolean;
+    canReverseTransfer: boolean;
   };
   fermentation: {
     canCreateFermentationLog: boolean;
     canUpdateFermentationLot: boolean;
     canUpdateFermentationVessel: boolean;
+    canCompleteFermentation: boolean;
+    /** Append-only compensation across reading, lot, vessel, and audit ledgers. */
+    canReverseFermentationCompletion: boolean;
     canDeleteFermentationLog: boolean;
   };
   bottling: {
     canCreateBottling: boolean;
-    canDeleteBottling: boolean;
+    /** Append-only compensation across lot, inventory, cost, and storage ledgers. */
+    canReverseBottling: boolean;
     canUseBottlingCosting: boolean;
     canPlaceFinishedGoods: boolean;
   };
@@ -50,9 +58,9 @@ export interface SalesWorkflowPermissions {
   canCreateOrder: boolean;
   canUpdateOrder: boolean;
   canCreateDispatch: boolean;
-  canDeleteDispatch: boolean;
+  /** Append-only compensation; requires sales update/create and storage create. */
+  canReverseDispatch: boolean;
   canCreateStockMovement: boolean;
-  canDeleteStockMovement: boolean;
   canViewCosts: boolean;
   canViewStorage: boolean;
   canViewBottling: boolean;
@@ -70,10 +78,8 @@ export function cellarWorkflowPermissions(role: unknown): CellarWorkflowPermissi
   const canCreateLot = canAccess(role, 'lots', 'create');
   const canUpdateLot = canAccess(role, 'lots', 'update');
   const canCreateCost = canAccess(role, 'costs', 'create');
-  const canDeleteCost = canAccess(role, 'costs', 'delete');
   const canUpdateInventory = canAccess(role, 'inventory', 'update');
   const canCreateStorage = canAccess(role, 'storage', 'create');
-  const canDeleteStorage = canAccess(role, 'storage', 'delete');
   const canWriteAudit = can(role, 'write');
 
   return {
@@ -84,6 +90,12 @@ export function cellarWorkflowPermissions(role: unknown): CellarWorkflowPermissi
       canLinkHarvest: canAccess(role, 'vineyard', 'update'),
       canFillDestinationVessel: canUpdateVessel,
       canPostIntakeCost: canCreateCost,
+      canReverseHarvestIntake: canAccess(role, 'grape_intake', 'delete')
+        && canUpdateLot
+        && canAccess(role, 'vineyard', 'update')
+        && canUpdateVessel
+        && canCreateCost
+        && canWriteAudit,
     },
     vessels: {
       canCreateVessel,
@@ -96,6 +108,12 @@ export function cellarWorkflowPermissions(role: unknown): CellarWorkflowPermissi
         && canWriteAudit,
       canUseOperationVessels: canUpdateVessel,
       canConsumeOperationMaterials: canUpdateInventory && canCreateCost,
+      canReverseCellarOperation: canAccess(role, 'operations', 'delete')
+        && canUpdateLot
+        && canUpdateVessel
+        && canUpdateInventory
+        && canCreateCost
+        && canWriteAudit,
     },
     transfers: {
       canExecuteTransfer: canAccess(role, 'transfers', 'create')
@@ -103,21 +121,31 @@ export function cellarWorkflowPermissions(role: unknown): CellarWorkflowPermissi
         && canCreateLot
         && canUpdateLot,
       canSanitizeVessels: canUpdateVessel,
-      canRollbackTransfer: canAccess(role, 'transfers', 'delete') && canUpdateVessel,
+      canReverseTransfer: canAccess(role, 'transfers', 'delete')
+        && canUpdateVessel
+        && canUpdateLot,
     },
     fermentation: {
       canCreateFermentationLog: canAccess(role, 'fermentation', 'create'),
       canUpdateFermentationLot: canUpdateLot,
       canUpdateFermentationVessel: canUpdateVessel,
+      canCompleteFermentation: canAccess(role, 'fermentation', 'update')
+        && canUpdateLot
+        && canUpdateVessel
+        && canWriteAudit,
+      canReverseFermentationCompletion: canAccess(role, 'fermentation', 'delete')
+        && canUpdateLot
+        && canUpdateVessel
+        && canWriteAudit,
       canDeleteFermentationLog: canAccess(role, 'fermentation', 'delete'),
     },
     bottling: {
       canCreateBottling: canAccess(role, 'bottling', 'create') && canUpdateLot,
-      canDeleteBottling: canAccess(role, 'bottling', 'delete')
+      canReverseBottling: canAccess(role, 'bottling', 'delete')
         && canUpdateLot
         && canUpdateInventory
-        && canDeleteCost
-        && canDeleteStorage,
+        && canCreateCost
+        && canCreateStorage,
       canUseBottlingCosting: canUpdateInventory && canCreateCost,
       canPlaceFinishedGoods: canCreateStorage,
     },
@@ -140,6 +168,7 @@ export function vineyardWorkflowPermissions(role: unknown): VineyardWorkflowPerm
     canCreateVineyardProject: canAccess(role, 'vineyard_projects', 'create'),
     canUpdateVineyardProject: canAccess(role, 'vineyard_projects', 'update'),
     canDispatchHarvestToGvino: canUpdateVineyardRecord
+      && canAccess(role, 'grape_intake', 'create')
       && canAccess(role, 'lots', 'create')
       && can(role, 'write'),
     canCreateTask: canAccess(role, 'vineyard', 'view') && canAccess(role, 'tasks', 'create'),
@@ -153,13 +182,18 @@ export function vineyardWorkflowPermissions(role: unknown): VineyardWorkflowPerm
  * deleting one may additionally restore its linked order.
  */
 export function salesWorkflowPermissions(role: unknown): SalesWorkflowPermissions {
+  const canCreateDispatch = canAccess(role, 'sales', 'create');
+  const canUpdateOrder = canAccess(role, 'sales', 'update');
+  const canCreateStockMovement = canAccess(role, 'storage', 'create');
   return {
     canCreateOrder: canAccess(role, 'sales', 'create'),
-    canUpdateOrder: canAccess(role, 'sales', 'update'),
-    canCreateDispatch: canAccess(role, 'sales', 'create'),
-    canDeleteDispatch: canAccess(role, 'sales', 'delete'),
-    canCreateStockMovement: canAccess(role, 'storage', 'create'),
-    canDeleteStockMovement: canAccess(role, 'storage', 'delete'),
+    canUpdateOrder,
+    canCreateDispatch,
+    canReverseDispatch: canAccess(role, 'sales', 'delete')
+      && canUpdateOrder
+      && canCreateDispatch
+      && canCreateStockMovement,
+    canCreateStockMovement,
     canViewCosts: canAccess(role, 'costs', 'view'),
     canViewStorage: canAccess(role, 'storage', 'view'),
     canViewBottling: canAccess(role, 'bottling', 'view'),

@@ -78,6 +78,12 @@ describe('sync authorization', () => {
         totalCost: 4000,
         grapePrice: 4,
         paymentStatus: 'unpaid',
+        reversalSnapshot: {
+          version: 1,
+          lot: { id: 'lot-1', initialVolume: 700, currentVolume: 700, stage: 'crushing', historyDescription: 'Intake' },
+          costEntry: { id: 'cost-intake-1', amount: 4000, currency: 'GEL' },
+          auditId: 'audit-intake-1',
+        },
       }],
       inventory: [{ id: 'yeast-1', stock: 10, costPerUnit: 22 }],
       bottlingRuns: [{
@@ -109,7 +115,10 @@ describe('sync authorization', () => {
 
     const response = redactWineryDatabaseForRole('Winemaker', userDb);
 
-    expect(Object.keys(response).sort()).toEqual(Object.keys(createEmptyUserData()).sort());
+    expect(Object.keys(response).sort()).toEqual(
+      Object.keys(createEmptyUserData()).filter(key => key !== 'syncDeletionLedger').sort(),
+    );
+    expect(response).not.toHaveProperty('syncDeletionLedger');
     expect(response).not.toHaveProperty('secretInternalCollection');
     expect(response.lots).toEqual(userDb.lots);
     expect(response.vessels).toEqual(userDb.vessels);
@@ -126,12 +135,15 @@ describe('sync authorization', () => {
     expect(response.inventory[0]).not.toHaveProperty('costPerUnit');
     expect(response.grapeIntakes[0]).not.toHaveProperty('totalCost');
     expect(response.grapeIntakes[0]).not.toHaveProperty('grapePrice');
+    expect(response.grapeIntakes[0].reversalSnapshot).not.toHaveProperty('costEntry');
+    expect(response.grapeIntakes[0].reversalSnapshot.lot.id).toBe('lot-1');
     expect(response.bottlingRuns[0]).not.toHaveProperty('packagingCostTotal');
     expect(response.bottlingRuns[0]).not.toHaveProperty('storageLocationId');
     expect(response.attachments.map((item: any) => item.id)).toEqual(['cert-file', 'qvevri-file']);
 
     // Redaction must never mutate the full candidate that is persisted.
     expect(userDb.inventory[0].costPerUnit).toBe(22);
+    expect(userDb.grapeIntakes[0].reversalSnapshot.costEntry.amount).toBe(4000);
     expect(userDb.bottlingRuns[0].storageLocationId).toBe('store-1');
   });
 

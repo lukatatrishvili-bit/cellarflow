@@ -17,7 +17,7 @@ interface TelemetryReading {
   status: 'active' | 'slow' | 'stuck' | 'finished';
 }
 
-let simulatedTelemetry: Record<string, Record<string, TelemetryReading>> = {};
+const simulatedTelemetry: Record<string, Record<string, TelemetryReading>> = {};
 
 // ── Client error telemetry ─────────────────────────────────────────────────
 // In-memory ring buffer of the most recent client-side crashes (ErrorBoundary
@@ -85,11 +85,11 @@ function initTelemetry(username: string, userDb: any) {
   }
   const userSimulated = simulatedTelemetry[username];
   const newTelemetry: Record<string, TelemetryReading> = {};
-  
+
   for (const lot of fermentingLots) {
     const vessel = userDb.vessels.find((v: any) => v.assignedLotId === lot.id);
     if (!vessel) continue;
-    
+
     if (userSimulated[lot.id]) {
       newTelemetry[lot.id] = userSimulated[lot.id];
       newTelemetry[lot.id].tankId = vessel.id;
@@ -124,7 +124,7 @@ router.get('/active', async (req, res) => {
   Object.keys(userSimulated).forEach((lotId) => {
     const t = userSimulated[lotId];
     t.timestamp = new Date().toISOString();
-    
+
     if (t.status === 'stuck') {
       t.density = parseFloat((t.density - 0.00005 + (Math.random() - 0.5) * 0.0001).toFixed(4));
       t.temperature = parseFloat((15.5 + (Math.random() - 0.5) * 0.3).toFixed(1));

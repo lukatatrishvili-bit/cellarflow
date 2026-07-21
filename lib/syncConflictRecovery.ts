@@ -16,8 +16,8 @@ export interface BuildResolvedSyncStateInput {
 }
 
 export interface ResolvedDeletionIntent {
-  retainedRecords: Array<{ id: string; collection: string }>;
-  discardedRecords: Array<{ id: string; collection: string }>;
+  retainedRecords: DeletionTombstone[];
+  discardedRecords: DeletionTombstone[];
   retainedLegacyIds: string[];
   discardedLegacyIds: string[];
 }
@@ -106,9 +106,32 @@ export function resolveDeletionIntent(
   const discardedRecords: ResolvedDeletionIntent['discardedRecords'] = [];
   for (const tombstone of Array.isArray(attemptedPayload?.deletedRecords) ? attemptedPayload.deletedRecords : []) {
     if (!tombstone || typeof tombstone !== 'object' || typeof tombstone.id !== 'string' || typeof tombstone.collection !== 'string') continue;
-    const normalized = { id: tombstone.id, collection: tombstone.collection };
-    if (conflictChoice(tombstone.collection, tombstone.id) === 'server') discardedRecords.push(normalized);
-    else retainedRecords.push(normalized);
+    const conflict = conflicts.find(item => (
+      serverSyncCollectionKey(item.collection) === serverSyncCollectionKey(tombstone.collection)
+      && item.recordId === tombstone.id
+    ));
+    const normalized: DeletionTombstone = {
+      id: tombstone.id,
+      collection: tombstone.collection,
+      ...(typeof tombstone.baselineTimestamp === 'string'
+        ? { baselineTimestamp: tombstone.baselineTimestamp }
+        : {}),
+      ...(typeof tombstone.baselineFingerprint === 'string'
+        ? { baselineFingerprint: tombstone.baselineFingerprint }
+        : {}),
+      ...(typeof tombstone.deletedAt === 'string' ? { deletedAt: tombstone.deletedAt } : {}),
+    };
+    if (conflictChoice(tombstone.collection, tombstone.id) === 'server') {
+      discardedRecords.push(normalized);
+    } else {
+      retainedRecords.push(conflict?.server ? {
+        ...normalized,
+        ...(typeof conflict.server.lastModified === 'string'
+          ? { baselineTimestamp: conflict.server.lastModified }
+          : {}),
+        baselineFingerprint: syncRecordFingerprint(conflict.server),
+      } : normalized);
+    }
   }
 
   const retainedLegacyIds: string[] = [];
@@ -182,6 +205,7 @@ export function buildResolvedSyncState({
 
   const deletionIntent = resolveDeletionIntent(attemptedPayload, conflicts, resolutions);
   for (const tombstone of deletionIntent.retainedRecords) {
+    if (!tombstone.collection) continue;
     const collection = serverSyncCollectionKey(tombstone.collection);
     if (Array.isArray(resolvedDb[collection])) {
       resolvedDb[collection] = resolvedDb[collection].filter((item: any) => item?.id !== tombstone.id);
@@ -200,3 +224,4 @@ export function buildResolvedSyncState({
 
   return resolvedDb;
 }
+import { syncRecordFingerprint, type DeletionTombstone } from './deletionTombstones';

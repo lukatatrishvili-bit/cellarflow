@@ -5,9 +5,9 @@ import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, VesselType, WineLot } from '../lib/wineryState';
 import { vesselTypeLabel } from '../lib/enumLabels';
-import { 
-  ShieldAlert, CheckCircle, Flame, Snowflake, RotateCw, Plus, Trash2, Edit, 
-  Search, LayoutGrid, List, Map, Sparkles, Database, Droplets, Thermometer, ShieldCheck
+import {
+  ShieldAlert, CheckCircle, Snowflake, RotateCw, Plus, Trash2, Edit,
+  Search, LayoutGrid, List, Map, Database, Droplets, Thermometer, ShieldCheck
 } from 'lucide-react';
 import TankCapacityChart, { ChartTankData } from './TankCapacityChart';
 import CellarMap from './CellarMap';
@@ -32,9 +32,9 @@ interface Props {
   canExecuteTransfer?: boolean;
 }
 
-export default function TanksVessels({ 
+export default function TanksVessels({
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
-  setActiveTab, setPrefilledSourceId, setPrefilledDestId, wineryName,
+  setActiveTab, setPrefilledSourceId, setPrefilledDestId,
   canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true
 }: Props) {
   const t = translations[lang];
@@ -45,7 +45,7 @@ export default function TanksVessels({
   };
 
   const [filterType, setFilterType] = useState<string>('all');
-  
+
   // Custom view modes and search states for intuitive navigation
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'map'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
@@ -191,7 +191,7 @@ export default function TanksVessels({
     name: v.id,
     capacity: v.capacity,
     currentVolume: v.currentVolume,
-    status: v.assignedLotId 
+    status: v.assignedLotId
       ? (lots.find(l => l.id === v.assignedLotId)?.stage === 'fermenting' ? 'fermenting' : 'occupied')
       : (v.cleaningStatus === 'dirty' ? 'cleaning' : 'empty')
   }));
@@ -257,8 +257,8 @@ export default function TanksVessels({
             </div>
           </div>
           <div className="w-full bg-slate-100 rounded-full h-1 mt-3 overflow-hidden">
-            <div 
-              className="bg-[#801323] h-full transition-all duration-500" 
+            <div
+              className="bg-[#801323] h-full transition-all duration-500"
               style={{ width: `${Math.min(100, totalUtilization)}%` }}
             />
           </div>
@@ -391,8 +391,8 @@ export default function TanksVessels({
                   key={type}
                   onClick={() => setFilterType(type)}
                   className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium cursor-pointer transition-all flex items-center gap-1 mt-1 ${
-                    filterType === type 
-                      ? 'bg-[#4e0e15] text-white border-[#4e0e15] shadow-xs' 
+                    filterType === type
+                      ? 'bg-[#4e0e15] text-white border-[#4e0e15] shadow-xs'
                       : 'bg-[#FCFAF7] text-slate-600 border-slate-200 hover:border-slate-300'
                   }`}
                 >
@@ -404,8 +404,8 @@ export default function TanksVessels({
                     {type === 'concrete' && (t.concrete || 'Concrete')}
                   </span>
                   <span className={`text-[9px] px-1 rounded-full ${
-                    filterType === type 
-                      ? 'bg-white/25 text-white' 
+                    filterType === type
+                      ? 'bg-white/25 text-white'
                       : 'bg-slate-200/60 text-slate-500'
                   }`}>
                     {count}
@@ -438,7 +438,7 @@ export default function TanksVessels({
           {/* Search bar with lens icon */}
           <div className="relative w-full md:w-80">
             <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
-            <input 
+            <input
               type="text"
               placeholder={({
                 en: "Search vessels, locations or wine lots...",
@@ -452,7 +452,7 @@ export default function TanksVessels({
               className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-[#4e0e15] text-stone-800 shadow-3xs"
             />
             {searchTerm && (
-              <button 
+              <button
                 onClick={() => setSearchTerm('')}
                 className="absolute right-3 top-2 text-xs text-slate-400 hover:text-stone-700 font-bold"
               >
@@ -488,8 +488,8 @@ export default function TanksVessels({
                 type="button"
                 onClick={() => setViewMode('grid')}
                 className={`p-1.5 rounded-md cursor-pointer transition-colors ${
-                  viewMode === 'grid' 
-                    ? 'bg-white text-[#4e0e15] shadow-xs' 
+                  viewMode === 'grid'
+                    ? 'bg-white text-[#4e0e15] shadow-xs'
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
                 title={ka ? 'დაფის ბადე' : 'Board Grid Representation'}
@@ -500,8 +500,8 @@ export default function TanksVessels({
                 type="button"
                 onClick={() => setViewMode('table')}
                 className={`p-1.5 rounded-md cursor-pointer transition-colors ${
-                  viewMode === 'table' 
-                    ? 'bg-white text-[#4e0e15] shadow-xs' 
+                  viewMode === 'table'
+                    ? 'bg-white text-[#4e0e15] shadow-xs'
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
                 title={ka ? 'კომპაქტური ცხრილი' : 'Compact Power-Winery Table'}
@@ -512,8 +512,8 @@ export default function TanksVessels({
                 type="button"
                 onClick={() => setViewMode('map')}
                 className={`p-1.5 rounded-md cursor-pointer transition-colors ${
-                  viewMode === 'map' 
-                    ? 'bg-white text-[#4e0e15] shadow-xs' 
+                  viewMode === 'map'
+                    ? 'bg-white text-[#4e0e15] shadow-xs'
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
                 title={ka ? 'ინტერაქტიული მარნის რუკა' : 'Interactive Cellar Floor Map'}
@@ -538,8 +538,8 @@ export default function TanksVessels({
                 de: 'Eindeutige Behälter-ID'
               })[lang] || 'Unique Vessel ID'}
             </label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               required
               placeholder="e.g. Tank T-5"
               value={newId}
@@ -594,8 +594,8 @@ export default function TanksVessels({
                 de: 'Maximales Volumen (L)'
               })[lang] || 'Maximum Liters Capacity'}
             </label>
-            <input 
-              type="number" 
+            <input
+              type="number"
               required
               value={newCapacity}
               onChange={(e) => setNewCapacity(parseInt(e.target.value) || 0)}
@@ -603,7 +603,7 @@ export default function TanksVessels({
             />
           </div>
           <div className="flex gap-2">
-            <button 
+            <button
               type="submit"
               className="px-4 py-1.5 bg-[#4e0e15] text-white text-xs font-semibold rounded hover:bg-[#6b151e] flex-1 cursor-pointer"
             >
@@ -615,7 +615,7 @@ export default function TanksVessels({
                 de: 'Registrieren'
               })[lang] || 'Register Vessel'}
             </button>
-            <button 
+            <button
               type="button"
               onClick={() => setShowAddForm(false)}
               className="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs rounded hover:bg-slate-300 pointer-events-auto"
@@ -681,7 +681,7 @@ export default function TanksVessels({
         </div>
       ) : viewMode === 'map' ? (
         /* Interactive 2D Cellar Map Floor Layout */
-        <CellarMap 
+        <CellarMap
           lang={lang}
           vessels={vessels}
           lots={lots}
@@ -706,13 +706,13 @@ export default function TanksVessels({
 
             return (
               <StaggerItem key={v.id}>
-                <div 
+                <div
                   onClick={() => onSelectTank?.(v.id)}
                 className={`bg-white border text-stone-800 rounded-xl overflow-hidden shadow-sm flex flex-col transition-all cursor-pointer ${
-                  isSelected 
-                    ? 'border-[#801323] ring-2 ring-[#801323]/10 scale-[1.01]' 
-                    : isOver95 
-                      ? 'border-red-500 shadow-md ring-1 ring-red-100' 
+                  isSelected
+                    ? 'border-[#801323] ring-2 ring-[#801323]/10 scale-[1.01]'
+                    : isOver95
+                      ? 'border-red-500 shadow-md ring-1 ring-red-100'
                       : 'border-[#e8dfd5] hover:border-stone-400'
                 }`}
               >
@@ -722,7 +722,7 @@ export default function TanksVessels({
                     {isSelected && <span className="w-2 h-2 rounded-full bg-[#801323] animate-pulse" />}
                     <div>
                       <h4 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-1">
-                        {v.id} 
+                        {v.id}
                         {isSelected && <span className="text-[9px] font-sans font-normal text-stone-400 italic">({({ en: 'selected', ka: 'არჩეული', it: 'selezionato', fr: 'sélectionné', de: 'ausgewählt' })[lang] || 'selected'})</span>}
                       </h4>
                       <p className="text-[10px] text-slate-400 font-mono capitalize">
@@ -840,10 +840,10 @@ export default function TanksVessels({
                             const needsReseal = diffDays > 120;
                             const formattedDate = v.lastSealedDate || lastSealed.toISOString().split('T')[0];
                             return (
-                              <span 
+                              <span
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] rounded font-bold border mt-0.5 ${
-                                  needsReseal 
-                                    ? 'bg-red-50 text-red-750 border-red-200 animate-pulse' 
+                                  needsReseal
+                                    ? 'bg-red-50 text-red-750 border-red-200 animate-pulse'
                                     : 'bg-emerald-50 text-emerald-750 border-emerald-200'
                                 }`}
                                 title={needsReseal ? (ka ? 'საჭიროებს ხელახალ დალუქვას' : 'Requires beeswax resealing!') : (ka ? 'დალუქულია' : 'Sealed')}
@@ -868,14 +868,14 @@ export default function TanksVessels({
                           </span>
                           {canUpdateVessel && editingTempId === v.id ? (
                             <div className="flex items-center gap-1 mt-0.5">
-                              <input 
-                                type="number" 
+                              <input
+                                type="number"
                                 step="0.1"
                                 value={tempInputValue}
                                 onChange={(e) => setTempInputValue(parseFloat(e.target.value) || 0)}
                                 className="w-14 px-1 py-0.5 bg-slate-50 border border-slate-200 rounded text-xs"
                               />
-                              <button 
+                              <button
                                 onClick={() => handleSaveTemp(v.id)}
                                 className="px-1.5 py-0.5 text-[9px] bg-green-600 hover:bg-green-700 text-white rounded cursor-pointer"
                               >
@@ -884,7 +884,7 @@ export default function TanksVessels({
                             </div>
                           ) : (
                             <span className="font-bold flex items-center gap-1 mt-0.5">
-                              {v.temperature}°C 
+                              {v.temperature}°C
                               {canUpdateVessel && (
                                 <button
                                   onClick={() => {
@@ -938,7 +938,7 @@ export default function TanksVessels({
                             }`}>
                             {v.coolingJacketActive ? (
                               <>
-                                <Snowflake className="w-2.5 h-2.5 text-[#0369a1] animate-spin" /> 
+                                <Snowflake className="w-2.5 h-2.5 text-[#0369a1] animate-spin" />
                                 {({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' })[lang] || 'Active'}
                               </>
                             ) : (
@@ -963,7 +963,7 @@ export default function TanksVessels({
                         </span>
                       ) : (
                         <span className="text-emerald-700 font-semibold inline-flex items-center gap-0.5">
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> 
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
                           {({ en: 'Clean', ka: 'სუფთა', it: 'Pulito', fr: 'Propre', de: 'Sauber' })[lang] || 'Clean'} ({v.lastCleaned})
                         </span>
                       )}
@@ -974,7 +974,7 @@ export default function TanksVessels({
                         onClick={() => handleClean(v.id)}
                         className="inline-flex items-center gap-0.5 px-2 py-1 bg-[#4e0e15] text-white font-bold rounded hover:bg-[#6b151e] cursor-pointer text-[9px] active:scale-95 hover:-translate-y-0.5 duration-150"
                       >
-                        <RotateCw className="w-2.5 h-2.5" /> 
+                        <RotateCw className="w-2.5 h-2.5" />
                         {({ en: 'Wash Vessel', ka: 'ჭურჭლის რეცხვა', it: 'Lava Recipiente', fr: 'Nettoyer la Cuve', de: 'Gefäß waschen' })[lang] || 'Wash Vessel'}
                       </button>
                     )}
@@ -1013,7 +1013,7 @@ export default function TanksVessels({
                   const isSelected = v.id === selectedTankId;
 
                   return (
-                    <tr 
+                    <tr
                       key={v.id}
                       onClick={() => onSelectTank?.(v.id)}
                       className={`cursor-pointer transition-colors hover:bg-slate-50/50 ${
@@ -1024,10 +1024,10 @@ export default function TanksVessels({
                       <td className="py-3.5 px-4 font-serif">
                         <div className="flex items-center gap-2">
                           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                            isSelected 
+                            isSelected
                               ? 'bg-[#801323] animate-ping'
-                              : isOver95 
-                                ? 'bg-red-500' 
+                              : isOver95
+                                ? 'bg-red-500'
                                 : v.currentVolume > 0 ? 'bg-[#801323]' : 'bg-slate-300'
                           }`} />
                           <div>
@@ -1061,7 +1061,7 @@ export default function TanksVessels({
                               <span>{progress.toFixed(0)}%</span>
                             </div>
                             <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                              <div 
+                              <div
                                 className={`h-full rounded-full transition-all duration-300 ${isOver95 ? 'bg-red-500' : 'bg-[#801323]'}`}
                                 style={{ width: `${Math.min(100, progress)}%` }}
                               />
@@ -1075,20 +1075,20 @@ export default function TanksVessels({
                       <td className="py-3.5 px-3" onClick={e => e.stopPropagation()}>
                         {canUpdateVessel && editingTempId === v.id ? (
                           <div className="flex items-center gap-1">
-                            <input 
-                              type="number" 
+                            <input
+                              type="number"
                               step="0.1"
                               value={tempInputValue}
                               onChange={(e) => setTempInputValue(parseFloat(e.target.value) || 0)}
                               className="w-14 px-1 py-0.5 bg-slate-50 border border-slate-200 rounded text-xs"
                             />
-                            <button 
+                            <button
                               onClick={() => handleSaveTemp(v.id)}
                               className="px-1.5 py-0.5 text-[9px] bg-green-600 hover:bg-green-700 text-white rounded cursor-pointer"
                             >
                               ✓
                             </button>
-                            <button 
+                            <button
                               onClick={() => setEditingTempId(null)}
                               className="px-1.5 py-0.5 text-[9px] bg-slate-200 text-slate-600 rounded cursor-pointer"
                             >
@@ -1140,8 +1140,8 @@ export default function TanksVessels({
                               ? 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd]'
                               : 'bg-slate-50 text-slate-500 border-slate-200'
                           }`}>
-                          <Snowflake className={`w-2.5 h-2.5 ${v.coolingJacketActive ? 'text-[#0369a1] animate-spin' : 'text-slate-400'}`} /> 
-                          {v.coolingJacketActive 
+                          <Snowflake className={`w-2.5 h-2.5 ${v.coolingJacketActive ? 'text-[#0369a1] animate-spin' : 'text-slate-400'}`} />
+                          {v.coolingJacketActive
                             ? lText({ en: 'Active', ka: 'აქტიური', it: 'Attiva', fr: 'Active', de: 'Aktiv' }, 'Active')
                               : lText({ en: 'Hold', ka: 'გამორთული', it: 'Fermo', fr: 'Arrêt', de: 'Aus' }, 'Hold')
                             }
@@ -1157,7 +1157,7 @@ export default function TanksVessels({
                           </span>
                         ) : (
                           <span className="text-emerald-700 font-semibold inline-flex items-center gap-0.5 text-[10px] whitespace-nowrap">
-                            <CheckCircle className="w-3 h-3 text-emerald-600" /> 
+                            <CheckCircle className="w-3 h-3 text-emerald-600" />
                             {lText({ en: 'Clean', ka: 'სუფთა', it: 'Pulito', fr: 'Propre', de: 'Sauber' }, 'Clean')}
                           </span>
                         )}

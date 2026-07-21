@@ -39,7 +39,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const addToast = useCallback((message: string, type: ToastType = 'info', duration = 4000) => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { id, type, message, duration }]);
-    
+
     if (duration > 0) {
       setTimeout(() => {
         removeToast(id);
@@ -55,14 +55,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast: addToast, success, error, warning, info }}>
       {children}
-      
+
       {/* Toast container floating at the top-right */}
       <div className="fixed top-6 right-6 z-100 flex flex-col gap-3 w-full max-w-sm pointer-events-none">
         <AnimatePresence>
           {toasts.map((t) => {
             let icon = <Info className="w-5 h-5 text-blue-500" />;
             let bgClass = 'bg-blue-50 border-blue-200 text-blue-900 dark:bg-blue-950/90 dark:border-blue-900/60 dark:text-blue-200';
-            
+
             if (t.type === 'success') {
               icon = <CheckCircle className="w-5 h-5 text-emerald-500" />;
               bgClass = 'bg-emerald-50 border-emerald-200 text-emerald-900 dark:bg-emerald-950/90 dark:border-emerald-900/60 dark:text-emerald-200';

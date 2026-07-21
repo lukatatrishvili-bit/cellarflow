@@ -61,6 +61,21 @@ const operation: CellarOperation = {
   notes: 'Temperature and density reviewed.',
 };
 
+const reversibleOperation: CellarOperation = {
+  ...operation,
+  id: 'OP-REVERSIBLE',
+  commandId: 'cmd-operation-reversible',
+  recordKind: 'operation',
+  lastModified: '2026-09-06T10:00:00.000Z',
+  reversalSnapshot: {
+    version: 1,
+    lot: { id: lot.id, currentVolume: 920, stage: 'aging' },
+    vessel: { id: vessel.id, currentVolume: 920, lastOperation: 'Filled' },
+    auditId: 'AUDIT-REVERSIBLE',
+    operationDescription: 'Temperature and density reviewed.',
+  },
+};
+
 const operationInput: CellarOperationInput = {
   date: '2026-09-07',
   type: 'sulfitation',
@@ -147,6 +162,14 @@ describe('CellarOperationsTab action permissions', () => {
     expect(markup).toContain('Operation type');
     expect(markup).toContain('>Vessel</label>');
     expect(markup).toContain('Log operation</button>');
+  });
+
+  it('shows correction only for safely reversible command-created operations', () => {
+    const allowed = renderOperations({ ops: [reversibleOperation], canReverseCellarOperation: true });
+    const denied = renderOperations({ ops: [reversibleOperation], canReverseCellarOperation: false });
+
+    expect(allowed).toContain('Correct operation for Saperavi Reserve');
+    expect(denied).not.toContain('Correct operation for Saperavi Reserve');
   });
 
   it('localizes the read-only guidance in Georgian', () => {

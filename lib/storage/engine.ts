@@ -45,8 +45,19 @@ export function unstored(producedByLot: Record<string, number>, movements: Stock
   const out: Record<string, number> = {};
   for (const lotId of Object.keys(producedByLot)) {
     const stored = movements
-      .filter(m => m.lotId === lotId && m.direction === 'in')
-      .reduce((a, m) => a + m.bottles, 0);
+      .filter(m => m.lotId === lotId)
+      .reduce((total, movement) => {
+        // Relocations are not new placements and sales returns are not new
+        // production. A bottling reversal is the one outbound fact that must
+        // cancel its original inbound receipt for this reconciliation.
+        if (movement.direction === 'in'
+          && movement.reason !== 'transfer'
+          && movement.reason !== 'sale_reversal') return total + movement.bottles;
+        if (movement.direction === 'out' && movement.reason === 'bottling_reversal') {
+          return total - movement.bottles;
+        }
+        return total;
+      }, 0);
     const remaining = (producedByLot[lotId] || 0) - stored;
     if (remaining > 0) out[lotId] = remaining;
   }

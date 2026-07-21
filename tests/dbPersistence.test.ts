@@ -12,7 +12,6 @@ async function loadDbModule(dbPath: string) {
   process.env = {
     ...originalEnv,
     DATABASE_PATH: dbPath,
-    USE_FIRESTORE: 'false',
     GCS_BUCKET: '',
   };
   return import('../server/db');
@@ -25,7 +24,6 @@ async function loadDbModuleWithMockPrisma(dbPath: string, prisma: any) {
     ...originalEnv,
     DATABASE_PATH: dbPath,
     DATABASE_URL: 'postgresql://user:pass@localhost:5432/cellarflow',
-    USE_FIRESTORE: 'false',
     GCS_BUCKET: '',
   };
   return import('../server/db');
@@ -525,7 +523,10 @@ describe('database persistence', () => {
   it('reports PostgreSQL readiness when required Prisma models are readable', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
     const dbPath = path.join(root, 'db.json');
-    const readableModel = () => ({ count: vi.fn(async () => 0) });
+    const readableModel = () => ({
+      findMany: vi.fn(async () => []),
+      count: vi.fn(async () => 0),
+    });
     const prisma = {
       user: readableModel(),
       organization: readableModel(),
@@ -552,9 +553,12 @@ describe('database persistence', () => {
       },
       errors: [],
     });
-    expect(prisma.user.count).toHaveBeenCalledTimes(1);
-    expect(prisma.loginAttempt.count).toHaveBeenCalledTimes(1);
-    expect(prisma.securityAuditEvent.count).toHaveBeenCalledTimes(1);
+    expect(prisma.user.findMany).toHaveBeenCalledWith({ take: 1 });
+    expect(prisma.loginAttempt.findMany).toHaveBeenCalledWith({ take: 1 });
+    expect(prisma.securityAuditEvent.findMany).toHaveBeenCalledWith({ take: 1 });
+    expect(prisma.user.count).not.toHaveBeenCalled();
+    expect(prisma.loginAttempt.count).not.toHaveBeenCalled();
+    expect(prisma.securityAuditEvent.count).not.toHaveBeenCalled();
   });
 
   it('reports PostgreSQL readiness errors when the LoginAttempt model is missing', async () => {

@@ -28,7 +28,12 @@ describe('release workflow contracts', () => {
     expect(workflow).toContain('workflow_call:');
     expect(workflow).toContain('npm ci');
     expect(workflow).toContain('npm audit --omit=dev --audit-level=high');
+    expect(workflow).toContain('image: postgres:16-alpine');
     expectInOrder(workflow, [
+      'npm run db:migrate:deploy',
+      'prisma migrate diff',
+      'npm run test:postgres',
+      'npm run typecheck',
       'npm run lint',
       'npm test',
       'npm run build',
@@ -50,8 +55,11 @@ describe('release workflow contracts', () => {
       'docker push "$IMAGE_TAG"',
       "--format='value(image_summary.digest)'",
       'needs: build_image',
+      'Enforce Cloud SQL backup and PITR policy',
+      '--enable-point-in-time-recovery',
       'Run controlled database migrations',
       '--args "run,db:migrate:deploy"',
+      '--execute-now',
       '--wait',
       'Deploy the verified digest',
       '--image "$IMAGE_URI"',
@@ -59,6 +67,15 @@ describe('release workflow contracts', () => {
     ]);
     expect(workflow).not.toContain('--source .');
     expect(workflow).toContain('[[ "$DEPLOYED_IMAGE" != *@"$IMAGE_DIGEST" ]]');
+    expect(workflow).toContain('PRODUCTION_SMOKE_EXPECT_READINESS=not-ready');
+    expect(workflow).toContain('--retained-backups-count "$CLOUDSQL_RETAINED_BACKUPS"');
+    expect(workflow).toContain('--retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS"');
+    expect(workflow).toContain('--retain-backups-on-delete');
+    expect(workflow).toContain('Cloud SQL project and region must match the deployment target.');
+    expectInOrder(workflow, [
+      '"$SERVICE_URL/api/health"',
+      '"$SERVICE_URL/api/ready"',
+    ]);
     expect(readRootFile('.dockerignore')).toContain('gha-creds-*.json');
     expect(readRootFile('.gitignore')).toContain('gha-creds-*.json');
   });
@@ -79,5 +96,24 @@ describe('release workflow contracts', () => {
       '20260719000000_baseline',
       'migration.sql',
     ))).toBe(true);
+  });
+
+  it('audits dependencies and checks production schema drift on a weekly schedule', () => {
+    const workflow = readWorkflow('scheduled-operations.yml');
+
+    expect(workflow).toContain("cron: '17 4 * * 1'");
+    expect(workflow).toContain('workflow_dispatch:');
+    expect(workflow).toContain('npm audit --omit=dev --audit-level=high');
+    expect(workflow).toContain('GCP_CLOUDSQL_INSTANCE');
+    expectInOrder(workflow, [
+      'status.latestReadyRevisionName',
+      'spec.containers[0].image',
+      '--args "run,db:check-drift"',
+      '--set-secrets "DATABASE_URL=cellarflow-database-url:latest"',
+      '--max-retries 0',
+      '--execute-now',
+      '--wait',
+    ]);
+    expect(workflow).not.toContain('db:migrate:deploy');
   });
 });

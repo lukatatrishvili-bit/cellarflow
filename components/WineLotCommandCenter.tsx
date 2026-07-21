@@ -24,7 +24,8 @@ import type {
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import type { Language } from '../lib/i18n';
-import { isActiveReservation } from '../lib/sales';
+import { isActiveReservation, isActiveSalesDispatch } from '../lib/sales';
+import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
 import { stageLabel as sharedStageLabel, vesselTypeLabel } from '../lib/enumLabels';
 import { StatusBadge } from './ui/primitives';
 
@@ -125,7 +126,7 @@ export default function WineLotCommandCenter({
     .slice()
     .sort((a, b) => b.date.localeCompare(a.date))[0];
   const bottled = bottlingRuns
-    .filter(run => run.lotId === lot.id)
+    .filter(run => run.lotId === lot.id && isActiveBottlingRun(run))
     .reduce((acc, run) => acc + (run.totalBottles || 0) + (run.totalCeramic || 0), 0);
   const stockOnHand = Math.max(0, stockMovements
     .filter(m => m.lotId === lot.id)
@@ -133,7 +134,7 @@ export default function WineLotCommandCenter({
   const reserved = salesOrders
     .filter(order => order.lotId === lot.id && isActiveReservation(order))
     .reduce((acc, order) => acc + (order.bottles || 0), 0);
-  const dispatches = salesDispatches.filter(d => d.lotId === lot.id);
+  const dispatches = salesDispatches.filter(d => d.lotId === lot.id && isActiveSalesDispatch(d));
   const dispatched = dispatches.reduce((acc, d) => acc + (d.bottles || 0), 0);
   const revenue = dispatches.reduce((acc, d) => acc + (d.revenue || 0), 0);
   const totalCost = costEntries

@@ -3,6 +3,7 @@ import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog, LabAnalysis, Task } from '../lib/wineryState';
 import { taskPriorityLabel } from '../lib/enumLabels';
+import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
 import { canAccess, type Role } from '../server/permissions';
 import TankCapacityChart from './TankCapacityChart';
 import FermentationCurveChart from './FermentationCurveChart';
@@ -107,6 +108,7 @@ export default function WineryDashboardTab({
   const canViewTasks = canAccess(role, 'tasks', 'view');
   const canCreateTasks = canAccess(role, 'tasks', 'create');
   const showCellarHealth = canViewVessels || canViewBottling || canViewLab;
+  const physicalFermLogs = fermLogs.filter(isPhysicalFermentationReading);
 
   const totalLotsVolume = lots.reduce((acc, curr) => acc + curr.currentVolume, 0);
   const totalCapacity = vessels.reduce((acc, curr) => acc + curr.capacity, 0);
@@ -119,7 +121,7 @@ export default function WineryDashboardTab({
     ? parseFloat((occupiedVessels.reduce((acc, curr) => acc + (curr.temperature || 0), 0) / occupiedVessels.length).toFixed(1))
     : 0;
 
-  const latestFermByLot = latestByLot(fermLogs);
+  const latestFermByLot = latestByLot(physicalFermLogs);
   const latestLabByLot = latestByLot(labLogs);
   const fermentsMissingReading = activeFerms.filter(lot => latestFermByLot[lot.id]?.date !== today);
   const lowSO2Alerts = Object.values(latestLabByLot).filter(log => log.freeSo2 < 15);
@@ -179,7 +181,7 @@ export default function WineryDashboardTab({
     })) : []),
   ].slice(0, 8);
 
-  const chartableLotIds = Array.from(new Set(fermLogs.map(l => l.lotId)));
+  const chartableLotIds = Array.from(new Set(physicalFermLogs.map(l => l.lotId)));
   const selectedChartLotId = chartLotId && chartableLotIds.includes(chartLotId)
     ? chartLotId
     : chartableLotIds[0] || '';
@@ -196,7 +198,7 @@ export default function WineryDashboardTab({
     }));
   }, [vessels, lots]);
 
-  const recentFermLogs = [...fermLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+  const recentFermLogs = [...physicalFermLogs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
   const recentTasks = pendingTasks.slice(0, 6);
 
   return (
@@ -411,7 +413,7 @@ export default function WineryDashboardTab({
           {chartableLotIds.length === 0 ? (
             <EmptyState icon={Activity} title={isKa ? 'დუღილის ჩანაწერები ჯერ არ არის' : 'No fermentation readings yet'} description={isKa ? 'ჩაწერეთ პირველი დღიური სიმკვრივე და ტემპერატურა მრუდის დასაწყებად.' : 'Log the first daily density and temperature reading to start the curve.'} />
           ) : (
-            <FermentationCurveChart logs={fermLogs} selectedLotId={selectedChartLotId} lang={lang} />
+            <FermentationCurveChart logs={physicalFermLogs} selectedLotId={selectedChartLotId} lang={lang} />
           )}
         </SectionCard>
         )}

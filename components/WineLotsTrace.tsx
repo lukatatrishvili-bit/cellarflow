@@ -8,7 +8,7 @@ import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import { stageLabel, vesselTypeLabel } from '../lib/enumLabels';
 import WineLotCommandCenter from './WineLotCommandCenter';
-import { Calendar, Tag, ChevronRight, Compass, FlaskConical, Circle, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
+import { ChevronRight, Compass, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
 
 interface Props {
   lang: Language;
@@ -174,7 +174,7 @@ export default function WineLotsTrace({
       <div className="xl:col-span-1 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold font-serif text-[#4e0e15] flex items-center gap-1">
-            <ListFilter className="w-4 h-4" /> 
+            <ListFilter className="w-4 h-4" />
             {{
               en: 'Active Lots',
               ka: 'აქტიური პარტიები',
@@ -187,7 +187,7 @@ export default function WineLotsTrace({
             onClick={() => setShowAddForm(!showAddForm)}
             className="inline-flex items-center gap-0.5 px-2.5 py-1 text-[11px] font-semibold text-white bg-[#4e0e15] hover:bg-[#6b151e] rounded transition-colors cursor-pointer"
           >
-            <Plus className="w-3 h-3" /> 
+            <Plus className="w-3 h-3" />
             {{
               en: 'Create Lot',
               ka: 'პარტიის შექმნა',
@@ -217,8 +217,8 @@ export default function WineLotsTrace({
                   type="button"
                   onClick={() => setFilterClass(cls)}
                   className={`text-[10px] py-1 border rounded capitalize cursor-pointer font-medium font-sans ${
-                    filterClass === cls 
-                      ? 'bg-[#4e0e15] text-white border-[#4e0e15]' 
+                    filterClass === cls
+                      ? 'bg-[#4e0e15] text-white border-[#4e0e15]'
                       : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
                   }`}
                 >
@@ -282,7 +282,7 @@ export default function WineLotsTrace({
                   de: 'Chargennummer (Eindeutig)'
                 }[lang] || 'Lot Code (Unique)'}
               </label>
-              <input 
+              <input
                 type="text" required placeholder="e.g. MC-2025-09"
                 value={newId} onChange={(e) => setNewId(e.target.value)}
                 className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
@@ -298,7 +298,7 @@ export default function WineLotsTrace({
                   de: 'Weincharge Name'
                 }[lang] || 'Wine Lot Name'}
               </label>
-              <input 
+              <input
                 type="text" required placeholder="e.g. Mukuzani Old Vine"
                 value={newName} onChange={(e) => setNewName(e.target.value)}
                 className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
@@ -307,7 +307,7 @@ export default function WineLotsTrace({
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">{t.grape_variety || 'Grape Variety'}</label>
-                <input 
+                <input
                   type="text" value={newVariety} onChange={(e) => setNewVariety(e.target.value)}
                   className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
                 />
@@ -322,7 +322,7 @@ export default function WineLotsTrace({
                     de: 'Weinstil'
                   }[lang] || 'Wine Style'}
                 </label>
-                <select 
+                <select
                   value={newClass} onChange={(e) => setNewClass(e.target.value as WineClass)}
                   className="w-full px-2 py-1 text-xs border border-[#ced] rounded bg-[#FAF8F5]"
                 >
@@ -336,7 +336,7 @@ export default function WineLotsTrace({
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">{t.vintage || 'Vintage'}</label>
-                <input 
+                <input
                   type="number" value={newVintage} onChange={(e) => setNewVintage(parseInt(e.target.value) || 2025)}
                   className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
                 />
@@ -351,7 +351,7 @@ export default function WineLotsTrace({
                     de: 'Volumen (L)'
                   }[lang] || 'Volume Equivalency (L)'}
                 </label>
-                <input 
+                <input
                   type="number" value={newVolume} onChange={(e) => setNewVolume(parseInt(e.target.value) || 100)}
                   className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
                 />
@@ -367,14 +367,14 @@ export default function WineLotsTrace({
                   de: 'Weinbergsparzelle'
                 }[lang] || 'Vineyard Block Source'}
               </label>
-              <input 
+              <input
                 type="text" placeholder={lang === 'ka' ? 'მაგ. მუკუზანი, დასავლეთი ბლოკი B' : 'Mukuzani West Block B'}
                 value={newVineyard} onChange={(e) => setNewVineyard(e.target.value)}
                 className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
               />
             </div>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="w-full py-1.5 text-xs font-semibold text-white bg-[#4e0e15] cursor-pointer hover:bg-[#6b151e] rounded text-center block"
             >
               {{
@@ -397,8 +397,8 @@ export default function WineLotsTrace({
                 key={l.id}
                 onClick={() => setSelectedLotId(l.id)}
                 className={`p-3 border rounded-lg cursor-pointer transition-all flex items-center justify-between ${
-                  isSelected 
-                    ? 'bg-[#f5efe9] border-[#4e0e15] shadow-sm' 
+                  isSelected
+                    ? 'bg-[#f5efe9] border-[#4e0e15] shadow-sm'
                     : 'bg-white border-[#e8dfd5] hover:border-slate-300'
                 }`}
               >
@@ -406,6 +406,7 @@ export default function WineLotsTrace({
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-bold text-slate-800 truncate block">{l.name}</span>
                     <span className="text-[9px] font-mono px-1 py-0.2 bg-slate-100 text-slate-500 border rounded font-bold shrink-0">{l.id}</span>
+                    {l.voidedAt && <span className="text-[8px] uppercase font-bold rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">Voided</span>}
                   </div>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-[10px] text-slate-400 capitalize">{lang === 'ka'
@@ -436,7 +437,7 @@ export default function WineLotsTrace({
               salesOrders={salesOrders}
               salesDispatches={salesDispatches}
               currency={currency}
-              onEdit={canUpdateLot ? () => setIsEditingLot(!isEditingLot) : undefined}
+              onEdit={canUpdateLot && !selectedLot.voidedAt ? () => setIsEditingLot(!isEditingLot) : undefined}
               onOpenPassport={onOpenPassport}
               setActiveTab={setActiveTab}
               setSelectedTankId={setSelectedTankId}
@@ -480,7 +481,7 @@ export default function WineLotsTrace({
               </div>
             </div>
 
-            {canUpdateLot && isEditingLot ? (
+            {canUpdateLot && !selectedLot.voidedAt && isEditingLot ? (
               <form onSubmit={(e) => {
                 e.preventDefault();
                 if (!canUpdateLot) return;
@@ -504,13 +505,13 @@ export default function WineLotsTrace({
                 <h3 className="text-xs uppercase font-mono tracking-widest text-[#4e0e15] font-black border-b pb-1.5 mb-3 flex justify-between items-center">
                   <span>✏️ {lang === 'ka' ? 'პარტიის რედაქტირება' : 'Edit Wine Lot Properties'}</span>
                 </h3>
-                
+
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
                       {lang === 'ka' ? 'სახელი' : 'Lot Name'}
                     </label>
-                    <input 
+                    <input
                       type="text" required
                       value={editName} onChange={(e) => setEditName(e.target.value)}
                       className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
@@ -522,7 +523,7 @@ export default function WineLotsTrace({
                       <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
                         {lang === 'ka' ? 'ჯიში' : 'Grape Variety'}
                       </label>
-                      <input 
+                      <input
                         type="text" required
                         value={editVariety} onChange={(e) => setEditVariety(e.target.value)}
                         className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
@@ -532,7 +533,7 @@ export default function WineLotsTrace({
                       <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
                         {lang === 'ka' ? 'წელი' : 'Vintage'}
                       </label>
-                      <input 
+                      <input
                         type="number" required
                         value={editVintage} onChange={(e) => setEditVintage(Number(e.target.value) || 2025)}
                         className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
@@ -545,7 +546,7 @@ export default function WineLotsTrace({
                       <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
                         {lang === 'ka' ? 'მოცულობა (L)' : 'Volume (Liters)'}
                       </label>
-                      <input 
+                      <input
                         type="number" required min="0"
                         value={editVolume} onChange={(e) => setEditVolume(Number(e.target.value) || 0)}
                         className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
@@ -555,7 +556,7 @@ export default function WineLotsTrace({
                       <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
                         {lang === 'ka' ? 'ნაკვეთი' : 'Vineyard Block'}
                       </label>
-                      <input 
+                      <input
                         type="text" required
                         value={editBlock} onChange={(e) => setEditBlock(e.target.value)}
                         className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
@@ -567,7 +568,7 @@ export default function WineLotsTrace({
                     <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
                       {lang === 'ka' ? 'რეგიონი / PDO' : 'Origin Region / PDO'}
                     </label>
-                    <input 
+                    <input
                       type="text" required
                       value={editRegion} onChange={(e) => setEditRegion(e.target.value)}
                       className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
@@ -576,14 +577,14 @@ export default function WineLotsTrace({
                 </div>
 
                 <div className="flex gap-2 pt-2">
-                  <button 
+                  <button
                     type="button"
                     onClick={() => setIsEditingLot(false)}
                     className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-700 font-mono font-bold uppercase py-2 rounded text-[10px] cursor-pointer transition-colors"
                   >
                     {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
                   </button>
-                  <button 
+                  <button
                     type="submit"
                     className="flex-1 bg-[#4e0e15] hover:bg-[#801323] text-white font-mono font-bold uppercase py-2 rounded text-[10px] cursor-pointer transition-colors"
                   >
@@ -627,7 +628,7 @@ export default function WineLotsTrace({
                     <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
                       <MapPin className="w-4 h-4 text-[#801323]" /> Live Location Containment
                     </h4>
-                    
+
                     {containingVessels.length > 0 ? (
                       <div className="space-y-2">
                         {containingVessels.map(v => (
@@ -778,7 +779,7 @@ export default function WineLotsTrace({
                     <div className="flex items-center justify-between min-w-[700px] relative py-2">
                       {/* Connection Line */}
                       <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-stone-200 z-0 -translate-y-1/2 dark:bg-stone-800" />
-                      
+
                       {stagesOrdered.map((st, idx) => {
                         const currentStageIndex = stagesOrdered.indexOf(selectedLot.stage);
                         const isCompleted = idx < currentStageIndex;
@@ -787,12 +788,12 @@ export default function WineLotsTrace({
 
                         return (
                           <div key={st} className="flex flex-col items-center z-10 relative">
-                            <div 
+                            <div
                               className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-mono font-bold transition-all duration-300 ${
-                                isCompleted 
-                                  ? 'bg-emerald-600 text-white ring-4 ring-emerald-50 border border-white dark:ring-emerald-950/20' 
-                                  : isActive 
-                                  ? 'bg-[#4e0e15] text-white ring-4 ring-rose-100 border border-white scale-110 animate-pulse dark:ring-rose-950/30' 
+                                isCompleted
+                                  ? 'bg-emerald-600 text-white ring-4 ring-emerald-50 border border-white dark:ring-emerald-950/20'
+                                  : isActive
+                                  ? 'bg-[#4e0e15] text-white ring-4 ring-rose-100 border border-white scale-110 animate-pulse dark:ring-rose-950/30'
                                   : 'bg-stone-200 text-stone-400 border border-white dark:bg-stone-800 dark:text-stone-600'
                               }`}
                               title={st}
@@ -816,7 +817,7 @@ export default function WineLotsTrace({
                       <h5 className="font-bold text-[#4e0e15] border-b border-stone-100 pb-1.5 uppercase text-[10px] tracking-wide dark:text-amber-100 dark:border-stone-850">
                         {lang === 'ka' ? 'ეტაპის გადასვლის ჩაწერა' : 'Log Stage Transition'}
                       </h5>
-                      
+
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
                           <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სამიზნე ეტაპი' : 'Target Stage'}</label>
@@ -918,7 +919,7 @@ export default function WineLotsTrace({
                   <div key={index} className="relative">
                     {/* Circle Node indicator */}
                     <div className="absolute -left-[30px] top-1 w-3 h-3 bg-[#4e0e15] ring-4 ring-[#FAF8F5] rounded-full flex items-center justify-center border border-white" />
-                    
+
                     <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg hover:border-slate-200 transition-colors">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1.5">
                         <span className="text-xs font-bold text-slate-700 flex items-center gap-1">{hist.type}</span>

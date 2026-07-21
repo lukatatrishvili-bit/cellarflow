@@ -34,11 +34,11 @@ export function updateEnvFile(updates: Record<string, string>) {
     if (fs.existsSync(envPath)) {
       envContent = fs.readFileSync(envPath, 'utf8');
     }
-    
+
     const lines = envContent.split('\n');
     const newLines: string[] = [];
     const keysHandled = new Set<string>();
-    
+
     lines.forEach(line => {
       const trimmed = line.trim();
       if (trimmed && !trimmed.startsWith('#')) {
@@ -54,16 +54,16 @@ export function updateEnvFile(updates: Record<string, string>) {
       }
       newLines.push(line);
     });
-    
+
     // Add keys not present in original file
     Object.keys(updates).forEach(key => {
       if (!keysHandled.has(key)) {
         newLines.push(`${key}="${updates[key]}"`);
       }
     });
-    
+
     fs.writeFileSync(envPath, newLines.join('\n'), 'utf8');
-    
+
     // Update process.env immediately
     Object.keys(updates).forEach(key => {
       process.env[key] = updates[key];

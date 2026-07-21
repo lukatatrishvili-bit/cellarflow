@@ -4,6 +4,7 @@ import { X, Thermometer, RefreshCw } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
 import { stageLabel } from '../lib/enumLabels';
+import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import QvevriCrossSection from './QvevriCrossSection';
 import { ambientMotionEnabled, prefersReducedMotion } from './motion';
@@ -348,11 +349,11 @@ export default function VesselDrawer({
   canUpdateVessel = true
 }: VesselDrawerProps) {
   const selectedVessel = selectedTankId ? vessels.find(v => v.id === selectedTankId) : null;
-  const selectedLot = selectedVessel?.assignedLotId 
-    ? lots.find(l => l.id === selectedVessel.assignedLotId) 
+  const selectedLot = selectedVessel?.assignedLotId
+    ? lots.find(l => l.id === selectedVessel.assignedLotId)
     : null;
-  const tankLogs = selectedTankId 
-    ? fermLogs.filter(log => log.tankId === selectedTankId) 
+  const tankLogs = selectedTankId
+    ? fermLogs.filter(log => log.tankId === selectedTankId && isPhysicalFermentationReading(log))
     : [];
 
   const [aiInsights, setAiInsights] = useState<string>('');
@@ -392,7 +393,7 @@ export default function VesselDrawer({
       setIsAiLoading(true);
       setAiInsights('');
       try {
-        const lotInfo = selectedLot 
+        const lotInfo = selectedLot
           ? `holding ${selectedLot.name} (${selectedLot.variety}, vintage ${selectedLot.vintage}, stage ${selectedLot.stage})`
           : 'vacant';
         const promptMsg = `Vessel: ${selectedVessel.id} (${selectedVessel.type}, shape ${selectedVessel.shape}, capacity ${selectedVessel.capacity}L, volume ${selectedVessel.currentVolume}L).
@@ -422,7 +423,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
     // Lightweight debounced delay to prevent spamming the API on rapid clicks
     const timer = setTimeout(fetchInsights, 400);
     return () => clearTimeout(timer);
-  }, [selectedTankId, selectedVessel?.currentVolume, selectedVessel?.temperature, selectedVessel?.cleaningStatus]);
+  }, [selectedLot, selectedTankId, selectedVessel]);
 
   // Build 7-day temperature history
   const tempHistory = (() => {
@@ -434,10 +435,10 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
       const realLog = tankLogs.find(log => log.date === dateStr);
-      
+
       let temp = currentTemp;
       let isReal = false;
-      
+
       if (realLog) {
         temp = realLog.temperature;
         isReal = true;
@@ -446,12 +447,12 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
         const variance = Math.sin((idSum + i) * 1.7) * 1.3;
         temp = Number((currentTemp + variance).toFixed(1));
       }
-      
+
       const label = d.toLocaleDateString(lang === 'ka' ? 'ka-GE' : lang === 'it' ? 'it-IT' : 'en-US', {
         month: 'short',
         day: 'numeric',
       });
-      
+
       list.push({
         date: dateStr,
         label,
@@ -530,7 +531,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
             className="fixed inset-y-0 right-0 z-50 w-full sm:w-[600px] lg:w-[680px] bg-[#FAF8F5] dark:bg-[#140d0e] shadow-2xl border-l border-[#f0e6da] dark:border-[#2a1618] flex flex-col focus:outline-none text-stone-800 dark:text-stone-200"
           >
             <div className="flex-1 overflow-y-auto p-8 space-y-8">
-              
+
               <div className="flex items-start justify-between border-b border-[#e8dfd5] pb-4">
                 <div>
                   <div className="flex items-center gap-2">
@@ -588,7 +589,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                   <div className="space-y-3 text-xs">
                     <div>
                       <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vessel ID / Identifier *</label>
-                      <input 
+                      <input
                         type="text" required
                         value={editId} onChange={(e) => setEditId(e.target.value)}
                         className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-bold text-stone-900 focus:bg-white outline-none"
@@ -598,7 +599,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vessel Type</label>
-                        <select 
+                        <select
                           value={editType} onChange={(e) => setEditType(e.target.value as any)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-bold text-stone-900 outline-none"
                         >
@@ -613,7 +614,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
 
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Profile Shape</label>
-                        <select 
+                        <select
                           value={editShape} onChange={(e) => setEditShape(e.target.value as any)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-bold text-stone-900 outline-none"
                         >
@@ -627,7 +628,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Total Capacity (Liters) *</label>
-                        <input 
+                        <input
                           type="number" required min="1"
                           value={editCapacity} onChange={(e) => setEditCapacity(Number(e.target.value) || 0)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-semibold text-stone-850 outline-none"
@@ -636,7 +637,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
 
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Location Details</label>
-                        <input 
+                        <input
                           type="text"
                           value={editLocationDetails} onChange={(e) => setEditLocationDetails(e.target.value)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded text-stone-800 outline-none"
@@ -649,7 +650,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                       <div className="grid grid-cols-2 gap-3 bg-[#FCFAF8] p-3 rounded-lg border border-amber-200">
                         <div>
                           <label className="block text-[9px] uppercase font-mono text-amber-800 font-bold mb-1">Last Sealed Date</label>
-                          <input 
+                          <input
                             type="date"
                             value={editLastSealedDate} onChange={(e) => setEditLastSealedDate(e.target.value)}
                             className="w-full bg-white border border-[#e8dfd5] p-1.5 rounded outline-none text-stone-800"
@@ -658,7 +659,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
 
                         <div>
                           <label className="block text-[9px] uppercase font-mono text-amber-800 font-bold mb-1">Soil Temperature (°C)</label>
-                          <input 
+                          <input
                             type="number" step="0.1"
                             value={editSoilTemperature} onChange={(e) => setEditSoilTemperature(Number(e.target.value) || 0)}
                             className="w-full bg-white border border-[#e8dfd5] p-1.5 rounded outline-none text-stone-800 font-mono"
@@ -668,14 +669,14 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     )}
 
                     <div className="flex gap-2 pt-2">
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setIsEditing(false)}
                         className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-700 font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer shadow-3xs transition-colors"
                       >
                         {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
                       </button>
-                      <button 
+                      <button
                         type="submit"
                         className="flex-1 bg-emerald-850 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer shadow-xs transition-colors"
                       >
@@ -741,12 +742,12 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                         {selectedVessel.capacity > 0 ? Math.round((selectedVessel.currentVolume / selectedVessel.capacity) * 100) : 0}% Filled
                       </span>
                     </div>
-                    
+
                     <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden border border-slate-200 relative">
-                      <div 
+                      <div
                         className={`h-full rounded-full transition-all duration-500 ${
-                          (selectedVessel.currentVolume / selectedVessel.capacity) > 0.95 
-                            ? 'bg-gradient-to-r from-red-600 to-rose-500 animate-pulse' 
+                          (selectedVessel.currentVolume / selectedVessel.capacity) > 0.95
+                            ? 'bg-gradient-to-r from-red-600 to-rose-500 animate-pulse'
                             : 'bg-gradient-to-r from-[#801323] to-[#510e19]'
                         }`}
                         style={{ width: `${selectedVessel.capacity > 0 ? (selectedVessel.currentVolume / selectedVessel.capacity) * 100 : 0}%` }}
@@ -873,36 +874,36 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                       <div className="h-28 w-full bg-[#FAF8F5]/80 rounded-lg p-2 border border-[#e8dfd5]/40">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={tempHistory} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
-                            <XAxis 
-                              dataKey="label" 
-                              fontSize={8} 
-                              tickLine={false} 
+                            <XAxis
+                              dataKey="label"
+                              fontSize={8}
+                              tickLine={false}
                               axisLine={false}
-                              stroke="#94a3b8" 
+                              stroke="#94a3b8"
                             />
-                            <YAxis 
-                              domain={['dataMin - 1', 'dataMax + 1']} 
-                              fontSize={8} 
-                              tickLine={false} 
+                            <YAxis
+                              domain={['dataMin - 1', 'dataMax + 1']}
+                              fontSize={8}
+                              tickLine={false}
                               axisLine={false}
-                              stroke="#94a3b8" 
+                              stroke="#94a3b8"
                               tickFormatter={(val) => `${val}°C`}
                             />
-                            <Tooltip 
-                              contentStyle={{ 
-                                backgroundColor: '#fff', 
-                                borderRadius: '6px', 
-                                border: '1px solid #e8dfd5', 
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#fff',
+                                borderRadius: '6px',
+                                border: '1px solid #e8dfd5',
                                 fontSize: '10px',
                                 padding: '4px 8px'
                               }}
                               formatter={(value: any) => [`${value} °C`, 'Temp']}
                               labelFormatter={(label) => `Date: ${label}`}
                             />
-                            <Line 
-                              type="monotone" 
-                              dataKey="temperature" 
-                              stroke="#801323" 
+                            <Line
+                              type="monotone"
+                              dataKey="temperature"
+                              stroke="#801323"
                               strokeWidth={2}
                               dot={{ r: 2 }}
                               activeDot={{ r: 4 }}
@@ -920,8 +921,8 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                         Sanitation & Hygiene Protocol
                       </h3>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono uppercase ${
-                        selectedVessel.cleaningStatus === 'clean' 
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                        selectedVessel.cleaningStatus === 'clean'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                           : 'bg-amber-100 text-amber-805 border border-amber-200'
                       }`}>
                         {selectedVessel.cleaningStatus.replace('_', ' ')}
@@ -950,7 +951,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
 
                   <div className="p-4 bg-gradient-to-br from-white to-amber-50/10 border border-[#e8dfd5] rounded-xl space-y-2.5 shadow-2xs relative overflow-hidden">
                     <div className="absolute -right-6 -bottom-6 text-4xl opacity-[0.07] select-none pointer-events-none">🔮</div>
-                    
+
                     <div className="flex items-center justify-between border-b border-stone-200/50 pb-2">
                       <h3 className="text-xs font-serif font-black text-[#4e0e15] flex items-center gap-1.5">
                         <span className="animate-pulse">💡</span> AI Winemaker Insights
@@ -971,8 +972,8 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                           {aiInsights.split('\n').filter(l => l.trim()).map((line, idx) => (
                             <p key={idx} className="flex items-start gap-1.5 text-[11px] text-[#2c241e]">
                               <span className="text-amber-600 mt-0.5">•</span>
-                              <span dangerouslySetInnerHTML={{ 
-                                __html: line.replace(/^\s*[\-\*]\s*/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') 
+                              <span dangerouslySetInnerHTML={{
+                                __html: line.replace(/^\s*[-*]\s*/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                               }} />
                             </p>
                           ))}

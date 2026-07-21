@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Download, Filter, Hash, Search, ShieldCheck, X } from 'lucide-react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
@@ -25,11 +25,11 @@ export default function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
   const verification = useMemo(() => buildAuditHashChain(auditLogs), [auditLogs]);
 
-  const moduleLabel = (module: MaraniOSAuditLog['module']) => {
+  const moduleLabel = useCallback((module: MaraniOSAuditLog['module']) => {
     if (module === 'VAZI') return t.nav_vazi || 'Vazi';
     if (module === 'MARANIOS') return 'System';
     return t.nav_gvino || 'Gvino';
-  };
+  }, [t.nav_gvino, t.nav_vazi]);
 
   const timeFilterLabel = (value: TimeFilter) => {
     if (value === '24h') return lang === 'ka' ? '24 საათი' : 'Last 24h';
@@ -74,7 +74,7 @@ export default function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
         verification.byId[log.id]?.sequence,
       ].some(value => String(value || '').toLowerCase().includes(query));
     });
-  }, [auditLogs, moduleFilter, searchTerm, timeFilter, verification.byId]);
+  }, [auditLogs, moduleFilter, moduleLabel, searchTerm, timeFilter, verification.byId]);
 
   const hasActiveFilters = !!searchTerm || moduleFilter !== 'all' || timeFilter !== 'all';
   const verifiedCount = verification.verifiedCount;

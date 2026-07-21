@@ -5,6 +5,7 @@ import type {
   WineLot,
 } from '../wineryState';
 import { reservedBottlesFor } from '../sales';
+import { isActiveBottlingRun } from '../bottlingIntegrity';
 import type { StockMovement } from './types';
 
 export interface StorageLocationReferences {
@@ -16,8 +17,10 @@ export interface StorageLocationReferences {
 }
 
 export interface StorageMovementDeletionBlockers {
+  commandIds: string[];
   bottlingRunIds: string[];
   salesDispatchIds: string[];
+  relatedMovementIds: string[];
   remainingOnHandBottles: number;
   reservedBottles: number;
   wouldCreateNegativeStock: boolean;
@@ -35,10 +38,12 @@ interface StorageReferenceInput {
 /** Storage records finished goods only: a bottled lot or a partially bottled lot with provenance. */
 export function isFinishedGoodsLot(
   lot: Pick<WineLot, 'id' | 'stage'>,
-  bottlingRuns: Array<Pick<BottlingRunRecord, 'lotId' | 'totalBottles' | 'totalCeramic'>>,
+  bottlingRuns: Array<Pick<BottlingRunRecord,
+    'lotId' | 'totalBottles' | 'totalCeramic' | 'recordKind' | 'reversedByCommandId' | 'reversedAt'>>,
 ): boolean {
   return lot.stage === 'bottled' || bottlingRuns.some(run => (
-    run.lotId === lot.id && ((run.totalBottles || 0) + (run.totalCeramic || 0)) > 0
+    isActiveBottlingRun(run)
+    && run.lotId === lot.id && ((run.totalBottles || 0) + (run.totalCeramic || 0)) > 0
   ));
 }
 
@@ -50,7 +55,8 @@ export function storageLocationReferences(
     .filter(movement => movement.locationId === locationId)
     .map(movement => movement.id);
   const bottlingRunIds = input.bottlingRuns
-    .filter(run => run.storageLocationId === locationId)
+    .filter(run => run.storageLocationId === locationId
+      || run.storagePlacements?.some(placement => placement.locationId === locationId))
     .map(run => run.id);
   const salesOrderIds = (input.orders || [])
     .filter(order => order.locationId === locationId)
@@ -75,8 +81,11 @@ export function storageMovementDeletionBlockers(
   const movement = input.movements.find(item => item.id === movementId);
   if (!movement) return null;
 
+  const commandIds = movement.commandId ? [movement.commandId] : [];
   const bottlingRunIds = input.bottlingRuns
-    .filter(run => run.storageMovementId === movementId || movement.sourceRef === run.id)
+    .filter(run => run.storageMovementId === movementId
+      || run.storagePlacements?.some(placement => placement.movementId === movementId)
+      || movement.sourceRef === run.id)
     .map(run => run.id);
   const salesDispatchIds = (input.dispatches || [])
     .filter(dispatch => dispatch.stockMovementId === movementId || movement.sourceRef === dispatch.id)
@@ -96,17 +105,25 @@ export function storageMovementDeletionBlockers(
   );
   const wouldCreateNegativeStock = remainingOnHandBottles < 0;
   const wouldUndercutReservations = remainingOnHandBottles >= 0 && remainingOnHandBottles < reservedBottles;
+  const relatedMovementIds = movement.relatedMovementId
+    && input.movements.some(item => item.id === movement.relatedMovementId)
+    ? [movement.relatedMovementId]
+    : [];
 
   return {
+    commandIds,
     bottlingRunIds,
     salesDispatchIds,
+    relatedMovementIds,
     remainingOnHandBottles,
     reservedBottles,
     wouldCreateNegativeStock,
     wouldUndercutReservations,
     blocked:
-      bottlingRunIds.length > 0
+      commandIds.length > 0
+      || bottlingRunIds.length > 0
       || salesDispatchIds.length > 0
+      || relatedMovementIds.length > 0
       || wouldCreateNegativeStock
       || wouldUndercutReservations,
   };

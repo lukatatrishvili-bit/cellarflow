@@ -1,14 +1,14 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import type { 
-  VineyardBlock, 
-  PhenologyRecord, 
-  SprayRecord, 
-  ScoutingRecord, 
-  IrrigationRecord, 
-  FertilizationRecord, 
-  SoilAnalysisRecord, 
+import type {
+  VineyardBlock,
+  PhenologyRecord,
+  SprayRecord,
+  ScoutingRecord,
+  IrrigationRecord,
+  FertilizationRecord,
+  SoilAnalysisRecord,
   VineyardPlantingProject,
-  GrapeSamplingRecord, 
+  GrapeSamplingRecord,
   HarvestRecord,
   UserProfile
 } from '../lib/wineryState';
@@ -86,11 +86,11 @@ function MapPolygon({ paths, fillColor, strokeColor, onClick }: MapPolygonProps)
   return null;
 }
 import { DayWeather, fetchDayWeather, localISODate } from '../lib/weatherApi';
-import { 
-  Mountain, Wind, Droplet, Sun, Layers, Plus, 
-  AlertTriangle, Check, Calendar, Thermometer, 
-  Compass, FlaskConical, BarChart3, TrendingUp, 
-  MapPin, HelpCircle, ArrowRight, User, Trash2,
+import {
+  Mountain, Wind, Sun, Layers, Plus,
+  AlertTriangle, Check, Calendar,
+  Compass, FlaskConical, BarChart3, TrendingUp,
+  MapPin, ArrowRight,
   Sprout, FileText, CheckSquare, Info, ShieldAlert
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
@@ -113,7 +113,7 @@ interface VaziModuleProps {
   harvests: HarvestRecord[];
   irrigationLogs: IrrigationRecord[];
   fertilizerLogs: FertilizationRecord[];
-  
+
   onAddBlock: (block: Omit<VineyardBlock, 'id'>) => void;
   onUpdateBlock: (id: string, updated: Partial<VineyardBlock>) => void;
   onAddVineyardProject: (project: Omit<VineyardPlantingProject, 'id'>) => void;
@@ -125,6 +125,8 @@ interface VaziModuleProps {
   onAddHarvestRecord: (rec: Omit<HarvestRecord, 'id'>) => void;
   onUpdateHarvestRecord: (id: string, updated: Partial<HarvestRecord>) => void;
   onSendHarvestToGvino: (blockId: string, harvestedKg: number, variety: string, vintage: number, harvestedDate: string) => string; // Returns Gvino Lot ID
+  /** Canonical handoff: open the full intake form with this harvest prefilled. */
+  onPrepareHarvestIntake?: (harvestId: string) => void;
   onAddIrrigation: (rec: Omit<IrrigationRecord, 'id'>) => void;
   onAddFertilizer: (rec: Omit<FertilizationRecord, 'id'>) => void;
   setActiveModule?: (mod: NavigationTarget['module']) => void;
@@ -489,12 +491,10 @@ export default function VaziModule({
   phenologyLogs,
   sprays,
   scoutings,
-  soilRecords,
   vineyardProjects,
   samplings,
   harvests,
   irrigationLogs,
-  fertilizerLogs,
   onAddBlock,
   onUpdateBlock,
   onAddVineyardProject,
@@ -506,8 +506,7 @@ export default function VaziModule({
   onAddHarvestRecord,
   onUpdateHarvestRecord,
   onSendHarvestToGvino,
-  onAddIrrigation,
-  onAddFertilizer,
+  onPrepareHarvestIntake,
   setActiveModule,
   setActiveTab,
   onNavigate,
@@ -538,10 +537,8 @@ export default function VaziModule({
     lotId: string;
   } | null>(null);
   const dispatchNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
-  const [mapOverlay, setMapOverlay] = useState<'mildew' | 'moisture' | 'phenology'>('mildew');
-  const [mapHoveredBlock, setMapHoveredBlock] = useState<string | null>(null);
 
+  const [mapOverlay, setMapOverlay] = useState<'mildew' | 'moisture' | 'phenology'>('mildew');
   const getBlockColor = (blockId: string) => {
     const b = blocks.find(x => x.id === blockId);
     if (!b) return '#e2e8f0';
@@ -881,7 +878,7 @@ export default function VaziModule({
   // Compute stats
   const totalArea = useMemo(() => blocks.reduce((acc, b) => acc + b.area, 0), [blocks]);
   const totalVines = useMemo(() => blocks.reduce((acc, b) => acc + b.vinesCount, 0), [blocks]);
-  
+
   const [blockWeatherData, setBlockWeatherData] = useState<DayWeather | null>(null);
   const [blockWeatherError, setBlockWeatherError] = useState('');
 
@@ -908,7 +905,7 @@ export default function VaziModule({
     return () => {
       active = false;
     };
-  }, [selectedBlock?.id, selectedBlock?.latitude, selectedBlock?.longitude]);
+  }, [selectedBlock]);
 
   const blockWeather = useMemo(() => {
     if (!blockWeatherData) return null;
@@ -966,7 +963,7 @@ export default function VaziModule({
           <option key={name} value={name} />
         ))}
       </datalist>
-      
+
       {/* Module Title bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between bg-emerald-950/95 text-white p-5 rounded-2xl border border-emerald-900 shadow-md gap-4">
         <div>
@@ -977,7 +974,7 @@ export default function VaziModule({
           </h2>
           <p className="text-xs text-emerald-250/90 mt-1 font-medium">{label.tagline}</p>
         </div>
-        
+
         {/* Unit & Area Stats Badge */}
         <div className="flex flex-wrap items-center gap-4">
           <div className="px-3.5 py-2 bg-emerald-900/50 rounded-xl border border-emerald-850 text-center">
@@ -1143,8 +1140,8 @@ export default function VaziModule({
                 }
               }}
               className={`px-3.5 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all duration-150 text-xs ${
-                isActive 
-                  ? 'bg-[#1e2f23] text-stone-100 shadow-xs border border-[#1e2f23]' 
+                isActive
+                  ? 'bg-[#1e2f23] text-stone-100 shadow-xs border border-[#1e2f23]'
                   : 'text-[#615c57] hover:text-[#1b1715] hover:bg-stone-100 border border-transparent'
               }`}
             >
@@ -1206,7 +1203,7 @@ export default function VaziModule({
         <div className="space-y-6">
           {/* Quick Info Alerts */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
+
             {/* Quick Summary list of Blocks */}
             <div className="lg:col-span-1 bg-white border border-[#e8dfd5] rounded-xl p-5 space-y-4 shadow-sm">
               <h3 className="font-serif font-bold text-sm text-emerald-950 border-b border-stone-100 pb-2">
@@ -1283,8 +1280,8 @@ export default function VaziModule({
                       type="button"
                       onClick={() => setMapOverlay(layer.id as any)}
                       className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
-                        mapOverlay === layer.id 
-                          ? 'bg-[#1e2f23] text-stone-100 shadow-2xs' 
+                        mapOverlay === layer.id
+                          ? 'bg-[#1e2f23] text-stone-100 shadow-2xs'
                           : 'text-stone-650 hover:bg-stone-200/50'
                       }`}
                     >
@@ -1507,7 +1504,7 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'blocks' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-          
+
           {/* Left Block Selection list */}
           <div className="lg:col-span-1 space-y-4">
             <div className="flex items-center justify-between border-b border-[#e8dfd5] pb-2">
@@ -1532,8 +1529,8 @@ export default function VaziModule({
                     key={b.id}
                     onClick={() => setSelectedBlockId(b.id)}
                     className={`p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
-                      isActive 
-                        ? 'bg-neutral-50/80 border-[#4e0e15] shadow-xs' 
+                      isActive
+                        ? 'bg-neutral-50/80 border-[#4e0e15] shadow-xs'
                         : 'bg-white border-[#e8dfd5] hover:bg-stone-50/50'
                     }`}
                   >
@@ -1571,7 +1568,7 @@ export default function VaziModule({
           <div className="lg:col-span-2 xl:col-span-3 space-y-6">
             {selectedBlock ? (
               <div className="bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-8 lg:p-10 rounded-3xl shadow-sm space-y-8">
-                
+
                 {/* Title and Base Stats */}
                 <div className="flex flex-col sm:flex-row justify-between sm:items-start border-b border-[#e8dfd5] pb-4 gap-3">
                   <div>
@@ -1591,7 +1588,7 @@ export default function VaziModule({
                     </div>
                     <p className="text-xs text-stone-500 font-medium font-sans leading-relaxed mt-1">{selectedBlock.notes}</p>
                   </div>
-                  
+
                   {/* Local Quick actions */}
                   <div className="bg-neutral-50 border border-stone-200/55 p-3 rounded-xl flex items-center gap-3 w-fit text-[10px] font-mono shrink-0">
                     <div className="text-center shrink-0 pr-3 border-r border-stone-150">
@@ -1620,7 +1617,7 @@ export default function VaziModule({
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის სახელი' : 'Block Name'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editBlockName} onChange={(e) => setEditBlockName(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1628,7 +1625,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვენახის სახელი' : 'Vineyard Name'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editVineyardName} onChange={(e) => setEditVineyardName(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1636,7 +1633,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მდებარეობის სახელი' : 'Location Name'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editLocationName} onChange={(e) => setEditLocationName(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1755,7 +1752,7 @@ export default function VaziModule({
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ფართობი (ჰა)' : 'Area (ha)'}</label>
-                        <input 
+                        <input
                           type="number" step="0.01" required
                           value={editArea} onChange={(e) => setEditArea(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1763,7 +1760,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სიმაღლე (მ)' : 'Elevation (m)'}</label>
-                        <input 
+                        <input
                           type="number" required
                           value={editElevation} onChange={(e) => setEditElevation(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1771,7 +1768,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დაქანება' : 'Slope'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editSlope} onChange={(e) => setEditSlope(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1779,7 +1776,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ექსპოზიცია' : 'Aspect'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editAspect} onChange={(e) => setEditAspect(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1790,7 +1787,7 @@ export default function VaziModule({
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ყურძნის ჯიში' : 'Grape Variety'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editGrapeVariety} onChange={(e) => setEditGrapeVariety(e.target.value)}
                           list="vazi-georgian-variety-options"
@@ -1799,7 +1796,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დარგვის წელი' : 'Planting Year'}</label>
-                        <input 
+                        <input
                           type="number" required
                           value={editPlantingYear} onChange={(e) => setEditPlantingYear(Number(e.target.value) || 2018)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1807,7 +1804,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ფორმირების სისტემა' : 'Training System'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editTrainingSystem} onChange={(e) => setEditTrainingSystem(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1849,7 +1846,7 @@ export default function VaziModule({
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დარგვის სქემა' : 'Spacing'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editSpacing} onChange={(e) => setEditSpacing(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1857,7 +1854,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'რიგების რაოდენობა' : 'Rows Count'}</label>
-                        <input 
+                        <input
                           type="number" required
                           value={editRowsCount} onChange={(e) => setEditRowsCount(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1865,7 +1862,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვაზების რაოდენობა' : 'Vines Count'}</label>
-                        <input 
+                        <input
                           type="number" required
                           value={editVinesCount} onChange={(e) => setEditVinesCount(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1873,7 +1870,7 @@ export default function VaziModule({
                       </div>
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მართვის სტატუსი' : 'Farming Status'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editFarmingStatus} onChange={(e) => setEditFarmingStatus(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1884,14 +1881,14 @@ export default function VaziModule({
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="sm:col-span-2">
                         <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნიადაგის ტიპი' : 'Soil Type'}</label>
-                        <input 
+                        <input
                           type="text" required
                           value={editSoilType} onChange={(e) => setEditSoilType(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div className="flex items-center gap-2 pt-4">
-                        <input 
+                        <input
                           type="checkbox" id="editIrrigationEnabled"
                           checked={editIrrigationEnabled} onChange={(e) => setEditIrrigationEnabled(e.target.checked)}
                           className="h-4 w-4 text-emerald-800 focus:ring-emerald-700 rounded accent-emerald-800"
@@ -1902,21 +1899,21 @@ export default function VaziModule({
 
                     <div>
                       <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის შენიშვნები / აღწერა' : 'Block Notes / Description'}</label>
-                      <textarea 
+                      <textarea
                         value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
                         className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none h-16"
                       />
                     </div>
 
                     <div className="flex gap-2 pt-2">
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setIsEditingBlock(false)}
                         className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-700 font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer transition-colors"
                       >
                         {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
                       </button>
-                      <button 
+                      <button
                         type="submit"
                         className="flex-1 bg-emerald-800 hover:bg-emerald-900 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer transition-colors"
                       >
@@ -1929,7 +1926,7 @@ export default function VaziModule({
 
                 {/* Sub-Tabs of Block detail */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-stone-700">
-                  
+
                   {selectedCadastre && (
                     <div className="space-y-3 p-4 bg-amber-50/45 rounded-xl border border-amber-100 md:col-span-2">
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between gap-2 border-b border-dashed border-amber-200 pb-1.5">
@@ -2030,7 +2027,7 @@ export default function VaziModule({
                     {/* Virtual Interactive coordinate mapping area */}
                     <div className="h-32 bg-stone-100/80 rounded-lg border border-stone-200 relative overflow-hidden flex flex-col items-center justify-center">
                       <div className="absolute top-2 right-2 flex gap-1.5 shrink-0 z-10">
-                        <button 
+                        <button
                           onClick={() => {
                             setIsDrawingPolygon(!isDrawingPolygon);
                             setDrawnPixels([]);
@@ -2047,10 +2044,10 @@ export default function VaziModule({
                       <div className="absolute inset-0 bg-stone-200 opacity-30 flex items-center justify-center select-none">
                         <span className="text-[8px] font-mono text-stone-400 uppercase tracking-widest">{lang === 'ka' ? '[სატელიტური ხედის სიმულაცია]' : '[Satellite View Simulation]'}</span>
                       </div>
-                      
+
                       {isDrawingPolygon ? (
-                        <div 
-                          className="absolute inset-0 z-0 cursor-crosshair pb-2 flex flex-col items-center justify-end" 
+                        <div
+                          className="absolute inset-0 z-0 cursor-crosshair pb-2 flex flex-col items-center justify-end"
                           onClick={(e) => {
                             const rect = e.currentTarget.getBoundingClientRect();
                             const x = e.clientX - rect.left;
@@ -2138,7 +2135,7 @@ export default function VaziModule({
 
                   {canCreateVineyardRecord && (
                   <div className="flex gap-2 text-[10px] font-mono justify-end pt-1">
-                    <button 
+                    <button
                       onClick={() => {
                         if (!canCreateVineyardRecord) return;
                         runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddPhenologyLog({
@@ -2204,7 +2201,7 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'spraying' && selectedBlock && (
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
-          
+
           {/* Add Spray Record Form */}
           {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
@@ -2256,7 +2253,7 @@ export default function VaziModule({
                   name="targetProblem"
                   placeholder={lang === 'ka' ? 'მაგ., ჭრაქის პრევენცია' : 'e.g., Downy Mildew prevention'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium text-stone-800"
-                  required 
+                  required
                 />
               </div>
 
@@ -2267,7 +2264,7 @@ export default function VaziModule({
                   name="productName"
                   placeholder={lang === 'ka' ? 'მაგ., Valiant Cu-7 Copp' : 'e.g., Valiant Cu-7 Copp'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium"
-                  required 
+                  required
                 />
               </div>
 
@@ -2319,8 +2316,8 @@ export default function VaziModule({
                 </div>
               )}
 
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors"
               >
                 {lang === 'ka' ? 'წამლობის კამპანიის დაწყება' : 'Launch Field Spray Campaign'}
@@ -2344,7 +2341,7 @@ export default function VaziModule({
                     </span>
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{spray.date} • {lang === 'ka' ? 'ოპერატორი' : 'Operator'} {spray.operator}</span>
                   </div>
-                  
+
                   <h5 className="font-bold text-stone-900 text-sm leading-tight">{lang === 'ka' ? 'გამოყენებული' : 'Applied'}: {spray.productName} ({spray.activeIngredient})</h5>
                   <p className="text-xs text-stone-500 leading-relaxed bg-[#fbf9f6]/60 p-2 rounded border border-dashed border-[#e8dfd5]/60">
                     <strong>{lang === 'ka' ? 'სამიზნე:' : 'Target:'}</strong> {spray.targetProblem} <br />
@@ -2404,7 +2401,7 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'scouting' && selectedBlock && (
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
-          
+
           {/* Add Scouting Record form */}
           {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
@@ -2458,7 +2455,7 @@ export default function VaziModule({
                   name="locationDetails"
                   placeholder={lang === 'ka' ? 'მაგ. 24-დან 36 რიგამდე, სამხრეთი დაქანება' : 'e.g. Rows 24 to 36, southern depression'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium"
-                  required 
+                  required
                 />
               </div>
 
@@ -2498,8 +2495,8 @@ export default function VaziModule({
                 />
               </div>
 
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors hover-lift"
               >
                 {lang === 'ka' ? 'დაკვირვების ჩანაწერის შენახვა' : 'Save Scouting Record'}
@@ -2587,7 +2584,7 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'sampling' && selectedBlock && (
         <div className="space-y-6 font-sans">
-          
+
           {/* Top Form to Record new Analytical Grape Sample */}
           {canCreateVineyardRecord && (
           <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4">
@@ -2627,7 +2624,7 @@ export default function VaziModule({
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'შაქრიანობა (°Brix) *' : 'Sugar Density (°Brix) *'}</label>
                 <input type="number" step="0.1" name="brix" defaultValue="19.5" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
               </div>
-              
+
               <div>
                 <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'აქტიური pH *' : 'Active pH *'}</label>
                 <input type="number" step="0.01" name="ph" defaultValue="3.15" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
@@ -2653,7 +2650,7 @@ export default function VaziModule({
               </div>
 
               <div className="flex items-end">
-                <button 
+                <button
                   type="submit"
                   className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 font-mono font-bold uppercase rounded cursor-pointer leading-tight"
                 >
@@ -2666,7 +2663,7 @@ export default function VaziModule({
 
           {/* Interactive Recharts Graphics showing maturity curves */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
+
             {/* Recharts 1: Brix vs Berry Weight */}
             <div className="bg-white border border-[#e8dfd5] p-5 rounded-xl shadow-sm space-y-2">
               <h5 className="font-serif font-bold text-stone-900 text-xs">{lang === 'ka' ? 'შაქრის დაგროვების ტემპი (°Brix ტრენდი)' : 'Sugar Accumulation Rate (°Brix Trend)'}</h5>
@@ -2714,7 +2711,7 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'yield' && selectedBlock && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 font-sans">
-          
+
           {/* Yield Calculator */}
           <div className="bg-white border border-[#e8dfd5] p-6 rounded-2xl shadow-sm space-y-5">
             <div>
@@ -2745,18 +2742,18 @@ export default function VaziModule({
                 </div>
               </div>
 
-              <button 
+              <button
                 type="button"
                 onClick={() => {
                   const bCount = parseFloat((document.getElementById('cluster-count') as HTMLInputElement).value) || 15;
                   const bWeight = parseFloat((document.getElementById('bunch-weight') as HTMLInputElement).value) || 125;
-                  
+
                   // Computations
                   const totalKg = Math.round(selectedBlock.vinesCount * bCount * (bWeight / 1000));
                   const totalTons = Math.round((totalKg / 1000) * 10) / 10;
                   const tonsPerHa = Math.round((totalTons / selectedBlock.area) * 10) / 10;
                   const expectedJuiceLiters = Math.round(totalKg * 0.70); // 70% average extraction recovery
-                  
+
                   // Show inside target outputs
                   (document.getElementById('pred-kg') as HTMLSpanElement).innerText = totalKg.toLocaleString() + " Kg";
                   (document.getElementById('pred-tons') as HTMLSpanElement).innerText = totalTons + " Tons";
@@ -2890,9 +2887,16 @@ export default function VaziModule({
                       </div>
                     ) : canDispatchHarvestToGvino ? (
                       <div className="pt-2">
+                        {onPrepareHarvestIntake && (
+                          <p className="mb-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-semibold leading-relaxed text-emerald-900">
+                            {lang === 'ka'
+                              ? 'გახსენით მიღების სრული ფორმა, გადაამოწმეთ ფაქტობრივი წონა, თარიღი, ქიმია და დანიშნულების ჭურჭელი, შემდეგ დაადასტურეთ ერთი ატომური ჩანაწერი.'
+                              : 'Open the full intake form, review actual weight, date, chemistry, and destination vessel, then confirm one atomic record.'}
+                          </p>
+                        )}
                         <label
                           htmlFor={`qty-${harvest.id}`}
-                          className="text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold"
+                          className={onPrepareHarvestIntake ? 'sr-only' : 'text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold'}
                         >
                           {lang === 'ka' ? 'მოსავლის ფაქტობრივი წონა (კგ)' : 'Actual harvested weight (kg)'}
                         </label>
@@ -2918,9 +2922,11 @@ export default function VaziModule({
                                 return next;
                               });
                             }}
-                            className={`h-9 bg-white border px-2 py-1 text-xs outline-none rounded font-mono w-full sm:w-28 text-stone-900 ${harvestDispatchErrors[harvest.id] ? 'border-red-500 focus:ring-2 focus:ring-red-200' : 'border-stone-250 focus:border-emerald-700'}`}
+                            className={onPrepareHarvestIntake
+                              ? 'hidden'
+                              : `h-9 bg-white border px-2 py-1 text-xs outline-none rounded font-mono w-full sm:w-28 text-stone-900 ${harvestDispatchErrors[harvest.id] ? 'border-red-500 focus:ring-2 focus:ring-red-200' : 'border-stone-250 focus:border-emerald-700'}`}
                           />
-                          <div className="min-w-0 sm:w-36">
+                          <div className={onPrepareHarvestIntake ? 'hidden' : 'min-w-0 sm:w-36'}>
                             <label
                               htmlFor={`harvest-date-${harvest.id}`}
                               className="mb-1 block text-[9px] font-bold uppercase text-slate-500"
@@ -2942,6 +2948,11 @@ export default function VaziModule({
                             type="button"
                             onClick={() => {
                               if (!canDispatchHarvestToGvino) return;
+                              if (onPrepareHarvestIntake) {
+                                onPrepareHarvestIntake(harvest.id);
+                                navigateTo({ module: 'gvino', tab: 'intake' });
+                                return;
+                              }
                               const dispatch = parseHarvestDispatchInput(
                                 harvestDispatchWeights[harvest.id] || '',
                                 harvestDispatchDates[harvest.id] || localISODate(),
@@ -2993,7 +3004,9 @@ export default function VaziModule({
                             }}
                             className="flex-1 bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold text-[10px] uppercase font-mono px-3.5 py-1.5 rounded cursor-pointer duration-100 flex items-center justify-center gap-1.5"
                           >
-                            <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'მოსავლის გადაცემა მარანში' : 'Dispatch Crop to Gvino Winery'}
+                            <ArrowRight className="w-3.5 h-3.5" /> {onPrepareHarvestIntake
+                              ? (lang === 'ka' ? 'მიღების ფორმის გახსნა' : 'Continue in Grape Intake')
+                              : (lang === 'ka' ? 'მოსავლის გადაცემა მარანში' : 'Dispatch Crop to Gvino Winery')}
                           </button>
                         </div>
                         {harvestDispatchErrors[harvest.id] && (
@@ -3053,7 +3066,7 @@ export default function VaziModule({
           TAB: IPM PHENOSCHEME
           ========================================== */}
       {vaziTab === 'ipm_pheno' && (
-        <IpmPhenoscheme 
+        <IpmPhenoscheme
           lang={lang}
           selectedBlock={selectedBlock}
           sprays={sprays}
@@ -3069,9 +3082,9 @@ export default function VaziModule({
           TAB 7: AGRO-WEATHER STATION
           ========================================== */}
       {vaziTab === 'weather' && (
-        <WeatherTab 
-          lang={lang} 
-          blocks={blocks} 
+        <WeatherTab
+          lang={lang}
+          blocks={blocks}
           setActiveModule={setActiveModule}
           setActiveTab={setActiveTab}
           setPrefilledTaskTitle={setPrefilledTaskTitle}
@@ -3104,7 +3117,7 @@ export default function VaziModule({
               if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
-              
+
               const name = fd.get('name') as string;
               const vineyard = fd.get('vineyardName') as string;
               const area = parseFloat(fd.get('area') as string) || 2.5;
@@ -3203,7 +3216,7 @@ export default function VaziModule({
                     if (typeof loc.elevation === 'number' && loc.elevation > 0) setAddBlockElev(Math.round(loc.elevation));
                   }}
                 />
-                
+
                 <div className="w-full h-40 rounded-lg overflow-hidden border border-stone-200 mt-2 relative z-0">
                   {!MAPS_KEY ? <MapUnavailable lang={lang} /> : (
                   <APIProvider apiKey={MAPS_KEY}>
@@ -3269,24 +3282,24 @@ export default function VaziModule({
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'განედი' : 'Latitude'}</label>
-                  <input 
-                    type="number" 
-                    step="0.0001" 
-                    name="lat" 
-                    value={addBlockLat} 
-                    onChange={(e) => setAddBlockLat(parseFloat(e.target.value) || 41.9)} 
-                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono" 
+                  <input
+                    type="number"
+                    step="0.0001"
+                    name="lat"
+                    value={addBlockLat}
+                    onChange={(e) => setAddBlockLat(parseFloat(e.target.value) || 41.9)}
+                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono"
                   />
                 </div>
                 <div>
                   <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'გრძედი' : 'Longitude'}</label>
-                  <input 
-                    type="number" 
-                    step="0.0001" 
-                    name="lng" 
-                    value={addBlockLng} 
-                    onChange={(e) => setAddBlockLng(parseFloat(e.target.value) || 45.4)} 
-                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono" 
+                  <input
+                    type="number"
+                    step="0.0001"
+                    name="lng"
+                    value={addBlockLng}
+                    onChange={(e) => setAddBlockLng(parseFloat(e.target.value) || 45.4)}
+                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono"
                   />
                 </div>
                 <div>
@@ -3396,7 +3409,7 @@ export default function VaziModule({
                 <textarea name="notes" placeholder={lang === 'ka' ? 'ძველი საფერავის კლონები 5C საძირეზე...' : 'Old Saperavi clones on 5C rootstocks...'} className="w-full bg-stone-50 border border-slate-200 p-2.5 h-16 outline-none" />
               </div>
 
-              <button 
+              <button
                 type="submit"
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-mono font-bold uppercase tracking-wider py-2.5 rounded-lg cursor-pointer"
               >

@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
 import {
   BadgeDollarSign,
   CalendarClock,
   CheckCircle2,
   LockKeyhole,
   PackageCheck,
+  RotateCcw,
   ShoppingCart,
-  Trash2,
   Truck,
   XCircle,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
-import { persistDeletionTombstones } from '../lib/deletionTombstones';
 import type { BottlingRunRecord, SalesDispatchRecord, SalesOrderRecord, WineLot } from '../lib/wineryState';
 import { rollupLots, type CostEntry } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
@@ -19,15 +19,35 @@ import {
   availableToSell,
   computeDispatchFinancials,
   isActiveReservation,
+  isActiveSalesDispatch,
   reservedBottlesFor,
 } from '../lib/sales';
 import {
   computeStock,
-  stockMovementFromDispatch,
   type StockMovement,
   type StorageLocation,
 } from '../lib/storage';
 import { CountUp } from './motion';
+import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
+import {
+  applySalesStockCommand,
+  type SalesStockCommandPayload,
+  type SalesStockCommandResult,
+} from '../lib/commands/salesStock';
+import {
+  applySalesStockReversalCommand,
+  type SalesStockReversalCommandPayload,
+} from '../lib/commands/salesStockReversal';
+import {
+  CommandRequestError,
+  createSalesStockCommandIntent,
+  createSalesStockReversalCommandIntent,
+  pendingSalesStockCommandIntent,
+  pendingSalesStockReversalCommandIntent,
+  submitSalesStockCommand,
+  submitSalesStockReversalCommand,
+  type SalesStockCommandResponse,
+} from '../lib/commands/client';
 
 interface Props {
   lang: Language;
@@ -42,6 +62,7 @@ interface Props {
   onUpdateMovements: (movements: StockMovement[]) => void;
   onUpdateDispatches: (dispatches: SalesDispatchRecord[]) => void;
   onUpdateOrders: (orders: SalesOrderRecord[]) => void;
+  onApplySalesStockCommandResponse?: (response: SalesStockCommandResponse) => void;
   currency: string;
   currentUserName: string;
   setToastMessage?: (message: string) => void;
@@ -49,9 +70,8 @@ interface Props {
   canCreateOrder?: boolean;
   canUpdateOrder?: boolean;
   canCreateDispatch?: boolean;
-  canDeleteDispatch?: boolean;
+  canReverseDispatch?: boolean;
   canCreateStockMovement?: boolean;
-  canDeleteStockMovement?: boolean;
   canViewCosts?: boolean;
   canViewStorage?: boolean;
   canViewBottling?: boolean;
@@ -61,9 +81,8 @@ export interface SalesDispatchActionPermissions {
   canCreateOrder: boolean;
   canUpdateOrder: boolean;
   canCreateDispatch: boolean;
-  canDeleteDispatch: boolean;
+  canReverseDispatch: boolean;
   canCreateStockMovement: boolean;
-  canDeleteStockMovement: boolean;
 }
 
 export const canRecordSalesDispatch = (permissions: SalesDispatchActionPermissions) =>
@@ -72,49 +91,14 @@ export const canRecordSalesDispatch = (permissions: SalesDispatchActionPermissio
 export const canFulfillSalesOrder = (permissions: SalesDispatchActionPermissions) =>
   permissions.canUpdateOrder && canRecordSalesDispatch(permissions);
 
-export const canDeleteSalesDispatch = (
+export const canReverseSalesDispatch = (
   dispatch: SalesDispatchRecord,
-  hasLinkedMovement: boolean,
   permissions: SalesDispatchActionPermissions,
-  hasLinkedOrder = Boolean(dispatch.salesOrderId),
-) => permissions.canDeleteDispatch
-  && (!hasLinkedMovement || permissions.canDeleteStockMovement)
-  && (!hasLinkedOrder || permissions.canUpdateOrder);
-
-export interface SalesDispatchDeletionPlan {
-  deletedIds: string[];
-  stockMovementIds: string[];
-  salesOrderIds: string[];
-}
-
-export const planSalesDispatchDeletion = (
-  dispatch: SalesDispatchRecord,
-  movements: StockMovement[],
-  permissions: SalesDispatchActionPermissions,
-  orders: SalesOrderRecord[] = [],
-): SalesDispatchDeletionPlan | null => {
-  const linkedMovements = movements.filter(movement => (
-    movement.id === dispatch.stockMovementId || movement.sourceRef === dispatch.id
-  ));
-  const salesOrderIds = [...new Set([
-    ...(dispatch.salesOrderId ? [dispatch.salesOrderId] : []),
-    ...orders
-      .filter(order => order.id === dispatch.salesOrderId || order.dispatchId === dispatch.id)
-      .map(order => order.id),
-  ])];
-  if (!canDeleteSalesDispatch(
-    dispatch,
-    linkedMovements.length > 0,
-    permissions,
-    salesOrderIds.length > 0,
-  )) return null;
-  const stockMovementIds = linkedMovements.map(movement => movement.id);
-  return {
-    deletedIds: [dispatch.id, ...stockMovementIds],
-    stockMovementIds,
-    salesOrderIds,
-  };
-};
+) => permissions.canReverseDispatch
+  && Boolean(dispatch.commandId)
+  && dispatch.recordKind !== 'reversal'
+  && !dispatch.reversedByCommandId
+  && !dispatch.reversedAt;
 
 interface StockRow {
   locationId: string;
@@ -141,6 +125,7 @@ export default function SalesDispatchTab({
   onUpdateMovements,
   onUpdateDispatches,
   onUpdateOrders,
+  onApplySalesStockCommandResponse,
   currency,
   currentUserName,
   setToastMessage,
@@ -148,21 +133,27 @@ export default function SalesDispatchTab({
   canCreateOrder = true,
   canUpdateOrder = true,
   canCreateDispatch = true,
-  canDeleteDispatch = true,
+  canReverseDispatch = true,
   canCreateStockMovement = true,
-  canDeleteStockMovement = true,
   canViewCosts = true,
   canViewStorage = true,
   canViewBottling = true,
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
+  const [pendingIntent, setPendingIntent] = useState<PendingCommandIntent<SalesStockCommandPayload> | null>(null);
+  const [pendingReversalIntent, setPendingReversalIntent] = useState<PendingCommandIntent<SalesStockReversalCommandPayload> | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reversalDispatchId, setReversalDispatchId] = useState('');
+  const [reversalReason, setReversalReason] = useState('');
 
   const stock = useMemo(() => computeStock(movements), [movements]);
 
   const bottlesByLot = useMemo(() => {
     const map: Record<string, number> = {};
     for (const r of bottlingRuns) {
+      if (!isActiveBottlingRun(r)) continue;
       map[r.lotId] = (map[r.lotId] || 0) + (r.totalBottles || 0) + (r.totalCeramic || 0);
     }
     return map;
@@ -178,18 +169,16 @@ export default function SalesDispatchTab({
     canCreateOrder,
     canUpdateOrder,
     canCreateDispatch,
-    canDeleteDispatch,
+    canReverseDispatch,
     canCreateStockMovement,
-    canDeleteStockMovement,
   };
   const canRecordDispatch = canRecordSalesDispatch(actionPermissions);
   const canFulfillOrder = canFulfillSalesOrder(actionPermissions);
-  const hasAnySalesAction = canCreateOrder || canUpdateOrder || canRecordDispatch || canDeleteDispatch;
+  const hasAnySalesAction = canCreateOrder || canUpdateOrder || canRecordDispatch || canReverseDispatch;
   const hasAllSalesAccess = canCreateOrder
     && canUpdateOrder
     && canRecordDispatch
-    && canDeleteDispatch
-    && canDeleteStockMovement
+    && canReverseDispatch
     && canViewCosts;
   const showSalesForms = canCreateOrder || canRecordDispatch;
 
@@ -235,6 +224,48 @@ export default function SalesDispatchTab({
   const [requestedDispatchDate, setRequestedDispatchDate] = useState('');
   const [reservedUntil, setReservedUntil] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
+
+  useEffect(() => {
+    const restored = pendingSalesStockCommandIntent();
+    if (!restored) return;
+    setPendingIntent(restored);
+    const payload = restored.payload;
+    if (payload.action === 'reserve') {
+      setOrderDate(payload.orderDate);
+      setOrderCustomerName(payload.customerName);
+      setOrderLocationId(payload.locationId);
+      setOrderLotId(payload.lotId);
+      setOrderBottles(String(payload.bottles));
+      setOrderPricePerBottle(String(payload.pricePerBottle));
+      setRequestedDispatchDate(payload.requestedDispatchDate);
+      setReservedUntil(payload.reservedUntil);
+      setOrderNotes(payload.notes);
+    } else if (payload.action === 'dispatch') {
+      setDate(payload.date);
+      setCustomerName(payload.customerName);
+      setLocationId(payload.locationId);
+      setLotId(payload.lotId);
+      setBottles(String(payload.bottles));
+      setPricePerBottle(String(payload.pricePerBottle));
+      setOperator(payload.operator);
+      setNotes(payload.notes);
+    }
+    setCommandError(ka
+      ? 'წინა გაყიდვის მოქმედება ჯერ არ არის დადასტურებული. იგივე ბრძანების უსაფრთხოდ აღსადგენად ხელახლა გაგზავნეთ.'
+      : 'A previous sales action is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [ka]);
+
+  useEffect(() => {
+    const restored = pendingSalesStockReversalCommandIntent();
+    if (!restored) return;
+    setPendingReversalIntent(restored);
+    setReversalReason(restored.payload.reason);
+    const original = dispatches.find(item => item.commandId === restored.payload.originalCommandId);
+    if (original) setReversalDispatchId(original.id);
+    setCommandError(ka
+      ? 'áƒ’áƒáƒ§áƒ˜áƒ“áƒ•áƒ˜áƒ¡ áƒ™áƒáƒ áƒ”áƒ¥áƒªáƒ˜áƒ áƒ¯áƒ”áƒ  áƒáƒ  áƒáƒ áƒ˜áƒ¡ áƒ“áƒáƒ“áƒáƒ¡áƒ¢áƒ£áƒ áƒ”áƒ‘áƒ£áƒšáƒ˜. áƒ˜áƒ’áƒ˜áƒ•áƒ” áƒ‘áƒ áƒ«áƒáƒœáƒ”áƒ‘áƒ áƒ®áƒ”áƒšáƒáƒ®áƒšáƒ áƒ’áƒáƒ’áƒ–áƒáƒ•áƒœáƒ”áƒ—.'
+      : 'A previous sales reversal is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [dispatches, ka]);
 
   useEffect(() => {
     if (!locationId && availableRows[0]) setLocationId(availableRows[0].locationId);
@@ -318,138 +349,167 @@ export default function SalesDispatchTab({
     value: round2(acc.value + (o.revenue || 0)),
   }), { count: 0, bottles: 0, value: 0 }), [activeOrders]);
 
-  const dispatchTotals = useMemo(() => dispatches.reduce((acc, d) => ({
+  const activeDispatches = useMemo(() => dispatches.filter(isActiveSalesDispatch), [dispatches]);
+  const dispatchTotals = useMemo(() => activeDispatches.reduce((acc, d) => ({
     bottles: acc.bottles + (d.bottles || 0),
     revenue: round2(acc.revenue + (d.revenue || 0)),
     cogs: round2(acc.cogs + (d.cogs || 0)),
     grossProfit: round2(acc.grossProfit + (d.grossProfit || 0)),
-  }), { bottles: 0, revenue: 0, cogs: 0, grossProfit: 0 }), [dispatches]);
+  }), { bottles: 0, revenue: 0, cogs: 0, grossProfit: 0 }), [activeDispatches]);
 
   const fmtMoney = (n: number) => `${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
   const btl = ka ? 'ბოთ.' : 'btl';
-  const locName = (id: string) => locations.find(l => l.id === id)?.name || id;
-  const lotName = (id: string) => lots.find(l => l.id === id)?.name || id;
 
-  const makeDispatch = (input: {
-    date: string;
-    customerName: string;
-    lotId: string;
-    locationId: string;
-    bottles: number;
-    pricePerBottle: number;
-    costPerBottle?: number | null;
-    operator: string;
-    notes?: string;
-    salesOrderId?: string;
-  }): { movement: StockMovement; record: SalesDispatchRecord } | null => {
-    const dispatchId = `sale-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const movement = stockMovementFromDispatch({
-      dispatchId,
-      date: input.date,
-      lotId: input.lotId,
-      locationId: input.locationId,
-      bottles: input.bottles,
-      customerName: input.customerName,
-    });
-    if (!movement) return null;
+  const localizedCommandReceipt = (result: SalesStockCommandResult): string => {
+    const receipt = result.receipt;
+    if (receipt.action === 'reserve') {
+      return ka
+        ? `დაიჯავშნა ${receipt.bottles.toLocaleString()} ბოთლი — ${receipt.customerName}`
+        : `Reserved ${receipt.bottles.toLocaleString()} bottles for ${receipt.customerName}`;
+    }
+    if (receipt.action === 'cancel') {
+      return ka
+        ? `ჯავშანი გაუქმდა: ${receipt.customerName}`
+        : `Reservation cancelled: ${receipt.customerName}`;
+    }
+    if (receipt.action === 'fulfill') {
+      return ka
+        ? `შეკვეთა შესრულდა და გაიტანა: ${receipt.bottles.toLocaleString()} ბოთლი → ${receipt.customerName}`
+        : `Order fulfilled and dispatched: ${receipt.bottles.toLocaleString()} bottles → ${receipt.customerName}`;
+    }
+    return ka
+      ? `გატანა აღირიცხა: ${receipt.bottles.toLocaleString()} ბოთლი → ${receipt.customerName}`
+      : `Dispatch recorded: ${receipt.bottles.toLocaleString()} bottles → ${receipt.customerName}`;
+  };
 
-    const computed = computeDispatchFinancials({
-      bottles: input.bottles,
-      pricePerBottle: input.pricePerBottle,
-      costPerBottle: input.costPerBottle,
-    });
+  const clearSalesCommand = () => {
+    setPendingIntent(null);
+    setCommandError(null);
+  };
 
-    return {
-      movement,
-      record: {
-        id: dispatchId,
-        date: input.date,
-        customerName: input.customerName,
-        lotId: input.lotId,
-        lotName: lotName(input.lotId),
-        locationId: input.locationId,
-        locationName: locName(input.locationId),
-        bottles: input.bottles,
-        pricePerBottle: input.pricePerBottle,
-        currency,
-        revenue: computed.revenue,
-        costPerBottle: input.costPerBottle ?? null,
-        cogs: computed.cogs,
-        grossProfit: computed.grossProfit,
-        marginPct: computed.marginPct,
-        stockMovementId: movement.id,
-        salesOrderId: input.salesOrderId,
-        operator: input.operator,
-        notes: input.notes || undefined,
+  const applySalesCommandLocally = (intent: PendingCommandIntent<SalesStockCommandPayload>) => {
+    const applied = applySalesStockCommand(
+      {
+        lots,
+        bottlingRuns,
+        costEntries,
+        storageLocations: locations,
+        stockMovements: movements,
+        salesDispatches: dispatches,
+        salesOrders: orders,
       },
-    };
+      intent.payload,
+      {
+        commandId: intent.commandId,
+        actorUsername: currentUserName,
+        currency,
+        performedAt: new Date(),
+      },
+    );
+    onUpdateMovements(applied.state.stockMovements);
+    onUpdateDispatches(applied.state.salesDispatches);
+    onUpdateOrders(applied.state.salesOrders);
+    setToastMessage?.(localizedCommandReceipt(applied.result));
+    if (intent.payload.action === 'reserve') {
+      setOrderCustomerName('');
+      setOrderBottles('');
+      setOrderNotes('');
+    } else if (intent.payload.action === 'dispatch') {
+      setBottles('');
+      setCustomerName('');
+      setNotes('');
+    }
+    clearSalesCommand();
+  };
+
+  const executeSalesCommand = async (intent: PendingCommandIntent<SalesStockCommandPayload>) => {
+    setCommandError(null);
+    if (!onApplySalesStockCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingIntent) {
+        setCommandError(ka
+          ? 'დაუდასტურებელი გაყიდვის მოქმედების აღდგენას ინტერნეტთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged sales action requires a server connection.');
+        return;
+      }
+      try {
+        applySalesCommandLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Sales stock validation failed.');
+      }
+      return;
+    }
+
+    setPendingIntent(intent);
+    setIsSubmitting(true);
+    try {
+      const response = await submitSalesStockCommand(intent);
+      onApplySalesStockCommandResponse(response);
+      setToastMessage?.(localizedCommandReceipt(response.result));
+      if (intent.payload.action === 'reserve') {
+        setOrderCustomerName('');
+        setOrderBottles('');
+        setOrderNotes('');
+      } else if (intent.payload.action === 'dispatch') {
+        setBottles('');
+        setCustomerName('');
+        setNotes('');
+      }
+      clearSalesCommand();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingIntent) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applySalesCommandLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error ? fallbackError.message : 'Sales stock validation failed.');
+          setPendingIntent(null);
+          return;
+        }
+      }
+      setCommandError(error instanceof Error ? error.message : 'Sales stock command failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingIntent(null);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const submitDispatch = () => {
-    if (!canRecordDispatch || !canDispatch || !selectedRow) return;
-    const result = makeDispatch({
+    if (pendingIntent || pendingReversalIntent || !canRecordDispatch || !canDispatch || !selectedRow) return;
+    void executeSalesCommand(createSalesStockCommandIntent({
+      action: 'dispatch',
       date,
       customerName: customerName.trim(),
       lotId,
       locationId,
       bottles: qty,
       pricePerBottle: price,
-      costPerBottle,
       operator: operator.trim() || currentUserName,
       notes: notes.trim(),
-    });
-    if (!result) return;
-
-    onUpdateMovements([result.movement, ...movements]);
-    onUpdateDispatches([result.record, ...dispatches]);
-    setBottles('');
-    setCustomerName('');
-    setNotes('');
-    setToastMessage?.(ka
-      ? `გატანა აღირიცხა: ${qty.toLocaleString()} ბოთლი → ${result.record.customerName}`
-      : `Dispatch recorded: ${qty.toLocaleString()} bottles → ${result.record.customerName}`);
+    }));
   };
 
   const submitOrder = () => {
-    if (!canCreateOrder || !canReserve || !selectedOrderRow) return;
-    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
-    const orderId = `so-${Date.now()}-${suffix.toLowerCase()}`;
-    const record: SalesOrderRecord = {
-      id: orderId,
-      orderNumber: `SO-${orderDate.replace(/-/g, '')}-${suffix}`,
+    if (pendingIntent || pendingReversalIntent || !canCreateOrder || !canReserve || !selectedOrderRow) return;
+    void executeSalesCommand(createSalesStockCommandIntent({
+      action: 'reserve',
       orderDate,
-      createdAt: new Date().toISOString(),
-      requestedDispatchDate: requestedDispatchDate || undefined,
-      reservedUntil: reservedUntil || undefined,
+      requestedDispatchDate,
+      reservedUntil,
       customerName: orderCustomerName.trim(),
       lotId: orderLotId,
-      lotName: lotName(orderLotId),
       locationId: orderLocationId,
-      locationName: locName(orderLocationId),
       bottles: orderQty,
       pricePerBottle: orderPrice,
-      currency,
-      revenue: orderFinancials.revenue,
-      costPerBottle: orderCostPerBottle,
-      cogs: orderFinancials.cogs,
-      grossProfit: orderFinancials.grossProfit,
-      marginPct: orderFinancials.marginPct,
-      status: 'reserved',
       operator: currentUserName,
-      notes: orderNotes.trim() || undefined,
-    };
-
-    onUpdateOrders([record, ...orders]);
-    setOrderCustomerName('');
-    setOrderBottles('');
-    setOrderNotes('');
-    setToastMessage?.(ka
-      ? `დაიჯავშნა ${orderQty.toLocaleString()} ბოთლი — ${record.customerName}`
-      : `Reserved ${orderQty.toLocaleString()} bottles for ${record.customerName}`);
+      notes: orderNotes.trim(),
+    }));
   };
 
   const fulfillOrder = (orderId: string) => {
-    if (!canFulfillOrder) return;
+    if (pendingIntent || pendingReversalIntent || !canFulfillOrder) return;
     const order = orders.find(o => o.id === orderId);
     if (!order || order.status !== 'reserved') return;
 
@@ -470,86 +530,130 @@ export default function SalesDispatchTab({
       return;
     }
 
-    const result = makeDispatch({
+    void executeSalesCommand(createSalesStockCommandIntent({
+      action: 'fulfill',
+      orderId: order.id,
       date: today,
-      customerName: order.customerName,
-      lotId: order.lotId,
-      locationId: order.locationId,
-      bottles: order.bottles,
-      pricePerBottle: order.pricePerBottle,
-      costPerBottle: order.costPerBottle ?? costSummaries.get(order.lotId)?.perBottle ?? null,
       operator: currentUserName,
-      notes: order.notes
-        ? (ka ? `შესრულდა შეკვეთა ${order.orderNumber || order.id}. ${order.notes}` : `Fulfilled order ${order.orderNumber || order.id}. ${order.notes}`)
-        : (ka ? `შესრულდა შეკვეთა ${order.orderNumber || order.id}` : `Fulfilled order ${order.orderNumber || order.id}`),
-      salesOrderId: order.id,
-    });
-    if (!result) return;
-
-    onUpdateMovements([result.movement, ...movements]);
-    onUpdateDispatches([result.record, ...dispatches]);
-    onUpdateOrders(orders.map(o => o.id === order.id
-      ? { ...o, status: 'fulfilled', dispatchId: result.record.id, fulfilledAt: new Date().toISOString() }
-      : o));
-    setToastMessage?.(ka
-      ? `შეკვეთა შესრულდა და გაიტანა: ${order.bottles.toLocaleString()} ბოთლი → ${order.customerName}`
-      : `Order fulfilled and dispatched: ${order.bottles.toLocaleString()} bottles → ${order.customerName}`);
+    }));
   };
 
   const cancelOrder = (orderId: string) => {
-    if (!canUpdateOrder) return;
+    if (pendingIntent || pendingReversalIntent || !canUpdateOrder) return;
     const order = orders.find(o => o.id === orderId);
     if (!order || order.status !== 'reserved') return;
-    onUpdateOrders(orders.map(o => o.id === orderId
-      ? { ...o, status: 'cancelled', cancelledAt: new Date().toISOString() }
-      : o));
-    setToastMessage?.(ka
-      ? `ჯავშანი გაუქმდა: ${order.orderNumber || order.customerName}`
-      : `Reservation cancelled: ${order.orderNumber || order.customerName}`);
+    void executeSalesCommand(createSalesStockCommandIntent({ action: 'cancel', orderId }));
   };
 
-  const deleteDispatch = (id: string) => {
-    const dispatch = dispatches.find(d => d.id === id);
-    if (!dispatch) return;
-    const deletion = planSalesDispatchDeletion(dispatch, movements, actionPermissions, orders);
-    if (!deletion) return;
-    if (typeof window !== 'undefined') {
-      const linkedEffects = [
-        deletion.stockMovementIds.length > 0
-          ? (ka ? 'დაკავშირებული მარაგის მოძრაობაც წაიშლება' : 'the linked stock movement will also be deleted')
-          : '',
-        deletion.salesOrderIds.length > 0
-          ? (ka ? 'დაკავშირებული შეკვეთა კვლავ დაჯავშნილად გაიხსნება' : 'the linked order will be reopened as reserved')
-          : '',
-      ].filter(Boolean).join(ka ? ' და ' : ' and ');
-      const confirmed = window.confirm(ka
-        ? `წავშალოთ ეს გატანა? ${linkedEffects ? `${linkedEffects}. ` : ''}სინქრონიზაციის შემდეგ მოქმედების გაუქმება შეუძლებელია.`
-        : `Delete this dispatch? ${linkedEffects ? `${linkedEffects}. ` : ''}This cannot be undone after sync.`);
-      if (!confirmed) return;
-    }
-    if (typeof window === 'undefined' || !persistDeletionTombstones([
-      { id: dispatch.id, collection: 'salesDispatches' },
-      ...deletion.stockMovementIds.map(movementId => ({ id: movementId, collection: 'stockMovements' })),
-    ], localStorage)) {
-      setToastMessage?.(ka
-        ? 'გატანის წაშლა ვერ დაიწყო, რადგან ცვლილება ამ მოწყობილობაზე უსაფრთხოდ ვერ შეინახა. სცადეთ ხელახლა.'
-        : 'Dispatch deletion could not start because this device could not save it safely. Please try again.');
+  const clearReversalCommand = () => {
+    setPendingReversalIntent(null);
+    setReversalDispatchId('');
+    setReversalReason('');
+    setCommandError(null);
+  };
+
+  const localizedReversalReceipt = (dispatch: SalesDispatchRecord): string => ka
+    ? `გატანა კორექტირდა და ${dispatch.bottles.toLocaleString()} ბოთლი მარაგში დაბრუნდა.`
+    : `Dispatch corrected and ${dispatch.bottles.toLocaleString()} bottles returned to stock.`;
+
+  const applyReversalLocally = (intent: PendingCommandIntent<SalesStockReversalCommandPayload>) => {
+    const applied = applySalesStockReversalCommand({
+      lots,
+      storageLocations: locations,
+      stockMovements: movements,
+      salesDispatches: dispatches,
+      salesOrders: orders,
+    }, intent.payload, {
+      commandId: intent.commandId,
+      actorUsername: currentUserName,
+      performedAt: new Date(),
+    });
+    onUpdateMovements(applied.state.stockMovements);
+    onUpdateDispatches(applied.state.salesDispatches);
+    onUpdateOrders(applied.state.salesOrders);
+    setToastMessage?.(localizedReversalReceipt(applied.result.originalDispatch));
+    clearReversalCommand();
+  };
+
+  const executeReversalCommand = async (intent: PendingCommandIntent<SalesStockReversalCommandPayload>) => {
+    setCommandError(null);
+    if (!onApplySalesStockCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingReversalIntent) {
+        setCommandError(ka
+          ? 'დაუდასტურებელი კორექციის აღდგენას სერვერთან კავშირი სჭირდება.'
+          : 'Recovering an unacknowledged reversal requires a server connection.');
+        return;
+      }
+      try {
+        applyReversalLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Sales reversal validation failed.');
+      }
       return;
     }
-    onUpdateDispatches(dispatches.filter(d => d.id !== id));
-    if (deletion.stockMovementIds.length > 0) {
-      onUpdateMovements(movements.filter(m => !deletion.stockMovementIds.includes(m.id)));
-    }
-    if (deletion.salesOrderIds.length > 0) {
-      onUpdateOrders(orders.map(o => deletion.salesOrderIds.includes(o.id)
-        ? { ...o, status: 'reserved', dispatchId: null, fulfilledAt: null }
-        : o));
+
+    setPendingReversalIntent(intent);
+    setIsSubmitting(true);
+    try {
+      const response = await submitSalesStockReversalCommand(intent);
+      if (response.collections) {
+        onUpdateMovements(response.collections.stockMovements);
+        onUpdateDispatches(response.collections.salesDispatches);
+        onUpdateOrders(response.collections.salesOrders);
+      } else {
+        const result = response.result;
+        const changedDispatches = new Map([
+          [result.originalDispatch.id, result.originalDispatch],
+          [result.reversalDispatch.id, result.reversalDispatch],
+        ]);
+        const nextDispatches = dispatches.map(item => changedDispatches.get(item.id) || item);
+        if (!nextDispatches.some(item => item.id === result.reversalDispatch.id)) {
+          nextDispatches.unshift(result.reversalDispatch);
+        }
+        onUpdateDispatches(nextDispatches);
+        onUpdateMovements(movements.some(item => item.id === result.returnMovement.id)
+          ? movements
+          : [result.returnMovement, ...movements]);
+        if (result.changedOrder) {
+          onUpdateOrders(orders.map(item => item.id === result.changedOrder?.id
+            ? result.changedOrder as SalesOrderRecord
+            : item));
+        }
+      }
+      setToastMessage?.(localizedReversalReceipt(response.result.originalDispatch));
+      clearReversalCommand();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingReversalIntent) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyReversalLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error ? fallbackError.message : 'Sales reversal validation failed.');
+          setPendingReversalIntent(null);
+          return;
+        }
+      }
+      setCommandError(error instanceof Error ? error.message : 'Sales reversal command failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingReversalIntent(null);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const mayDeleteDispatch = (dispatch: SalesDispatchRecord) =>
-    planSalesDispatchDeletion(dispatch, movements, actionPermissions, orders) !== null;
-  const showDispatchDeleteActions = dispatches.some(mayDeleteDispatch);
+  const submitReversal = () => {
+    const original = dispatches.find(item => item.id === reversalDispatchId);
+    if (pendingIntent || pendingReversalIntent || !original?.commandId
+      || !canReverseSalesDispatch(original, actionPermissions) || !reversalReason.trim()) return;
+    void executeReversalCommand(createSalesStockReversalCommandIntent({
+      originalCommandId: original.commandId,
+      reason: reversalReason.trim(),
+    }));
+  };
+
+  const showDispatchCorrectionActions = dispatches.some(item => canReverseSalesDispatch(item, actionPermissions));
 
   const statusKey = (order: SalesOrderRecord) => {
     if (order.status === 'reserved' && !isActiveReservation(order, today)) return 'expired';
@@ -616,6 +720,30 @@ export default function SalesDispatchTab({
           </span>
         </div>
       )}
+
+      {(pendingIntent || pendingReversalIntent || commandError) && (
+        <div role={commandError ? 'alert' : 'status'} className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+          <span>{commandError || (ka
+            ? 'გაყიდვის მოქმედება სერვერის დადასტურებას ელოდება.'
+            : 'A sales action is waiting for server acknowledgement.')}</span>
+          {(pendingIntent || pendingReversalIntent) && (
+            <button
+              type="button"
+              onClick={() => pendingReversalIntent
+                ? void executeReversalCommand(pendingReversalIntent)
+                : pendingIntent
+                  ? void executeSalesCommand(pendingIntent)
+                  : undefined}
+              disabled={isSubmitting}
+              className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white disabled:opacity-50"
+            >
+              {ka ? 'იგივე მოქმედების ხელახლა გაგზავნა' : 'Resubmit same action'}
+            </button>
+          )}
+        </div>
+      )}
+
+      <fieldset disabled={Boolean(pendingIntent || pendingReversalIntent) || isSubmitting} className="contents">
 
       <div className={`grid grid-cols-2 ${canViewCosts ? 'xl:grid-cols-5' : 'xl:grid-cols-4'} gap-3`}>
         {[
@@ -1016,9 +1144,12 @@ export default function SalesDispatchTab({
                         <p className="font-mono text-[10px] text-stone-500">{d.date}</p>
                         <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{d.customerName}</h4>
                         {d.salesOrderId && <p className="text-[10px] text-blue-500">{ka ? 'ჯავშნიდან' : 'from reservation'}</p>}
+                        {d.recordKind === 'reversal' && <p className="text-[10px] font-bold text-amber-700">{ka ? 'კორექცია / დაბრუნება' : 'correction / return'}</p>}
+                        {d.reversedByCommandId && <p className="text-[10px] font-bold text-stone-500">{ka ? 'კორექტირებული' : 'reversed'}</p>}
+                        {!d.commandId && <p className="text-[10px] text-stone-400">{ka ? 'ძველი ჩანაწერი · მხოლოდ ნახვა' : 'legacy · read-only'}</p>}
                       </div>
-                      {mayDeleteDispatch(d) && <button onClick={() => deleteDispatch(d.id)} aria-label={ka ? `${d.customerName}-ის გატანის წაშლა` : `Delete dispatch for ${d.customerName}`} className="shrink-0 text-stone-300 hover:text-rose-600 cursor-pointer" title={ka ? 'გატანის წაშლა' : 'Delete dispatch'}>
-                        <Trash2 className="w-4 h-4" />
+                      {canReverseSalesDispatch(d, actionPermissions) && <button onClick={() => { setReversalDispatchId(d.id); setCommandError(null); }} aria-label={ka ? `${d.customerName}-ის გატანის კორექცია` : `Correct dispatch for ${d.customerName}`} className="shrink-0 text-stone-400 hover:text-amber-700 cursor-pointer" title={ka ? 'კორექცია და მარაგის დაბრუნება' : 'Correct and return stock'}>
+                        <RotateCcw className="w-4 h-4" />
                       </button>}
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-[11px]">
@@ -1043,7 +1174,7 @@ export default function SalesDispatchTab({
                       <th className="p-2.5 text-right">{ka ? 'ბოთლები' : 'Bottles'}</th>
                       <th className="p-2.5 text-right">{ka ? 'შემოსავალი' : 'Revenue'}</th>
                       {canViewCosts && <th className="p-2.5 text-right">{ka ? 'მარჟა' : 'Margin'}</th>}
-                      {showDispatchDeleteActions && <th className="p-2.5"></th>}
+                      {showDispatchCorrectionActions && <th className="p-2.5"></th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
@@ -1053,6 +1184,9 @@ export default function SalesDispatchTab({
                           <span className="font-mono text-stone-500">{d.date}</span>
                           <span className="block font-bold text-stone-800 dark:text-amber-50">{d.customerName}</span>
                           {d.salesOrderId && <span className="block text-[9px] text-blue-500">{ka ? 'ჯავშნიდან' : 'from reservation'}</span>}
+                          {d.recordKind === 'reversal' && <span className="block text-[9px] font-bold text-amber-700">{ka ? 'კორექცია / დაბრუნება' : 'correction / return'}</span>}
+                          {d.reversedByCommandId && <span className="block text-[9px] font-bold text-stone-500">{ka ? 'კორექტირებული' : 'reversed'}</span>}
+                          {!d.commandId && <span className="block text-[9px] text-stone-400">{ka ? 'ძველი ჩანაწერი · მხოლოდ ნახვა' : 'legacy · read-only'}</span>}
                         </td>
                         <td className="p-2.5">
                           <span className="font-bold text-stone-700 dark:text-stone-200">{d.lotName}</span>
@@ -1061,9 +1195,9 @@ export default function SalesDispatchTab({
                         <td className="p-2.5 text-right font-bold">{d.bottles.toLocaleString()}</td>
                         <td className="p-2.5 text-right font-mono text-emerald-700 dark:text-emerald-400">{fmtMoney(d.revenue || 0)}</td>
                         {canViewCosts && <td className="p-2.5 text-right font-mono">{d.marginPct != null ? `${d.marginPct}%` : '—'}</td>}
-                        {showDispatchDeleteActions && <td className="p-2.5 text-right">
-                          {mayDeleteDispatch(d) && <button onClick={() => deleteDispatch(d.id)} aria-label={ka ? `${d.customerName}-ის გატანის წაშლა` : `Delete dispatch for ${d.customerName}`} className="text-stone-300 hover:text-rose-600 cursor-pointer" title={ka ? 'გატანის წაშლა' : 'Delete dispatch'}>
-                            <Trash2 className="w-3.5 h-3.5" />
+                        {showDispatchCorrectionActions && <td className="p-2.5 text-right">
+                          {canReverseSalesDispatch(d, actionPermissions) && <button onClick={() => { setReversalDispatchId(d.id); setCommandError(null); }} aria-label={ka ? `${d.customerName}-ის გატანის კორექცია` : `Correct dispatch for ${d.customerName}`} className="text-stone-400 hover:text-amber-700 cursor-pointer" title={ka ? 'კორექცია და მარაგის დაბრუნება' : 'Correct and return stock'}>
+                            <RotateCcw className="w-3.5 h-3.5" />
                           </button>}
                         </td>}
                       </tr>
@@ -1071,11 +1205,52 @@ export default function SalesDispatchTab({
                   </tbody>
                 </table>
               </div>
+              {reversalDispatchId && (() => {
+                const original = dispatches.find(item => item.id === reversalDispatchId);
+                if (!original) return null;
+                return (
+                  <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/20">
+                    <div className="flex items-start gap-3">
+                      <RotateCcw className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-xs font-bold text-amber-950 dark:text-amber-100">
+                          {ka ? 'გატანის კორექცია და მარაგის დაბრუნება' : 'Correct dispatch and return stock'}
+                        </h4>
+                        <p className="mt-1 text-[11px] text-amber-900/80 dark:text-amber-200/80">
+                          {original.id} · {original.customerName} · {original.bottles.toLocaleString()} {btl}. {ka
+                            ? 'თავდაპირველი გატანა დარჩება აუდიტის ისტორიაში; დაემატება შემომავალი დაბრუნება.'
+                            : 'The original dispatch stays in the audit trail; an inbound return is appended.'}
+                        </p>
+                        <label className="mt-3 block text-[9px] font-bold uppercase tracking-widest text-amber-900 dark:text-amber-200">
+                          {ka ? 'კორექციის მიზეზი' : 'Correction reason'}
+                        </label>
+                        <textarea
+                          value={reversalReason}
+                          onChange={event => setReversalReason(event.target.value)}
+                          maxLength={500}
+                          rows={2}
+                          placeholder={ka ? 'აღწერეთ რატომ დაბრუნდა მარაგი…' : 'Explain why the stock was returned…'}
+                          className="mt-1 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs outline-none focus:border-amber-700 dark:border-amber-800 dark:bg-stone-950"
+                        />
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button type="button" onClick={submitReversal} disabled={!reversalReason.trim()} className="rounded-lg bg-amber-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white disabled:opacity-40">
+                            {ka ? 'კორექციის ჩაწერა' : 'Record correction'}
+                          </button>
+                          <button type="button" onClick={() => { setReversalDispatchId(''); setReversalReason(''); setCommandError(null); }} className="rounded-lg border border-amber-300 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:text-amber-100">
+                            {ka ? 'დახურვა' : 'Close'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               </>
             )}
           </div>
         </div>
       </div>
+      </fieldset>
     </main>
   );
 }

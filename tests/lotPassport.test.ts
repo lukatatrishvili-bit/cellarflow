@@ -189,6 +189,16 @@ describe('lot passport report', () => {
       blocks: [block],
       harvests: [harvest],
       grapeIntakes: [intake],
+      cellarOps: [{
+        id: 'OP-1', commandId: 'cmd-op', recordKind: 'operation', date: '2027-10-01',
+        type: 'fining', lotId: lot.id, lotName: lot.name, operator: 'Nino', notes: '',
+        reversedByCommandId: 'cmd-op-reversal', reversalReason: 'Wrong lot selected.',
+      }, {
+        id: 'OP-1-REV', commandId: 'cmd-op-reversal', recordKind: 'reversal', date: '2027-10-02',
+        type: 'correction', customLabel: 'Reversal of fining', lotId: lot.id, lotName: lot.name,
+        operator: 'Owner', notes: 'Wrong lot selected.', reversalOfOperationId: 'OP-1',
+        reversalOfCommandId: 'cmd-op', reversalReason: 'Wrong lot selected.',
+      }],
       bottlingRuns: [{ id: 'BOT-1', lotId: lot.id, lotName: lot.name, date: '2027-11-20', lotNumber: 'K-1', operator: 'Nino', formats: {}, totalBottles: 3000, totalCeramic: 0, volumeBottledL: 2250 }],
       stockMovements: [{ id: 'MOVE-1', date: '2027-11-20', lotId: lot.id, locationId: 'WH-1', direction: 'in', bottles: 3000, reason: 'bottling' }],
       storageLocations: [{ id: 'WH-1', name: 'Main Warehouse', type: 'warehouse' }],
@@ -208,5 +218,8 @@ describe('lot passport report', () => {
     expect(html).toContain('sha256:aaaaaaaaaaaa');
     expect(html).toContain('Restaurant');
     expect(html).toContain('Audit History');
+    expect(html).toContain('Cellar operation (reversed)');
+    expect(html).toContain('Cellar operation correction');
+    expect(html).toContain('Wrong lot selected.');
   });
 });

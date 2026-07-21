@@ -28,7 +28,9 @@ import type {
   WineLot,
   DocumentAttachment,
 } from '../lib/wineryState';
+import { isActiveHarvestIntake } from '../lib/harvestIntakeIntegrity';
 import { evaluateCertificationChecklist, requiredLabParameters } from '../lib/certification';
+import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
 import { checkPdoEligibility, findPdoCandidates, getPdoRule, PDO_RULES } from '../lib/pdo';
 import {
   attachmentUploadPreflightError,
@@ -197,8 +199,8 @@ export default function CertificationManagerTab({
 
   const linkedIntake = useMemo(() => {
     if (!selectedLot) return undefined;
-    return grapeIntakes.find(intake => intake.createdLotId === selectedLot.id)
-      || grapeIntakes.find(intake => intake.blockName === selectedLot.vineyardBlock);
+    return grapeIntakes.find(intake => isActiveHarvestIntake(intake) && intake.createdLotId === selectedLot.id)
+      || grapeIntakes.find(intake => isActiveHarvestIntake(intake) && intake.blockName === selectedLot.vineyardBlock);
   }, [grapeIntakes, selectedLot]);
 
   const linkedBlock = useMemo(() => {
@@ -255,7 +257,7 @@ export default function CertificationManagerTab({
   const relatedBottlingRuns = useMemo(() => {
     if (!selectedLot) return [];
     return bottlingRuns
-      .filter(run => run.lotId === selectedLot.id)
+      .filter(run => run.lotId === selectedLot.id && isActiveBottlingRun(run))
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [bottlingRuns, selectedLot]);
 
@@ -462,7 +464,7 @@ export default function CertificationManagerTab({
                   onChange={event => setSelectedLotId(event.target.value)}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
                 >
-                  {lots.map(lot => (
+                  {lots.filter(lot => !lot.voidedAt).map(lot => (
                     <option key={lot.id} value={lot.id}>
                       {lot.name} ({lot.id})
                     </option>

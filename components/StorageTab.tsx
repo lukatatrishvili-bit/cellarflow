@@ -5,6 +5,7 @@ import type { WineLot, BottlingRunRecord, SalesDispatchRecord, SalesOrderRecord 
 import {
   computeStock,
   isFinishedGoodsLot,
+  lotTotalStored,
   storageLocationReferences,
   storageMovementDeletionBlockers,
   unstored,
@@ -17,6 +18,20 @@ import {
 } from '../lib/storage';
 import { reservedBottlesFor, stockAvailabilityPosition } from '../lib/sales';
 import { CountUp } from './motion';
+import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
+import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
+import {
+  applyStorageMovementCommand,
+  bottlingRunUnplacedUnits,
+  type StorageMovementCommandPayload,
+} from '../lib/commands/storageMovement';
+import {
+  CommandRequestError,
+  createStorageMovementCommandIntent,
+  pendingStorageMovementCommandIntent,
+  submitStorageMovementCommand,
+  type StorageMovementCommandResponse,
+} from '../lib/commands/client';
 
 interface Props {
   lang: Language;
@@ -28,6 +43,9 @@ interface Props {
   dispatches?: SalesDispatchRecord[];
   onUpdateLocations: (locations: StorageLocation[]) => void;
   onUpdateMovements: (movements: StockMovement[]) => void;
+  onUpdateBottlingRuns?: (runs: BottlingRunRecord[]) => void;
+  onApplyStorageMovementCommandResponse?: (response: StorageMovementCommandResponse) => void;
+  currentUserName?: string;
   onDeleteLocation?: (locationId: string) => boolean | void;
   onDeleteMovement?: (movementId: string) => boolean | void;
   setToastMessage?: (message: string) => void;
@@ -71,6 +89,9 @@ const locationDeletionReason = (references: StorageLocationReferences, ka: boole
 
 const movementDeletionReason = (blockers: StorageMovementDeletionBlockers, ka: boolean): string => {
   const linked: string[] = [];
+  if (blockers.commandIds.length > 0) {
+    linked.push(ka ? 'სერვერის ატომურ ბრძანებას' : 'an atomic server command');
+  }
   if (blockers.bottlingRunIds.length > 0) {
     linked.push(ka
       ? `${blockers.bottlingRunIds.length} ჩამოსხმის ჩანაწერს`
@@ -80,6 +101,9 @@ const movementDeletionReason = (blockers: StorageMovementDeletionBlockers, ka: b
     linked.push(ka
       ? `${blockers.salesDispatchIds.length} გაცემის ჩანაწერს`
       : `${blockers.salesDispatchIds.length} sales dispatch${blockers.salesDispatchIds.length === 1 ? '' : 'es'}`);
+  }
+  if (blockers.relatedMovementIds.length > 0) {
+    linked.push(ka ? 'áƒ¬áƒ§áƒ•áƒ˜áƒš áƒ¨áƒ˜áƒ“áƒ áƒ’áƒáƒ“áƒáƒ¢áƒáƒœáƒáƒ¡' : 'a paired internal relocation');
   }
   if (linked.length > 0) {
     return ka
@@ -107,6 +131,9 @@ export default function StorageTab({
   dispatches = [],
   onUpdateLocations,
   onUpdateMovements,
+  onUpdateBottlingRuns,
+  onApplyStorageMovementCommandResponse,
+  currentUserName = 'Cellar Crew',
   onDeleteLocation,
   onDeleteMovement,
   setToastMessage,
@@ -121,7 +148,10 @@ export default function StorageTab({
 
   const producedByLot = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const r of bottlingRuns) m[r.lotId] = (m[r.lotId] || 0) + (r.totalBottles || 0) + (r.totalCeramic || 0);
+    for (const r of bottlingRuns) {
+      if (!isActiveBottlingRun(r)) continue;
+      m[r.lotId] = (m[r.lotId] || 0) + (r.totalBottles || 0) + (r.totalCeramic || 0);
+    }
     return m;
   }, [bottlingRuns]);
 
@@ -192,17 +222,70 @@ export default function StorageTab({
     onUpdateLocations(locations.filter(location => location.id !== locationId));
   };
 
-  // movement form
+  // Command-owned movement form. Sales owns customer dispatches and bottling
+  // owns same-transaction placement; this form only receives previously
+  // unplaced output, relocates stock, or records an explicit count adjustment.
+  const [mAction, setMAction] = useState<'receive' | 'relocate' | 'adjust'>('receive');
   const [mDate, setMDate] = useState(new Date().toISOString().slice(0, 10));
   const [mLot, setMLot] = useState(finishedGoodsLots[0]?.id || '');
+  const [mRun, setMRun] = useState('');
   const [mLoc, setMLoc] = useState('');
-  const [mDir, setMDir] = useState<'in' | 'out'>('in');
+  const [mDest, setMDest] = useState('');
+  const [mDir, setMDir] = useState<'in' | 'out'>('out');
   const [mQty, setMQty] = useState('');
+  const [mReason, setMReason] = useState('Inventory count correction');
+  const [mNote, setMNote] = useState('');
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingIntent, setPendingIntent] = useState<PendingCommandIntent<StorageMovementCommandPayload> | null>(null);
+
+  const unplacedRuns = useMemo(() => bottlingRuns.filter(run => (
+    isActiveBottlingRun(run) && bottlingRunUnplacedUnits(run, movements) > 0
+  )), [bottlingRuns, movements]);
+
+  useEffect(() => {
+    const restored = pendingStorageMovementCommandIntent();
+    if (!restored) return;
+    setPendingIntent(restored);
+    setMAction(restored.payload.action);
+    setMDate(restored.payload.date);
+    setMLot(restored.payload.lotId);
+    setMQty(String(restored.payload.bottles));
+    setMNote(restored.payload.note);
+    if (restored.payload.action === 'receive') {
+      setMRun(restored.payload.bottlingRunId);
+      setMLoc(restored.payload.locationId);
+    } else if (restored.payload.action === 'relocate') {
+      setMLoc(restored.payload.sourceLocationId);
+      setMDest(restored.payload.destinationLocationId);
+    } else {
+      setMLoc(restored.payload.locationId);
+      setMDir(restored.payload.direction);
+      setMReason(restored.payload.adjustmentReason);
+    }
+    setCommandError(ka
+      ? 'წინა მოძრაობის შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანება ხელახლა გააგზავნეთ.'
+      : 'A previous movement is not yet acknowledged. Resubmit to recover the same command safely.');
+  }, [ka]);
+
   useEffect(() => {
     if (finishedGoodsLots.some(lot => lot.id === mLot)) return;
     setMLot(finishedGoodsLots[0]?.id || '');
   }, [finishedGoodsLots, mLot]);
+
+  const receiveRunsForLot = useMemo(
+    () => unplacedRuns.filter(run => run.lotId === mLot),
+    [mLot, unplacedRuns],
+  );
+  useEffect(() => {
+    if (mAction !== 'receive' || receiveRunsForLot.some(run => run.id === mRun)) return;
+    setMRun(receiveRunsForLot[0]?.id || '');
+  }, [mAction, mRun, receiveRunsForLot]);
+
   const moveQty = Math.max(0, parseInt(mQty) || 0);
+  const selectedLotIsFinishedGoods = finishedGoodsLots.some(lot => lot.id === mLot);
+  const selectedRun = receiveRunsForLot.find(run => run.id === mRun);
+  const selectedRunRemaining = selectedRun ? bottlingRunUnplacedUnits(selectedRun, movements) : 0;
   const selectedOnHand = stock.get(mLoc)?.byLot[mLot] || 0;
   const selectedPosition = stockAvailabilityPosition({
     onHandBottles: selectedOnHand,
@@ -211,40 +294,170 @@ export default function StorageTab({
     lotId: mLot,
     asOfDate: today,
   });
-  const overAvailableForOut = mDir === 'out' && moveQty > selectedPosition.availableBottles;
-  const selectedLotIsFinishedGoods = finishedGoodsLots.some(lot => lot.id === mLot);
-  const canMove = selectedLotIsFinishedGoods && !!mLoc && moveQty > 0 && !overAvailableForOut;
-  const submitMove = () => {
-    if (!canCreateMovement) return;
-    if (!canMove) {
-      if (overAvailableForOut) {
-        setToastMessage?.(
-          ka
-            ? 'ვერ გაიცემა: რაოდენობა აჭარბებს არარეზერვირებულ ხელმისაწვდომ მარაგს.'
-            : 'Cannot record outbound movement: quantity exceeds unreserved available stock.'
-        );
-      } else if (!selectedLotIsFinishedGoods) {
-        setToastMessage?.(ka
-          ? 'საწყობში მოძრაობა მხოლოდ ჩამოსხმულ ღვინოს შეიძლება შეეხოს.'
-          : 'Storage movements can only use bottled wine with bottling provenance.');
+  const destinationId = mAction === 'relocate' ? mDest : mLoc;
+  const destination = locations.find(location => location.id === destinationId);
+  const destinationStored = stock.get(destinationId)?.totalBottles || 0;
+  const addsToDestination = mAction === 'receive' || mAction === 'relocate'
+    || (mAction === 'adjust' && mDir === 'in');
+  const overDestinationCapacity = addsToDestination && Boolean(
+    destination?.capacityBottles && destinationStored + moveQty > destination.capacityBottles,
+  );
+  const overAvailableForOut = (mAction === 'relocate' || (mAction === 'adjust' && mDir === 'out'))
+    && moveQty > selectedPosition.availableBottles;
+  const overRunRemaining = mAction === 'receive' && moveQty > selectedRunRemaining;
+  const producedForSelectedLot = producedByLot[mLot] || 0;
+  const overProducedForAdjustment = mAction === 'adjust' && mDir === 'in'
+    && lotTotalStored(movements, mLot) + moveQty > producedForSelectedLot;
+  const canMove = selectedLotIsFinishedGoods
+    && moveQty > 0
+    && !!mDate
+    && !overAvailableForOut
+    && !overDestinationCapacity
+    && !overRunRemaining
+    && !overProducedForAdjustment
+    && (mAction === 'receive'
+      ? Boolean(mRun && mLoc)
+      : mAction === 'relocate'
+        ? Boolean(mLoc && mDest && mLoc !== mDest)
+        : Boolean(mLoc && mReason.trim()));
+  const formLocked = isSubmitting || Boolean(pendingIntent);
+
+  const finishMovementCommand = () => {
+    setPendingIntent(null);
+    setCommandError(null);
+    setMQty('');
+    setMNote('');
+  };
+
+  const localizedMovementReceipt = (result: StorageMovementCommandResponse['result']): string => {
+    const receipt = result.receipt;
+    if (receipt.action === 'receive') {
+      return ka
+        ? `${receipt.bottles.toLocaleString()} ერთეული საწყობში განთავსდა.`
+        : `${receipt.bottles.toLocaleString()} bottled units placed in storage.`;
+    }
+    if (receipt.action === 'relocate') {
+      return ka
+        ? `${receipt.bottles.toLocaleString()} ბოთლი ლოკაციებს შორის გადაიტანეს.`
+        : `${receipt.bottles.toLocaleString()} bottles relocated atomically.`;
+    }
+    return ka
+      ? `${receipt.bottles.toLocaleString()} ბოთლის კორექტირება აღირიცხა.`
+      : `${receipt.bottles.toLocaleString()} bottle adjustment recorded.`;
+  };
+
+  const applyMovementLocally = (intent: PendingCommandIntent<StorageMovementCommandPayload>) => {
+    if (intent.payload.action === 'receive' && !onUpdateBottlingRuns) {
+      throw new Error('The linked bottling run cannot be updated in this workspace.');
+    }
+    const applied = applyStorageMovementCommand(
+      { lots, bottlingRuns, storageLocations: locations, stockMovements: movements, salesOrders: orders },
+      intent.payload,
+      { commandId: intent.commandId, actorUsername: currentUserName, performedAt: new Date() },
+    );
+    onUpdateMovements(applied.state.stockMovements);
+    onUpdateBottlingRuns?.(applied.state.bottlingRuns);
+    setToastMessage?.(localizedMovementReceipt(applied.result));
+    finishMovementCommand();
+  };
+
+  const executeMovementCommand = async (intent: PendingCommandIntent<StorageMovementCommandPayload>) => {
+    setCommandError(null);
+    if (!onApplyStorageMovementCommandResponse || !SyncQueueManager.isOnline()) {
+      if (pendingIntent) {
+        setCommandError(ka
+          ? 'დაუდასტურებელი მოძრაობის აღდგენას ინტერნეტი სჭირდება.'
+          : 'Recovering an unacknowledged storage movement requires a server connection.');
+        return;
+      }
+      try {
+        applyMovementLocally(intent);
+      } catch (error) {
+        setCommandError(error instanceof Error ? error.message : 'Storage movement validation failed.');
       }
       return;
     }
-    const movement: StockMovement = {
-      id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      date: mDate,
-      lotId: mLot,
-      locationId: mLoc,
-      direction: mDir,
-      bottles: moveQty,
-      reason: mDir === 'in' ? 'receive' : 'dispatch',
-    };
-    onUpdateMovements([movement, ...movements]);
-    setMQty('');
+
+    setPendingIntent(intent);
+    setIsSubmitting(true);
+    try {
+      const response = await submitStorageMovementCommand(intent);
+      onApplyStorageMovementCommandResponse(response);
+      setToastMessage?.(localizedMovementReceipt(response.result));
+      finishMovementCommand();
+    } catch (error) {
+      if (error instanceof CommandRequestError
+        && error.code === 'command_store_unavailable'
+        && !pendingIntent) {
+        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+        try {
+          applyMovementLocally(intent);
+          return;
+        } catch (fallbackError) {
+          setCommandError(fallbackError instanceof Error ? fallbackError.message : 'Storage movement validation failed.');
+          setPendingIntent(null);
+          return;
+        }
+      }
+      setCommandError(error instanceof Error ? error.message : 'Storage movement command failed.');
+      if (error instanceof CommandRequestError && !error.retryable) setPendingIntent(null);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
-  const prefillReceive = (lotId: string, bottles: number) => {
+
+  const submitMove = () => {
     if (!canCreateMovement) return;
-    setMLot(lotId); setMDir('in'); setMQty(String(bottles)); if (!mLoc && locations[0]) setMLoc(locations[0].id);
+    if (pendingIntent) {
+      void executeMovementCommand(pendingIntent);
+      return;
+    }
+    if (!canMove) {
+      const message = overAvailableForOut
+        ? 'Quantity exceeds unreserved available stock.'
+        : overDestinationCapacity
+          ? 'Quantity exceeds destination capacity.'
+          : overRunRemaining
+            ? 'Quantity exceeds the selected bottling run\'s unplaced units.'
+            : overProducedForAdjustment
+              ? 'Adjustment would exceed bottled production for this lot.'
+              : 'Complete the required movement fields.';
+      setToastMessage?.(message);
+      return;
+    }
+    const common = { date: mDate, lotId: mLot, bottles: moveQty, note: mNote };
+    const intent = mAction === 'receive'
+      ? createStorageMovementCommandIntent({
+        ...common,
+        action: 'receive',
+        bottlingRunId: mRun,
+        locationId: mLoc,
+      })
+      : mAction === 'relocate'
+        ? createStorageMovementCommandIntent({
+          ...common,
+          action: 'relocate',
+          sourceLocationId: mLoc,
+          destinationLocationId: mDest,
+        })
+        : createStorageMovementCommandIntent({
+          ...common,
+          action: 'adjust',
+          locationId: mLoc,
+          direction: mDir,
+          adjustmentReason: mReason,
+        });
+    void executeMovementCommand(intent);
+  };
+
+  const prefillReceive = (lotId: string, bottles: number) => {
+    if (!canCreateMovement || formLocked) return;
+    const run = unplacedRuns.find(item => item.lotId === lotId);
+    setMAction('receive');
+    setMLot(lotId);
+    setMRun(run?.id || '');
+    setMQty(String(Math.min(bottles, run ? bottlingRunUnplacedUnits(run, movements) : bottles)));
+    if (!mLoc && locations[0]) setMLoc(locations[0].id);
   };
   const deleteMovement = (movementId: string) => {
     if (!canDeleteMovement) return;
@@ -368,18 +581,30 @@ export default function StorageTab({
               <p className="text-xs text-stone-400 py-4 text-center">{ka ? 'ჯერ დაამატეთ ლოკაცია' : 'Add a location first'}</p>
             ) : (
               <>
-                <div className="inline-flex rounded-lg border border-stone-200 overflow-hidden w-full dark:border-stone-800">
-                  {([{ id: 'in', ka: 'მიღება', en: 'Receive' }, { id: 'out', ka: 'გაცემა', en: 'Dispatch' }] as const).map(o => (
-                    <button key={o.id} onClick={() => setMDir(o.id)} className={`flex-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer ${mDir === o.id ? (o.id === 'in' ? 'bg-emerald-700 text-white' : 'bg-rose-700 text-white') : 'bg-stone-50 text-stone-500 dark:bg-stone-900'}`}>{ka ? o.ka : o.en}</button>
+                <div className="grid grid-cols-3 rounded-lg border border-stone-200 overflow-hidden w-full dark:border-stone-800">
+                  {([
+                    { id: 'receive', ka: 'მიღება', en: 'Receive' },
+                    { id: 'relocate', ka: 'გადატანა', en: 'Relocate' },
+                    { id: 'adjust', ka: 'კორექცია', en: 'Adjust' },
+                  ] as const).map(option => (
+                    <button
+                      type="button"
+                      key={option.id}
+                      onClick={() => setMAction(option.id)}
+                      disabled={formLocked}
+                      className={`px-2 py-2 text-[9px] font-bold uppercase cursor-pointer disabled:cursor-not-allowed ${mAction === option.id ? 'bg-[#4e0e15] text-white' : 'bg-stone-50 text-stone-500 dark:bg-stone-900'}`}
+                    >
+                      {ka ? option.ka : option.en}
+                    </button>
                   ))}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div><label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label><input type="date" value={mDate} onChange={e => setMDate(e.target.value)} className={inputCls} /></div>
-                  <div><label className={labelCls}>{ka ? 'ბოთლი' : 'Bottles'}</label><input type="number" min={0} value={mQty} onChange={e => setMQty(e.target.value)} className={inputCls} /></div>
+                  <div><label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label><input type="date" value={mDate} onChange={e => setMDate(e.target.value)} disabled={formLocked} className={inputCls} /></div>
+                  <div><label className={labelCls}>{ka ? 'ბოთლი' : 'Bottles'}</label><input type="number" min={1} value={mQty} onChange={e => setMQty(e.target.value)} disabled={formLocked} className={inputCls} /></div>
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'ჩამოსხმული ლოტი' : 'Bottled wine lot'}</label>
-                  <select value={mLot} onChange={e => setMLot(e.target.value)} className={inputCls} disabled={finishedGoodsLots.length === 0}>
+                  <select value={mLot} onChange={e => setMLot(e.target.value)} className={inputCls} disabled={formLocked || finishedGoodsLots.length === 0}>
                     {finishedGoodsLots.length === 0 && <option value="">{ka ? 'ჩამოსხმული ლოტი არ არის' : 'No bottled lots available'}</option>}
                     {finishedGoodsLots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
@@ -389,9 +614,50 @@ export default function StorageTab({
                     </p>
                   )}
                 </div>
-                <div><label className={labelCls}>{ka ? 'ლოკაცია' : 'Location'}</label><select value={mLoc} onChange={e => setMLoc(e.target.value)} className={inputCls}><option value="">{ka ? 'აირჩიეთ' : 'Select…'}</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
-                <button onClick={submitMove} disabled={!canMove} className="w-full px-4 py-2 bg-[#4e0e15] hover:bg-[#34070a] disabled:opacity-50 text-amber-50 rounded-xl text-xs font-bold uppercase tracking-wide cursor-pointer">{ka ? 'დაფიქსირება' : 'Record'}</button>
-                {mDir === 'out' && mLoc && mLot && (
+                {mAction === 'receive' && (
+                  <div>
+                    <label className={labelCls}>{ka ? 'ჩამოსხმის წყარო' : 'Bottling source'}</label>
+                    <select value={mRun} onChange={event => setMRun(event.target.value)} disabled={formLocked || receiveRunsForLot.length === 0} className={inputCls}>
+                      {receiveRunsForLot.length === 0 && <option value="">{ka ? 'განსათავსებელი გამოშვება არ არის' : 'No unplaced run for this lot'}</option>}
+                      {receiveRunsForLot.map(run => (
+                        <option key={run.id} value={run.id}>
+                          {run.lotNumber || run.id} · {bottlingRunUnplacedUnits(run, movements).toLocaleString()} {ka ? 'ერთ.' : 'units left'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {mAction === 'adjust' && (
+                  <>
+                    <div className="inline-flex rounded-lg border border-stone-200 overflow-hidden w-full dark:border-stone-800">
+                      {([{ id: 'out', ka: 'შემცირება', en: 'Decrease' }, { id: 'in', ka: 'გაზრდა', en: 'Increase' }] as const).map(option => (
+                        <button type="button" key={option.id} onClick={() => setMDir(option.id)} disabled={formLocked}
+                          className={`flex-1 px-3 py-2 text-[10px] font-bold uppercase cursor-pointer disabled:cursor-not-allowed ${mDir === option.id ? (option.id === 'in' ? 'bg-emerald-700 text-white' : 'bg-rose-700 text-white') : 'bg-stone-50 text-stone-500 dark:bg-stone-900'}`}>
+                          {ka ? option.ka : option.en}
+                        </button>
+                      ))}
+                    </div>
+                    <div><label className={labelCls}>{ka ? 'კორექტირების მიზეზი' : 'Adjustment reason'}</label><input value={mReason} onChange={event => setMReason(event.target.value)} disabled={formLocked} maxLength={200} className={inputCls} /></div>
+                  </>
+                )}
+                <div>
+                  <label className={labelCls}>{mAction === 'relocate' ? (ka ? 'საწყისი ლოკაცია' : 'Source location') : (ka ? 'ლოკაცია' : 'Location')}</label>
+                  <select value={mLoc} onChange={e => setMLoc(e.target.value)} disabled={formLocked} className={inputCls}><option value="">{ka ? 'აირჩიეთ' : 'Select…'}</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>
+                </div>
+                {mAction === 'relocate' && (
+                  <div>
+                    <label className={labelCls}>{ka ? 'დანიშნულების ლოკაცია' : 'Destination location'}</label>
+                    <select value={mDest} onChange={event => setMDest(event.target.value)} disabled={formLocked} className={inputCls}>
+                      <option value="">{ka ? 'აირჩიეთ' : 'Select…'}</option>
+                      {locations.filter(location => location.id !== mLoc).map(location => <option key={location.id} value={location.id}>{location.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div><label className={labelCls}>{ka ? 'შენიშვნა' : 'Note'}</label><input value={mNote} onChange={event => setMNote(event.target.value)} disabled={formLocked} maxLength={500} className={inputCls} placeholder={ka ? 'არასავალდებულო' : 'Optional operational context'} /></div>
+                <button onClick={submitMove} disabled={isSubmitting || (!pendingIntent && !canMove)} className="w-full px-4 py-2 bg-[#4e0e15] hover:bg-[#34070a] disabled:opacity-50 text-amber-50 rounded-xl text-xs font-bold uppercase tracking-wide cursor-pointer">
+                  {isSubmitting ? (ka ? 'იგზავნება…' : 'Recording…') : pendingIntent ? (ka ? 'იგივე ბრძანების აღდგენა' : 'Recover same command') : (ka ? 'დაფიქსირება' : 'Record')}
+                </button>
+                {(mAction === 'relocate' || (mAction === 'adjust' && mDir === 'out')) && mLoc && mLot && (
                   <div className="text-[11px] font-mono border border-stone-200 rounded-xl p-3 bg-stone-50/60 space-y-1 dark:bg-stone-950/40 dark:border-stone-800">
                     <div className="flex justify-between"><span>{ka ? 'საწყობში' : 'On hand'}</span><strong>{selectedPosition.onHandBottles.toLocaleString()} btl</strong></div>
                     <div className="flex justify-between"><span>{ka ? 'რეზერვში' : 'Reserved'}</span><strong className="text-blue-700 dark:text-blue-300">{selectedPosition.reservedBottles.toLocaleString()} btl</strong></div>
@@ -480,6 +746,17 @@ export default function StorageTab({
                     <LockKeyhole className="mt-0.5 h-3 w-3 shrink-0" />
                     <span>{deletionReason}</span>
                   </div>
+                )}
+                {overDestinationCapacity && (
+                  <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                    <LockKeyhole className="w-3.5 h-3.5" /> {ka ? 'დანიშნულების ლოკაციას საკმარისი ტევადობა არ აქვს.' : 'Destination capacity is too small for this movement.'}
+                  </div>
+                )}
+                {mAction === 'receive' && selectedRun && (
+                  <p className="text-[10px] text-stone-500">{ka ? 'გამოშვებაში დარჩენილია' : 'Unplaced in selected run'}: <strong>{selectedRunRemaining.toLocaleString()}</strong></p>
+                )}
+                {commandError && (
+                  <div role="alert" className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{commandError}</div>
                 )}
                 <div className="p-4 space-y-3">
                   {/* capacity bar */}

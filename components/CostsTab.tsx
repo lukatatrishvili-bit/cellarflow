@@ -6,6 +6,7 @@ import { rollupLots, type CostEntry, type CostCategory } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
 import { buildCostReportRows, sumCostReport, costRowsToCSV } from '../lib/costing/report';
 import { CountUp } from './motion';
+import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
 
 interface Props {
   lang: Language;
@@ -71,6 +72,7 @@ export default function CostsTab({
   const bottlesByLot = useMemo(() => {
     const map: Record<string, number> = {};
     for (const r of bottlingRuns) {
+      if (!isActiveBottlingRun(r)) continue;
       map[r.lotId] = (map[r.lotId] || 0) + (r.totalBottles || 0) + (r.totalCeramic || 0);
     }
     return map;
@@ -179,6 +181,7 @@ export default function CostsTab({
 
   const remove = (id: string) => {
     if (!canDeleteCost) return;
+    if (costEntries.find(entry => entry.id === id)?.commandId) return;
     onUpdateCostEntries(costEntries.filter(e => e.id !== id));
   };
 
@@ -468,7 +471,7 @@ export default function CostsTab({
                         <td className="p-2.5"><span className="px-1.5 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[9px] font-bold uppercase">{catLabel(e.category, ka)}</span></td>
                         <td className="p-2.5 text-stone-600 dark:text-stone-300">{e.description}</td>
                         <td className={`p-2.5 text-right font-mono font-bold ${e.amount < 0 ? 'text-rose-600' : 'text-stone-800 dark:text-amber-200'}`}>{fmt(e.amount)}</td>
-                        {canDeleteCost && <td className="p-2.5 text-right"><button onClick={() => remove(e.id)} className="text-stone-300 hover:text-rose-600 cursor-pointer" aria-label={`Delete cost for ${lotName(e.lotId)}`}><Trash2 className="w-3.5 h-3.5" /></button></td>}
+                        {canDeleteCost && <td className="p-2.5 text-right">{!e.commandId && <button onClick={() => remove(e.id)} className="text-stone-300 hover:text-rose-600 cursor-pointer" aria-label={`Delete cost for ${lotName(e.lotId)}`}><Trash2 className="w-3.5 h-3.5" /></button>}</td>}
                       </tr>
                     ))}
                   </tbody>
