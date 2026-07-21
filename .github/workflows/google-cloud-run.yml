@@ -275,6 +275,14 @@ jobs:
             exit 1
           fi
 
+          ACTIVE_OPS=$(gcloud sql operations list --instance="$SQL_INSTANCE" --project="$PROJECT_ID" --filter="status=RUNNING" --format="value(name)" 2>/dev/null || true)
+          if [ -n "$ACTIVE_OPS" ]; then
+            echo "Waiting for active Cloud SQL operation(s) to complete before patching..."
+            for OP in $ACTIVE_OPS; do
+              gcloud beta sql operations wait "$OP" --project="$PROJECT_ID" || true
+            done
+          fi
+
           gcloud sql instances patch "$SQL_INSTANCE" \
             --project "$PROJECT_ID" \
             --backup-location "$REGION" \
@@ -283,7 +291,18 @@ jobs:
             --retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS" \
             --enable-point-in-time-recovery \
             --retain-backups-on-delete \
-            --quiet
+            --quiet || {
+              echo "Patch command exited. Checking for running operations..."
+              ACTIVE_OPS=$(gcloud sql operations list --instance="$SQL_INSTANCE" --project="$PROJECT_ID" --filter="status=RUNNING" --format="value(name)" 2>/dev/null || true)
+              if [ -n "$ACTIVE_OPS" ]; then
+                for OP in $ACTIVE_OPS; do
+                  echo "Waiting for Cloud SQL operation $OP to finish..."
+                  gcloud beta sql operations wait "$OP" --project="$PROJECT_ID"
+                done
+              else
+                exit 1
+              fi
+            }
 
       - name: Run controlled database migrations
         run: |
