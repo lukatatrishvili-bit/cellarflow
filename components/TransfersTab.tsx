@@ -2,7 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import type { Language } from '../lib/i18n';
-import type { Vessel, WineLot, CellarTransferRecord } from '../lib/wineryState';
+import type {
+  Vessel,
+  WineLot,
+  CellarTransferRecord,
+  InventoryItem,
+  OperationMaterialUsage,
+} from '../lib/wineryState';
+import type { CellarOperationInput } from '../lib/commands/cellarOperation';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
   applyTransferCommand,
@@ -24,6 +31,11 @@ import {
   type TransferCommandResponse,
   type TransferReversalCommandResponse,
 } from '../lib/commands/client';
+import OperationMaterialsEditor, {
+  materialDraftIssue,
+  materialDraftsToUsages,
+  type MaterialUsageDraft,
+} from './OperationMaterialsEditor';
 import {
   ShieldAlert,
   ArrowRight,
@@ -43,8 +55,10 @@ interface Props {
   lang: Language;
   vessels: Vessel[];
   lots: WineLot[];
+  inventory?: InventoryItem[];
   onUpdateVessels: (newVessels: Vessel[]) => void;
   onUpdateLots: (newLots: WineLot[]) => void;
+  onAddCellarOperation?: (input: CellarOperationInput) => string;
   prefilledSourceId?: string;
   prefilledDestId?: string;
   clearPrefilled?: () => void;
@@ -54,16 +68,18 @@ interface Props {
   onApplyTransferReversalCommandResponse?: (response: TransferReversalCommandResponse) => void;
   canExecuteTransfer?: boolean;
   canSanitizeVessels?: boolean;
+  canConsumeTransferMaterials?: boolean;
   canReverseTransfer?: boolean;
 }
 
 type TransferRecord = CellarTransferRecord;
 
 export default function TransfersTab({
-  lang, vessels, lots, onUpdateVessels, onUpdateLots,
+  lang, vessels, lots, inventory = [], onUpdateVessels, onUpdateLots, onAddCellarOperation,
   prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers,
   onApplyTransferCommandResponse, onApplyTransferReversalCommandResponse,
-  canExecuteTransfer = true, canSanitizeVessels = true, canReverseTransfer = true,
+  canExecuteTransfer = true, canSanitizeVessels = true,
+  canConsumeTransferMaterials = false, canReverseTransfer = true,
 }: Props) {
   // Transfer input states
   const [sourceId, setSourceId] = useState<string>('');
@@ -81,6 +97,15 @@ export default function TransfersTab({
   const [reversalTargetId, setReversalTargetId] = useState<string | null>(null);
   const [reversalReason, setReversalReason] = useState('');
   const [pendingReversalIntent, setPendingReversalIntent] = useState<PendingCommandIntent<TransferReversalCommandPayload> | null>(null);
+  const [materialDrafts, setMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
+  const [pendingMaterialPosting, setPendingMaterialPosting] = useState<{
+    lotId: string;
+    vesselId: string;
+    operator: string;
+    category: 'racking' | 'blend' | 'filtration' | 'bottling';
+    transferId: string;
+    materials: OperationMaterialUsage[];
+  } | null>(null);
 
   useEffect(() => {
     const restored = pendingTransferCommandIntent();
@@ -148,6 +173,9 @@ export default function TransfersTab({
   const destWillOverflow = destVessel ? arrivalVolume > destCapRemaining : true;
   const lossIsInvalid = lossVol < 0 || lossVol >= transferVol;
   const destinationNeedsCleaning = Boolean(destVessel && destVessel.currentVolume === 0 && destVessel.cleaningStatus !== 'clean');
+  const transferMaterialIssue = canConsumeTransferMaterials
+    ? materialDraftIssue(materialDrafts, inventory)
+    : null;
 
   // Wet blend warning
   const showsBlendAlert = sourceVessel && destVessel &&
@@ -219,6 +247,45 @@ export default function TransfersTab({
     setCommandError(null);
   };
 
+  const queueTransferMaterials = (result: TransferCommandResult) => {
+    if (!canConsumeTransferMaterials) return;
+    const materials = materialDraftsToUsages(materialDrafts, inventory);
+    if (!materials.length) return;
+    setPendingMaterialPosting({
+      lotId: result.receipt.destinationLotId,
+      vesselId: result.receipt.destinationVesselId,
+      operator: operatorName || 'Cellar Crew',
+      category: reasonCategory,
+      transferId: result.transfer.id,
+      materials,
+    });
+  };
+
+  useEffect(() => {
+    if (!pendingMaterialPosting || !onAddCellarOperation) return;
+    const destinationLot = lots.find(item => item.id === pendingMaterialPosting.lotId);
+    const destinationVessel = vessels.find(item => item.id === pendingMaterialPosting.vesselId);
+    if (!destinationLot || destinationVessel?.assignedLotId !== destinationLot.id) return;
+    onAddCellarOperation({
+      date: new Date().toISOString().slice(0, 10),
+      type: pendingMaterialPosting.category === 'blend'
+        ? 'blending'
+        : pendingMaterialPosting.category === 'bottling'
+          ? 'bottling'
+          : pendingMaterialPosting.category,
+      lotId: destinationLot.id,
+      vesselId: destinationVessel.id,
+      vesselToId: null,
+      materials: pendingMaterialPosting.materials,
+      operator: pendingMaterialPosting.operator,
+      notes: lang === 'ka'
+        ? `გადაღებასთან დაკავშირებული მასალები: ${pendingMaterialPosting.transferId}`
+        : `Materials linked to transfer ${pendingMaterialPosting.transferId}`,
+    });
+    setPendingMaterialPosting(null);
+    setMaterialDrafts([]);
+  }, [lang, lots, onAddCellarOperation, pendingMaterialPosting, vessels]);
+
   const applyTransferLocally = (intent: PendingCommandIntent<TransferCommandPayload>) => {
     const applied = applyTransferCommand(
       { vessels, lots, transfers: pastTransfers },
@@ -233,6 +300,7 @@ export default function TransfersTab({
     onUpdateLots(applied.state.lots);
     saveTransfers(applied.state.transfers);
     setOperationReceipt(localizedReceipt(applied.result));
+    queueTransferMaterials(applied.result);
     resetTransferForm();
   };
 
@@ -241,6 +309,12 @@ export default function TransfersTab({
     if (!canExecuteTransfer || pendingReversalIntent) return;
     if (!pendingIntent && (!sourceVessel || !destVessel || sourceIsEmpty || sourceHasInsufficient
       || destWillOverflow || lossIsInvalid || destinationNeedsCleaning)) return;
+    if (!pendingIntent && transferMaterialIssue) {
+      setCommandError(lang === 'ka'
+        ? 'შეამოწმეთ გადაღების მასალები, რაოდენობები და ხელმისაწვდომი მარაგი.'
+        : 'Check the transfer materials, quantities, and available stock.');
+      return;
+    }
 
     const intent = pendingIntent || createTransferCommandIntent({
       sourceVesselId: sourceId,
@@ -274,6 +348,7 @@ export default function TransfersTab({
       const response = await submitTransferCommand(intent);
       onApplyTransferCommandResponse(response);
       setOperationReceipt(localizedReceipt(response.result));
+      queueTransferMaterials(response.result);
       resetTransferForm();
     } catch (error) {
       if (error instanceof CommandRequestError
@@ -1068,6 +1143,17 @@ export default function TransfersTab({
                   />
                 </div>
 
+                {canConsumeTransferMaterials && (
+                  <OperationMaterialsEditor
+                    lang={lang}
+                    inventory={inventory}
+                    value={materialDrafts}
+                    onChange={setMaterialDrafts}
+                    operationType={reasonCategory === 'blend' ? 'blending' : reasonCategory}
+                    lotVolumeL={destVessel ? destVessel.currentVolume + arrivalVolume : arrivalVolume}
+                  />
+                )}
+
                 <button
                   type="submit"
                   disabled={isSubmitting || Boolean(pendingReversalIntent) || (!pendingIntent && (
@@ -1076,6 +1162,7 @@ export default function TransfersTab({
                     || destWillOverflow
                     || lossIsInvalid
                     || destinationNeedsCleaning
+                    || Boolean(transferMaterialIssue)
                     || !sourceId
                     || !destId
                   ))}

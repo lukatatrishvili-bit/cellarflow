@@ -24,6 +24,7 @@ export interface CellarWorkflowPermissions {
   transfers: {
     canExecuteTransfer: boolean;
     canSanitizeVessels: boolean;
+    canConsumeTransferMaterials: boolean;
     canReverseTransfer: boolean;
   };
   fermentation: {
@@ -31,6 +32,8 @@ export interface CellarWorkflowPermissions {
     canUpdateFermentationLot: boolean;
     canUpdateFermentationVessel: boolean;
     canCompleteFermentation: boolean;
+    /** Enables inventory-backed yeast, starter, nutrient, and additive usage. */
+    canConsumeFermentationMaterials: boolean;
     /** Append-only compensation across reading, lot, vessel, and audit ledgers. */
     canReverseFermentationCompletion: boolean;
     canDeleteFermentationLog: boolean;
@@ -107,7 +110,10 @@ export function cellarWorkflowPermissions(role: unknown): CellarWorkflowPermissi
         && canUpdateLot
         && canWriteAudit,
       canUseOperationVessels: canUpdateVessel,
-      canConsumeOperationMaterials: canUpdateInventory && canCreateCost,
+      // Material costing is a system-generated consequence of the cellar
+      // operation. Operators need inventory authority, not direct access to
+      // the financial ledger.
+      canConsumeOperationMaterials: canUpdateInventory,
       canReverseCellarOperation: canAccess(role, 'operations', 'delete')
         && canUpdateLot
         && canUpdateVessel
@@ -121,6 +127,11 @@ export function cellarWorkflowPermissions(role: unknown): CellarWorkflowPermissi
         && canCreateLot
         && canUpdateLot,
       canSanitizeVessels: canUpdateVessel,
+      canConsumeTransferMaterials: canAccess(role, 'transfers', 'create')
+        && canAccess(role, 'operations', 'create')
+        && canUpdateLot
+        && canUpdateInventory
+        && canWriteAudit,
       canReverseTransfer: canAccess(role, 'transfers', 'delete')
         && canUpdateVessel
         && canUpdateLot,
@@ -132,6 +143,11 @@ export function cellarWorkflowPermissions(role: unknown): CellarWorkflowPermissi
       canCompleteFermentation: canAccess(role, 'fermentation', 'update')
         && canUpdateLot
         && canUpdateVessel
+        && canWriteAudit,
+      canConsumeFermentationMaterials: canAccess(role, 'fermentation', 'create')
+        && canAccess(role, 'operations', 'create')
+        && canUpdateLot
+        && canUpdateInventory
         && canWriteAudit,
       canReverseFermentationCompletion: canAccess(role, 'fermentation', 'delete')
         && canUpdateLot

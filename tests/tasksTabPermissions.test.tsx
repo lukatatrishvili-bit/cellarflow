@@ -1,7 +1,7 @@
-import React, { type ComponentProps, type ReactElement, type ReactNode } from 'react';
+import React, { type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import TasksTab from '../components/TasksTab';
+import TasksTab, { toggleTaskStatusIfAllowed } from '../components/TasksTab';
 
 const tasks = [
   {
@@ -35,13 +35,6 @@ function taskProps(overrides: Partial<ComponentProps<typeof TasksTab>> = {}): Co
   };
 }
 
-function flattenElements(node: ReactNode): ReactElement[] {
-  if (Array.isArray(node)) return node.flatMap(flattenElements);
-  if (!React.isValidElement(node)) return [];
-  const element = node as ReactElement<{ children?: ReactNode }>;
-  return [element, ...flattenElements(element.props.children)];
-}
-
 describe('TasksTab action permissions', () => {
   it('preserves task browsing while hiding create/delete and disabling updates', () => {
     const markup = renderToStaticMarkup(React.createElement(TasksTab, taskProps({
@@ -63,15 +56,8 @@ describe('TasksTab action permissions', () => {
 
   it('guards update callbacks even if a disabled handler is invoked directly', () => {
     const onToggleTaskStatus = vi.fn();
-    const tree = TasksTab(taskProps({ canUpdateTask: false, onToggleTaskStatus }));
-    const elements = flattenElements(tree);
-    const checkbox = elements.find(element => element.type === 'input' && element.props.type === 'checkbox');
-    const reopen = elements.find(element => element.type === 'button' && element.props['aria-label'] === 'Reopen Completed lab check');
-
-    expect(checkbox?.props.disabled).toBe(true);
-    expect(reopen?.props.disabled).toBe(true);
-    checkbox?.props.onChange();
-    reopen?.props.onClick();
+    toggleTaskStatusIfAllowed(false, onToggleTaskStatus, 'task-pending');
+    toggleTaskStatusIfAllowed(false, onToggleTaskStatus, 'task-complete');
     expect(onToggleTaskStatus).not.toHaveBeenCalled();
   });
 

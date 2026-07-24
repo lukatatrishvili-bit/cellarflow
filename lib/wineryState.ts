@@ -140,6 +140,10 @@ export interface DailyFermLog {
   tastingNotes: string;
   capManagement: string; // Punchdown, pumpover, none
   additives: string;
+  /** Structured inventory-backed additions made with this reading. */
+  materialsUsed?: OperationMaterialUsage[];
+  /** Cellar operation that deducted the structured additions from inventory. */
+  linkedOperationId?: string;
   isCompletion?: boolean;
   completedAt?: string;
   completedBy?: string;
@@ -307,8 +311,22 @@ export interface Task {
   priority: 'high' | 'medium' | 'low';
   dueDate: string;
   assignedTo: string;
+  assignedUserId?: string;
   status: 'pending' | 'completed';
   description: string;
+  whatsappNotification?: {
+    status: 'sending' | 'accepted' | 'failed';
+    messageId?: string;
+    language?: 'en' | 'ka';
+    updatedAt: string;
+    error?: string;
+  };
+}
+
+export interface TaskAssignmentInput {
+  assignedUserId?: string;
+  assignedTo?: string;
+  notifyWhatsApp?: boolean;
 }
 
 export interface TransferEvent {
@@ -629,7 +647,18 @@ export type CellarOperationType =
   | 'additive' | 'fining' | 'filtration' | 'stabilization'
   | 'vessel_filling' | 'bottling' | 'cleaning' | 'correction' | 'custom';
 
-export interface CellarOperationReversalSnapshot {
+export interface OperationMaterialUsage {
+  materialId: string;
+  /** Immutable display facts captured when the material is consumed. */
+  materialName?: string;
+  category?: string;
+  quantity: number;
+  unit?: string;
+  /** Winemaker-entered role such as yeast, starter, nutrient, sulfur, or enzyme. */
+  purpose?: string;
+}
+
+export interface CellarOperationReversalSnapshotV1 {
   version: 1;
   lot: {
     id: string;
@@ -655,6 +684,36 @@ export interface CellarOperationReversalSnapshot {
   operationDescription: string;
 }
 
+export interface CellarOperationReversalSnapshotV2 {
+  version: 2;
+  lot: {
+    id: string;
+    currentVolume: number;
+    stage: WinemakingStage;
+  };
+  vessel?: {
+    id: string;
+    currentVolume: number;
+    lastOperation: string;
+  };
+  inventory: Array<{
+    id: string;
+    stock: number;
+  }>;
+  costEntries: Array<{
+    id: string;
+    amount: number;
+    currency: string;
+    quantity?: number;
+  }>;
+  auditId: string;
+  operationDescription: string;
+}
+
+export type CellarOperationReversalSnapshot =
+  | CellarOperationReversalSnapshotV1
+  | CellarOperationReversalSnapshotV2;
+
 export interface CellarOperation {
   id: string;
   commandId?: string;
@@ -674,6 +733,8 @@ export interface CellarOperation {
   materialName?: string;
   dose?: number;         // amount used, in the material's stock unit
   unit?: string;
+  /** One or more inventory-backed materials consumed by this operation. */
+  materials?: OperationMaterialUsage[];
   operator: string;
   notes: string;
   /** Exact before-state captured by new transactional operation commands. */
@@ -689,7 +750,7 @@ export interface CellarOperationMeta {
   key: CellarOperationType;
   en: string;
   ka: string;
-  /** Consumes an inventory material (additive / agent). */
+  /** Material use is common for this operation, so the UI should foreground suggestions. */
   needsMaterial?: boolean;
   /** Typically changes the batch volume (loss or addition). */
   affectsVolume?: boolean;
@@ -925,6 +986,10 @@ export interface UserProfile {
   fullName: string;
   role: 'Owner/Admin' | 'Viticulturist' | 'Winemaker' | 'Lab Technician' | 'Cellar Worker' | 'Read-Only';
   language: 'en' | 'ka';
+  /** Personal international number; never exposed for other workspace members. */
+  phone?: string;
+  /** Explicit consent to receive operational task templates through WhatsApp. */
+  whatsappOptIn?: boolean;
   enabledModules?: string[];
   enabledWidgets?: string[];
   registrationComplete?: boolean;

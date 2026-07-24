@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import type { InventoryItem } from '../lib/wineryState';
+import React, { useState, useEffect, useMemo } from 'react';
+import type { CellarOperation, InventoryItem } from '../lib/wineryState';
 import type { Language } from '../lib/i18n';
 import { inventoryCategoryLabel } from '../lib/enumLabels';
 import {
@@ -21,6 +21,7 @@ import {
 interface Props {
   lang?: Language;
   inventory: InventoryItem[];
+  cellarOps?: CellarOperation[];
   onUpdateInventory: (newInv: InventoryItem[]) => void;
   canCreateInventory?: boolean;
   canUpdateInventory?: boolean;
@@ -30,6 +31,7 @@ interface Props {
 export default function InventoryTab({
   lang = 'en',
   inventory,
+  cellarOps = [],
   onUpdateInventory,
   canCreateInventory = true,
   canUpdateInventory = true,
@@ -236,6 +238,45 @@ export default function InventoryTab({
 
   // Filter items in the currently active category
   const filteredItems = inventory.filter(item => item.category === selectedCategory);
+  const usageByMaterial = useMemo(() => {
+    const result = new Map<string, Array<{
+      operationId: string;
+      date: string;
+      lotName: string;
+      operationType: string;
+      quantity: number;
+      unit: string;
+      purpose?: string;
+    }>>();
+    cellarOps
+      .filter(operation => operation.recordKind !== 'reversal' && !operation.reversedByCommandId)
+      .forEach(operation => {
+        const usages = operation.materials?.length
+          ? operation.materials
+          : operation.materialId && operation.dose
+            ? [{
+              materialId: operation.materialId,
+              quantity: operation.dose,
+              unit: operation.unit,
+            }]
+            : [];
+        usages.forEach(usage => {
+          const records = result.get(usage.materialId) || [];
+          records.push({
+            operationId: operation.id,
+            date: operation.date,
+            lotName: operation.lotName,
+            operationType: operation.customLabel || operation.type.replace(/_/g, ' '),
+            quantity: usage.quantity,
+            unit: usage.unit || '',
+            ...(usage.purpose ? { purpose: usage.purpose } : {}),
+          });
+          result.set(usage.materialId, records);
+        });
+      });
+    result.forEach(records => records.sort((a, b) => b.date.localeCompare(a.date)));
+    return result;
+  }, [cellarOps]);
 
   return (
     <div className="space-y-6 text-stone-800">
@@ -249,8 +290,8 @@ export default function InventoryTab({
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             {ka
-              ? 'აღრიცხეთ მარნის დანამატები, აქტიური საფუარები, ნუტრიენტები, ბოთლების პარტიები და შესაფუთი მასალები.'
-              : 'Track and log cellar additions, active strains, custom nutrients, glass bottle batches, and general packaging materials.'}
+              ? 'მარაგის ხარჯვა ოპერაციებიდან ავტომატურად აღირიცხება. აქ მართეთ მიღება, სპეციფიკაციები და მარაგის შესწორებები.'
+              : 'Consumption is recorded automatically from cellar operations. Use this area for receipts, specifications, and stock corrections.'}
           </p>
         </div>
         {canCreateInventory && (
@@ -529,6 +570,7 @@ export default function InventoryTab({
               {filteredItems.map(item => {
                 const lowStock = item.stock < item.minThreshold;
                 const isEditing = editingItemId === item.id;
+                const recentUsage = usageByMaterial.get(item.id)?.slice(0, 2) || [];
 
                 if (isEditing && canUpdateInventory) {
                   return (
@@ -682,6 +724,23 @@ export default function InventoryTab({
                           </p>
                         )}
                       </div>
+
+                      {recentUsage.length > 0 && (
+                        <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2">
+                          <p className="text-[8px] font-bold uppercase tracking-wider text-indigo-800">
+                            {ka ? 'ბოლო ავტომატური ხარჯვა' : 'Recent automatic usage'}
+                          </p>
+                          {recentUsage.map(usage => (
+                            <div key={`${usage.operationId}-${usage.quantity}`} className="mt-1 flex items-start justify-between gap-2 text-[9px] text-indigo-950">
+                              <span className="truncate">
+                                {usage.date} · {usage.lotName} · {usage.operationType}
+                                {usage.purpose ? ` (${usage.purpose})` : ''}
+                              </span>
+                              <strong className="shrink-0">−{usage.quantity} {usage.unit}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* Stock Refill / Reduce micro adjustments bar */}
@@ -699,18 +758,18 @@ export default function InventoryTab({
                       {canUpdateInventory && (
                       <div className="flex w-full sm:w-auto items-center gap-1 shrink-0">
                         <button
-                          title={ka ? 'ხარჯვა (-რაოდ.)' : 'Consume Item (-Qty)'}
+                          title={ka ? 'მარაგის ხელით შესწორება (-რაოდ.)' : 'Manual stock correction (-Qty)'}
                           onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? -50 : -2.5)}
                           className="flex-1 sm:flex-none px-2 py-1 bg-stone-100 text-stone-700 text-[10px] font-bold rounded-lg hover:bg-stone-200 border border-stone-200 cursor-pointer"
                         >
-                          - {ka ? 'ხარჯვა' : 'Consume'}
+                          − {ka ? 'შესწორება' : 'Adjust'}
                         </button>
                         <button
-                          title={ka ? 'შევსება (+რაოდ.)' : 'Refill Stock (+Qty)'}
+                          title={ka ? 'მარაგის მიღება (+რაოდ.)' : 'Receive Stock (+Qty)'}
                           onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? 100 : 5)}
                           className="flex-1 sm:flex-none px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer flex items-center justify-center gap-0.5"
                         >
-                          + {ka ? 'შევსება' : 'Refill'}
+                          + {ka ? 'მიღება' : 'Receive'}
                         </button>
                       </div>
                       )}

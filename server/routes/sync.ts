@@ -348,7 +348,7 @@ export function validateSyncPayload(
         || original.reversedByCommandId !== reversal.commandId
         || original.reversedAt !== reversal.lastModified
         || original.reversalReason !== reversal.reversalReason
-        || !snapshot || snapshot.version !== 1
+        || !snapshot || ![1, 2].includes(snapshot.version)
         || typeof reversal.reversalReason !== 'string'
         || !reversal.reversalReason.trim()
         || reversal.reversalReason.length > 500
@@ -361,6 +361,7 @@ export function validateSyncPayload(
         || reversal.materialName !== original.materialName
         || reversal.dose !== original.dose
         || reversal.unit !== original.unit
+        || JSON.stringify(reversal.materials || []) !== JSON.stringify(original.materials || [])
         || reversal.volumeBeforeL !== (original.volumeAfterL ?? snapshot.lot?.currentVolume)
         || reversal.volumeAfterL !== snapshot.lot?.currentVolume) {
         throw new Error(`Mismatched Cellar Operation Reversal: correction ${reversal.id} is inconsistent with its original operation.`);
@@ -385,15 +386,25 @@ export function validateSyncPayload(
       } else if (original.vesselId) {
         throw new Error(`Mismatched Cellar Operation Reversal: vessel snapshot for ${original.id} is missing.`);
       }
-      if (snapshot.inventory) {
-        const material = effectiveRecord('inventory', snapshot.inventory.id);
-        if (!material || material.stock !== snapshot.inventory.stock
+      const inventorySnapshots = snapshot.version === 2
+        ? snapshot.inventory
+        : snapshot.inventory ? [snapshot.inventory] : [];
+      const originalMaterialUsages = Array.isArray(original.materials) && original.materials.length
+        ? original.materials
+        : original.materialId && original.dose
+          ? [{ materialId: original.materialId, quantity: original.dose }]
+          : [];
+      if (!Array.isArray(inventorySnapshots)
+        || inventorySnapshots.length !== originalMaterialUsages.length) {
+        throw new Error(`Mismatched Cellar Operation Reversal: inventory snapshots for ${original.id} are incomplete.`);
+      }
+      for (const inventorySnapshot of inventorySnapshots) {
+        const material = effectiveRecord('inventory', inventorySnapshot.id);
+        if (!material || material.stock !== inventorySnapshot.stock
           || material.lastCommandId !== reversal.commandId
           || material.lastModified !== reversal.lastModified) {
-          throw new Error(`Mismatched Cellar Operation Reversal: material ${snapshot.inventory.id} was not restored.`);
+          throw new Error(`Mismatched Cellar Operation Reversal: material ${inventorySnapshot.id} was not restored.`);
         }
-      } else if (original.materialId || original.dose) {
-        throw new Error(`Mismatched Cellar Operation Reversal: inventory snapshot for ${original.id} is missing.`);
       }
       const originalCosts = effectiveCollection('costEntries').filter((entry: any) => (
         entry?.sourceRef === original.id && entry.recordKind !== 'reversal'
@@ -402,16 +413,19 @@ export function validateSyncPayload(
         entry?.recordKind === 'reversal' && entry.reversalOfCommandId === original.commandId
           && entry.sourceRef === reversal.id
       ));
-      const expectedCostCount = snapshot.costEntry ? 1 : 0;
+      const costSnapshots = snapshot.version === 2
+        ? snapshot.costEntries
+        : snapshot.costEntry ? [snapshot.costEntry] : [];
+      const expectedCostCount = Array.isArray(costSnapshots) ? costSnapshots.length : -1;
       if (originalCosts.length !== expectedCostCount || reversalCosts.length !== expectedCostCount) {
         throw new Error(`Mismatched Cellar Operation Reversal: cost ledger for ${reversal.id} is incomplete.`);
       }
-      if (snapshot.costEntry) {
-        const originalCost = originalCosts[0];
-        const correction = reversalCosts[0];
-        if (originalCost.id !== snapshot.costEntry.id
-          || originalCost.amount !== snapshot.costEntry.amount
-          || originalCost.currency !== snapshot.costEntry.currency
+      for (const costSnapshot of costSnapshots) {
+        const originalCost = originalCosts.find((entry: any) => entry.id === costSnapshot.id);
+        const correction = reversalCosts.find((entry: any) => entry.reversalOfCostEntryId === costSnapshot.id);
+        if (!originalCost || !correction
+          || originalCost.amount !== costSnapshot.amount
+          || originalCost.currency !== costSnapshot.currency
           || correction.reversalOfCostEntryId !== originalCost.id
           || correction.commandId !== reversal.commandId
           || correction.lastModified !== reversal.lastModified
@@ -422,7 +436,7 @@ export function validateSyncPayload(
           || originalCost.reversedByCommandId !== reversal.commandId
           || originalCost.reversedAt !== reversal.lastModified
           || originalCost.reversalReason !== reversal.reversalReason) {
-          throw new Error(`Mismatched Cellar Operation Reversal: cost correction for ${originalCost.id} is invalid.`);
+          throw new Error(`Mismatched Cellar Operation Reversal: cost correction for ${costSnapshot.id} is invalid.`);
         }
       }
       const originalAudit = effectiveRecord('auditLogs', snapshot.auditId);
@@ -1420,6 +1434,10 @@ export function validateSyncPayload(
                 && JSON.stringify(item.reversalSnapshot) !== JSON.stringify(existingItem.reversalSnapshot)) {
                 throw new Error(`Immutable Cellar Operation Ledger: reversalSnapshot cannot be modified on ${item.id}.`);
               }
+              if (item.materials !== undefined
+                && JSON.stringify(item.materials) !== JSON.stringify(existingItem.materials)) {
+                throw new Error(`Immutable Cellar Operation Ledger: materials cannot be modified on ${item.id}.`);
+              }
               if (existingItem.recordKind === 'reversal' || existingItem.reversedByCommandId) {
                 for (const field of ['reversedByCommandId', 'reversedAt', 'reversalReason']) {
                   if (item[field] !== undefined && item[field] !== existingItem[field]) {
@@ -1465,6 +1483,32 @@ export function validateSyncPayload(
             for (const field of nonNegativeFields) {
               if (item[field] !== undefined && (typeof item[field] !== 'number' || item[field] < 0)) {
                 throw new Error(`Cellar operation ${item.id} property ${field} must be non-negative.`);
+              }
+            }
+            if (item.materials !== undefined) {
+              if (!Array.isArray(item.materials) || item.materials.length > 25) {
+                throw new Error(`Cellar operation ${item.id} materials must be a bounded array.`);
+              }
+              const materialIds = new Set<string>();
+              for (const usage of item.materials) {
+                if (!usage || !isValidId(usage.materialId)
+                  || typeof usage.quantity !== 'number'
+                  || !Number.isFinite(usage.quantity)
+                  || usage.quantity <= 0
+                  || (usage.purpose !== undefined
+                    && (typeof usage.purpose !== 'string' || usage.purpose.length > 120))) {
+                  throw new Error(`Cellar operation ${item.id} has an invalid material usage.`);
+                }
+                if (materialIds.has(usage.materialId)) {
+                  throw new Error(`Cellar operation ${item.id} repeats inventory material ${usage.materialId}.`);
+                }
+                materialIds.add(usage.materialId);
+                const materialExists = userDb.inventory.some((inventoryItem: any) => inventoryItem.id === usage.materialId)
+                  || (collections.inventory && collections.inventory.some((inventoryItem: any) => inventoryItem.id === usage.materialId));
+                const materialDeleted = isDeleted('inventory', usage.materialId);
+                if (!materialExists || materialDeleted) {
+                  throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted inventory material (${usage.materialId}).`);
+                }
               }
             }
             if (operationRecord.recordKind === 'reversal') {

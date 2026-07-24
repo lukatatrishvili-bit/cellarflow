@@ -2,6 +2,8 @@ import type { Language } from './i18n';
 
 type ShellTranslationKey =
   | 'dashboard'
+  | 'today'
+  | 'overview'
   | 'grape_intake'
   | 'rtveli'
   | 'wine_lots'
@@ -41,6 +43,8 @@ export type ShellTranslations = Record<ShellTranslationKey, string>;
 
 const en: ShellTranslations = {
   dashboard: 'Dashboard',
+  today: 'Today',
+  overview: 'Overview',
   grape_intake: 'Grape Intake',
   rtveli: 'Rtveli (Harvest)',
   wine_lots: 'Wine Lots',
@@ -79,6 +83,8 @@ const en: ShellTranslations = {
 
 const ka: ShellTranslations = {
   dashboard: 'მთავარი პანელი',
+  today: 'დღეს',
+  overview: 'მიმოხილვა',
   grape_intake: 'ყურძნის მიღება',
   rtveli: 'რთველი',
   wine_lots: 'ღვინის პარტიები',

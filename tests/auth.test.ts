@@ -11,6 +11,7 @@ import {
   MIN_PASSCODE_LENGTH,
   MAX_PASSCODE_LENGTH,
   sameNormalizedEmail,
+  uniqueUsernameForEmail,
   sessionMatchesUserVersion,
   sessionPayloadForUser,
   sessionVersionForUser,
@@ -73,6 +74,17 @@ describe('invitation email binding', () => {
     expect(sameNormalizedEmail('owner@example.com', 'worker@example.com')).toBe(false);
     expect(sameNormalizedEmail('', '')).toBe(false);
     expect(sameNormalizedEmail(undefined, 'worker@example.com')).toBe(false);
+  });
+});
+
+describe('email-derived account usernames', () => {
+  it('creates a readable internal key without asking for a separate username', () => {
+    expect(uniqueUsernameForEmail(' Owner.Wine+Cellar@Example.com ', [])).toBe('owner_wine_cellar');
+  });
+
+  it('resolves collisions deterministically and handles non-Latin prefixes', () => {
+    expect(uniqueUsernameForEmail('owner@example.com', ['owner', 'owner_2'])).toBe('owner_3');
+    expect(uniqueUsernameForEmail('მარანი@example.ge', [])).toBe('member');
   });
 });
 

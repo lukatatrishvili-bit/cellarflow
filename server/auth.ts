@@ -31,6 +31,26 @@ export function sameNormalizedEmail(left: unknown, right: unknown): boolean {
 }
 
 /**
+ * Account usernames remain an internal compatibility key, while people sign in
+ * with their email address. Generate a stable, readable key and resolve clashes
+ * without asking a new customer to invent another identifier.
+ */
+export function uniqueUsernameForEmail(email: unknown, existingUsernames: Iterable<string>): string {
+  const emailPrefix = typeof email === 'string' ? email.trim().toLowerCase().split('@')[0] : '';
+  const normalizedPrefix = emailPrefix
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  const baseUsername = normalizedPrefix || 'member';
+  const existing = new Set(Array.from(existingUsernames, username => String(username).toLowerCase()));
+
+  if (!existing.has(baseUsername)) return baseUsername;
+  let suffix = 2;
+  while (existing.has(`${baseUsername}_${suffix}`)) suffix += 1;
+  return `${baseUsername}_${suffix}`;
+}
+
+/**
  * Resolve the HMAC signing secret for session tokens. In production a real
  * secret is mandatory — falling back to a hardcoded value would let anyone with
  * source access forge a session for any user (including the master admin), so

@@ -1,4 +1,5 @@
 import { getDbRuntimeStatus, getPostgresReadinessProbe, type PostgresReadinessProbe } from './db';
+import { whatsappIsConfigured } from './whatsapp';
 
 export const READINESS_PROBE_TIMEOUT_MS = 3_000;
 
@@ -20,6 +21,7 @@ export interface ServiceReadiness {
     aiAssistant: OptionalState;
     email: OptionalState;
     googleOAuth: OptionalState;
+    whatsapp: OptionalState;
   };
 }
 
@@ -51,7 +53,15 @@ export function buildServiceReadiness(
   const googleOAuth: OptionalState = env.GOOGLE_CLIENT_ID?.trim() && env.GOOGLE_CLIENT_SECRET?.trim()
     ? 'ready'
     : 'not_configured';
-  const optionalDegraded = [storageBackup, aiAssistant, email, googleOAuth].includes('degraded');
+  const whatsappValues = [
+    env.WHATSAPP_ACCESS_TOKEN,
+    env.WHATSAPP_PHONE_NUMBER_ID,
+    env.WHATSAPP_GRAPH_API_VERSION,
+  ];
+  const whatsapp: OptionalState = whatsappValues.some(value => value?.trim())
+    ? whatsappIsConfigured(env) ? 'ready' : 'degraded'
+    : 'not_configured';
+  const optionalDegraded = [storageBackup, aiAssistant, email, googleOAuth, whatsapp].includes('degraded');
 
   return {
     ok: databaseReady,
@@ -72,6 +82,7 @@ export function buildServiceReadiness(
       aiAssistant,
       email,
       googleOAuth,
+      whatsapp,
     },
   };
 }

@@ -34,6 +34,12 @@ import {
   submitCellarOperationReversalCommand,
   type CellarOperationCommandResponse,
 } from '../lib/commands/client';
+import OperationMaterialsEditor, {
+  materialDraftIssue,
+  materialDraftsToUsages,
+  materialUsagesToDrafts,
+  type MaterialUsageDraft,
+} from './OperationMaterialsEditor';
 
 export type { CellarOperationInput } from '../lib/commands/cellarOperation';
 
@@ -60,6 +66,7 @@ export function permittedCellarOperationInput(
     vesselToId: access.canUseOperationVessels ? input.vesselToId : null,
     materialId: access.canConsumeOperationMaterials ? input.materialId : undefined,
     dose: access.canConsumeOperationMaterials ? input.dose : undefined,
+    materials: access.canConsumeOperationMaterials ? input.materials : undefined,
   };
 }
 
@@ -125,8 +132,7 @@ export default function CellarOperationsTab({
   const [lotId, setLotId] = useState('');
   const [vesselId, setVesselId] = useState('');
   const [vesselToId, setVesselToId] = useState('');
-  const [materialId, setMaterialId] = useState('');
-  const [dose, setDose] = useState('');
+  const [materialDrafts, setMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
   const [volumeAfter, setVolumeAfter] = useState('');
   const [date, setDate] = useState(today);
   const [operator, setOperator] = useState('');
@@ -141,18 +147,19 @@ export default function CellarOperationsTab({
 
   const meta = CELLAR_OPERATIONS.find(o => o.key === type)!;
   const lot = lots.find(l => l.id === lotId) || null;
-  const material = canConsumeOperationMaterials
-    ? inventory.find(i => i.id === materialId) || null
-    : null;
-
   const restoreCapturedOperation = (input: CellarOperationInput) => {
     setType(input.type);
     setCustomLabel(input.customLabel || '');
     setLotId(input.lotId);
     setVesselId(input.vesselId || '');
     setVesselToId(input.vesselToId || '');
-    setMaterialId(input.materialId || '');
-    setDose(input.dose != null ? String(input.dose) : '');
+    setMaterialDrafts(materialUsagesToDrafts(
+      input.materials?.length
+        ? input.materials
+        : input.materialId && input.dose
+          ? [{ materialId: input.materialId, quantity: input.dose }]
+          : [],
+    ));
     setVolumeAfter(input.volumeAfterL != null ? String(input.volumeAfterL) : '');
     setDate(input.date);
     setOperator(input.operator);
@@ -223,21 +230,24 @@ export default function CellarOperationsTab({
     if (pendingCellarOperationCommandIntent()) return;
     if (meta.affectsVolume && lot && !volumeAfter) setVolumeAfter(String(round1(lot.currentVolume)));
     if (!meta.affectsVolume) setVolumeAfter('');
-    if (!meta.needsMaterial) { setMaterialId(''); setDose(''); }
     if (!meta.needsVesselTo) setVesselToId('');
   }, [type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const volNum = volumeAfter === '' ? null : parseFloat(volumeAfter);
   const overfill = meta.affectsVolume && lot != null && volNum != null && volNum > lot.currentVolume + 0.001
     && (type === 'pressing' || type === 'racking' || type === 'filtration' || type === 'bottling');
-  const doseNum = parseFloat(dose) || 0;
-  const overDraw = canConsumeOperationMaterials && !!material && doseNum > material.stock + 0.0001;
+  const materialIssue = canConsumeOperationMaterials
+    ? materialDraftIssue(materialDrafts, inventory)
+    : null;
+  const materials = canConsumeOperationMaterials
+    ? materialDraftsToUsages(materialDrafts, inventory)
+    : [];
 
   const customOk = type !== 'custom' || customLabel.trim().length > 0;
-  const canSubmit = canLogCellarOperation && !!lot && customOk && !overfill && !overDraw
+  const canSubmit = canLogCellarOperation && !!lot && customOk && !overfill && !materialIssue
     && !pendingIntent && !pendingReversalIntent && !isSubmitting && !isReversing;
 
-  const resetSoft = () => { setDose(''); setNotes(''); setCustomLabel(''); };
+  const resetSoft = () => { setMaterialDrafts([]); setNotes(''); setCustomLabel(''); };
 
   const finishCommand = () => {
     setPendingIntent(null);
@@ -349,13 +359,28 @@ export default function CellarOperationsTab({
     const result = response.result;
     onUpdateLots?.(replaceById(lots, [result.updatedLot]));
     if (result.updatedVessel) onUpdateVessels?.(replaceById(vessels, [result.updatedVessel]));
-    if (result.updatedInventoryItem) {
-      onUpdateInventory?.(replaceById(inventory, [result.updatedInventoryItem]));
+    const restoredInventory = result.updatedInventoryItems?.length
+      ? result.updatedInventoryItems
+      : result.updatedInventoryItem
+        ? [result.updatedInventoryItem]
+        : [];
+    if (restoredInventory.length) {
+      onUpdateInventory?.(replaceById(inventory, restoredInventory));
     }
     onUpdateOperations?.(replaceById(ops, [result.reversalOperation, result.originalOperation]));
+    const reversalCosts = result.reversalCostEntries?.length
+      ? result.reversalCostEntries
+      : result.reversalCostEntry
+        ? [result.reversalCostEntry]
+        : [];
+    const updatedOriginalCosts = result.updatedOriginalCostEntries?.length
+      ? result.updatedOriginalCostEntries
+      : result.updatedOriginalCostEntry
+        ? [result.updatedOriginalCostEntry]
+        : [];
     onUpdateCostEntries?.(replaceById(costEntries, [
-      ...(result.reversalCostEntry ? [result.reversalCostEntry] : []),
-      ...(result.updatedOriginalCostEntry ? [result.updatedOriginalCostEntry] : []),
+      ...reversalCosts,
+      ...updatedOriginalCosts,
     ]));
     onUpdateAuditLogs?.(replaceById(auditLogs, [result.auditLog]));
   };
@@ -410,8 +435,7 @@ export default function CellarOperationsTab({
       vesselId: vesselId || null,
       vesselToId: meta.needsVesselTo ? (vesselToId || null) : null,
       volumeAfterL: meta.affectsVolume && volNum != null ? volNum : undefined,
-      materialId: meta.needsMaterial ? (materialId || undefined) : undefined,
-      dose: meta.needsMaterial && doseNum > 0 ? doseNum : undefined,
+      materials: materials.length ? materials : undefined,
       operator: operator.trim() || currentUserName,
       notes: notes.trim(),
     }, {
@@ -570,20 +594,15 @@ export default function CellarOperationsTab({
                 </div>
               )}
 
-              {canConsumeOperationMaterials && meta.needsMaterial && (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className={labelCls}>{ka ? 'მასალა / დანამატი' : 'Material / additive'}</label>
-                    <select value={materialId} onChange={e => setMaterialId(e.target.value)} className={inputCls}>
-                      <option value="">{ka ? '— არცერთი —' : '— none —'}</option>
-                      {inventory.map(i => <option key={i.id} value={i.id}>{i.name} ({round1(i.stock)} {i.unit})</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>{ka ? 'გამოყ. რაოდენობა' : 'Amount used'}{material ? ` (${material.unit})` : ''}</label>
-                    <input type="number" step="0.01" min={0} value={dose} onChange={e => setDose(e.target.value)} placeholder="0" className={inputCls} />
-                  </div>
-                </div>
+              {canConsumeOperationMaterials && (
+                <OperationMaterialsEditor
+                  lang={lang}
+                  inventory={inventory}
+                  value={materialDrafts}
+                  onChange={setMaterialDrafts}
+                  operationType={type}
+                  lotVolumeL={lot?.currentVolume}
+                />
               )}
 
               {meta.affectsVolume && (
@@ -617,12 +636,6 @@ export default function CellarOperationsTab({
                   placeholder={ka ? 'არასავალდებულო' : 'optional'} className={inputCls} />
               </div>
 
-              {overDraw && (
-                <div className="flex items-center gap-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  {ka ? 'რაოდენობა აღემატება მარაგს — ოპერაცია არ შეინახება.' : 'Amount exceeds stock — the operation will not be saved.'}
-                </div>
-              )}
               {overfill && (
                 <div className="flex items-center gap-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
@@ -708,8 +721,13 @@ export default function CellarOperationsTab({
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">
                   {ops.map(o => {
                     const Icon = OP_ICONS[o.type] || Plus;
+                    const materialDetail = o.materials?.length
+                      ? o.materials.map(item => `${item.materialName || item.materialId} ${o.recordKind === 'reversal' ? '−' : ''}${item.quantity}${item.unit || ''}${item.purpose ? ` (${item.purpose})` : ''}`).join(', ')
+                      : o.materialName && o.dose
+                        ? `${o.materialName} ${o.recordKind === 'reversal' ? '−' : ''}${o.dose}${o.unit || ''}`
+                        : '';
                     const detail = [
-                      o.materialName && o.dose ? `${o.materialName} ${o.recordKind === 'reversal' ? '−' : ''}${o.dose}${o.unit || ''}` : '',
+                      materialDetail,
                       o.vesselId ? (o.vesselToId ? `${o.vesselId}→${o.vesselToId}` : o.vesselId) : '',
                       o.volumeAfterL != null && o.volumeBeforeL != null && o.volumeAfterL !== o.volumeBeforeL ? `${round1(o.volumeBeforeL)}→${round1(o.volumeAfterL)} L` : '',
                       o.notes,

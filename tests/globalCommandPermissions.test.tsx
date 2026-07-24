@@ -27,7 +27,7 @@ describe('GlobalCommandPalette permissions', () => {
   it('only indexes destinations available to a lab technician', () => {
     const markup = renderPalette('Lab Technician');
 
-    expect(markup).toContain('>Dashboard</strong>');
+    expect(markup).toContain('>Today</strong>');
     expect(markup).toContain('>Cellar</strong>');
     expect(markup).toContain('>Documents</strong>');
     expect(markup).toContain('>Settings</strong>');

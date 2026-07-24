@@ -49,8 +49,8 @@ describe('InventoryTab action permissions', () => {
 
     expect(markup).toContain('Add New Material');
     expect(markup).toContain('title="Edit Material"');
-    expect(markup).toContain('Consume Item');
-    expect(markup).toContain('Refill Stock');
+    expect(markup).toContain('Manual stock correction');
+    expect(markup).toContain('Receive Stock');
     expect(markup).not.toContain('title="Delete Item"');
   });
 

@@ -2,7 +2,7 @@
   "name": "VinOS — Unified Winery & Vineyard Control",
   "short_name": "VinOS",
   "description": "Unified vineyard (Vazi) and winery (Gvino) management — tanks, lots, fermentation, lab, and traceability.",
-  "start_url": "/",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#fbf9f6",

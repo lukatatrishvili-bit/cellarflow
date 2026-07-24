@@ -23,7 +23,7 @@ describe('compound cellar workflow permissions', () => {
     expect(Object.values(permissions).flatMap(Object.values).every(Boolean)).toBe(true);
   });
 
-  it('keeps winemaker production actions but omits owner-only ledgers and deletion', () => {
+  it('lets winemakers consume production materials without opening owner-only ledgers', () => {
     const permissions = cellarWorkflowPermissions('Winemaker');
 
     expect(permissions.intake).toEqual({
@@ -41,12 +41,13 @@ describe('compound cellar workflow permissions', () => {
     expect(permissions.operations).toEqual({
       canLogCellarOperation: true,
       canUseOperationVessels: true,
-      canConsumeOperationMaterials: false,
+      canConsumeOperationMaterials: true,
       canReverseCellarOperation: false,
     });
     expect(permissions.transfers).toEqual({
       canExecuteTransfer: true,
       canSanitizeVessels: true,
+      canConsumeTransferMaterials: true,
       canReverseTransfer: true,
     });
     expect(permissions.fermentation).toEqual({
@@ -54,6 +55,7 @@ describe('compound cellar workflow permissions', () => {
       canUpdateFermentationLot: true,
       canUpdateFermentationVessel: true,
       canCompleteFermentation: true,
+      canConsumeFermentationMaterials: true,
       canReverseFermentationCompletion: false,
       canDeleteFermentationLog: false,
     });
@@ -89,6 +91,7 @@ describe('compound cellar workflow permissions', () => {
     expect(permissions.transfers).toEqual({
       canExecuteTransfer: false,
       canSanitizeVessels: true,
+      canConsumeTransferMaterials: false,
       canReverseTransfer: false,
     });
     expect(permissions.fermentation).toEqual({
@@ -96,6 +99,7 @@ describe('compound cellar workflow permissions', () => {
       canUpdateFermentationLot: false,
       canUpdateFermentationVessel: true,
       canCompleteFermentation: false,
+      canConsumeFermentationMaterials: false,
       canReverseFermentationCompletion: false,
       canDeleteFermentationLog: false,
     });

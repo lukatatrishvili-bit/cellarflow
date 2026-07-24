@@ -42,8 +42,11 @@ export interface CellarOperationReversalCommandResult {
   reversalOperation: CellarOperation;
   updatedLot: WineLot;
   updatedVessel?: Vessel;
+  updatedInventoryItems: InventoryItem[];
   updatedInventoryItem?: InventoryItem;
+  reversalCostEntries: CostEntry[];
   reversalCostEntry?: CostEntry;
+  updatedOriginalCostEntries: CostEntry[];
   updatedOriginalCostEntry?: CostEntry;
   auditLog: MaraniOSAuditLog;
   stateVersion?: number;
@@ -125,26 +128,38 @@ function validSnapshot(value: unknown): value is CellarOperationReversalSnapshot
     && snapshot.vessel.currentVolume >= 0
     && typeof snapshot.vessel.lastOperation === 'string'
   );
-  const inventoryValid = snapshot.inventory === undefined || (
-    RECORD_ID_PATTERN.test(snapshot.inventory.id || '')
-    && typeof snapshot.inventory.stock === 'number'
-    && Number.isFinite(snapshot.inventory.stock)
-    && snapshot.inventory.stock >= 0
+  const inventoryFactValid = (item: { id: string; stock: number }) => (
+    RECORD_ID_PATTERN.test(item.id || '')
+    && typeof item.stock === 'number'
+    && Number.isFinite(item.stock)
+    && item.stock >= 0
   );
-  const costValid = snapshot.costEntry === undefined || (
-    RECORD_ID_PATTERN.test(snapshot.costEntry.id || '')
-    && typeof snapshot.costEntry.amount === 'number'
-    && Number.isFinite(snapshot.costEntry.amount)
-    && snapshot.costEntry.amount > 0
-    && typeof snapshot.costEntry.currency === 'string'
-    && snapshot.costEntry.currency.length > 0
-    && (snapshot.costEntry.quantity === undefined || (
-      typeof snapshot.costEntry.quantity === 'number'
-      && Number.isFinite(snapshot.costEntry.quantity)
-      && snapshot.costEntry.quantity > 0
+  const costFactValid = (item: { id: string; amount: number; currency: string; quantity?: number }) => (
+    RECORD_ID_PATTERN.test(item.id || '')
+    && typeof item.amount === 'number'
+    && Number.isFinite(item.amount)
+    && item.amount > 0
+    && typeof item.currency === 'string'
+    && item.currency.length > 0
+    && (item.quantity === undefined || (
+      typeof item.quantity === 'number'
+      && Number.isFinite(item.quantity)
+      && item.quantity > 0
     ))
   );
-  return snapshot.version === 1
+  const materialFactsValid = snapshot.version === 1
+    ? (snapshot.inventory === undefined || inventoryFactValid(snapshot.inventory))
+      && (snapshot.costEntry === undefined || costFactValid(snapshot.costEntry))
+    : snapshot.version === 2
+      && Array.isArray(snapshot.inventory)
+      && snapshot.inventory.length <= 25
+      && snapshot.inventory.every(inventoryFactValid)
+      && new Set(snapshot.inventory.map(item => item.id)).size === snapshot.inventory.length
+      && Array.isArray(snapshot.costEntries)
+      && snapshot.costEntries.length <= 25
+      && snapshot.costEntries.every(costFactValid)
+      && new Set(snapshot.costEntries.map(item => item.id)).size === snapshot.costEntries.length;
+  return (snapshot.version === 1 || snapshot.version === 2)
     && Boolean(snapshot.lot && RECORD_ID_PATTERN.test(snapshot.lot.id))
     && typeof snapshot.lot.currentVolume === 'number'
     && Number.isFinite(snapshot.lot.currentVolume)
@@ -154,8 +169,7 @@ function validSnapshot(value: unknown): value is CellarOperationReversalSnapshot
     && typeof snapshot.operationDescription === 'string'
     && snapshot.operationDescription.length > 0
     && vesselValid
-    && inventoryValid
-    && costValid;
+    && materialFactsValid;
 }
 
 export function parseCellarOperationReversalCommandPayload(
@@ -300,47 +314,60 @@ export function applyCellarOperationReversalCommand(
     dependencyConflict(`Vessel snapshot for operation ${original.id}`);
   }
 
-  let inventoryItem: InventoryItem | undefined;
-  if (snapshot.inventory) {
-    inventoryItem = currentState.inventory.find(item => item.id === snapshot.inventory?.id);
+  const inventorySnapshots = snapshot.version === 1
+    ? (snapshot.inventory ? [snapshot.inventory] : [])
+    : snapshot.inventory;
+  const originalMaterialUsages = original.materials?.length
+    ? original.materials
+    : original.materialId && original.dose
+      ? [{ materialId: original.materialId, quantity: original.dose }]
+      : [];
+  if (inventorySnapshots.length !== originalMaterialUsages.length) {
+    dependencyConflict(`Inventory snapshots for operation ${original.id}`);
+  }
+  const inventoryItems = inventorySnapshots.map(inventorySnapshot => {
+    const inventoryItem = currentState.inventory.find(item => item.id === inventorySnapshot.id);
     if (!inventoryItem) {
       throw new CellarOperationReversalCommandError(
         'cellar_operation_reversal_resource_missing',
-        `Inventory material ${snapshot.inventory.id} no longer exists.`,
+        `Inventory material ${inventorySnapshot.id} no longer exists.`,
         409,
       );
     }
-    const dose = original.dose || 0;
-    const expectedStock = round3(snapshot.inventory.stock - dose);
-    if (original.materialId !== inventoryItem.id || !(dose > 0)
+    const usage = originalMaterialUsages.find(item => item.materialId === inventoryItem.id);
+    const expectedStock = round3(inventorySnapshot.stock - (usage?.quantity || 0));
+    if (!usage || !(usage.quantity > 0)
       || !sameNumber(inventoryItem.stock, expectedStock)
       || inventoryItem.lastCommandId !== original.commandId
       || inventoryItem.lastModified !== original.lastModified) {
       dependencyConflict(`Inventory material ${inventoryItem.id}`);
     }
-  } else if (original.materialId || original.dose) {
-    dependencyConflict(`Inventory snapshot for operation ${original.id}`);
-  }
+    return { inventoryItem, inventorySnapshot, usage };
+  });
 
   const linkedCosts = currentState.costEntries.filter(entry => (
     entry.sourceRef === original.id && entry.recordKind !== 'reversal'
   ));
-  let originalCostEntry: CostEntry | undefined;
-  if (snapshot.costEntry) {
-    originalCostEntry = linkedCosts.find(entry => entry.id === snapshot.costEntry?.id);
-    if (!originalCostEntry || linkedCosts.length !== 1
+  const costSnapshots = snapshot.version === 1
+    ? (snapshot.costEntry ? [snapshot.costEntry] : [])
+    : snapshot.costEntries;
+  if (linkedCosts.length !== costSnapshots.length) {
+    dependencyConflict(`Cost ledger for operation ${original.id}`);
+  }
+  const originalCostEntries = costSnapshots.map(costSnapshot => {
+    const originalCostEntry = linkedCosts.find(entry => entry.id === costSnapshot.id);
+    if (!originalCostEntry
       || originalCostEntry.commandId !== original.commandId
       || originalCostEntry.lastModified !== original.lastModified
-      || !sameNumber(originalCostEntry.amount, snapshot.costEntry.amount)
-      || originalCostEntry.currency !== snapshot.costEntry.currency
-      || (snapshot.costEntry.quantity !== undefined
-        && !sameNumber(originalCostEntry.quantity, snapshot.costEntry.quantity))
+      || !sameNumber(originalCostEntry.amount, costSnapshot.amount)
+      || originalCostEntry.currency !== costSnapshot.currency
+      || (costSnapshot.quantity !== undefined
+        && !sameNumber(originalCostEntry.quantity, costSnapshot.quantity))
       || originalCostEntry.reversedByCommandId || originalCostEntry.reversedAt) {
       dependencyConflict(`Cost ledger for operation ${original.id}`);
     }
-  } else if (linkedCosts.length > 0) {
-    dependencyConflict(`Cost ledger for operation ${original.id}`);
-  }
+    return originalCostEntry;
+  });
 
   const originalAudit = currentState.auditLogs.find(item => item.id === snapshot.auditId);
   if (!originalAudit || originalAudit.commandId !== original.commandId
@@ -370,12 +397,15 @@ export function applyCellarOperationReversalCommand(
     lastCommandId: context.commandId,
     lastModified: timestamp,
   } : undefined;
-  const updatedInventoryItem: InventoryItem | undefined = inventoryItem && snapshot.inventory ? {
+  const updatedInventoryItems: InventoryItem[] = inventoryItems.map(({
+    inventoryItem,
+    inventorySnapshot,
+  }) => ({
     ...inventoryItem,
-    stock: snapshot.inventory.stock,
+    stock: inventorySnapshot.stock,
     lastCommandId: context.commandId,
     lastModified: timestamp,
-  } : undefined;
+  }));
 
   const updatedOriginal: CellarOperation = {
     ...original,
@@ -402,6 +432,7 @@ export function applyCellarOperationReversalCommand(
     ...(original.materialName ? { materialName: original.materialName } : {}),
     ...(typeof original.dose === 'number' ? { dose: original.dose } : {}),
     ...(original.unit ? { unit: original.unit } : {}),
+    ...(original.materials?.length ? { materials: original.materials } : {}),
     operator: context.actorUsername,
     notes: payload.reason,
     reversalOfOperationId: original.id,
@@ -409,14 +440,14 @@ export function applyCellarOperationReversalCommand(
     reversalReason: payload.reason,
   };
 
-  const updatedOriginalCostEntry: CostEntry | undefined = originalCostEntry ? {
+  const updatedOriginalCostEntries: CostEntry[] = originalCostEntries.map(originalCostEntry => ({
     ...originalCostEntry,
     reversedByCommandId: context.commandId,
     reversedAt: timestamp,
     reversalReason: payload.reason,
     lastModified: timestamp,
-  } : undefined;
-  const originalCostFacts = originalCostEntry ? (() => {
+  }));
+  const reversalCostEntries: CostEntry[] = originalCostEntries.map((originalCostEntry, index) => {
     const {
       reversedByCommandId: _reversedByCommandId,
       reversedAt: _reversedAt,
@@ -425,26 +456,34 @@ export function applyCellarOperationReversalCommand(
       reversalOfCommandId: _reversalOfCommandId,
       ...facts
     } = originalCostEntry;
-    return facts;
-  })() : undefined;
-  const reversalCostEntry: CostEntry | undefined = originalCostEntry && originalCostFacts ? {
-    ...originalCostFacts,
-    id: payload.costReversalId,
-    commandId: context.commandId,
-    recordKind: 'reversal',
-    lastModified: timestamp,
-    date: operationDate,
-    description: `Reversal: ${originalCostEntry.description}`,
-    amount: -Math.abs(originalCostEntry.amount),
-    ...(typeof originalCostEntry.quantity === 'number'
-      ? { quantity: -Math.abs(originalCostEntry.quantity) }
-      : {}),
-    sourceRef: reversalOperation.id,
-    createdBy: context.actorUsername,
-    reversalOfCostEntryId: originalCostEntry.id,
-    reversalOfCommandId: original.commandId,
-    reversalReason: payload.reason,
-  } : undefined;
+    const suffix = index === 0 ? '' : `-${index + 1}`;
+    const id = `${payload.costReversalId.slice(0, 128 - suffix.length)}${suffix}`;
+    if (currentState.costEntries.some(item => item.id === id)) {
+      throw new CellarOperationReversalCommandError(
+        'cellar_operation_reversal_id_conflict',
+        `Cost reversal record ${id} already exists.`,
+        409,
+      );
+    }
+    return {
+      ...facts,
+      id,
+      commandId: context.commandId,
+      recordKind: 'reversal',
+      lastModified: timestamp,
+      date: operationDate,
+      description: `Reversal: ${originalCostEntry.description}`,
+      amount: -Math.abs(originalCostEntry.amount),
+      ...(typeof originalCostEntry.quantity === 'number'
+        ? { quantity: -Math.abs(originalCostEntry.quantity) }
+        : {}),
+      sourceRef: reversalOperation.id,
+      createdBy: context.actorUsername,
+      reversalOfCostEntryId: originalCostEntry.id,
+      reversalOfCommandId: original.commandId,
+      reversalReason: payload.reason,
+    };
+  });
 
   const unsignedAudit: MaraniOSAuditLog = {
     id: payload.auditId,
@@ -461,7 +500,10 @@ export function applyCellarOperationReversalCommand(
   };
   const auditLog = signAuditEntries([unsignedAudit], currentState.auditLogs)[0];
   const updatedCosts = new Map(
-    updatedOriginalCostEntry ? [[updatedOriginalCostEntry.id, updatedOriginalCostEntry]] : [],
+    updatedOriginalCostEntries.map(item => [item.id, item]),
+  );
+  const updatedInventoryById = new Map(
+    updatedInventoryItems.map(item => [item.id, item]),
   );
 
   return {
@@ -470,15 +512,13 @@ export function applyCellarOperationReversalCommand(
       vessels: updatedVessel
         ? currentState.vessels.map(item => item.id === updatedVessel.id ? updatedVessel : item)
         : currentState.vessels,
-      inventory: updatedInventoryItem
-        ? currentState.inventory.map(item => item.id === updatedInventoryItem.id ? updatedInventoryItem : item)
-        : currentState.inventory,
+      inventory: currentState.inventory.map(item => updatedInventoryById.get(item.id) || item),
       cellarOps: [
         reversalOperation,
         ...currentState.cellarOps.map(item => item.id === updatedOriginal.id ? updatedOriginal : item),
       ],
       costEntries: [
-        ...(reversalCostEntry ? [reversalCostEntry] : []),
+        ...reversalCostEntries,
         ...currentState.costEntries.map(item => updatedCosts.get(item.id) || item),
       ],
       auditLogs: [auditLog, ...currentState.auditLogs],
@@ -488,9 +528,12 @@ export function applyCellarOperationReversalCommand(
       reversalOperation,
       updatedLot,
       ...(updatedVessel ? { updatedVessel } : {}),
-      ...(updatedInventoryItem ? { updatedInventoryItem } : {}),
-      ...(reversalCostEntry ? { reversalCostEntry } : {}),
-      ...(updatedOriginalCostEntry ? { updatedOriginalCostEntry } : {}),
+      updatedInventoryItems,
+      ...(updatedInventoryItems[0] ? { updatedInventoryItem: updatedInventoryItems[0] } : {}),
+      reversalCostEntries,
+      ...(reversalCostEntries[0] ? { reversalCostEntry: reversalCostEntries[0] } : {}),
+      updatedOriginalCostEntries,
+      ...(updatedOriginalCostEntries[0] ? { updatedOriginalCostEntry: updatedOriginalCostEntries[0] } : {}),
       auditLog,
       receipt: {
         kind: 'cellar_operation_reversal',
@@ -501,8 +544,8 @@ export function applyCellarOperationReversalCommand(
         originalOperationId: original.id,
         reversalOperationId: reversalOperation.id,
         restoredVolumeL: snapshot.lot.currentVolume,
-        restoredMaterialQuantity: original.dose || 0,
-        reversedCostAmount: originalCostEntry?.amount || 0,
+        restoredMaterialQuantity: originalMaterialUsages.reduce((sum, item) => sum + item.quantity, 0),
+        reversedCostAmount: originalCostEntries.reduce((sum, item) => sum + item.amount, 0),
       },
     },
   };

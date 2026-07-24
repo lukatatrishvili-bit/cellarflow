@@ -161,6 +161,8 @@ describe('CellarOperationsTab action permissions', () => {
     expect(markup).not.toContain('Limited operation tools');
     expect(markup).toContain('Operation type');
     expect(markup).toContain('>Vessel</label>');
+    expect(markup).toContain('Materials &amp; additives (optional)');
+    expect(markup).toContain('Used stock is deducted automatically');
     expect(markup).toContain('Log operation</button>');
   });
 

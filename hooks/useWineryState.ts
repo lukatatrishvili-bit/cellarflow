@@ -12,6 +12,7 @@ import type {
   LabAnalysis,
   InventoryItem,
   Task,
+  TaskAssignmentInput,
   VineyardBlock,
   PhenologyRecord,
   SprayRecord,
@@ -123,6 +124,8 @@ export function applyLiveSessionProfile(
     ...(typeof candidate.email === 'string' ? { email: candidate.email } : {}),
     ...(typeof candidate.fullName === 'string' ? { fullName: candidate.fullName } : {}),
     ...(candidate.language === 'en' || candidate.language === 'ka' ? { language: candidate.language } : {}),
+    ...(typeof candidate.phone === 'string' ? { phone: candidate.phone } : {}),
+    ...(typeof candidate.whatsappOptIn === 'boolean' ? { whatsappOptIn: candidate.whatsappOptIn } : {}),
     ...(Array.isArray(candidate.enabledModules)
       ? { enabledModules: candidate.enabledModules.filter((item): item is string => typeof item === 'string') }
       : {}),
@@ -190,6 +193,8 @@ const createSignedOutUser = (): UserProfile => ({
   fullName: '',
   role: 'Read-Only',
   language: 'en',
+  phone: '',
+  whatsappOptIn: false,
   registrationComplete: true,
 });
 
@@ -220,15 +225,16 @@ export interface CellarNote {
 }
 
 interface RegistrationProfileData {
-  username: string;
+  /** Optional compatibility key; new registration derives this from email. */
+  username?: string;
   email: string;
   fullName: string;
-  role: UserProfile['role'];
+  role?: UserProfile['role'];
   language: UserProfile['language'];
   rememberMe?: boolean;
   passcode: string;
   companyProfile: Partial<CompanyProfile>;
-  enabledModules: string[];
+  enabledModules?: string[];
   enabledWidgets?: string[];
 }
 
@@ -853,20 +859,32 @@ export function useWineryState() {
     }
 
     const result = response.result;
+    const changedInventoryItems = result.inventoryItems?.length
+      ? result.inventoryItems
+      : result.inventoryItem
+        ? [result.inventoryItem]
+        : [];
+    const changedInventoryById = new Map(
+      changedInventoryItems.map(item => [item.id, item]),
+    );
+    const generatedCostEntries = result.costEntries?.length
+      ? result.costEntries
+      : result.costEntry
+        ? [result.costEntry]
+        : [];
     updateAllStates({
       lots: lots.map(item => item.id === result.lot.id ? result.lot : item),
       vessels: result.vessel
         ? vessels.map(item => item.id === result.vessel?.id ? result.vessel as Vessel : item)
         : vessels,
-      inventory: result.inventoryItem
-        ? inventory.map(item => item.id === result.inventoryItem?.id ? result.inventoryItem as InventoryItem : item)
-        : inventory,
+      inventory: inventory.map(item => changedInventoryById.get(item.id) || item),
       cellarOps: cellarOps.some(item => item.id === result.operation.id)
         ? cellarOps
         : [result.operation, ...cellarOps],
-      costEntries: result.costEntry && !costEntries.some(item => item.id === result.costEntry?.id)
-        ? [result.costEntry, ...costEntries]
-        : costEntries,
+      costEntries: [
+        ...generatedCostEntries.filter(entry => !costEntries.some(item => item.id === entry.id)),
+        ...costEntries,
+      ],
       auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
         ? auditLogs
         : [result.auditLog, ...auditLogs],
@@ -1891,8 +1909,8 @@ export function useWineryState() {
 
   /**
    * Fast cellar-operation entry. Records a single winemaking action against a
-   * batch: appends a readable entry to the lot timeline, deducts an inventory
-   * material when one is consumed, applies a volume change (loss/addition) to the
+   * batch: appends a readable entry to the lot timeline, deducts every inventory
+   * material consumed, applies a volume change (loss/addition) to the
    * lot and its vessel, and writes an audit entry. Returns the operation id.
    */
   /**
@@ -1954,7 +1972,24 @@ export function useWineryState() {
       ? (input.customLabel || 'Custom operation')
       : (lang === 'ka' ? (meta?.ka || input.type) : (meta?.en || input.type));
 
-    const material = input.materialId ? inventory.find(i => i.id === input.materialId) : undefined;
+    const requestedMaterials = input.materials?.length
+      ? input.materials
+      : input.materialId && input.dose
+        ? [{ materialId: input.materialId, quantity: input.dose }]
+        : [];
+    const materialUsages = requestedMaterials.flatMap(usage => {
+      const material = inventory.find(item => item.id === usage.materialId);
+      if (!material || !(usage.quantity > 0)) return [];
+      return [{
+        material,
+        usage: {
+          ...usage,
+          materialName: material.name,
+          category: material.category,
+          unit: material.unit,
+        },
+      }];
+    });
     const volumeBeforeL = lot.currentVolume;
     const hasVolumeChange = input.volumeAfterL != null && Number.isFinite(input.volumeAfterL);
     const volumeAfterL = hasVolumeChange ? Math.max(0, input.volumeAfterL as number) : undefined;
@@ -1965,7 +2000,11 @@ export function useWineryState() {
 
     // Build a readable timeline description.
     const parts: string[] = [opLabel];
-    if (material && input.dose) parts.push(`${material.name} ${input.dose}${material.unit || ''}`);
+    if (materialUsages.length) {
+      parts.push(materialUsages.map(({ material, usage }) => (
+        `${material.name} ${usage.quantity}${material.unit || ''}${usage.purpose ? ` (${usage.purpose})` : ''}`
+      )).join(', '));
+    }
     if (input.vesselId) parts.push(input.vesselToId ? `${input.vesselId} → ${input.vesselToId}` : `${input.vesselId}`);
     if (hasVolumeChange) parts.push(`${volumeBeforeL} → ${volumeAfterL} L`);
     if (input.notes) parts.push(input.notes);
@@ -1992,11 +2031,17 @@ export function useWineryState() {
       setVessels(prev => prev.map(v => v.id !== input.vesselId ? v : { ...v, lastOperation: description }));
     }
 
-    // 3) Inventory: deduct the consumed material (clamped at zero).
-    if (material && input.dose && input.dose > 0) {
-      setInventory(prev => prev.map(i => i.id !== material.id ? i : {
-        ...i,
-        stock: deductStock(i.stock, input.dose as number),
+    // 3) Inventory: deduct every consumed material (clamped at zero).
+    if (materialUsages.length) {
+      const deductions = new Map(
+        materialUsages.map(({ material, usage }) => [material.id, usage.quantity]),
+      );
+      setInventory(prev => prev.map(item => {
+        const quantity = deductions.get(item.id);
+        return quantity == null ? item : {
+          ...item,
+          stock: deductStock(item.stock, quantity),
+        };
       }));
     }
 
@@ -2008,17 +2053,29 @@ export function useWineryState() {
       operator,
       volumeBeforeL,
       volumeAfterL,
-      materialName: material?.name,
-      unit: material?.unit,
+      ...(materialUsages.length ? { materials: materialUsages.map(item => item.usage) } : {}),
+      ...(materialUsages.length === 1 && input.materialId ? {
+        materialName: materialUsages[0].material.name,
+        unit: materialUsages[0].material.unit,
+      } : {}),
     };
     setCellarOps(prev => [op, ...prev]);
 
-    const materialCost = materialCostEntryFromOperation(op, material, {
-      currency: companyProfile.currency || 'GEL',
-      createdBy: operator,
+    const materialCosts = materialUsages.flatMap(({ material, usage }) => {
+      const materialCost = materialCostEntryFromOperation({
+        ...op,
+        materialId: material.id,
+        materialName: material.name,
+        dose: usage.quantity,
+        unit: material.unit,
+      }, material, {
+        currency: companyProfile.currency || 'GEL',
+        createdBy: operator,
+      });
+      return materialCost ? [materialCost] : [];
     });
-    if (materialCost) {
-      setCostEntries(prev => [materialCost, ...prev]);
+    if (materialCosts.length) {
+      setCostEntries(prev => [...materialCosts, ...prev]);
     }
 
     // 5) Audit.
@@ -2121,18 +2178,42 @@ export function useWineryState() {
     }));
   };
 
-  const handleAddNewTask = (title: string, priority: 'high' | 'medium' | 'low', dueDate: string, description: string) => {
+  const handleAddNewTask = (
+    title: string,
+    priority: 'high' | 'medium' | 'low',
+    dueDate: string,
+    description: string,
+    assignment: TaskAssignmentInput = {},
+  ) => {
     const newTask: Task = {
       id: createUniqueRecordId('task', tasks.map(item => item.id)),
       title,
       priority,
       dueDate: dueDate || new Date().toISOString().split('T')[0],
-      assignedTo: 'Luka Tatrishvili',
+      assignedTo: assignment.assignedTo || currentUser.fullName || currentUser.username,
+      ...(assignment.assignedUserId ? { assignedUserId: assignment.assignedUserId } : {}),
       status: 'pending',
-      description
+      description,
+      ...(assignment.notifyWhatsApp ? {
+        whatsappNotification: {
+          status: 'sending' as const,
+          updatedAt: new Date().toISOString(),
+        },
+      } : {}),
     };
     setTasks(prev => [newTask, ...prev]);
     setToastMessage(lang === 'ka' ? 'ახალი დავალება დაემატა!' : 'New task assigned successfully!');
+    return newTask;
+  };
+
+  const handleUpdateTaskWhatsAppNotification = (
+    taskId: string,
+    notification: NonNullable<Task['whatsappNotification']>,
+  ) => {
+    setTasks(prev => prev.map(task => task.id === taskId ? {
+      ...task,
+      whatsappNotification: notification,
+    } : task));
   };
 
   const recordDeletions = (records: DeletionTombstone[]): boolean => {
@@ -2642,6 +2723,7 @@ export function useWineryState() {
     handleAddLabLog,
     handleToggleTaskStatus,
     handleAddNewTask,
+    handleUpdateTaskWhatsAppNotification,
     handleAddAttachment,
     handleDeleteAttachment,
     handleSaveCrmLead,

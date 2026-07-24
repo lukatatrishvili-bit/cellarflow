@@ -129,7 +129,7 @@ export default function GlobalCommandPalette({
 
   const commands = useMemo<CommandItem[]>(() => {
     const allModuleCommands: Array<CommandItem & { moduleId: string; tabId?: string }> = [
-      { id: 'module-dashboard', moduleId: 'portal', kind: 'module', title: ka ? 'მთავარი' : 'Dashboard', subtitle: ka ? 'მთავარი პორტალის გახსნა' : 'Open main portal', keywords: 'dashboard portal home overview მთავარი', icon: BarChart3, run: () => jump('portal') },
+      { id: 'module-dashboard', moduleId: 'portal', kind: 'module', title: ka ? 'დღეს' : 'Today', subtitle: ka ? 'დღევანდელი სამუშაოს გახსნა' : 'Open today’s priorities', keywords: 'today dashboard portal home overview დღეს მთავარი', icon: BarChart3, run: () => jump('portal') },
       { id: 'module-vineyard', moduleId: 'vazi', kind: 'module', title: ka ? 'ვენახი' : 'Vineyard', subtitle: ka ? 'ვაზის მოდულის გახსნა' : 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray ვენახი', icon: Sprout, run: () => jump('vazi') },
       { id: 'module-cellar', moduleId: 'gvino', tabId: 'dashboard', kind: 'module', title: ka ? 'მარანი' : 'Cellar', subtitle: ka ? 'ღვინის მოდულის გახსნა' : 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels მარანი', icon: Wine, run: () => jump('gvino', 'dashboard') },
       { id: 'module-sales', moduleId: 'sales', kind: 'module', title: ka ? 'გაყიდვები' : 'Sales', subtitle: ka ? 'შეკვეთები, ჯავშნები, გატანა' : 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers გაყიდვები', icon: ShoppingCart, run: () => jump('sales') },

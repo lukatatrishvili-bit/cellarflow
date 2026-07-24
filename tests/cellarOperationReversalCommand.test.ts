@@ -134,6 +134,55 @@ describe('cellar.operation.reverse domain command', () => {
     expect(applied.state.inventory).toEqual(posted.inventory);
   });
 
+  it('restores every material and cost from a multi-addition operation', () => {
+    const yeast = { ...material(), id: 'INV-YEAST-REV', name: 'Yeast', stock: 5, costPerUnit: 20 };
+    const starter = { ...material(), id: 'INV-STARTER-REV', name: 'Starter', stock: 8, costPerUnit: 10 };
+    const posted = applyCellarOperationCommand({
+      lots: [lot()], vessels: [vessel()], inventory: [yeast, starter],
+      cellarOps: [], costEntries: [], auditLogs: [],
+    }, {
+      operationId: 'OP-MULTI-ORIGINAL',
+      auditId: 'AUDIT-MULTI-ORIGINAL',
+      operation: {
+        date: '2026-09-10',
+        type: 'ferment_start',
+        lotId: 'LOT-OP-REV',
+        vesselId: 'TANK-OP-REV',
+        vesselToId: null,
+        materials: [
+          { materialId: yeast.id, quantity: 0.5, purpose: 'yeast' },
+          { materialId: starter.id, quantity: 1.25, purpose: 'starter' },
+        ],
+        operator: 'Nino',
+        notes: 'Inoculation.',
+      },
+    }, {
+      commandId: 'cmd-operation-multi-original',
+      actorUsername: 'nino',
+      currency: 'GEL',
+      performedAt: new Date('2026-09-10T10:00:00.000Z'),
+    }).state;
+
+    const applied = applyCellarOperationReversalCommand(posted, {
+      ...payload,
+      originalCommandId: 'cmd-operation-multi-original',
+    }, context);
+
+    expect(applied.result.updatedInventoryItems).toEqual([
+      expect.objectContaining({ id: yeast.id, stock: 5 }),
+      expect.objectContaining({ id: starter.id, stock: 8 }),
+    ]);
+    expect(applied.result.updatedOriginalCostEntries).toHaveLength(2);
+    expect(applied.result.reversalCostEntries).toEqual([
+      expect.objectContaining({ id: 'COST-REVERSAL', amount: -10, quantity: -0.5 }),
+      expect.objectContaining({ id: 'COST-REVERSAL-2', amount: -12.5, quantity: -1.25 }),
+    ]);
+    expect(applied.result.receipt).toMatchObject({
+      restoredMaterialQuantity: 1.75,
+      reversedCostAmount: 22.5,
+    });
+  });
+
   it('restores lot and vessel volume after a loss operation', () => {
     const posted = applyCellarOperationCommand({
       lots: [lot()], vessels: [vessel()], inventory: [material()],

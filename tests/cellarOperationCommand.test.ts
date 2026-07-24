@@ -152,6 +152,56 @@ describe('cellar.operation domain command', () => {
     expect(applied.state.auditLogs).toHaveLength(1);
   });
 
+  it('deducts several additions from one operation and posts one linked cost per material', () => {
+    const multiState = state({
+      inventory: [
+        material({ id: 'INV-YEAST', name: 'EC-1118 yeast', category: 'yeasts', stock: 2, unit: 'kg', costPerUnit: 50 }),
+        material({ id: 'INV-STARTER', name: 'Go-Ferm starter', category: 'nutritions', stock: 4, unit: 'kg', costPerUnit: 30 }),
+      ],
+    });
+    const applied = applyCellarOperationCommand(multiState, {
+      operationId: 'OP-FERMENT-START-1',
+      auditId: 'AUDIT-FERMENT-START-1',
+      operation: {
+        date: '2026-09-10',
+        type: 'ferment_start',
+        lotId: 'LOT-CELLAR-1',
+        vesselId: 'TANK-CELLAR-1',
+        vesselToId: null,
+        materials: [
+          { materialId: 'INV-YEAST', quantity: 0.25, purpose: 'yeast' },
+          { materialId: 'INV-STARTER', quantity: 0.4, purpose: 'starter' },
+        ],
+        operator: 'Nino Winemaker',
+        notes: 'Inoculation.',
+      },
+    }, context);
+
+    expect(applied.result.inventoryItems).toEqual([
+      expect.objectContaining({ id: 'INV-YEAST', stock: 1.75 }),
+      expect.objectContaining({ id: 'INV-STARTER', stock: 3.6 }),
+    ]);
+    expect(applied.result.costEntries).toEqual([
+      expect.objectContaining({ amount: 12.5, quantity: 0.25 }),
+      expect.objectContaining({ amount: 12, quantity: 0.4 }),
+    ]);
+    expect(applied.result.operation.materials).toEqual([
+      expect.objectContaining({ materialName: 'EC-1118 yeast', quantity: 0.25, unit: 'kg', purpose: 'yeast' }),
+      expect.objectContaining({ materialName: 'Go-Ferm starter', quantity: 0.4, unit: 'kg', purpose: 'starter' }),
+    ]);
+    expect(applied.result.operation.reversalSnapshot).toMatchObject({
+      version: 2,
+      inventory: [
+        { id: 'INV-YEAST', stock: 2 },
+        { id: 'INV-STARTER', stock: 4 },
+      ],
+    });
+    expect(applied.result.receipt.materialDeductions).toEqual([
+      { materialId: 'INV-YEAST', materialName: 'EC-1118 yeast', quantity: 0.25, unit: 'kg' },
+      { materialId: 'INV-STARTER', materialName: 'Go-Ferm starter', quantity: 0.4, unit: 'kg' },
+    ]);
+  });
+
   it('rejects material over-consumption instead of clamping stock', () => {
     expect(() => applyCellarOperationCommand(state(), {
       ...payload,
@@ -200,9 +250,16 @@ describe('cellar.operation domain command', () => {
       ...payload,
       operation: { ...payload.operation, date: '2026-02-30' },
     })).toThrowError(expect.objectContaining({ code: 'invalid_cellar_operation_payload', statusCode: 400 }));
-    expect(() => parseCellarOperationCommandPayload({
+    expect(parseCellarOperationCommandPayload({
       ...payload,
       operation: { ...payload.operation, type: 'measurement', materialId: 'INV-SO2', dose: 0.2 },
+    }).operation.type).toBe('measurement');
+    expect(() => parseCellarOperationCommandPayload({
+      ...payload,
+      operation: {
+        ...payload.operation,
+        materials: [{ materialId: 'INV-SO2', quantity: 0.2 }],
+      },
     })).toThrowError(expect.objectContaining({ code: 'invalid_cellar_operation_payload' }));
     expect(() => parseCellarOperationCommandPayload({ ...payload, operationId: '../bad' }))
       .toThrowError(expect.objectContaining({ code: 'invalid_cellar_operation_payload' }));

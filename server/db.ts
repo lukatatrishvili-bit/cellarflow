@@ -4,6 +4,11 @@ import { fileURLToPath } from 'url';
 import type { PrismaClient as PrismaClientType } from '@prisma/client';
 import { downloadDb, uploadDb, gcsEnabled, gcsTarget } from './gcsStore';
 import { createEmptyIntegrationHubState, ensureIntegrationHubState, type IntegrationHubState } from '../lib/integrations';
+import {
+  DEFAULT_TERROIR_SHARING_SETTINGS,
+  normalizeTerroirSharingSettings,
+  type TerroirSharingSettings,
+} from '../lib/terroirPulse';
 import { hashToken } from './emailVerification';
 
 
@@ -252,6 +257,8 @@ export interface UserDataState {
   crmLeads: any[];
   aiDrafts: any[];
   integrationHub?: IntegrationHubState;
+  /** Explicit, revocable opt-in for the public privacy-preserving vintage pulse. */
+  terroirSharing?: TerroirSharingSettings;
   companyProfile: any;
 }
 
@@ -301,6 +308,7 @@ export function createEmptyUserData(): UserDataState {
     crmLeads: [],
     aiDrafts: [],
     integrationHub: createEmptyIntegrationHubState(),
+    terroirSharing: { ...DEFAULT_TERROIR_SHARING_SETTINGS },
     companyProfile: {
       companyName: '',
       wineryName: '',
@@ -365,6 +373,10 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     crmLeads: Array.isArray(data.crmLeads) ? data.crmLeads : [],
     aiDrafts: Array.isArray(data.aiDrafts) ? data.aiDrafts : [],
     integrationHub: ensureIntegrationHubState(data.integrationHub),
+    terroirSharing: normalizeTerroirSharingSettings(
+      data.terroirSharing,
+      (Array.isArray(data.blocks) ? data.blocks : []).map(block => String(block?.id || '')).filter(Boolean),
+    ),
     companyProfile: data.companyProfile && typeof data.companyProfile === 'object'
       ? { ...empty.companyProfile, ...data.companyProfile }
       : empty.companyProfile,
@@ -376,6 +388,8 @@ function normalizeDbState(data: Partial<DBState> & { userData?: Record<string, P
     users: Array.isArray(data?.users)
       ? data.users.map((user: any) => ({
         ...user,
+        phone: typeof user?.phone === 'string' ? user.phone : '',
+        whatsappOptIn: user?.whatsappOptIn === true,
         accountEnabled: user?.accountEnabled !== false,
         sessionVersion: Number.isInteger(Number(user?.sessionVersion)) && Number(user.sessionVersion) > 0
           ? Number(user.sessionVersion)
@@ -545,6 +559,8 @@ function dbFromPostgresRows(rows: {
       fullName: u.fullName,
       role: u.role,
       language: u.language,
+      phone: u.phone || '',
+      whatsappOptIn: u.whatsappOptIn === true,
       passwordHash: u.passwordHash,
       emailVerified: u.emailVerified,
       verifyTokenHash: u.verifyTokenHash,
@@ -766,6 +782,8 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,
@@ -787,6 +805,8 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,
@@ -1224,6 +1244,8 @@ async function persistFullDbToPostgres(
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,
@@ -1244,6 +1266,8 @@ async function persistFullDbToPostgres(
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,

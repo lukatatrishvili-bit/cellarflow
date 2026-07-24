@@ -72,6 +72,7 @@ describe('service readiness contract', () => {
         aiAssistant: 'not_configured',
         email: 'not_configured',
         googleOAuth: 'not_configured',
+        whatsapp: 'not_configured',
       },
     });
   });
@@ -153,7 +154,34 @@ describe('service readiness contract', () => {
       aiAssistant: 'ready',
       email: 'ready',
       googleOAuth: 'ready',
+      whatsapp: 'not_configured',
     });
+  });
+
+  it('reports complete WhatsApp configuration as ready and partial configuration as degraded', () => {
+    const ready = buildServiceReadiness(
+      dbStatus(),
+      postgresProbe(),
+      {
+        NODE_ENV: 'production',
+        WHATSAPP_ACCESS_TOKEN: 'token',
+        WHATSAPP_PHONE_NUMBER_ID: '123456789012345',
+        WHATSAPP_GRAPH_API_VERSION: 'v26.0',
+      },
+      checkedAt,
+    );
+    const partial = buildServiceReadiness(
+      dbStatus(),
+      postgresProbe(),
+      { NODE_ENV: 'production', WHATSAPP_ACCESS_TOKEN: 'token' },
+      checkedAt,
+    );
+
+    expect(ready.optionalIntegrations.whatsapp).toBe('ready');
+    expect(ready.optionalIntegrations.status).toBe('ready');
+    expect(partial.optionalIntegrations.whatsapp).toBe('degraded');
+    expect(partial.optionalIntegrations.status).toBe('degraded');
+    expect(partial.ok).toBe(true);
   });
 
   it('fails readiness after an active database write error or before hydration completes', () => {

@@ -100,6 +100,7 @@ export default function WineryDashboardTab({
   const go = (tab: string) => setActiveTab ? () => setActiveTab(tab) : undefined;
   const canViewLots = canAccess(role, 'lots', 'view');
   const canViewVessels = canAccess(role, 'vessels', 'view');
+  const canCreateVessels = canAccess(role, 'vessels', 'create');
   const canViewFermentation = canAccess(role, 'fermentation', 'view');
   const canCreateFermentation = canAccess(role, 'fermentation', 'create');
   const canViewLab = canAccess(role, 'lab', 'view');
@@ -204,11 +205,11 @@ export default function WineryDashboardTab({
   return (
     <div className="space-y-5 animate-fade-in text-stone-800 relative z-10">
       <PageHeader
-        eyebrow={isKa ? 'მარნის ცენტრი' : 'Cellar command'}
-        title={t.dashboard || 'Winery Dashboard'}
+        eyebrow={isKa ? 'მარანი' : 'Cellar'}
+        title={t.overview || 'Overview'}
         description={isKa
-          ? 'თქვენი როლის შესაბამისი პრიორიტეტები და გადაუდებელი სამუშაო.'
-          : 'A focused operating desk for the priorities and urgent work available to your role.'}
+          ? 'წარმოების, ტევადობისა და ქიმიის მოკლე ოპერაციული სურათი.'
+          : 'A focused view of production, capacity, chemistry, and cellar work.'}
         icon={LayoutDashboard}
         actions={(
           <div className="flex flex-wrap gap-2">
@@ -366,12 +367,30 @@ export default function WineryDashboardTab({
                     : 'Cellar capacity is getting tight. Consider bottling, transfers, or adding temporary storage before receiving more fruit.'}
                 </InlineNotice>
               )}
+
+              {canViewVessels && vessels.length === 0 && (
+                <div className="flex flex-col gap-3 rounded-xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-800 dark:bg-stone-950/30 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <strong className="block text-xs font-bold text-stone-800 dark:text-stone-100">
+                      {isKa ? 'ჭურჭელი ჯერ არ არის რეგისტრირებული' : 'No vessels registered yet'}
+                    </strong>
+                    <span className="mt-1 block text-[11px] text-stone-500 dark:text-stone-400">
+                      {isKa ? 'დაამატეთ პირველი ჭურჭელი ტევადობისა და პარტიების აღრიცხვისთვის.' : 'Add the first vessel to start capacity and batch tracking.'}
+                    </span>
+                  </div>
+                  {canCreateVessels && (
+                    <ActionButton tone="secondary" onClick={go('vessels')} className="shrink-0">
+                      {isKa ? 'ჭურჭლის დამატება' : 'Register vessel'}
+                    </ActionButton>
+                  )}
+                </div>
+              )}
             </div>
           </SectionCard>
         )}
       </div>
 
-      {(canViewVessels || canViewFermentation) && (
+      {(canViewVessels || canViewFermentation) && (vessels.length > 0 || chartableLotIds.length > 0) && (
       <div className={`grid grid-cols-1 gap-5 ${canViewVessels && canViewFermentation ? 'xl:grid-cols-2' : ''}`}>
         {canViewVessels && (
         <SectionCard
@@ -420,9 +439,9 @@ export default function WineryDashboardTab({
       </div>
       )}
 
-      {(canViewTasks || canViewFermentation) && (
-      <div className={`grid grid-cols-1 gap-5 ${canViewTasks && canViewFermentation ? 'xl:grid-cols-2' : ''}`}>
-        {canViewTasks && (
+      {((canViewTasks && recentTasks.length > 0) || (canViewFermentation && recentFermLogs.length > 0)) && (
+      <div className={`grid grid-cols-1 gap-5 ${canViewTasks && recentTasks.length > 0 && canViewFermentation && recentFermLogs.length > 0 ? 'xl:grid-cols-2' : ''}`}>
+        {canViewTasks && recentTasks.length > 0 && (
         <SectionCard
           title={t.upcoming_tasks || 'Upcoming tasks'}
           subtitle={canUpdateTasks
@@ -460,7 +479,7 @@ export default function WineryDashboardTab({
         </SectionCard>
         )}
 
-        {canViewFermentation && (
+        {canViewFermentation && recentFermLogs.length > 0 && (
         <SectionCard
           title={isKa ? 'ბოლო დუღილის ჩანაწერები' : 'Recent fermentation logs'}
           subtitle={isKa ? 'ბოლო მაჩვენებლები პარტიების მიხედვით.' : 'Latest cellar readings across lots.'}

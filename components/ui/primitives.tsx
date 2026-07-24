@@ -27,16 +27,16 @@ export function PageHeader({
             row. `min-w-0` still applies below sm, where actions stack full-width. */}
         <div className="min-w-0 flex-[1_1_24rem] sm:min-w-[18rem]">
           {eyebrow && (
-            <span className="inline-flex text-[9px] uppercase tracking-widest bg-stone-100 text-stone-600 px-2.5 py-0.5 rounded font-bold dark:bg-stone-800 dark:text-stone-300">
+            <span className="inline-flex rounded-full bg-stone-100 px-2.5 py-1 text-[10px] font-bold text-stone-600 dark:bg-stone-800 dark:text-stone-300">
               {eyebrow}
             </span>
           )}
-          <h2 className="text-xl font-serif font-black leading-tight text-stone-900 uppercase mt-1 flex items-start gap-2 break-words dark:text-amber-100">
+          <h2 className="mt-1.5 flex items-start gap-2 break-words text-2xl font-black leading-tight tracking-tight text-stone-900 dark:text-amber-100">
             {Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-[#4e0e15] dark:text-amber-300" />}
             <span className="min-w-0">{title}</span>
           </h2>
           {description && (
-            <p className="text-xs leading-relaxed text-pretty text-stone-500 dark:text-stone-400 font-semibold mt-0.5 max-w-3xl">
+            <p className="mt-1 max-w-3xl text-pretty text-sm font-medium leading-relaxed text-stone-500 dark:text-stone-400">
               {description}
             </p>
           )}
@@ -68,7 +68,7 @@ export function SectionCard({
         <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-start justify-between gap-3 dark:border-stone-800">
           <div className="min-w-0">
             {title && (
-              <h3 className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
+              <h3 className="flex items-center gap-1.5 text-sm font-bold text-stone-800 dark:text-amber-100">
                 {Icon && <Icon className="w-4 h-4" />}
                 {title}
               </h3>
@@ -109,7 +109,7 @@ export function MetricCard({
   const inner = (
     <>
       <div className="flex items-start justify-between gap-3">
-        <span className="block text-[10px] font-mono font-black uppercase tracking-[0.16em] text-stone-500 dark:text-stone-400">
+        <span className="block text-[11px] font-bold text-stone-500 dark:text-stone-400">
           {label}
         </span>
         {Icon && (
@@ -122,7 +122,7 @@ export function MetricCard({
         {value}
       </strong>
       {detail && (
-        <span className="mt-2 block text-[11px] font-semibold leading-snug text-stone-500 dark:text-stone-500 dark:text-stone-400">
+        <span className="mt-2 block text-[11px] font-semibold leading-snug text-stone-500 dark:text-stone-400">
           {detail}
         </span>
       )}
@@ -209,8 +209,8 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="text-center py-12 px-4 text-stone-500 dark:text-stone-400">
-      {Icon && <Icon className="w-10 h-10 mx-auto mb-3 opacity-40" />}
+    <div className="px-4 py-8 text-center text-stone-500 dark:text-stone-400">
+      {Icon && <Icon className="mx-auto mb-3 h-8 w-8 opacity-40" />}
       <h3 className="text-sm font-bold text-stone-600 dark:text-stone-300">{title}</h3>
       {description && <p className="text-xs mt-1 max-w-md mx-auto leading-relaxed">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
@@ -311,7 +311,7 @@ export function ActionButton({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={cx('inline-flex items-center justify-center rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed', tones[tone], className)}
+      className={cx('inline-flex items-center justify-center rounded-xl px-4 py-2 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed', tones[tone], className)}
     >
       {children}
     </button>

@@ -2,7 +2,15 @@
 
 import React, { useEffect, useState } from 'react';
 import type { Language } from '../lib/i18n';
-import type { WineLot, Vessel, DailyFermLog, MaraniOSAuditLog, UserProfile } from '../lib/wineryState';
+import type {
+  WineLot,
+  Vessel,
+  DailyFermLog,
+  InventoryItem,
+  MaraniOSAuditLog,
+  UserProfile,
+} from '../lib/wineryState';
+import type { CellarOperationInput } from '../lib/commands/cellarOperation';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
   applyFermentationCompletionCommand,
@@ -37,18 +45,25 @@ import {
   X
 } from 'lucide-react';
 import FermentationCurveChart from './FermentationCurveChart';
+import OperationMaterialsEditor, {
+  materialDraftIssue,
+  materialDraftsToUsages,
+  type MaterialUsageDraft,
+} from './OperationMaterialsEditor';
 
 interface Props {
   lang: Language;
   vessels: Vessel[];
   lots: WineLot[];
   fermLogs: DailyFermLog[];
+  inventory?: InventoryItem[];
   auditLogs?: MaraniOSAuditLog[];
   currentUser: UserProfile;
   setActiveTab: (tab: string) => void;
   onUpdateLots: (newLots: WineLot[]) => void;
   onUpdateVessels: (newVessels: Vessel[]) => void;
   onUpdateFermLogs: (newLogs: DailyFermLog[]) => void;
+  onAddCellarOperation?: (input: CellarOperationInput) => string;
   onUpdateAuditLogs?: (newLogs: MaraniOSAuditLog[]) => void;
   onApplyFermentationCompletionCommandResponse?: (response: FermentationCompletionCommandResponse) => void;
   onApplyFermentationCompletionReversalCommandResponse?: (response: FermentationCompletionReversalCommandResponse) => void;
@@ -57,6 +72,7 @@ interface Props {
   canUpdateFermentationLot?: boolean;
   canUpdateFermentationVessel?: boolean;
   canCompleteFermentation?: boolean;
+  canConsumeFermentationMaterials?: boolean;
   canReverseFermentationCompletion?: boolean;
   canDeleteFermentationLog?: boolean;
 }
@@ -87,12 +103,14 @@ export default function FermentationTab({
   vessels,
   lots,
   fermLogs,
+  inventory = [],
   auditLogs = [],
   currentUser,
   setActiveTab,
   onUpdateLots,
   onUpdateVessels,
   onUpdateFermLogs,
+  onAddCellarOperation,
   onUpdateAuditLogs,
   onApplyFermentationCompletionCommandResponse,
   onApplyFermentationCompletionReversalCommandResponse,
@@ -101,6 +119,7 @@ export default function FermentationTab({
   canUpdateFermentationLot = true,
   canUpdateFermentationVessel = true,
   canCompleteFermentation,
+  canConsumeFermentationMaterials = false,
   canReverseFermentationCompletion = false,
   canDeleteFermentationLog = true,
 }: Props) {
@@ -142,7 +161,7 @@ export default function FermentationTab({
   const [logPH, setLogPH] = useState(3.45);
   const [logNotes, setLogNotes] = useState('');
   const [logCap, setLogCap] = useState('Punchdowns - 2X');
-  const [logAdditives, setLogAdditives] = useState('None');
+  const [materialDrafts, setMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
 
   // General add log form state
   const [showGeneralForm, setShowGeneralForm] = useState(false);
@@ -188,21 +207,61 @@ export default function FermentationTab({
         : 'An active wine lot must be assigned to a vessel before a fermentation reading can be saved.');
       return;
     }
+    const materialsIssue = canConsumeFermentationMaterials
+      ? materialDraftIssue(materialDrafts, inventory)
+      : null;
+    if (materialsIssue) {
+      setFormError(lang === 'ka'
+        ? 'შეამოწმეთ მასალის არჩევანი, რაოდენობა და ხელმისაწვდომი მარაგი.'
+        : 'Check the selected materials, quantities, and available stock.');
+      return;
+    }
     setFormError('');
 
+    const materialsUsed = canConsumeFermentationMaterials
+      ? materialDraftsToUsages(materialDrafts, inventory)
+      : [];
+    if (materialsUsed.length && !onAddCellarOperation) {
+      setFormError(lang === 'ka'
+        ? 'მასალების ავტომატური ჩამოწერა ამ სამუშაო სივრცეში ხელმისაწვდომი არ არის.'
+        : 'Automatic material deduction is not available in this workspace.');
+      return;
+    }
+    const materialSummary = materialsUsed.length
+      ? materialsUsed.map(item => (
+        `${item.materialName || item.materialId} ${item.quantity}${item.unit || ''}${item.purpose ? ` (${item.purpose})` : ''}`
+      )).join(', ')
+      : 'None';
+    const readingDate = new Date().toISOString().split('T')[0];
+    const linkedOperationId = materialsUsed.length
+      ? onAddCellarOperation?.({
+        date: readingDate,
+        type: physicalFermLogs.some(log => log.lotId === lotId) ? 'additive' : 'ferment_start',
+        lotId,
+        vesselId: tankId,
+        vesselToId: null,
+        materials: materialsUsed,
+        operator: currentUser.fullName,
+        notes: lang === 'ka'
+          ? `დუღილის ჟურნალიდან: ${materialSummary}`
+          : `From fermentation journal: ${materialSummary}`,
+      })
+      : undefined;
     const newLog: DailyFermLog = {
       id: `flog-${Date.now()}`,
       recordKind: 'reading',
       tankId: tankId,
       lotId: lotId,
-      date: new Date().toISOString().split('T')[0],
+      date: readingDate,
       temperature: logTemp,
       density: logDensity,
       sugar: logSugar,
       ph: logPH,
       tastingNotes: logNotes.trim(),
       capManagement: logCap,
-      additives: logAdditives
+      additives: materialSummary,
+      ...(materialsUsed.length ? { materialsUsed } : {}),
+      ...(linkedOperationId ? { linkedOperationId } : {}),
     };
 
     dispatchFermentationReadingUpdates(
@@ -234,7 +293,7 @@ export default function FermentationTab({
 
     // Reset log inputs
     setLogNotes('');
-    setLogAdditives('None');
+    setMaterialDrafts([]);
     setFormError('');
     setExpLogFormLotId(null);
     setShowGeneralForm(false);
@@ -726,16 +785,17 @@ export default function FermentationTab({
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[10px] font-semibold text-stone-500 mb-0.5">{lang === 'ka' ? 'საფუარის საკვები / დანამატები' : 'Yeast Nutrient / Additives Pitching'}</label>
-                  <input
-                    type="text"
-                    value={logAdditives}
-                    placeholder={lang === 'ka' ? 'მაგ. 15გ DAP, Go-Ferm, ფერმენტები ან არაფერი' : 'e.g. 15g DAP, Go-Ferm sterols, enzymes, or None'}
-                    onChange={(e) => setLogAdditives(e.target.value)}
-                    className="w-full px-2 py-1 text-xs border rounded bg-white text-stone-800"
+                {canConsumeFermentationMaterials && (
+                  <OperationMaterialsEditor
+                    lang={lang}
+                    inventory={inventory}
+                    value={materialDrafts}
+                    onChange={setMaterialDrafts}
+                    operationType="ferment_start"
+                    lotVolumeL={lots.find(item => item.id === generalLotId)?.currentVolume}
+                    compact
                   />
-                </div>
+                )}
 
                 <div>
                   <label className="block text-[10px] font-semibold text-stone-500 mb-0.5">{lang === 'ka' ? 'ორგანოლეპტიკური / დეგუსტაციის შენიშვნები' : 'Organoleptic / Tasting Notes'}</label>
@@ -949,16 +1009,17 @@ export default function FermentationTab({
                         </select>
                       </div>
 
-                      <div>
-                        <label className="block text-[9px] font-medium text-slate-500">{lang === 'ka' ? 'დამატებული ინგრედიენტები / საკვები' : 'Added Ingredients / Nutrients'}</label>
-                        <input
-                          type="text"
-                          value={logAdditives}
-                          onChange={(e) => setLogAdditives(e.target.value)}
-                          placeholder={lang === 'ka' ? 'არაფერი, ან მაგ. 15კგ Enartis საკვები' : 'None, or e.g. 15kg Enartis Yeast Nutrition'}
-                          className="w-full px-2 py-0.5 text-xs border rounded bg-white"
+                      {canConsumeFermentationMaterials && (
+                        <OperationMaterialsEditor
+                          lang={lang}
+                          inventory={inventory}
+                          value={materialDrafts}
+                          onChange={setMaterialDrafts}
+                          operationType="ferment_start"
+                          lotVolumeL={lot.currentVolume}
+                          compact
                         />
-                      </div>
+                      )}
 
                       <div>
                         <label className="block text-[9px] font-medium text-slate-500">{lang === 'ka' ? 'დღიური დეგუსტაციის შენიშვნები' : 'Daily Tasting Reflections'}</label>

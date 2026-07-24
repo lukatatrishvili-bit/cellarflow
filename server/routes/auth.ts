@@ -17,6 +17,7 @@ import {
   passwordNeedsUpgrade,
   passcodeValidationError,
   sameNormalizedEmail,
+  uniqueUsernameForEmail,
   sessionMatchesUserVersion,
   sessionPayloadForUser,
   sessionVersionForUser,
@@ -47,6 +48,7 @@ import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from '../oauth
 import { isKnownRole, type Role } from '../permissions';
 import { auditSecurityEvent } from '../securityAudit';
 import type { SharedLoginLimiter } from '../loginLimiter';
+import { normalizeWhatsAppPhone } from '../whatsapp';
 
 const authRouter = express.Router();
 const orgRouter = express.Router();
@@ -159,6 +161,8 @@ function publicUser(user: any, extra: Record<string, unknown> = {}) {
     fullName: user.fullName,
     role: normalizeRole(user.role),
     language: normalizeLanguage(user.language),
+    phone: cleanText(user.phone),
+    whatsappOptIn: user.whatsappOptIn === true,
     enabledModules: modules,
     enabledWidgets: selectedWidgets(user.enabledWidgets, modules),
     registrationComplete: user.registrationComplete ?? true,
@@ -225,10 +229,10 @@ const getRedirectUri = (req: any) => {
 // ── Authentication Endpoints ──────────────────────────────────────────
 
 authRouter.post('/register', async (req, res) => {
-  const { username, email, fullName, role, language, passcode, companyProfile } = req.body;
+  const { username, email, fullName, language, passcode, companyProfile } = req.body;
 
-  if (!username || !passcode) {
-    return res.status(400).json({ error: 'Username and passcode are required' });
+  if (!passcode) {
+    return res.status(400).json({ error: 'A password is required' });
   }
   const passcodeError = passcodeValidationError(passcode);
   if (passcodeError) {
@@ -241,19 +245,16 @@ authRouter.post('/register', async (req, res) => {
   if (!cleanFullName) {
     return res.status(400).json({ error: 'Full name is required' });
   }
-  if (!isKnownRole(role)) {
-    return res.status(400).json({ error: 'A valid role is required' });
-  }
-
-  const enabledModules = selectedModules(req.body?.enabledModules);
-  if (enabledModules.length === 0) {
-    return res.status(400).json({ error: 'Select at least one workspace module' });
-  }
+  const enabledModules = selectedModules(req.body?.enabledModules, DEFAULT_MODULES);
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const cleanUsername = String(username).toLowerCase().replace(/\s+/g, '_');
   const cleanEmail = String(email).toLowerCase().trim();
+  const requestedUsername = cleanText(username).toLowerCase().replace(/\s+/g, '_');
+  const cleanUsername = requestedUsername || uniqueUsernameForEmail(
+    cleanEmail,
+    db.users.map(user => user.username),
+  );
   const normalizedCompanyProfile = normalizeCompanyProfile(companyProfile, cleanEmail);
   if (!normalizedCompanyProfile.companyName) {
     return res.status(400).json({ error: 'Company or estate name is required' });
@@ -282,12 +283,14 @@ authRouter.post('/register', async (req, res) => {
     username: cleanUsername,
     email: cleanEmail,
     fullName: cleanFullName,
-    role,
+    role: 'Owner/Admin',
     language: normalizeLanguage(language),
+    phone: normalizeWhatsAppPhone(normalizedCompanyProfile.phone) || '',
+    whatsappOptIn: false,
     passwordHash: hashPassword(passcode || 'vinea2026'),
     enabledModules,
     enabledWidgets,
-    registrationComplete: true,
+    registrationComplete: false,
     emailVerified: false,
     verifyTokenHash: verification.tokenHash,
     verifyTokenExpires: verification.expiresAt,
@@ -853,15 +856,7 @@ authRouter.get('/google/callback', async (req, res) => {
     if (user) {
       username = user.username;
     } else {
-      const emailPrefix = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
-      const baseUsername = emailPrefix || 'google_user';
-      username = baseUsername;
-
-      let suffix = 1;
-      while (dbData.users.some(u => u.username === username)) {
-        username = `${baseUsername}_${suffix}`;
-        suffix++;
-      }
+      username = uniqueUsernameForEmail(cleanEmail, dbData.users.map(existingUser => existingUser.username));
 
       user = {
         username,
@@ -869,6 +864,8 @@ authRouter.get('/google/callback', async (req, res) => {
         fullName,
         role: 'Owner/Admin',
         language: 'en',
+        phone: '',
+        whatsappOptIn: false,
         passwordHash: '',
         enabledModules: ['vazi', 'gvino'],
         enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
@@ -886,6 +883,8 @@ authRouter.get('/google/callback', async (req, res) => {
       dbData.organizations.push(org);
       dbData.memberships.push(membership);
       dbData.orgData[orgId] = createEmptyUserData();
+      dbData.orgData[orgId].companyProfile.companyName = org.name;
+      dbData.orgData[orgId].companyProfile.contactEmail = cleanEmail;
       dbData.users.push(user);
       await saveCoreMetadata('auth-google-register');
       await saveUserData(username, dbData.orgData[orgId]);
@@ -988,29 +987,34 @@ authRouter.post('/complete_registration', async (req, res) => {
   if (!cleanFullName) {
     return res.status(400).json({ error: 'Full name is required' });
   }
-  if (!isKnownRole(req.body?.role)) {
-    return res.status(400).json({ error: 'A valid role is required' });
-  }
+  const enabledModules = selectedModules(
+    req.body?.enabledModules,
+    selectedModules(user.enabledModules, DEFAULT_MODULES),
+  );
 
-  const enabledModules = selectedModules(req.body?.enabledModules);
-  if (enabledModules.length === 0) {
-    return res.status(400).json({ error: 'Select at least one workspace module' });
-  }
-
-  const companyProfile = normalizeCompanyProfile(req.body?.companyProfile, user.email);
+  const data = await getUserData(user.username) || createEmptyUserData();
+  const companyProfile = normalizeCompanyProfile({
+    ...data.companyProfile,
+    ...(req.body?.companyProfile && typeof req.body.companyProfile === 'object'
+      ? req.body.companyProfile
+      : {}),
+  }, user.email);
   if (!companyProfile.companyName) {
     return res.status(400).json({ error: 'Company or estate name is required' });
   }
 
   user.fullName = cleanFullName;
-  user.role = req.body.role;
+  user.role = activeMembershipRole(db, user);
   user.sessionVersion = sessionVersionForUser(user) + 1;
   user.language = normalizeLanguage(req.body?.language || user.language);
+  if (!user.phone && companyProfile.phone) {
+    user.phone = normalizeWhatsAppPhone(companyProfile.phone) || '';
+  }
+  user.whatsappOptIn = user.whatsappOptIn === true;
   user.enabledModules = enabledModules;
   user.enabledWidgets = selectedWidgets(req.body?.enabledWidgets, enabledModules);
   user.registrationComplete = true;
 
-  const data = await getUserData(user.username) || createEmptyUserData();
   data.companyProfile = {
     ...createEmptyUserData().companyProfile,
     ...data.companyProfile,
@@ -1047,9 +1051,24 @@ authRouter.post('/update_profile', async (req, res) => {
     return res.status(401).json({ error: 'User not found' });
   }
 
-  const { fullName, language, enabledModules, enabledWidgets } = req.body;
+  const { fullName, language, phone, whatsappOptIn, enabledModules, enabledWidgets } = req.body;
   if (fullName !== undefined) user.fullName = cleanText(fullName) || user.fullName;
   if (language !== undefined) user.language = normalizeLanguage(language);
+  if (phone !== undefined) {
+    const rawPhone = cleanText(phone);
+    const normalizedPhone = rawPhone ? normalizeWhatsAppPhone(rawPhone) : '';
+    if (rawPhone && !normalizedPhone) {
+      return res.status(400).json({ error: 'Use an international phone number with country code, for example +995555123456.' });
+    }
+    user.phone = normalizedPhone || '';
+  }
+  if (whatsappOptIn !== undefined) {
+    const nextOptIn = whatsappOptIn === true;
+    if (nextOptIn && !normalizeWhatsAppPhone(user.phone)) {
+      return res.status(400).json({ error: 'Save a valid international phone number before enabling WhatsApp notifications.' });
+    }
+    user.whatsappOptIn = nextOptIn;
+  }
   if (enabledModules !== undefined) {
     const modules = selectedModules(enabledModules);
     if (modules.length === 0) {
@@ -1317,6 +1336,8 @@ orgRouter.get('/members', checkWineryScope('read'), async (req, res) => {
       fullName: u?.fullName || m.userId,
       email: u?.email || '',
       role: m.role,
+      language: normalizeLanguage(u?.language),
+      whatsappReady: Boolean(u?.whatsappOptIn === true && normalizeWhatsAppPhone(u?.phone)),
     };
   });
 

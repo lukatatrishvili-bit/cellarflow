@@ -338,7 +338,7 @@ describe.sequential('cellar.operation command route', () => {
     expect(storedCommands.size).toBe(0);
   });
 
-  it('allows a Winemaker core operation but rejects material/cost effects', async () => {
+  it('allows a Winemaker to consume material while the linked cost remains system-generated', async () => {
     resetDb('Winemaker');
     const corePayload = {
       operationId: 'OP-ROUTE-CORE',
@@ -353,10 +353,22 @@ describe.sequential('cellar.operation command route', () => {
 
     storedCommands = new Map();
     storedState = { ...storedState, data: initialState(), version: 1 };
-    const forbidden = await postCommand({ commandId: 'cmd-route-operation-0005', payload: materialPayload });
-    expect(forbidden.status).toBe(403);
-    expect(await forbidden.json()).toMatchObject({ error: { code: 'forbidden_cellar_operation_material' } });
-    expect(storedState.version).toBe(1);
+    const materialOperation = await postCommand({
+      commandId: 'cmd-route-operation-0005',
+      payload: materialPayload,
+    });
+    expect(materialOperation.status).toBe(201);
+    expect(await materialOperation.json()).toMatchObject({
+      ok: true,
+      result: {
+        operation: { id: materialPayload.operationId, materialId: 'INV-SO2', dose: 0.2 },
+        inventoryItem: { id: 'INV-SO2', stock: 4.8 },
+        costEntry: { amount: 4, sourceRef: materialPayload.operationId },
+      },
+    });
+    expect(storedState.version).toBe(2);
+    expect(storedState.data.inventory[0].stock).toBe(4.8);
+    expect(storedState.data.costEntries).toHaveLength(1);
   });
 
   it('denies roles without core operation authority before claiming a command', async () => {

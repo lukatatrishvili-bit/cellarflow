@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
-import type { PickedLocation } from '../components/LocationPicker';
 import { useWineryState } from '../hooks/useWineryState';
 import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
@@ -54,19 +53,24 @@ const CostsTab = lazyRetry(() => import('../components/CostsTab'));
 const StorageTab = lazyRetry(() => import('../components/StorageTab'));
 const SalesDispatchTab = lazyRetry(() => import('../components/SalesDispatchTab'));
 const YearComparisonTab = lazyRetry(() => import('../components/YearComparisonTab'));
+const TerroirPulsePage = lazyRetry(() => import('../components/TerroirPulsePage'));
 const VesselDrawer = lazyRetry(() => import('../components/VesselDrawer'));
-const LocationPicker = lazyRetry(() => import('../components/LocationPicker'));
 const GlobalCommandPalette = lazyRetry(() => import('../components/GlobalCommandPalette'));
 const SyncConflictResolutionModal = lazyRetry(() => import('../components/SyncConflictResolutionModal'));
 const AuthAccountFlows = lazyRetry(() => import('../components/AuthAccountFlows'));
 const MasterAdminPortal = lazyRetry(() => import('../components/MasterAdminPortal'));
 const NotificationCenter = lazyRetry(() => import('../components/NotificationCenter'));
 const PricingPage = lazyRetry(() => import('../components/PricingPage'));
+const MarketingLanding = lazyRetry(() => import('../components/MarketingLanding'));
+const RegistrationPanel = lazyRetry(() => import('../components/RegistrationExperience').then(module => ({ default: module.RegistrationPanel })));
+const SignInPanel = lazyRetry(() => import('../components/RegistrationExperience').then(module => ({ default: module.SignInPanel })));
+const WorkspaceSetupDialog = lazyRetry(() => import('../components/RegistrationExperience').then(module => ({ default: module.WorkspaceSetupDialog })));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
 import SyncStatus from '../components/SyncStatus';
 import InstallButton from '../components/InstallButton';
+import type { WorkspaceSetupSubmission } from '../components/RegistrationExperience';
 import type {
   AuthAccountFlow,
   AuthenticatedStateNotice,
@@ -78,6 +82,7 @@ import {
   LayoutDashboard,
   Container,
   Grape,
+  Globe2,
   Workflow,
   Wine,
   GitCommit,
@@ -148,6 +153,12 @@ function readInitialAuthLinkContext(): InitialAuthLinkContext {
 
 export default function App() {
   const state = useWineryState();
+  const isTerroirPulsePage = typeof window !== 'undefined'
+    && window.location.pathname.replace(/\/+$/, '') === '/terroir-pulse';
+  const isMarketingPage = typeof window !== 'undefined' && (
+    window.location.pathname.replace(/\/+$/, '') === '/welcome'
+    || (!state.isLoggedIn && window.location.pathname.replace(/\/+$/, '') === '')
+  );
   const perf = usePerformanceManager();
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
@@ -166,8 +177,12 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.lang = state.lang === 'ka' ? 'ka' : 'en';
-    document.title = state.lang === 'ka' ? 'VinOS — მარნის მართვა' : 'VinOS — Winery Management';
-  }, [state.lang]);
+    document.title = isMarketingPage
+      ? (state.lang === 'ka' ? 'VinOS | ღვინის წარმოების ერთიანი სისტემა' : 'VinOS | The operating system for wine')
+      : isTerroirPulsePage
+      ? 'Terroir Pulse — VinOS'
+      : (state.lang === 'ka' ? 'VinOS — მარნის მართვა' : 'VinOS — Winery Management');
+  }, [isMarketingPage, isTerroirPulsePage, state.lang]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !initialAuthLinkContext.flow) return;
@@ -303,20 +318,21 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (darkMode) {
+    if (isMarketingPage) {
+      document.documentElement.classList.remove('dark');
+    } else if (darkMode) {
       document.documentElement.classList.add('dark');
       localStorage.setItem('cf_dark_mode', 'true');
     } else {
       document.documentElement.classList.remove('dark');
       localStorage.setItem('cf_dark_mode', 'false');
     }
-  }, [darkMode]);
+  }, [darkMode, isMarketingPage]);
 
   // Registering/Login switch state
-  const [isRegistering, setIsRegistering] = useState(false);
-  // Estate location chosen during registration (drives weather, maps, disease models)
-  const [regLocation, setRegLocation] = useState<PickedLocation | null>(null);
-
+  const [isRegistering, setIsRegistering] = useState(() => (
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('register') === '1'
+  ));
   // Retractable header: slides up to reclaim vertical space. Manual only —
   // chevron button to hide, the "Menu" pill to show. Preference persists.
   const [headerHidden, setHeaderHidden] = useState(() =>
@@ -537,8 +553,6 @@ export default function App() {
 
   const t = getShellTranslations(state.lang);
   const needsRegistrationCompletion = state.currentUser.registrationComplete === false;
-  const defaultEnabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
-  const defaultEnabledWidgets = state.currentUser.enabledWidgets || ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'];
 
   // Derived stats for sidebar
   const activeFermsCount = state.lots.filter(l => l.stage === 'fermenting').length;
@@ -556,7 +570,7 @@ export default function App() {
     {
       label: state.lang === 'ka' ? 'მიმოხილვა' : 'Overview',
       tabs: [
-        { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard },
+        { id: 'dashboard', label: t.overview, icon: LayoutDashboard },
       ],
     },
     {
@@ -624,10 +638,10 @@ export default function App() {
   const moduleGroups = [
     {
       id: 'dashboard',
-      label: state.lang === 'ka' ? 'მთავარი' : 'Dashboard',
+      label: t.today,
       icon: LayoutDashboard,
       primary: 'portal',
-      modules: [{ id: 'portal', label: t.nav_portal || 'Dashboard Portal', icon: LayoutDashboard }],
+      modules: [{ id: 'portal', label: t.today, icon: LayoutDashboard }],
     },
     {
       id: 'vineyard',
@@ -750,6 +764,17 @@ export default function App() {
             localStorage.setItem('vinea_lang', nextLang);
           }}
         />
+      </Suspense>
+    );
+  }
+
+  if (
+    isMarketingPage
+    && !authAccountFlow
+  ) {
+    return (
+      <Suspense fallback={<ModuleLoader />}>
+        <MarketingLanding />
       </Suspense>
     );
   }
@@ -1099,7 +1124,7 @@ export default function App() {
 
         {/* RIGHT — status, search, notifications, settings, logout */}
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
-          {!state.currentUser.isMasterAdmin && <SyncStatus lang={state.lang} />}
+          {!isTerroirPulsePage && !state.currentUser.isMasterAdmin && <SyncStatus lang={state.lang} />}
 
           {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
             <button
@@ -1253,7 +1278,11 @@ export default function App() {
       </motion.div>
 
       {/* 2. Main Shell Layout */}
-      {authAccountFlow ? (
+      {isTerroirPulsePage ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <TerroirPulsePage lang={state.lang} isLoggedIn={state.isLoggedIn} />
+        </Suspense>
+      ) : authAccountFlow ? (
         <div className="flex-1 flex items-center justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
           <Suspense fallback={<ModuleLoader />}>
             <AuthAccountFlows
@@ -1270,10 +1299,11 @@ export default function App() {
         </div>
       ) : !state.isLoggedIn ? (
         <div className="flex-1 flex items-stretch justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
-          <div className="w-full max-w-5xl my-auto grid lg:grid-cols-[1.1fr_1fr] rounded-3xl overflow-hidden shadow-[0_35px_90px_-30px_rgba(78,14,21,0.38)] border border-stone-200/70 bg-white animate-fade-in dark:border-stone-850 dark:bg-stone-950">
+          <div className="my-auto grid w-full max-w-xl overflow-hidden rounded-3xl border border-stone-200/70 bg-white shadow-[0_35px_90px_-30px_rgba(78,14,21,0.38)] animate-fade-in dark:border-stone-850 dark:bg-stone-950">
 
             {/* Brand hero — desktop only */}
-            <div className="relative hidden lg:flex flex-col justify-between p-10 bg-gradient-to-br from-[#5a1019] via-[#3a0a0f] to-[#1b0203] text-amber-100 overflow-hidden">
+            {!isRegistering && (
+            <div className="hidden">
               <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#801323] via-[#c5a059] to-[#801323]" />
               <div className="absolute -right-12 -bottom-16 text-[260px] leading-none opacity-[0.06] select-none pointer-events-none">🍇</div>
 
@@ -1286,24 +1316,43 @@ export default function App() {
                   </div>
                 </div>
 
-                <h2 className="mt-10 text-3xl font-serif font-black leading-[1.15]">Vineyard to bottle,<br />in one cellar book.</h2>
+                <h2 className="mt-10 text-3xl font-serif font-black leading-[1.15]">
+                  {state.lang === 'ka' ? <>ვენახიდან ბოთლამდე,<br />ერთ სამუშაო სივრცეში.</> : <>Vineyard to bottle,<br />in one cellar book.</>}
+                </h2>
                 <p className="mt-3 text-[13px] text-amber-100/70 font-serif italic leading-relaxed max-w-xs">
                   {t.signin_subtitle || 'Unified Vineyard (Vazi) & Winery (Gvino) management.'}
                 </p>
 
                 <ul className="mt-8 space-y-2.5 text-[12px] text-amber-50/90">
-                  {['Block-to-bottle traceability', 'Lab panels & molecular SO₂ guardrails', 'Live fermentation & cellar alerts', 'AI winemaker assistant'].map(feat => (
+                  {(state.lang === 'ka' ? [
+                    'სრული მიკვლევადობა ნაკვეთიდან ბოთლამდე',
+                    'ლაბორატორია და ღვინის ქიმიის კონტროლი',
+                    'დუღილისა და მარნის ცოცხალი გაფრთხილებები',
+                    'AI მეღვინის ასისტენტი',
+                  ] : [
+                    'Block-to-bottle traceability',
+                    'Lab panels & molecular SO₂ guardrails',
+                    'Live fermentation & cellar alerts',
+                    'AI winemaker assistant',
+                  ]).map(feat => (
                     <li key={feat} className="flex items-center gap-2.5">
                       <CheckCircle2 className="w-4 h-4 text-[#c5a059] shrink-0" />
                       <span>{feat}</span>
                     </li>
                   ))}
                 </ul>
+                <a
+                  href="/terroir-pulse"
+                  className="mt-8 inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-[10px] font-black uppercase tracking-wider text-amber-50 transition-colors hover:bg-white/20"
+                >
+                  <Globe2 className="h-3.5 w-3.5" aria-hidden="true" /> {state.lang === 'ka' ? 'Terroir Pulse-ის ნახვა' : 'Explore Terroir Pulse'}
+                </a>
               </div>
             </div>
+            )}
             <div className="p-7 sm:p-10 flex flex-col justify-center bg-white text-stone-600 space-y-5 dark:bg-stone-900">
               {/* Compact brand for mobile */}
-              <div className="lg:hidden flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-xl bg-[#31070b] text-amber-100 flex items-center justify-center text-xl border border-[#4e0e15]">🍇</div>
                 <div>
                   <div className="font-serif font-black tracking-[0.25em] text-[#1b1715] dark:text-amber-100">VinOS</div>
@@ -1356,513 +1405,103 @@ export default function App() {
               )}
 
               {isRegistering ? (
-                <div>
-                  <div>
-                    <h2 className="text-xl font-serif font-black tracking-wide text-[#1b1715] dark:text-amber-100">
-                      {state.lang === 'ka' ? 'რეგისტრაცია' : 'Create New Account'}
-                    </h2>
-                    <p className="text-[12px] text-stone-400 mt-1">
-                      {state.lang === 'ka' ? 'შექმენით თქვენი პერსონალური პროფილი მარანში.' : 'Provision your personal cellar account.'}
-                    </p>
-                  </div>
-
-                  <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    const name = String(fd.get('fullName') || '');
-                    const email = String(fd.get('email') || '');
-                    const user = String(fd.get('username') || '');
-                    const passcode = String(fd.get('passcode') || '');
-                    const selectedRole = String(fd.get('role') || 'Viticulturist');
-                    const rememberMe = fd.get('rememberMe') === 'true';
-                    const enabledModules = fd.getAll('enabledModules').map(String);
-                    const companyName = String(fd.get('companyName') || '').trim();
-                    const wineryName = String(fd.get('wineryName') || '').trim();
-                    const country = String(fd.get('country') || '').trim();
-                    const region = String(fd.get('region') || '').trim();
-                    const municipality = String(fd.get('municipality') || '').trim();
-                    const address = String(fd.get('address') || '').trim();
-                    const phone = String(fd.get('phone') || '').trim();
-                    const website = String(fd.get('website') || '').trim();
-                    if (enabledModules.length === 0) {
-                      state.setLoginError('Select at least one workspace module.');
-                      return;
-                    }
-
-                    let mappedRole: 'Owner/Admin' | 'Viticulturist' | 'Winemaker' | 'Lab Technician' | 'Cellar Worker' | 'Read-Only' = 'Viticulturist';
-                    if (selectedRole === 'Winemaker') {
-                      mappedRole = 'Winemaker';
-                    } else if (selectedRole === 'Cellar Assistant') {
-                      mappedRole = 'Cellar Worker';
-                    } else if (selectedRole === 'Estate Manager') {
-                      mappedRole = 'Owner/Admin';
-                    }
-
-                    const cleanUsername = user.toLowerCase().replace(/\s+/g, '_');
-                    const companySetup = {
-                      companyName,
-                      wineryName,
-                      country,
-                      region,
-                      municipality,
-                      address: regLocation?.label || address,
-                      contactEmail: email,
-                      phone,
-                      website,
-                      measurementUnits: 'metric' as const,
-                      currency: 'GEL',
-                      ...(regLocation ? {
-                        latitude: regLocation.latitude,
-                        longitude: regLocation.longitude,
-                      } : {}),
-                    };
-                    await state.handleAuthRegister({
-                      username: cleanUsername,
-                      email: email,
-                      fullName: name,
-                      role: mappedRole,
-                      language: state.lang === 'ka' ? 'ka' : 'en',
-                      rememberMe: rememberMe,
-                      passcode: passcode,
-                      companyProfile: companySetup,
-                      enabledModules,
-                      enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks']
-                    });
-
-                    state.setCompanyProfile({
-                      ...state.companyProfile,
-                      ...companySetup,
-                    });
-                    if (enabledModules.includes('gvino') && (mappedRole === 'Winemaker' || mappedRole === 'Cellar Worker' || !enabledModules.includes('vazi'))) {
-                      state.setActiveModule('gvino');
-                    } else if (enabledModules.includes('vazi')) {
-                      state.setActiveModule('vazi');
-                    } else {
-                      state.setActiveModule('portal');
-                    }
-                  }} className="space-y-4 mt-4">
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'სრული სახელი' : 'Full Name'}
-                      </label>
-                      <input
-                        type="text"
-                        name="fullName"
-                        placeholder={state.lang === 'ka' ? 'ლუკა თათრიშვილი' : 'Luka Tatrishvili'}
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'ელ-ფოსტის მისამართი' : 'Email Address'}
-                      </label>
-                      <input
-                        type="email"
-                        name="email"
-                        placeholder={state.lang === 'ka' ? 'luka.t@vinea.ge' : 'luka.t@vinea.com'}
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'მამულის სახელი *' : 'Company / Estate Name *'}
-                      </label>
-                      <input
-                        type="text"
-                        name="companyName"
-                        placeholder="Kvareli Estate"
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'მომხმარებლის სახელი' : 'Desired Username'}
-                      </label>
-                      <input
-                        type="text"
-                        name="username"
-                        placeholder={state.lang === 'ka' ? 'luka_mevenakhe' : 'luka_viticulture'}
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'პაროლი (შესვლის კოდი)' : 'Passcode / Password'}
-                      </label>
-                      <input
-                        type="password"
-                        name="passcode"
-                        placeholder="••••••••"
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors font-sans"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'თანამდებობა / როლი' : 'Role / Position'}
-                      </label>
-                      <select
-                        name="role"
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                      >
-                        <option value="Viticulturist">{state.lang === 'ka' ? 'მევენახე' : 'Viticulturist'}</option>
-                        <option value="Winemaker">{state.lang === 'ka' ? 'მეღვინე' : 'Winemaker'}</option>
-                        <option value="Cellar Assistant">{state.lang === 'ka' ? 'მარნის დამხმარე' : 'Cellar Assistant'}</option>
-                        <option value="Estate Manager">{state.lang === 'ka' ? 'მამულის მმართველი' : 'Estate Manager'}</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-2 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'საჭირო მოდულები *' : 'Workspace Modules *'}
-                      </label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <label className="flex items-center gap-2 p-3 rounded-xl bg-stone-50/80 border border-stone-200 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            name="enabledModules"
-                            value="vazi"
-                            defaultChecked
-                            className="w-4 h-4 rounded border-stone-300 accent-emerald-700 cursor-pointer"
-                          />
-                          <span className="text-xs font-bold text-stone-800">
-                            {state.lang === 'ka' ? 'ვენახი / Vazi' : 'Vineyard / Vazi'}
-                          </span>
-                        </label>
-                        <label className="flex items-center gap-2 p-3 rounded-xl bg-stone-50/80 border border-stone-200 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            name="enabledModules"
-                            value="gvino"
-                            defaultChecked
-                            className="w-4 h-4 rounded border-stone-300 accent-[#4e0e15] cursor-pointer"
-                          />
-                          <span className="text-xs font-bold text-stone-800">
-                            {state.lang === 'ka' ? 'მარანი / Gvino' : 'Cellar / Gvino'}
-                          </span>
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                          {state.lang === 'ka' ? 'მარნის სახელი' : 'Winery / Brand Name'}
-                        </label>
-                        <input
-                          type="text"
-                          name="wineryName"
-                          placeholder="Marani"
-                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                          {state.lang === 'ka' ? 'ტელეფონი' : 'Phone'}
-                        </label>
-                        <input
-                          type="tel"
-                          name="phone"
-                          placeholder="+995"
-                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                          {state.lang === 'ka' ? 'ქვეყანა' : 'Country'}
-                        </label>
-                        <input
-                          type="text"
-                          name="country"
-                          placeholder="Georgia"
-                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                          {state.lang === 'ka' ? 'რეგიონი' : 'Region'}
-                        </label>
-                        <input
-                          type="text"
-                          name="region"
-                          placeholder="Kakheti"
-                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                          {state.lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}
-                        </label>
-                        <input
-                          type="text"
-                          name="municipality"
-                          placeholder="Kvareli"
-                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                          {state.lang === 'ka' ? 'ვებგვერდი' : 'Website'}
-                        </label>
-                        <input
-                          type="url"
-                          name="website"
-                          placeholder="https://"
-                          className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">
-                        {state.lang === 'ka' ? 'მამულის / ვენახის მდებარეობა' : 'Estate / Vineyard Location (Optional)'}
-                      </label>
-                      <Suspense fallback={<div className="h-10 rounded-xl bg-stone-100 animate-pulse" />}>
-                      <LocationPicker
-                        lang={state.lang}
-                        latitude={regLocation?.latitude ?? state.companyProfile.latitude ?? 41.9056}
-                        longitude={regLocation?.longitude ?? state.companyProfile.longitude ?? 45.474}
-                        showManual={false}
-                        placeholder={state.lang === 'ka' ? 'მოძებნეთ ადგილი… მაგ. თელავი' : 'Search your estate… e.g. Telavi, Kakheti'}
-                        onChange={(loc) => setRegLocation(loc)}
-                      />
-                      </Suspense>
-                      {regLocation?.label && (
-                        <p className="text-[10px] text-emerald-700 font-bold mt-1.5 flex items-center gap-1">
-                          ✓ {regLocation.label} ({regLocation.latitude.toFixed(3)}, {regLocation.longitude.toFixed(3)})
-                        </p>
-                      )}
-                      <p className="text-[9px] text-stone-400 mt-1 leading-relaxed">
-                        {state.lang === 'ka'
-                          ? 'გამოიყენება ამინდის, რუკებისა და დაავადების რისკის მოდელებისთვის.'
-                          : 'Powers the weather station, satellite views and disease-risk models for your estate.'}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center">
-                      <label className="flex items-center gap-2 text-[10px] text-stone-600 dark:text-stone-400 font-bold font-sans select-none cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="rememberMe"
-                          defaultChecked
-                          value="true"
-                          className="w-3.5 h-3.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
-                        />
-                        <span>{state.lang === 'ka' ? 'დამიმახსოვრე შესული' : 'Keep me signed in'}</span>
-                      </label>
-                    </div>
-
-                    {state.loginError && (
-                      <p className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-1.5 mt-2">
-                        <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {state.loginError}
-                      </p>
-                    )}
-
-                    <button
-                      type="submit"
-                      className="w-full bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase tracking-widest py-3 rounded-xl cursor-pointer shadow-sm transition-all duration-155 text-xs mt-2"
-                    >
-                      {state.lang === 'ka' ? 'ანგარიშის შექმნა' : 'Create Account'}
-                    </button>
-
-                    <p className="text-center text-[10px] font-sans text-stone-405 mt-2">
-                      {state.lang === 'ka' ? 'უკვე გაქვთ ანგარიში?' : 'Already have an account?'} {' '}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsRegistering(false);
-                          state.setLoginError(null);
-                        }}
-                        className="text-[#4e0e15] dark:text-[#c5a059] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
-                      >
-                        {state.lang === 'ka' ? 'შესვლა' : 'Sign In'}
-                      </button>
-                    </p>
-                  </form>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <h2 className="text-xl font-serif font-black tracking-wide text-[#1b1715] dark:text-amber-100">{t.signin_title || 'VINEA Unified Sign In'}</h2>
-                    <p className="text-[12px] text-stone-400 mt-1">{state.lang === 'ka' ? 'შედით თქვენს მართვის სივრცეში.' : 'Sign in to your estate workspace.'}</p>
-                  </div>
-
-                  <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    if (authSubmitting) return;
-                    const fd = new FormData(e.currentTarget);
-                    const rememberMe = fd.get('rememberMe') === 'true';
-                    setAuthSubmitting(true);
-                    try {
-                      const success = await state.handleAuthLogin(
-                        String(fd.get('identifier') || ''),
-                        String(fd.get('passcode') || ''),
-                        rememberMe
-                      );
-                      if (success) {
-                        if (pendingInvitationToken) {
-                          setAuthAccountFlow('accept-invite');
-                        } else {
-                          state.setActiveModule('portal');
-                        }
+                <Suspense fallback={<ModuleLoader />}>
+                  <RegistrationPanel
+                    lang={state.lang === 'ka' ? 'ka' : 'en'}
+                    error={state.loginError}
+                    submitting={authSubmitting}
+                    onGoogle={() => {
+                      window.location.href = '/api/auth/google/login';
+                    }}
+                    onSignIn={() => {
+                      setIsRegistering(false);
+                      state.setLoginError(null);
+                    }}
+                    onLanguageChange={nextLang => {
+                      state.setLang(nextLang);
+                      localStorage.setItem('vinea_lang', nextLang);
+                    }}
+                    onSubmit={async submission => {
+                      if (authSubmitting) return;
+                      setAuthSubmitting(true);
+                      state.setLoginError(null);
+                      try {
+                        await state.handleAuthRegister({
+                          email: submission.email,
+                          fullName: submission.fullName,
+                          passcode: submission.passcode,
+                          language: state.lang === 'ka' ? 'ka' : 'en',
+                          rememberMe: true,
+                          companyProfile: {
+                            companyName: submission.companyName,
+                            contactEmail: submission.email,
+                            measurementUnits: 'metric',
+                            currency: 'GEL',
+                          },
+                          enabledModules: ['vazi', 'gvino'],
+                          enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
+                        });
+                      } finally {
+                        setAuthSubmitting(false);
                       }
-                    } finally {
-                      setAuthSubmitting(false);
-                    }
-                  }} className="space-y-4" aria-busy={authSubmitting}>
-                    {pendingInvitationToken && (
-                      <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200" role="status">
-                        {state.lang === 'ka'
-                          ? 'შედით იმ ელფოსტით, რომელზეც სამუშაო სივრცის მოსაწვევი მიიღეთ.'
-                          : 'Sign in with the email address that received the workspace invitation.'}
-                      </p>
-                    )}
-                    <div>
-                      <label htmlFor="auth-login-identifier" className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_username || 'Account Username / Email'}</label>
-                      <input
-                        id="auth-login-identifier"
-                        type="text"
-                        name="identifier"
-                        placeholder={state.lang === 'ka' ? 'მომხმარებელი ან ელ-ფოსტა' : 'username or email'}
-                        autoComplete="username"
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <div className="mb-1 flex items-center justify-between gap-3">
-                        <label htmlFor="auth-login-passcode" className="text-[9px] uppercase font-mono font-bold text-slate-400 font-extrabold tracking-widest">{t.signin_passcode || 'Passcode'}</label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            state.setLoginError(null);
-                            setAuthAccountFlow('forgot-password');
-                          }}
-                          className="min-h-9 rounded-lg px-2 text-xs font-bold text-[#4e0e15] hover:bg-stone-100 hover:underline dark:text-amber-300 dark:hover:bg-stone-800"
-                        >
-                          {state.lang === 'ka' ? 'დაგავიწყდათ კოდი?' : 'Forgot passcode?'}
-                        </button>
-                      </div>
-                      <input
-                        id="auth-login-passcode"
-                        type="password"
-                        name="passcode"
-                        placeholder="••••••••"
-                        autoComplete="current-password"
-                        className="w-full bg-stone-50/80 border border-stone-200/80 px-3 py-2.5 rounded-xl text-xs outline-none font-bold focus:border-stone-400 transition-colors text-stone-900"
-                        required
-                      />
-                    </div>
-
-                    <div className="flex items-center">
-                      <label className="flex items-center gap-2 text-[10px] text-stone-600 dark:text-stone-400 font-bold font-sans select-none cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="rememberMe"
-                          defaultChecked
-                          value="true"
-                          className="w-3.5 h-3.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
-                        />
-                        <span>{state.lang === 'ka' ? 'დამიმახსოვრე შესული' : 'Keep me signed in'}</span>
-                      </label>
-                    </div>
-
-                    {state.loginError && (
-                      <p className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 flex items-center gap-1.5" role="alert">
-                        <ShieldAlert className="w-3.5 h-3.5 shrink-0" /> {state.loginError}
-                      </p>
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={authSubmitting}
-                      className="w-full bg-[#4e0e15] hover:bg-[#34070a] text-white font-mono font-bold uppercase tracking-widest py-3 rounded-xl cursor-pointer shadow-sm transition-all duration-155 text-xs mt-2"
-                    >
-                      {authSubmitting && <Loader2 className="mr-2 inline h-4 w-4 animate-spin" aria-hidden="true" />}
-                      {authSubmitting
-                        ? (state.lang === 'ka' ? 'შესვლა მიმდინარეობს…' : 'Signing in…')
-                        : (t.signin_btn || 'Secure Portal Login')}
-                    </button>
-
-                    {state.demoLoginEnabled && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const success = await state.handleDemoLogin();
-                          if (success) state.setActiveModule('portal');
-                        }}
-                        className="w-full border border-[#c5a059]/60 bg-amber-50/60 hover:bg-amber-50 text-[#4e0e15] px-4 py-3 rounded-xl cursor-pointer transition-colors text-left"
-                      >
-                        <span className="block text-xs font-black uppercase tracking-wide">
-                          {state.lang === 'ka' ? 'დემო სივრცის გახსნა' : 'Open Demo Workspace'}
-                        </span>
-                        <span className="block text-[10px] text-stone-500 mt-0.5 font-medium">
-                          {state.lang === 'ka'
-                            ? 'იგივე რეალური მონაცემთა ბაზა, სინქრონიზაცია და სერვისები — სატესტო ჩანაწერების გარეშე.'
-                            : 'Uses the real database, sync, and services — no sample operational records.'}
-                        </span>
-                      </button>
-                    )}
-
-                    <div className="relative flex py-1.5 items-center">
-                      <div className="flex-grow border-t border-stone-200/60 dark:border-stone-800"></div>
-                      <span className="flex-shrink mx-3 text-[10px] text-stone-400 dark:text-stone-500 font-mono uppercase tracking-wider">{state.lang === 'ka' ? 'ან' : 'or'}</span>
-                      <div className="flex-grow border-t border-stone-200/60 dark:border-stone-800"></div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        window.location.href = '/api/auth/google/login';
-                      }}
-                      className="w-full bg-white hover:bg-stone-50 text-stone-700 border border-stone-350/80 font-sans font-bold py-2.5 px-4 rounded-xl cursor-pointer shadow-xs transition-all duration-155 text-xs flex items-center justify-center gap-2.5 dark:bg-stone-800 dark:hover:bg-stone-750 dark:border-stone-700 dark:text-amber-100"
-                    >
-                      <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                        <path
-                          fill="#4285F4"
-                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                        />
-                        <path
-                          fill="#34A853"
-                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                        />
-                        <path
-                          fill="#FBBC05"
-                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.87-2.6-2.86-4.53-5.29-4.53z"
-                        />
-                        <path
-                          fill="#EA4335"
-                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                        />
-                      </svg>
-                      {state.lang === 'ka' ? 'Google-ით გაგრძელება' : 'Continue with Google'}
-                    </button>
-                    <a
-                      href="/api/auth/google/login?reconfigure=true"
-                      className="text-[10px] text-stone-400 hover:text-stone-600 dark:text-stone-550 dark:hover:text-stone-400 font-sans mt-2 block text-center transition-colors hover:underline"
-                    >
-                      {state.lang === 'ka' ? '⚙️ Google-ის პარამეტრების მართვა' : '⚙️ Manage Google OAuth Credentials'}
-                    </a>
-
-                    <p className="text-center text-[10px] font-sans text-stone-450 mt-3">
-                      {state.lang === 'ka' ? 'არ გაქვთ ანგარიში?' : "Don't have an account?"} {' '}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsRegistering(true);
-                          state.setLoginError(null);
-                        }}
-                        className="text-[#4e0e15] dark:text-[#c5a059] font-bold hover:underline cursor-pointer bg-transparent border-none p-0 inline"
-                      >
-                        {state.lang === 'ka' ? 'დარეგისტრირდით' : 'Register Now'}
-                      </button>
-                    </p>
-                  </form>
-                </>
+                    }}
+                  />
+                </Suspense>
+              ) : (
+                <Suspense fallback={<ModuleLoader />}>
+                  <SignInPanel
+                    lang={state.lang === 'ka' ? 'ka' : 'en'}
+                    error={state.loginError}
+                    submitting={authSubmitting}
+                    demoEnabled={state.demoLoginEnabled}
+                    invitationPending={Boolean(pendingInvitationToken)}
+                    onLanguageChange={nextLang => {
+                      state.setLang(nextLang);
+                      localStorage.setItem('vinea_lang', nextLang);
+                    }}
+                    onForgotPassword={() => {
+                      state.setLoginError(null);
+                      setAuthAccountFlow('forgot-password');
+                    }}
+                    onRegister={() => {
+                      setIsRegistering(true);
+                      state.setLoginError(null);
+                    }}
+                    onGoogle={() => {
+                      window.location.href = '/api/auth/google/login';
+                    }}
+                    onDemo={async () => {
+                      if (authSubmitting) return;
+                      setAuthSubmitting(true);
+                      try {
+                        const success = await state.handleDemoLogin();
+                        if (success) state.setActiveModule('portal');
+                      } finally {
+                        setAuthSubmitting(false);
+                      }
+                    }}
+                    onSubmit={async submission => {
+                      if (authSubmitting) return;
+                      setAuthSubmitting(true);
+                      try {
+                        const success = await state.handleAuthLogin(
+                          submission.identifier,
+                          submission.passcode,
+                          submission.rememberMe,
+                        );
+                        if (success) {
+                          if (pendingInvitationToken) {
+                            setAuthAccountFlow('accept-invite');
+                          } else {
+                            state.setActiveModule('portal');
+                          }
+                        }
+                      } finally {
+                        setAuthSubmitting(false);
+                      }
+                    }}
+                  />
+                </Suspense>
               )}
             </div>
           </div>
@@ -2423,8 +2062,10 @@ export default function App() {
                 lang={state.lang}
                 vessels={state.vessels}
                 lots={state.lots}
+                inventory={state.inventory}
                 onUpdateVessels={state.setVessels}
                 onUpdateLots={state.setLots}
+                onAddCellarOperation={state.handleAddCellarOperation}
                 {...cellarPermissions.transfers}
                 prefilledSourceId={state.prefilledSourceId}
                 prefilledDestId={state.prefilledDestId}
@@ -2446,6 +2087,7 @@ export default function App() {
                 vessels={state.vessels}
                 lots={state.lots}
                 fermLogs={state.fermLogs}
+                inventory={state.inventory}
                 auditLogs={state.auditLogs}
                 currentUser={state.currentUser}
                 setActiveTab={state.setActiveTab}
@@ -2453,6 +2095,7 @@ export default function App() {
                 onUpdateLots={state.setLots}
                 onUpdateVessels={state.setVessels}
                 onUpdateFermLogs={state.setFermLogs}
+                onAddCellarOperation={state.handleAddCellarOperation}
                 onUpdateAuditLogs={state.setAuditLogs}
                 onApplyFermentationCompletionCommandResponse={state.applyFermentationCompletionCommandResponse}
                 onApplyFermentationCompletionReversalCommandResponse={state.applyFermentationCompletionReversalCommandResponse}
@@ -2542,6 +2185,7 @@ export default function App() {
               <InventoryTab
                 lang={state.lang}
                 inventory={state.inventory}
+                cellarOps={state.cellarOps}
                 onUpdateInventory={state.setInventory}
                 canCreateInventory={canAccess(state.currentUser.role, 'inventory', 'create')}
                 canUpdateInventory={canAccess(state.currentUser.role, 'inventory', 'update')}
@@ -2583,10 +2227,13 @@ export default function App() {
             {state.activeTab === 'tasks' && (
               <TasksTab
                 lang={state.lang}
+                currentUsername={state.currentUser.username}
                 tasks={state.tasks}
                 onToggleTaskStatus={state.handleToggleTaskStatus}
                 onDeleteTask={state.handleDeleteTask}
                 onAddNewTask={state.handleAddNewTask}
+                onUpdateTaskWhatsAppNotification={state.handleUpdateTaskWhatsAppNotification}
+                setToastMessage={state.setToastMessage}
                 canCreateTask={canAccess(state.currentUser.role, 'tasks', 'create')}
                 canUpdateTask={canAccess(state.currentUser.role, 'tasks', 'update')}
                 canDeleteTask={canAccess(state.currentUser.role, 'tasks', 'delete')}
@@ -2691,339 +2338,52 @@ export default function App() {
         </button>
       )}
 
-      {/* ONBOARDING CUSTOMIZATION WIZARD */}
       {state.isLoggedIn && showOnboarding && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-white/95 dark:bg-stone-950/95 border border-stone-200 dark:border-stone-850 max-w-2xl w-full max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-scale-up font-sans"
-          >
-            {/* Top decorative stripe */}
-            <div className="h-1.5 bg-gradient-to-r from-[#801323] via-[#c5a059] to-emerald-800" />
-
-            <div className="px-8 py-6 border-b border-stone-200/80 dark:border-stone-850 bg-stone-50/50 dark:bg-stone-900/20">
-              <h3 className="text-xl font-serif font-black text-[#4e0e15] dark:text-amber-100 flex items-center gap-2">
-                🍇 {needsRegistrationCompletion
-                  ? (state.lang === 'ka' ? 'დაასრულეთ რეგისტრაცია' : 'Complete Your Registration')
-                  : (state.lang === 'ka' ? 'მოარგეთ VinOS თქვენს საჭიროებებს' : 'Tailor your VinOS Workspace')}
-              </h3>
-              <p className="text-xs text-slate-550 dark:text-stone-400 mt-1 leading-relaxed">
-                {needsRegistrationCompletion
-                  ? (state.lang === 'ka'
-                    ? 'შეავსეთ აუცილებელი სამუშაო სივრცის ინფორმაცია; დანარჩენი ველები შეგიძლიათ მოგვიანებით დაამატოთ.'
-                    : 'Add the required workspace details; optional fields can be filled later.')
-                  : (state.lang === 'ka'
-                    ? 'აირჩიეთ სასურველი მოდულები და მთავარი გვერდის ვიჯეტები თქვენი როლის შესაბამისად.'
-                    : 'Choose which modules and home page widgets match your role.')}
-              </p>
-            </div>
-
-            <form onSubmit={async (e) => {
-              e.preventDefault();
-              const fd = new FormData(e.currentTarget);
-              const modules = fd.getAll('enabledModules') as string[];
-              const widgets = fd.getAll('enabledWidgets') as string[];
-
-              if (modules.length === 0) {
-                alert(state.lang === 'ka' ? 'გთხოვთ აირჩიოთ მინიმუმ ერთი აქტიური მოდული.' : 'Please enable at least one active module.');
-                return;
-              }
-
+        <Suspense fallback={null}>
+          <WorkspaceSetupDialog
+            lang={state.lang === 'ka' ? 'ka' : 'en'}
+            required={needsRegistrationCompletion}
+            user={state.currentUser}
+            companyProfile={state.companyProfile}
+            error={state.loginError}
+            onClose={() => setShowOnboarding(false)}
+            onSubmit={async (setup: WorkspaceSetupSubmission) => {
               if (needsRegistrationCompletion) {
-                const fullName = String(fd.get('fullName') || state.currentUser.fullName || '').trim();
-                const role = String(fd.get('role') || 'Owner/Admin') as any;
-                const companyName = String(fd.get('companyName') || '').trim();
                 const companySetup = {
-                  companyName,
-                  wineryName: String(fd.get('wineryName') || '').trim(),
-                  country: String(fd.get('country') || '').trim(),
-                  region: String(fd.get('region') || '').trim(),
-                  municipality: String(fd.get('municipality') || '').trim(),
-                  address: regLocation?.label || String(fd.get('address') || '').trim(),
-                  contactEmail: String(fd.get('contactEmail') || state.currentUser.email || '').trim(),
-                  phone: String(fd.get('phone') || '').trim(),
-                  website: String(fd.get('website') || '').trim(),
-                  measurementUnits: 'metric' as const,
-                  currency: 'GEL',
-                  ...(regLocation ? {
-                    latitude: regLocation.latitude,
-                    longitude: regLocation.longitude,
+                  ...state.companyProfile,
+                  companyName: setup.companyName,
+                  address: setup.location?.label || state.companyProfile.address || '',
+                  contactEmail: state.companyProfile.contactEmail || state.currentUser.email || '',
+                  measurementUnits: state.companyProfile.measurementUnits || ('metric' as const),
+                  currency: state.companyProfile.currency || 'GEL',
+                  ...(setup.location ? {
+                    latitude: setup.location.latitude,
+                    longitude: setup.location.longitude,
                   } : {}),
                 };
                 const completed = await state.handleCompleteRegistration({
-                  fullName,
-                  role,
+                  fullName: state.currentUser.fullName,
+                  role: state.currentUser.role,
                   language: state.lang === 'ka' ? 'ka' : 'en',
                   companyProfile: companySetup,
-                  enabledModules: modules,
-                  enabledWidgets: widgets,
+                  enabledModules: setup.enabledModules,
+                  enabledWidgets: setup.enabledWidgets,
                 });
                 if (completed) {
-                  state.setActiveModule(modules.includes('gvino') ? 'gvino' : modules.includes('vazi') ? 'vazi' : 'portal');
-                  setShowOnboarding(false);
+                  state.setActiveModule(setup.enabledModules.includes('gvino') ? 'gvino' : 'vazi');
                 }
-                return;
+                return completed;
               }
 
               await state.handleUpdateProfile({
-                enabledModules: modules,
-                enabledWidgets: widgets
+                enabledModules: setup.enabledModules,
+                enabledWidgets: setup.enabledWidgets,
               });
-              setShowOnboarding(false);
-            }} className="p-8 overflow-y-auto space-y-6 flex-1 text-xs text-stone-700 dark:text-stone-300">
-              {needsRegistrationCompletion && (
-                <div className="space-y-4">
-                  <h4 className="text-[10px] font-mono uppercase tracking-widest text-[#c5a059] font-black border-b border-stone-150 pb-1">
-                    {state.lang === 'ka' ? 'აუცილებელი ინფორმაცია' : 'Required Registration Details'}
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'სრული სახელი *' : 'Full Name *'}
-                      </label>
-                      <input
-                        type="text"
-                        name="fullName"
-                        defaultValue={state.currentUser.fullName}
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'როლი *' : 'Role *'}
-                      </label>
-                      <select
-                        name="role"
-                        defaultValue={state.currentUser.role || 'Owner/Admin'}
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      >
-                        <option value="Owner/Admin">{state.lang === 'ka' ? 'მფლობელი / ადმინისტრატორი' : 'Owner / Admin'}</option>
-                        <option value="Viticulturist">{state.lang === 'ka' ? 'მევენახე' : 'Viticulturist'}</option>
-                        <option value="Winemaker">{state.lang === 'ka' ? 'მეღვინე' : 'Winemaker'}</option>
-                        <option value="Lab Technician">{state.lang === 'ka' ? 'ლაბორანტი' : 'Lab Technician'}</option>
-                        <option value="Cellar Worker">{state.lang === 'ka' ? 'მარნის თანამშრომელი' : 'Cellar Worker'}</option>
-                        <option value="Read-Only">{state.lang === 'ka' ? 'მხოლოდ ნახვა' : 'Read-Only'}</option>
-                      </select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'კომპანიის / მამულის სახელი *' : 'Company / Estate Name *'}
-                      </label>
-                      <input
-                        type="text"
-                        name="companyName"
-                        defaultValue={state.companyProfile.companyName}
-                        placeholder="Kvareli Estate"
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <input type="hidden" name="contactEmail" value={state.currentUser.email} />
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'მარნის სახელი' : 'Winery / Brand Name'}
-                      </label>
-                      <input
-                        type="text"
-                        name="wineryName"
-                        defaultValue={state.companyProfile.wineryName}
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'ტელეფონი' : 'Phone'}
-                      </label>
-                      <input
-                        type="tel"
-                        name="phone"
-                        defaultValue={state.companyProfile.phone}
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'რეგიონი' : 'Region'}
-                      </label>
-                      <input
-                        type="text"
-                        name="region"
-                        defaultValue={state.companyProfile.region}
-                        placeholder="Kakheti"
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}
-                      </label>
-                      <input
-                        type="text"
-                        name="municipality"
-                        defaultValue={state.companyProfile.municipality}
-                        placeholder="Kvareli"
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'ქვეყანა' : 'Country'}
-                      </label>
-                      <input
-                        type="text"
-                        name="country"
-                        defaultValue={state.companyProfile.country}
-                        placeholder="Georgia"
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                        {state.lang === 'ka' ? 'ვებგვერდი' : 'Website'}
-                      </label>
-                      <input
-                        type="url"
-                        name="website"
-                        defaultValue={state.companyProfile.website}
-                        className="w-full bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 px-3 py-2.5 rounded-xl text-xs outline-none text-stone-900 dark:text-stone-100 font-bold focus:border-stone-400 transition-colors"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-400 tracking-widest">
-                      {state.lang === 'ka' ? 'მდებარეობა' : 'Location'}
-                    </label>
-                    <Suspense fallback={<div className="h-10 rounded-xl bg-stone-100 animate-pulse" />}>
-                      <LocationPicker
-                        lang={state.lang}
-                        latitude={regLocation?.latitude ?? state.companyProfile.latitude ?? 41.9056}
-                        longitude={regLocation?.longitude ?? state.companyProfile.longitude ?? 45.474}
-                        showManual={false}
-                        placeholder={state.lang === 'ka' ? 'მოძებნეთ ადგილი...' : 'Search your estate...'}
-                        onChange={(loc) => setRegLocation(loc)}
-                      />
-                    </Suspense>
-                  </div>
-                </div>
-              )}
-
-              {/* Section 1: Modules Toggles */}
-              <div className="space-y-3">
-                <h4 className="text-[10px] font-mono uppercase tracking-widest text-[#c5a059] font-black border-b border-stone-150 pb-1">
-                  📦 {state.lang === 'ka' ? 'აქტიური მოდულები' : 'Active Winemaking Modules'}
-                </h4>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Viticulture Module (Vazi) */}
-                  <label className="relative flex flex-col p-4 bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-800 rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all select-none">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-sm text-stone-900 dark:text-amber-100 flex items-center gap-1.5">
-                        🚜 {state.lang === 'ka' ? 'მევენახეობა (ვაზი)' : 'Viticulture (Vazi / Vineyard)'}
-                      </span>
-                      <input
-                        type="checkbox"
-                        name="enabledModules"
-                        value="vazi"
-                        defaultChecked={defaultEnabledModules.includes('vazi')}
-                        className="h-4.5 w-4.5 rounded border-stone-300 text-emerald-805 focus:ring-emerald-800 accent-emerald-800 cursor-pointer"
-                      />
-                    </div>
-                    <p className="mt-1.5 text-[10px] text-slate-500 leading-relaxed font-sans font-medium">
-                      {state.lang === 'ka'
-                        ? 'ნაკვეთები, წამლობის გრაფიკები, ფენოლოგია, GDD ტემპერატურული ჯამები და ჭრაქის პროგნოზები.'
-                        : 'Track blocks, spray schedules, phenology stages, GDD heat summation, and downy mildew risk forecasts.'
-                      }
-                    </p>
-                  </label>
-
-                  {/* Winery Module (Gvino) */}
-                  <label className="relative flex flex-col p-4 bg-stone-50 dark:bg-stone-900/50 border border-stone-200 dark:border-stone-800 rounded-2xl cursor-pointer hover:border-[#801323]/50 transition-all select-none">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-sm text-stone-900 dark:text-amber-100 flex items-center gap-1.5">
-                        🍷 {state.lang === 'ka' ? 'მეღვინეობა (ღვინო)' : 'Winery (Gvino / Cellar)'}
-                      </span>
-                      <input
-                        type="checkbox"
-                        name="enabledModules"
-                        value="gvino"
-                        defaultChecked={defaultEnabledModules.includes('gvino')}
-                        className="h-4.5 w-4.5 rounded border-stone-300 text-[#4e0e15] focus:ring-[#4e0e15] accent-[#4e0e15] cursor-pointer"
-                      />
-                    </div>
-                    <p className="mt-1.5 text-[10px] text-slate-500 leading-relaxed font-sans font-medium">
-                      {state.lang === 'ka'
-                        ? 'ჭურჭელი, ქვევრები, პარტიები, ლაბორატორია, SO₂ ბუფერი და ხელოვნური ინტელექტის მეღვინე.'
-                        : 'Manage vessels, clay qvevris, wine lots, laboratory metrics, SO2 buffers, and the AI winemaker assistant.'
-                      }
-                    </p>
-                  </label>
-                </div>
-              </div>
-
-              {/* Section 2: Widget Selections */}
-              <div className="space-y-3">
-                <h4 className="text-[10px] font-mono uppercase tracking-widest text-[#c5a059] font-black border-b border-stone-150 pb-1">
-                  🏠 {state.lang === 'ka' ? 'მთავარი გვერდის ვიჯეტები' : 'Home Page Dashboard Widgets'}
-                </h4>
-                <p className="text-[10px] text-slate-400 font-sans">
-                  {state.lang === 'ka'
-                    ? 'აირჩიეთ, თუ რომელი ბლოკები გამოჩნდეს მთავარ პორტალზე.'
-                    : 'Choose what metrics appear on your main portal homepage.'
-                  }
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-stone-800 dark:text-stone-300">
-                  {[
-                    { id: 'chemistry', label: state.lang === 'ka' ? '⚠️ უსაფრთხოება და ქიმია' : '⚠️ Safety & Chemistry Alerts', module: 'gvino' },
-                    { id: 'weather', label: state.lang === 'ka' ? '🌦️ მეტეო პროგნოზები და რისკები' : '🌦️ Weather Station & Mildew Forecasts', module: 'vazi' },
-                    { id: 'fermentation', label: state.lang === 'ka' ? '🔥 აქტიური დუღილის ტელემეტრია' : '🔥 Active Fermentations & Telemetry', module: 'gvino' },
-                    { id: 'canopy', label: state.lang === 'ka' ? '🌿 ვენახის ფოთლის რადარი' : '🌿 Vineyard Canopy Status Radar', module: 'vazi' },
-                    { id: 'tasks', label: state.lang === 'ka' ? '📋 დავალებების ჩეკლისტი' : '📋 Unified Operations Tasklist Checklist', module: null },
-                    { id: 'audit', label: state.lang === 'ka' ? '🛡️ საქმიანობის აუდიტის ჟურნალი' : '🛡️ Immutable Audit Trail Ledger History', module: null }
-                  ].map(widget => (
-                    <label key={widget.id} className="flex items-center gap-2.5 p-3.5 bg-stone-50/70 dark:bg-stone-900/30 border border-stone-150 dark:border-stone-800 rounded-xl hover:bg-stone-100/50 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        name="enabledWidgets"
-                        value={widget.id}
-                        defaultChecked={defaultEnabledWidgets.includes(widget.id)}
-                        className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500 accent-amber-600 cursor-pointer"
-                      />
-                      <div>
-                        <span className="font-bold block text-stone-850 dark:text-amber-100">{widget.label}</span>
-                        {widget.module && (
-                          <span className="text-[8px] uppercase tracking-wider text-[#c5a059] font-black font-mono">
-                            {widget.module === 'vazi' ? (state.lang === 'ka' ? 'მევენახეობა' : 'Viticulture') : (state.lang === 'ka' ? 'მეღვინეობა' : 'Winery')}
-                          </span>
-                        )}
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Action */}
-              <div className="pt-4 flex justify-end gap-3.5">
-                <button
-                  type="submit"
-                  className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-mono font-bold uppercase tracking-widest py-3.5 rounded-xl cursor-pointer text-xs justify-center flex items-center shadow-md transition-all duration-200"
-                >
-                  ✨ {needsRegistrationCompletion
-                    ? (state.lang === 'ka' ? 'რეგისტრაციის დასრულება' : 'Finish Registration')
-                    : (state.lang === 'ka' ? 'პარამეტრების შენახვა და დაწყება' : 'Configure & Start Cellaring')} →
-                </button>
-              </div>
-
-            </form>
-          </motion.div>
-        </div>
+              state.setActiveModule(setup.enabledModules.includes('gvino') ? 'gvino' : 'vazi');
+              return true;
+            }}
+          />
+        </Suspense>
       )}
 
       {/* SLIDE-OUT PANEL FOR SELECTED VESSEL DETAILED METRICS */}

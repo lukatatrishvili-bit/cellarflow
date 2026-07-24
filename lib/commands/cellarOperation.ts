@@ -3,9 +3,11 @@ import { materialCostEntryFromOperation, type CostEntry } from '../costing';
 import { CELLAR_OPERATIONS } from '../wineryOperations';
 import type {
   CellarOperation,
+  CellarOperationReversalSnapshot,
   CellarOperationType,
   InventoryItem,
   MaraniOSAuditLog,
+  OperationMaterialUsage,
   Vessel,
   WineLot,
 } from '../wineryState';
@@ -52,7 +54,11 @@ export interface CellarOperationCommandResult {
   operation: CellarOperation;
   lot: WineLot;
   vessel?: Vessel;
+  /** All changed inventory records. Singular alias remains for older clients. */
+  inventoryItems: InventoryItem[];
   inventoryItem?: InventoryItem;
+  /** All generated material costs. Singular alias remains for older clients. */
+  costEntries: CostEntry[];
   costEntry?: CostEntry;
   auditLog: MaraniOSAuditLog;
   stateVersion?: number;
@@ -62,6 +68,12 @@ export interface CellarOperationCommandResult {
     vesselId?: string;
     materialId?: string;
     materialDeducted: number;
+    materialDeductions?: Array<{
+      materialId: string;
+      materialName: string;
+      quantity: number;
+      unit: string;
+    }>;
     costPosted: number;
     volumeBeforeL: number;
     volumeAfterL?: number;
@@ -181,6 +193,53 @@ function roundedQuantity(value: number): number {
   return Math.round((value + Number.EPSILON) * 1000) / 1000;
 }
 
+function parseMaterials(value: unknown): OperationMaterialUsage[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 25) {
+    throw new CellarOperationCommandError(
+      'invalid_cellar_operation_payload',
+      'operation.materials must be an array with at most 25 entries.',
+      400,
+    );
+  }
+  const seen = new Set<string>();
+  return value.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new CellarOperationCommandError(
+        'invalid_cellar_operation_payload',
+        `operation.materials[${index}] must be an object.`,
+        400,
+      );
+    }
+    const input = raw as Record<string, unknown>;
+    const materialId = requiredRecordId(
+      input.materialId,
+      `operation.materials[${index}].materialId`,
+    );
+    if (seen.has(materialId)) {
+      throw new CellarOperationCommandError(
+        'invalid_cellar_operation_payload',
+        `operation.materials repeats material ${materialId}; combine it into one quantity.`,
+        400,
+      );
+    }
+    seen.add(materialId);
+    return {
+      materialId,
+      quantity: finiteNumber(
+        input.quantity,
+        `operation.materials[${index}].quantity`,
+        EPSILON,
+        MAX_QUANTITY,
+        true,
+      ) as number,
+      ...(textValue(input.purpose, `operation.materials[${index}].purpose`, 120)
+        ? { purpose: textValue(input.purpose, `operation.materials[${index}].purpose`, 120) }
+        : {}),
+    };
+  });
+}
+
 function parseOperation(value: unknown): CellarOperationInput {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new CellarOperationCommandError(
@@ -227,17 +286,18 @@ function parseOperation(value: unknown): CellarOperationInput {
   }
   const materialId = optionalRecordId(input.materialId, 'operation.materialId');
   const dose = finiteNumber(input.dose, 'operation.dose', EPSILON, MAX_QUANTITY);
-  if ((materialId || dose !== undefined) && !meta.needsMaterial) {
-    throw new CellarOperationCommandError(
-      'invalid_cellar_operation_payload',
-      'Material consumption is not supported for this operation type.',
-      400,
-    );
-  }
   if (Boolean(materialId) !== (dose !== undefined)) {
     throw new CellarOperationCommandError(
       'invalid_cellar_operation_payload',
       'operation.materialId and operation.dose must be supplied together.',
+      400,
+    );
+  }
+  const materials = parseMaterials(input.materials);
+  if (materials.length > 0 && materialId) {
+    throw new CellarOperationCommandError(
+      'invalid_cellar_operation_payload',
+      'Use operation.materials for multiple additions or the legacy materialId/dose pair, not both.',
       400,
     );
   }
@@ -251,6 +311,7 @@ function parseOperation(value: unknown): CellarOperationInput {
     vesselToId: vesselToId || null,
     ...(volumeAfterL !== undefined ? { volumeAfterL } : {}),
     ...(materialId ? { materialId, dose: dose as number } : {}),
+    ...(materials.length ? { materials } : {}),
     operator: textValue(input.operator, 'operation.operator', 120, true),
     notes: textValue(input.notes, 'operation.notes', 2_000),
   };
@@ -277,7 +338,10 @@ export function cellarOperationPayloadUsesVessels(payload: CellarOperationComman
 }
 
 export function cellarOperationPayloadUsesMaterial(payload: CellarOperationCommandPayload): boolean {
-  return Boolean(payload.operation.materialId && payload.operation.dose);
+  return Boolean(
+    (payload.operation.materialId && payload.operation.dose)
+    || payload.operation.materials?.length,
+  );
 }
 
 export function applyCellarOperationCommand(
@@ -383,33 +447,50 @@ export function applyCellarOperationCommand(
     }
   }
 
-  let material: InventoryItem | undefined;
-  if (input.materialId && input.dose) {
-    material = currentState.inventory.find(item => item.id === input.materialId);
+  const requestedMaterials: OperationMaterialUsage[] = input.materials?.length
+    ? input.materials
+    : input.materialId && input.dose
+      ? [{ materialId: input.materialId, quantity: input.dose }]
+      : [];
+  const materialRecords = requestedMaterials.map(usage => {
+    const material = currentState.inventory.find(item => item.id === usage.materialId);
     if (!material) {
       throw new CellarOperationCommandError(
         'cellar_operation_material_not_found',
-        'The consumed inventory material was not found.',
+        `The consumed inventory material ${usage.materialId} was not found.`,
         404,
       );
     }
     const stock = storedQuantity(material.stock, `Inventory item ${material.id}`);
     storedQuantity(material.costPerUnit, `Inventory item ${material.id} unit cost`);
-    if (input.dose > stock + EPSILON) {
+    if (usage.quantity > stock + EPSILON) {
       throw new CellarOperationCommandError(
         'insufficient_operation_material',
         `Only ${stock} ${material.unit || 'units'} of ${material.name} remains.`,
         409,
       );
     }
-  }
+    return {
+      material,
+      usage: {
+        ...usage,
+        materialName: material.name,
+        category: material.category,
+        unit: material.unit,
+      } satisfies OperationMaterialUsage,
+    };
+  });
 
   const timestamp = context.performedAt.toISOString();
   const meta = CELLAR_OPERATIONS.find(item => item.key === input.type)!;
   const operationLabel = input.type === 'custom' ? (input.customLabel as string) : meta.en;
   const hasVolumeChange = input.volumeAfterL !== undefined;
   const descriptionParts: string[] = [operationLabel];
-  if (material && input.dose) descriptionParts.push(`${material.name} ${input.dose}${material.unit || ''}`);
+  if (materialRecords.length) {
+    descriptionParts.push(materialRecords.map(({ material, usage }) => (
+      `${material.name} ${usage.quantity}${material.unit || ''}${usage.purpose ? ` (${usage.purpose})` : ''}`
+    )).join(', '));
+  }
   if (input.vesselId) {
     descriptionParts.push(input.vesselToId ? `${input.vesselId} → ${input.vesselToId}` : input.vesselId);
   }
@@ -424,27 +505,43 @@ export function applyCellarOperationCommand(
     recordKind: 'operation',
     lotName: lot.name,
     volumeBeforeL,
-    ...(material ? { materialName: material.name, unit: material.unit } : {}),
+    ...(materialRecords.length ? { materials: materialRecords.map(item => item.usage) } : {}),
+    ...(materialRecords.length === 1 && input.materialId ? {
+      materialName: materialRecords[0].material.name,
+      unit: materialRecords[0].material.unit,
+    } : {}),
   }, timestamp);
 
-  let costEntry = materialCostEntryFromOperation(baseOperation, material, {
-    currency: context.currency || 'GEL',
-    createdBy: input.operator || context.actorUsername,
-  }) || undefined;
-  if (costEntry) {
-    if (currentState.costEntries.some(item => item.id === costEntry?.id)) {
+  const generatedCosts = materialRecords.flatMap(({ material, usage }) => {
+    const generated = materialCostEntryFromOperation({
+      ...baseOperation,
+      materialId: material.id,
+      materialName: material.name,
+      dose: usage.quantity,
+      unit: material.unit,
+    }, material, {
+      currency: context.currency || 'GEL',
+      createdBy: input.operator || context.actorUsername,
+    });
+    return generated ? [generated] : [];
+  });
+  const generatedCostIds = new Set<string>();
+  for (const generated of generatedCosts) {
+    if (generatedCostIds.has(generated.id)
+      || currentState.costEntries.some(item => item.id === generated.id)) {
       throw new CellarOperationCommandError(
         'cellar_operation_cost_id_conflict',
         'The derived material-cost entry already exists.',
         409,
       );
     }
-    costEntry = stamped<CostEntry>({
-      ...costEntry,
+    generatedCostIds.add(generated.id);
+  }
+  const costEntries = generatedCosts.map(generated => stamped<CostEntry>({
+      ...generated,
       commandId: context.commandId,
       recordKind: 'cost',
-    }, timestamp);
-  }
+    }, timestamp));
 
   const unsignedAudit = stamped<MaraniOSAuditLog>({
     id: payload.auditId,
@@ -459,9 +556,35 @@ export function applyCellarOperationCommand(
     notes: description,
   }, timestamp);
   const auditLog = signAuditEntries([unsignedAudit], currentState.auditLogs)[0];
-  const operation: CellarOperation = {
-    ...baseOperation,
-    reversalSnapshot: {
+  const reversalSnapshot: CellarOperationReversalSnapshot = input.materials?.length
+    ? {
+      version: 2,
+      lot: {
+        id: lot.id,
+        currentVolume: volumeBeforeL,
+        stage: lot.stage,
+      },
+      ...(vessel ? {
+        vessel: {
+          id: vessel.id,
+          currentVolume: vessel.currentVolume,
+          lastOperation: vessel.lastOperation,
+        },
+      } : {}),
+      inventory: materialRecords.map(({ material }) => ({
+        id: material.id,
+        stock: material.stock,
+      })),
+      costEntries: costEntries.map(costEntry => ({
+        id: costEntry.id,
+        amount: costEntry.amount,
+        currency: costEntry.currency,
+        ...(typeof costEntry.quantity === 'number' ? { quantity: costEntry.quantity } : {}),
+      })),
+      auditId: auditLog.id,
+      operationDescription: description,
+    }
+    : {
       version: 1,
       lot: {
         id: lot.id,
@@ -475,23 +598,26 @@ export function applyCellarOperationCommand(
           lastOperation: vessel.lastOperation,
         },
       } : {}),
-      ...(material ? {
+      ...(materialRecords[0] ? {
         inventory: {
-          id: material.id,
-          stock: material.stock,
+          id: materialRecords[0].material.id,
+          stock: materialRecords[0].material.stock,
         },
       } : {}),
-      ...(costEntry ? {
+      ...(costEntries[0] ? {
         costEntry: {
-          id: costEntry.id,
-          amount: costEntry.amount,
-          currency: costEntry.currency,
-          ...(typeof costEntry.quantity === 'number' ? { quantity: costEntry.quantity } : {}),
+          id: costEntries[0].id,
+          amount: costEntries[0].amount,
+          currency: costEntries[0].currency,
+          ...(typeof costEntries[0].quantity === 'number' ? { quantity: costEntries[0].quantity } : {}),
         },
       } : {}),
       auditId: auditLog.id,
       operationDescription: description,
-    },
+    };
+  const operation: CellarOperation = {
+    ...baseOperation,
+    reversalSnapshot,
   };
   const updatedLot = stamped<WineLot>({
     ...lot,
@@ -511,11 +637,22 @@ export function applyCellarOperationCommand(
     lastCommandId: context.commandId,
     lastOperation: description,
   }, timestamp) : undefined;
-  const updatedInventoryItem = material && input.dose ? stamped<InventoryItem>({
+  const updatedInventoryItems = materialRecords.map(({ material, usage }) => stamped<InventoryItem>({
     ...material,
-    stock: roundedQuantity(material.stock - input.dose),
+    stock: roundedQuantity(material.stock - usage.quantity),
     lastCommandId: context.commandId,
-  }, timestamp) : undefined;
+  }, timestamp));
+  const updatedInventoryById = new Map(
+    updatedInventoryItems.map(item => [item.id, item]),
+  );
+  const materialDeductions = materialRecords.map(({ material, usage }) => ({
+    materialId: material.id,
+    materialName: material.name,
+    quantity: usage.quantity,
+    unit: material.unit || '',
+  }));
+  const materialDeducted = materialDeductions.reduce((sum, item) => sum + item.quantity, 0);
+  const costPosted = costEntries.reduce((sum, item) => sum + item.amount, 0);
 
   return {
     state: {
@@ -523,27 +660,28 @@ export function applyCellarOperationCommand(
       vessels: updatedVessel
         ? currentState.vessels.map(item => item.id === updatedVessel.id ? updatedVessel : item)
         : currentState.vessels,
-      inventory: updatedInventoryItem
-        ? currentState.inventory.map(item => item.id === updatedInventoryItem.id ? updatedInventoryItem : item)
-        : currentState.inventory,
+      inventory: currentState.inventory.map(item => updatedInventoryById.get(item.id) || item),
       cellarOps: [operation, ...currentState.cellarOps],
-      costEntries: costEntry ? [costEntry, ...currentState.costEntries] : currentState.costEntries,
+      costEntries: [...costEntries, ...currentState.costEntries],
       auditLogs: [auditLog, ...currentState.auditLogs],
     },
     result: {
       operation,
       lot: updatedLot,
       ...(updatedVessel ? { vessel: updatedVessel } : {}),
-      ...(updatedInventoryItem ? { inventoryItem: updatedInventoryItem } : {}),
-      ...(costEntry ? { costEntry } : {}),
+      inventoryItems: updatedInventoryItems,
+      ...(updatedInventoryItems[0] ? { inventoryItem: updatedInventoryItems[0] } : {}),
+      costEntries,
+      ...(costEntries[0] ? { costEntry: costEntries[0] } : {}),
       auditLog,
       receipt: {
         operationId: operation.id,
         lotId: lot.id,
         ...(vessel ? { vesselId: vessel.id } : {}),
-        ...(material ? { materialId: material.id } : {}),
-        materialDeducted: input.dose || 0,
-        costPosted: costEntry?.amount || 0,
+        ...(materialRecords[0] ? { materialId: materialRecords[0].material.id } : {}),
+        materialDeducted,
+        ...(input.materials?.length ? { materialDeductions } : {}),
+        costPosted,
         volumeBeforeL,
         ...(input.volumeAfterL !== undefined ? { volumeAfterL: input.volumeAfterL } : {}),
       },
