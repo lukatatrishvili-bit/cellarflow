@@ -382,8 +382,25 @@ jobs:
             --region "$REGION" \
             --update-env-vars "APP_URL=$SERVICE_URL"
 
+          RELEASE_REVISION="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.latestCreatedRevisionName)')"
+          if [ -z "$RELEASE_REVISION" ]; then
+            echo "Cloud Run did not report the revision created by this release."
+            exit 1
+          fi
+
+          # Existing preview tags can pin production traffic to an older named
+          # revision. Explicitly promote the final revision after APP_URL is set.
+          gcloud run services update-traffic "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --to-revisions "${RELEASE_REVISION}=100"
+
           echo "url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+          echo "RELEASE_REVISION=$RELEASE_REVISION" >> "$GITHUB_ENV"
 
       - name: Verify deployed digest and health
         run: |
@@ -392,6 +409,11 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --format='value(status.latestReadyRevisionName)')"
+          if [ "$LATEST_REVISION" != "$RELEASE_REVISION" ]; then
+            echo "Expected latest ready revision: $RELEASE_REVISION"
+            echo "Cloud Run latest ready revision: $LATEST_REVISION"
+            exit 1
+          fi
           DEPLOYED_IMAGE="$(gcloud run revisions describe "$LATEST_REVISION" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
