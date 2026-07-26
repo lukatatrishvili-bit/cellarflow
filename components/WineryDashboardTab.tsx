@@ -281,7 +281,7 @@ export default function WineryDashboardTab({
 
       <div className={`grid grid-cols-1 gap-5 ${showCellarHealth ? 'xl:grid-cols-[1.25fr_0.75fr]' : ''}`}>
         <SectionCard
-          title={isKa ? 'მარნის დღის რიგი' : 'Today’s cellar queue'}
+          title={isKa ? 'დღის განრიგი' : 'Today’s cellar queue'}
           subtitle={isKa
             ? 'ჯერ ქიმიის რისკები, გამოტოვებული დუღილის ჩანაწერები და ვადაგადაცილებული სამუშაო.'
             : 'Chemistry risks, missing fermentation readings, and overdue work first.'}
