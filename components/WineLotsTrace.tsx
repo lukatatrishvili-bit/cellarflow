@@ -852,7 +852,7 @@ export default function WineLotsTrace({
                           value={transitionNotes}
                           onChange={(e) => setTransitionNotes(e.target.value)}
                           className="w-full bg-[#FAF8F5] border border-stone-200 p-2 rounded outline-none h-16 text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
-                          placeholder={lang === 'ka' ? 'აღწერეთ ქმედება: გადაღება, მაცერაცია, გოგირდის კორექცია ან ფილტრაციის შემოწმება...' : 'Describe action: racking, dynamic skin maceration, sulfur adjustment, or filtration check...'}
+                          placeholder={lang === 'ka' ? 'აღწერეთ ქმედება: გადატანა, მაცერაცია, გოგირდის კორექცია ან ფილტრაციის შემოწმება...' : 'Describe action: racking, dynamic skin maceration, sulfur adjustment, or filtration check...'}
                           required
                         />
                       </div>

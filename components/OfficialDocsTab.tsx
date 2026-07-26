@@ -547,9 +547,9 @@ export default function OfficialDocsTab(props: Props) {
 
             {has('material') && (
               <div>
-                <label className={labelCls}>{ka ? 'მასალა' : 'Material'}</label>
+                <label className={labelCls}>{ka ? 'პროდუქტი' : 'Material'}</label>
                 <select value={materialId} onChange={e => setMaterialId(e.target.value)} className={inputCls}>
-                  <option value="">{ka ? 'ყველა მასალა' : 'All materials'}</option>
+                  <option value="">{ka ? 'ყველა პროდუქტი' : 'All materials'}</option>
                   {pools.inventory.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                 </select>
               </div>

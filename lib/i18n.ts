@@ -342,7 +342,7 @@ export const translations = {
     cellar_operations: 'ოპერაციები',
     lineage: 'გენეალოგია',
     wine_lots: 'ღვინის პარტიები',
-    transfers: 'გადაღება/გადატანა',
+    transfers: 'გადატანა',
     fermentation: 'დუღილი',
     lab_analysis: 'ლაბორატორია',
     additives: 'დანამატები',
@@ -396,7 +396,7 @@ export const translations = {
     low_inventory: 'დაბალი მარაგების ალერტი',
     attention_required: 'ყურადღებას მოითხოვს',
     quick_actions: 'სწრაფი მოქმედებები',
-    recent_transfers: 'ბოლო გადაღებები',
+    recent_transfers: 'ბოლო გადატანები',
     recent_labs: 'ბოლო ანალიზები',
     alert_no_tasks: 'ყველა დავალება შესრულებულია!',
     alert_no_inventory: 'ინვენტარის მარაგები ოპტიმალურ ზღვარზეა.',
@@ -460,9 +460,9 @@ export const translations = {
 
     // Transfers
     transfer_date: 'გადატანის დრო',
-    source_tank: 'წყარო ჭურჭელი',
-    dest_tank: 'მიმღები ჭურჭელი',
-    volume_to_transfer: 'გადასაღები მოცულობა (ლ)',
+    source_tank: 'საიდან',
+    dest_tank: 'სად',
+    volume_to_transfer: 'გადასატანი მოცულობა (ლ)',
     loss_volume: 'დანაკარგი მოცულობა (ლ)',
     transfer_reason: 'გადატანის მიზეზი',
     transfer_rack: 'ლექიდან მოცილება (დეკანტაცია)',
@@ -519,7 +519,7 @@ export const translations = {
     add_success: 'დანამატი წარმატებით დაემატა პარტიას.',
 
     // Inventory
-    inv_item: 'მასალის დასახელება',
+    inv_item: 'პროდუქტის დასახელება',
     inv_category: 'კატეგორია',
     inv_stock: 'მარაგშია',
     inv_min: 'მინიმალური მარაგი',

@@ -524,7 +524,7 @@ export default function TanksVessels({
                     {ka ? 'მოქმედების რიგი' : 'Action queue'}
                   </h3>
                   <p className="mt-1 text-[11px] font-medium text-stone-500 dark:text-stone-400">
-                    {ka ? 'ერთი მიზეზი თითო ჭურჭელზე — ყველაზე კრიტიკული პირველია.' : 'One reason per vessel, with the most critical decisions first.'}
+                    {ka ? 'ყველაზე კრიტიკული პირველია' : 'Most critical first.'}
                   </p>
                 </div>
                 {attentionVessels.length > 4 && (

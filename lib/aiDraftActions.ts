@@ -2,6 +2,11 @@ export type AiDraftActionType =
   | 'task'
   | 'lab_check'
   | 'cellar_operation'
+  | 'transfer_plan'
+  | 'bottling_readiness'
+  | 'inventory_restock'
+  | 'fermentation_nutrition'
+  | 'acid_adjustment'
   | 'so2_calculation'
   | 'spray_recommendation'
   | 'compliance_warning'
@@ -17,7 +22,18 @@ export interface AiDraftAction {
   priority: AiDraftPriority;
   description: string;
   reviewOnly: true;
-  targetModule: 'tasks' | 'labs' | 'operations' | 'vazi' | 'documents' | 'lots';
+  targetModule:
+    | 'tasks'
+    | 'labs'
+    | 'operations'
+    | 'transfers'
+    | 'bottling'
+    | 'inventory'
+    | 'fermentation'
+    | 'calculators'
+    | 'vazi'
+    | 'documents'
+    | 'lots';
   warnings: string[];
   payload?: Record<string, unknown>;
 }
@@ -61,6 +77,11 @@ const ACTION_LABELS: Record<AiDraftActionType, string> = {
   task: 'Task draft',
   lab_check: 'Lab check draft',
   cellar_operation: 'Cellar operation draft',
+  transfer_plan: 'Transfer plan draft',
+  bottling_readiness: 'Bottling readiness draft',
+  inventory_restock: 'Inventory restock draft',
+  fermentation_nutrition: 'Fermentation nutrition draft',
+  acid_adjustment: 'Acid adjustment draft',
   so2_calculation: 'SO2 calculation draft',
   spray_recommendation: 'Spray recommendation draft',
   compliance_warning: 'Compliance warning draft',
@@ -118,6 +139,11 @@ export function draftActionLabel(type: AiDraftActionType, lang?: string): string
       task: 'დავალების პროექტი',
       lab_check: 'ლაბორატორიული შემოწმების პროექტი',
       cellar_operation: 'მარნის ოპერაციის პროექტი',
+      transfer_plan: 'ღვინის გადატანის გეგმის პროექტი',
+      bottling_readiness: 'ჩამოსხმის მზადყოფნის პროექტი',
+      inventory_restock: 'მარაგის შევსების პროექტი',
+      fermentation_nutrition: 'დუღილის კვების პროექტი',
+      acid_adjustment: 'მჟავიანობის კორექციის პროექტი',
       so2_calculation: 'SO2-ის გაანგარიშების პროექტი',
       spray_recommendation: 'წამლობის რეკომენდაციის პროექტი',
       compliance_warning: 'შესაბამისობის გაფრთხილების პროექტი',
@@ -141,7 +167,31 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
   const drafts: AiDraftAction[] = [];
 
   const so2Like = hasAny(text, ['so2', 'sulfur dioxide', 'sulphur dioxide', 'sulfite', 'sulphite', 'kmbs', 'metabisulfite', 'გოგირდ', 'KMBS']);
-  const labLike = so2Like || hasAny(text, ['lab', 'analysis', 'sample', 'ph', 'volatile acidity', ' va ', 'density', 'brix', 'ta ', 'tartaric', 'ლაბორატორი', 'ანალიზი', 'ნიმუში']);
+  const transferLike = contextTab === 'transfers' || hasAny(text, [
+    'racking', 'wine transfer', 'transfer wine', 'source vessel', 'destination vessel',
+    'გადატანა', 'გადაღება', 'საიდან', 'მიმღები ჭურჭელი',
+  ]);
+  const bottlingLike = contextTab === 'bottling' || hasAny(text, [
+    'bottling', 'bottle run', 'cork', 'closure', 'capsule', 'packaging',
+    'ჩამოსხმა', 'საცობი', 'კაფსულა', 'ეტიკეტი',
+  ]);
+  const inventoryLike = contextTab === 'inventory' || hasAny(text, [
+    'inventory', 'restock', 'reorder', 'supplier', 'stock shortage',
+    'ინვენტარი', 'მარაგის შევსება', 'მომწოდებელი', 'პროდუქტის მარაგი',
+  ]);
+  const nutritionLike = (
+    contextTab === 'fermentation'
+    && hasAny(text, [
+      'yan', 'nitrogen', 'nutrient', 'dap', 'organic nutrition',
+      'აზოტი', 'კვება', 'საფუარის საკვები',
+    ])
+  ) || hasAny(text, ['yan calculation', 'nutrient dose', 'კვების დოზა']);
+  const acidLike = hasAny(text, [
+    'acid adjustment', 'acidification', 'deacidification', 'tartaric acid',
+    'malic acid', 'lactic acid', 'citric acid', 'titratable acidity',
+    'მჟავიანობის კორექცია', 'ღვინის მჟავა', 'ვაშლმჟავა', 'რძემჟავა', 'ლიმონმჟავა',
+  ]);
+  const labLike = so2Like || acidLike || hasAny(text, ['lab', 'analysis', 'sample', 'ph', 'volatile acidity', ' va ', 'density', 'brix', 'ta ', 'tartaric', 'ლაბორატორი', 'ანალიზი', 'ნიმუში']);
   const cellarLike = hasAny(text, [
     'rack',
     'racking',
@@ -253,7 +303,104 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
     }, lang));
   }
 
-  if (cellarLike) {
+  if (transferLike) {
+    drafts.push(makeDraft('transfer_plan', content, {
+      title: lot
+        ? (isKa ? `ღვინის გადატანის გეგმა ${lot.name}-სთვის` : `Review transfer plan for ${lot.name}`)
+        : (isKa ? 'ღვინის გადატანის გეგმა' : 'Review wine transfer plan'),
+      priority: urgentLike ? 'high' : 'medium',
+      targetModule: 'transfers',
+      description: isKa
+        ? 'მოამზადეთ გადატანის პროექტი ზუსტი „საიდან/სად“ ჭურჭლებით, მოცულობით, მოსალოდნელი დანაკარგით, სანიტარიული შემოწმებით და ოპერატორის დასტურით.'
+        : 'Prepare a transfer draft with exact source and destination vessels, volume, expected loss, sanitation check, and operator confirmation.',
+      warnings: [isKa
+        ? 'გადატანამდე გადაამოწმეთ ჭურჭლის თავისუფალი ტევადობა, პარტიის იდენტობა, სისუფთავე და ბოლო ოპერაციები.'
+        : 'Confirm vessel headroom, lot identity, sanitation, and intervening operations before transfer.'],
+      payload: {
+        lotId: lot?.id,
+        requiredInputs: ['sourceVesselId', 'destinationVesselId', 'volumeL', 'expectedLossL', 'sanitationStatus'],
+      },
+    }, lang));
+  }
+
+  if (bottlingLike) {
+    drafts.push(makeDraft('bottling_readiness', content, {
+      title: lot
+        ? (isKa ? `ჩამოსხმის მზადყოფნა ${lot.name}-სთვის` : `Review bottling readiness for ${lot.name}`)
+        : (isKa ? 'ჩამოსხმის მზადყოფნა' : 'Review bottling readiness'),
+      priority: urgentLike ? 'high' : 'medium',
+      targetModule: 'bottling',
+      description: isKa
+        ? 'შექმენით ჩამოსხმის მზადყოფნის პროექტი ლაბორატორიული გამოშვების, ფილტრაციის, მოცულობის, ბოთლის, საცობის, კაფსულის, ეტიკეტის, ყუთისა და საწყობის შემოწმებით.'
+        : 'Create a bottling-readiness draft covering lab release, filtration, volume, bottle, closure, capsule, label, box, and storage checks.',
+      warnings: [isKa
+        ? 'არასწორი პროდუქტის კატეგორია ან არასაკმარისი მარაგი ჩამოსხმამდე უნდა გამოსწორდეს.'
+        : 'Correct mismatched product categories or stock shortages before bottling.'],
+      payload: {
+        lotId: lot?.id,
+        checklist: ['lab release', 'filtration', 'bottle', 'closure', 'capsule', 'label', 'box', 'storage'],
+      },
+    }, lang));
+  }
+
+  if (inventoryLike) {
+    drafts.push(makeDraft('inventory_restock', content, {
+      title: isKa ? 'მარაგის შევსების გეგმა' : 'Review inventory restock plan',
+      priority: urgentLike ? 'high' : 'medium',
+      targetModule: 'inventory',
+      description: isKa
+        ? 'მოამზადეთ პროდუქტების შევსების პროექტი მიმდინარე ბალანსის, მინიმალური ზღვრის, დაგეგმილი ოპერაციების, მომწოდებლისა და მიწოდების ვადის მიხედვით.'
+        : 'Prepare a product restock draft using current balance, minimum threshold, scheduled operations, supplier, and lead time.',
+      warnings: [isKa
+        ? 'შეკვეთა ავტომატურად არ იგზავნება; რაოდენობა და მომწოდებელი ადამიანმა უნდა დაადასტუროს.'
+        : 'No order is sent automatically; a person must confirm quantity and supplier.'],
+      payload: {
+        suggestedChecks: ['on-hand', 'minimum threshold', 'scheduled consumption', 'supplier', 'lead time'],
+      },
+    }, lang));
+  }
+
+  if (nutritionLike) {
+    drafts.push(makeDraft('fermentation_nutrition', content, {
+      title: lot
+        ? (isKa ? `დუღილის კვების გეგმა ${lot.name}-სთვის` : `Review fermentation nutrition for ${lot.name}`)
+        : (isKa ? 'დუღილის კვების გეგმა' : 'Review fermentation nutrition'),
+      priority: urgentLike ? 'high' : 'medium',
+      targetModule: 'fermentation',
+      description: isKa
+        ? 'მოამზადეთ YAN-ზე დაფუძნებული კვების პროექტი ტკბილის მოცულობის, მიმდინარე და სამიზნე YAN-ის, შაქრის, საფუარის შტამისა და პროდუქტის ხელმისაწვდომი აზოტის მიხედვით.'
+        : 'Prepare a YAN-based nutrition draft using must volume, current and target YAN, sugar, yeast strain, and the product available-nitrogen fraction.',
+      warnings: [isKa
+        ? 'დოზა და დამატების დრო გადაამოწმეთ ლაბორატორიულ შედეგებთან და პროდუქტის ტექნიკურ ფურცელთან.'
+        : 'Confirm dose and timing against lab results and the product technical sheet.'],
+      payload: {
+        lotId: lot?.id,
+        requiresConfirmedInputs: ['mustVolumeL', 'currentYanMgL', 'targetYanMgL', 'sugar', 'yeastStrain', 'availableNitrogenPct'],
+      },
+    }, lang));
+  }
+
+  if (acidLike) {
+    drafts.push(makeDraft('acid_adjustment', content, {
+      title: lot
+        ? (isKa ? `მჟავიანობის კორექცია ${lot.name}-სთვის` : `Review acid adjustment for ${lot.name}`)
+        : (isKa ? 'მჟავიანობის კორექცია' : 'Review acid adjustment'),
+      priority: 'high',
+      targetModule: 'calculators',
+      description: isKa
+        ? 'მოამზადეთ მჟავიანობის კორექციის პროექტი მიმდინარე/სამიზნე TA-ის, პროდუქტის ტიპის, ფხვნილის ან სითხის ფორმის, სისუფთავისა და სითხის სიმკვრივის მიხედვით.'
+        : 'Prepare an acid-adjustment draft from current and target TA, product type, powder or liquid form, purity, and liquid density.',
+      warnings: [isKa
+        ? 'დოზირებამდე ჩაატარეთ მცირე საცდელი სინჯი, გადაამოწმეთ pH/TA და მოქმედი რეგულაცია.'
+        : 'Run a bench trial and confirm pH, TA, and applicable regulation before dosing.'],
+      payload: {
+        lotId: lot?.id,
+        requiresConfirmedInputs: ['volumeL', 'currentTaGL', 'targetTaGL', 'acidType', 'productForm', 'purityPct', 'densityGml'],
+      },
+    }, lang));
+  }
+
+  if (cellarLike && !transferLike && !bottlingLike && !nutritionLike) {
     drafts.push(makeDraft('cellar_operation', content, {
       title: lot
         ? (isKa ? `მარნის ოპერაცია ${lot.name}-სთვის` : `Review cellar operation for ${lot.name}`)

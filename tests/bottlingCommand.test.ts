@@ -144,6 +144,19 @@ describe('cellar.bottling domain command', () => {
     }), payload, context)).toThrowError(expect.objectContaining({ code: 'insufficient_packaging_stock', statusCode: 409 }));
   });
 
+  it('rejects a product selected for the wrong packaging component', () => {
+    expect(() => applyBottlingCommand(state({
+      inventory: [
+        { ...material('BOTTLE', 500, 0.6), category: 'bottles' },
+        { ...material('CORK', 500, 0.2), category: 'additives', name: 'Bentonite' },
+        { ...material('BOX', 100, 1.5), category: 'boxes' },
+      ],
+    }), payload, context)).toThrowError(expect.objectContaining({
+      code: 'packaging_category_mismatch',
+      statusCode: 409,
+    }));
+  });
+
   it('enforces finished-goods warehouse capacity', () => {
     expect(() => applyBottlingCommand(state({
       storageLocations: [{ id: 'STORE-A', name: 'Small warehouse', type: 'warehouse', capacityBottles: 119 }],

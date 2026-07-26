@@ -83,7 +83,7 @@ export const demoVessels: Vessel[] = [
 ];
 
 export const demoTransfers: TransferEvent[] = [
-  { id: 'TR-1', date: '2026-10-02', sourceTankId: 'ქვევრი Q-1', destTankId: 'ცისტერნა T-1', volume: 1350, loss: 8, reason: 'ქვევრიდან გადაღება', pumpModel: 'Liverani', operator: 'ლუკა' },
+  { id: 'TR-1', date: '2026-10-02', sourceTankId: 'ქვევრი Q-1', destTankId: 'ცისტერნა T-1', volume: 1350, loss: 8, reason: 'ქვევრიდან გადატანა', pumpModel: 'Liverani', operator: 'ლუკა' },
   { id: 'TR-2', date: '2026-10-18', sourceTankId: 'ცისტერნა T-1', destTankId: 'ცისტერნა T-2', volume: 400, loss: 3, reason: 'კუპაჟის მომზადება', pumpModel: 'Liverani', operator: 'ლუკა' },
 ];
 
@@ -136,7 +136,7 @@ export const demoCellarOps: CellarOperation[] = [
     operator: 'სოფიო', notes: 'YAN კორექცია' },
   { id: 'OP-4', date: '2026-10-02', type: 'racking', lotId: 'SAP-2026-01', lotName: 'საფერავი ქონდოლი 2026',
     vesselId: 'ქვევრი Q-1', vesselToId: 'ცისტერნა T-1', volumeBeforeL: 9800, volumeAfterL: 9400,
-    operator: 'ლუკა', notes: 'გადაღება ქვევრიდან' },
+    operator: 'ლუკა', notes: 'გადატანა ქვევრიდან' },
 ];
 
 export const demoBottlingRuns: BottlingRunRecord[] = [

@@ -18,6 +18,13 @@ import {
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
 
 import type { Vessel, WineLot, LabAnalysis } from '../lib/wineryState';
+import {
+  calculateAcidTreatment,
+  calculateNutrientDose,
+  scaleCellarDose,
+  type AcidTreatmentType,
+  type ProductForm,
+} from '../lib/enologyCalculations';
 
 interface Props {
   lang: Language;
@@ -43,7 +50,7 @@ export default function EnoCalculators({
   calculatorLotIdB = '',
 }: Props) {
   // Active calculator tab in standard sub-navigation
-  const [activeSubTab, setActiveSubTab] = useState<'so2' | 'blend' | 'alcohol' | 'vessel' | 'acid'>('so2');
+  const [activeSubTab, setActiveSubTab] = useState<'so2' | 'blend' | 'alcohol' | 'vessel' | 'acid' | 'production'>('so2');
 
   // --- CALCULATOR 1: ADVANCED SO2 EQUILIBRIUM & KMBS ---
   const [so2CurrentFree, setSo2CurrentFree] = useState<number>(15);
@@ -442,77 +449,111 @@ export default function EnoCalculators({
   const [wineAcidVol, setWineAcidVol] = useState<number>(3500);
   const [currTA, setCurrTA] = useState<number>(5.2); // g/L in tartaric
   const [targetTA, setTargetTA] = useState<number>(6.5); // g/L in tartaric
-  const [acidAdditiveType, setAcidAdditiveType] = useState<'tartaric' | 'malic' | 'citric' | 'carbonate_deacid' | 'bicarbonate_deacid'>('tartaric');
+  const [acidAdditiveType, setAcidAdditiveType] = useState<AcidTreatmentType>('tartaric');
+  const [acidProductForm, setAcidProductForm] = useState<ProductForm>('powder');
+  const [acidPurityPct, setAcidPurityPct] = useState<number>(100);
+  const [acidDensityGml, setAcidDensityGml] = useState<number>(1.2);
 
   const [acidOutput, setAcidOutput] = useState<{
     dosageGrams: number;
     dosagPerHL: number;
+    dosageMillilitres?: number;
     taExpectedDelta: number;
+    exceedsOivFourGramLimit: boolean;
     acidChemistryComment: string;
   } | null>(null);
 
   useEffect(() => {
-    let dosageGrams = 0;
-    const taExpectedDelta = targetTA - currTA;
+    const result = calculateAcidTreatment({
+      volumeL: wineAcidVol,
+      currentTaGL: currTA,
+      targetTaGL: targetTA,
+      treatment: acidAdditiveType,
+      purityPct: acidPurityPct,
+      productForm: acidProductForm,
+      densityGPerMl: acidDensityGml,
+    });
     let acidChemistryComment = '';
-
-    const deltaReq = targetTA - currTA;
     const ka = lang === 'ka';
 
     if (acidAdditiveType === 'tartaric') {
-      // 1 g/L addition of Tartaric acid increases Titratable Acidity exactly by 1 g/L
-      if (deltaReq > 0) {
-        dosageGrams = deltaReq * wineAcidVol;
+      if (result.taDeltaGL > 0) {
         acidChemistryComment = ka
           ? 'ღვინის მჟავის პირდაპირი დამატება. სტანდარტული ორგანული მჟავიანობის მატება. მოსალოდნელია pH-ის ძლიერი ვარდნა (დაახლ. 0.1-0.25 ერთეული, ბუფერზეა დამოკიდებული) და ცოცხალი, მკვეთრი გემო. ასევე ხელს უწყობს ფერის გამუქებას.'
           : 'Direct tartaric acid addition. Standard organic acidification. Expect a strong drop in pH (approx 0.1 - 0.25 units depends on buffer state) and vibrant crisp mouthfeel. Also promotes color shift towards rubies.';
       }
     } else if (acidAdditiveType === 'malic') {
-      if (deltaReq > 0) {
-        // Malic acts cooler, gives apple-like acidity. Neutralizing offset represents roughly 0.9 g/L TA per 1g/L
-        dosageGrams = (deltaReq / 0.9) * wineAcidVol;
+      if (result.taDeltaGL > 0) {
         acidChemistryComment = ka
           ? 'ვაშლმჟავის დამატება. მიკრობიოლოგიურად ძალიან არასტაბილურია, თუ ღვინო ვაშლ-რძემჟავა დუღილს (MLF) გაივლის. რძემჟავა გაფუჭების მაღალი რისკი, თუ კარგად არ არის დასულფიტებული.'
           : 'Malic Acid addition. Highly microbial unstable if the wine is slated to undergo Malolactic Fermentation (MLF). High risk of lactic spoilage if not sulfited well.';
       }
+    } else if (acidAdditiveType === 'lactic') {
+      if (result.taDeltaGL > 0) {
+        acidChemistryComment = ka
+          ? 'რძემჟავა რბილ და მრგვალ მჟავიანობას იძლევა. თხევადი კომერციული ხსნარისთვის მიუთითეთ ეტიკეტზე მოცემული კონცენტრაცია და სიმკვრივე. სამუშაო დოზამდე ჩაატარეთ მცირე საცდელი სინჯი და ხელახლა გაზომეთ TA და pH.'
+          : 'Lactic acid gives a softer, rounder acidity. For a commercial liquid solution, enter the labelled concentration and density. Run a bench trial and remeasure TA and pH before a cellar-scale addition.';
+      }
     } else if (acidAdditiveType === 'citric') {
-      if (deltaReq > 0) {
-        dosageGrams = (deltaReq / 0.8) * wineAcidVol;
+      if (result.taDeltaGL > 0) {
         acidChemistryComment = ka
           ? 'ლიმონმჟავის დამატება. სუფთა ციტრუსის ტონი. უნდა დაემატოს მხოლოდ დუღილის შემდეგ, რადგან Saccharomyces საფუარს ლიმონმჟავის ძმარმჟავად გადაქცევა შეუძლია. EU კანონით მაქს. 0.5გ/ლ.'
           : 'Citric Acid addition. Fresh citrus lift. Must only be added post-fermentation, as Saccharomyces yeasts can metabolize citric acid into acetic acid (volatile acidity spiker). Limit to 0.5g/L max by EU law.';
       }
     } else if (acidAdditiveType === 'carbonate_deacid') {
-      // Calcium Carbonate CaCO3 deacidification.
-      // 0.67 g/L reduces TA by approx 1.0 g/L by precipitation.
-      if (deltaReq < 0) {
-        const dropAmt = Math.abs(deltaReq);
-        dosageGrams = dropAmt * 0.67 * wineAcidVol;
+      if (result.taDeltaGL < 0) {
         acidChemistryComment = ka
           ? 'კალციუმის კარბონატით მჟავიანობის შემცირება. ხელს უწყობს კალციუმის ტარტრო-მალატის ორმაგი მარილის დალექვას. საჭიროებს 2-4 კვირის დაწყნარებას. არბილებს ზედმეტად მჟავე ღვინოებს, მაგრამ შეიძლება გააფერმკრთალოს ნაზი არომატები.'
           : 'Calcium Carbonate deacidification. Promotes double-salt precipitation of calcium tartro-malate. Requires 2-4 weeks sediment rest. Softens over-acidic vintages but can bleach delicate aromatics.';
       }
     } else {
-      // Potassium Bicarbonate KHCO3 deacidification.
-      // 0.67 g/L reduces TA by approx 1 g/L but triggers rapid Cream of Tartar precipitation.
-      if (deltaReq < 0) {
-        const dropAmt = Math.abs(deltaReq);
-        dosageGrams = dropAmt * 0.67 * wineAcidVol;
+      if (result.taDeltaGL < 0) {
         acidChemistryComment = ka
-          ? 'კალიუმის ბიკარბონატით ორმაგი დალექვა. იწვევს კალიუმის ბიტარტრატის სწრაფ დალექვას. მოითხოვს დაუყოვნებლივ ცივ სტაბილიზაციას (-4°C) კრისტალების დასალექად გადაღებამდე.'
+          ? 'კალიუმის ბიკარბონატით ორმაგი დალექვა. იწვევს კალიუმის ბიტარტრატის სწრაფ დალექვას. მოითხოვს დაუყოვნებლივ ცივ სტაბილიზაციას (-4°C) კრისტალების დასალექად გადატანამდე.'
           : 'Potassium Bicarbonate double precipitation. Triggers rapid precipitation of potassium bitartrate. Demands immediate cold stabilization (thermo-chilling at -4°C) to drop crystals before racking.';
       }
     }
 
-    const dosagPerHL = wineAcidVol > 0 ? (dosageGrams / (wineAcidVol / 100)) : 0;
-
     setAcidOutput({
-      dosageGrams: parseFloat(dosageGrams.toFixed(1)),
-      dosagPerHL: parseFloat(dosagPerHL.toFixed(1)),
-      taExpectedDelta,
-      acidChemistryComment
+      dosageGrams: parseFloat(result.productGrams.toFixed(1)),
+      dosagPerHL: parseFloat(result.productGramsPerHl.toFixed(1)),
+      ...(result.productMillilitres !== undefined
+        ? { dosageMillilitres: parseFloat(result.productMillilitres.toFixed(1)) }
+        : {}),
+      taExpectedDelta: result.taDeltaGL,
+      exceedsOivFourGramLimit: result.exceedsOivFourGramLimit,
+      acidChemistryComment,
     });
-  }, [wineAcidVol, currTA, targetTA, acidAdditiveType, lang]);
+  }, [
+    wineAcidVol,
+    currTA,
+    targetTA,
+    acidAdditiveType,
+    acidProductForm,
+    acidPurityPct,
+    acidDensityGml,
+    lang,
+  ]);
+
+  // --- CALCULATOR 6: FERMENTATION NUTRITION & CELLAR DOSE SCALING ---
+  const [nutrientVolumeL, setNutrientVolumeL] = useState(2500);
+  const [currentYanMgL, setCurrentYanMgL] = useState(110);
+  const [targetYanMgL, setTargetYanMgL] = useState(180);
+  const [availableNitrogenPct, setAvailableNitrogenPct] = useState(20);
+  const [doseVolumeL, setDoseVolumeL] = useState(2500);
+  const [doseGramsPerHl, setDoseGramsPerHl] = useState(10);
+  const [stockSolutionGramsPerL, setStockSolutionGramsPerL] = useState(100);
+  const nutrientDose = calculateNutrientDose({
+    volumeL: nutrientVolumeL,
+    currentYanMgL,
+    targetYanMgL,
+    availableNitrogenPct,
+  });
+  const scaledDose = scaleCellarDose({
+    volumeL: doseVolumeL,
+    doseGramsPerHl,
+    stockSolutionGramsPerL,
+  });
 
   return (
     <div className="space-y-6">
@@ -577,6 +618,18 @@ export default function EnoCalculators({
         >
           <Sliders className="w-3.5 h-3.5" />
           <span>{lang === 'ka' ? 'მჟავიანობის მოდელირება' : 'Acid Modeller'}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('production')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+            activeSubTab === 'production'
+              ? 'bg-[#4e0e15] text-white shadow-xs'
+              : 'text-stone-600 hover:text-[#4e0e15] hover:bg-white/70'
+          }`}
+        >
+          <Zap className="w-3.5 h-3.5" />
+          <span>{lang === 'ka' ? 'კვება და დოზირება' : 'Nutrition & Dosing'}</span>
         </button>
       </div>
 
@@ -1521,7 +1574,7 @@ export default function EnoCalculators({
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-2">
                   {lang === 'ka' ? 'დაამატეთ მჟავიანობის მომმატებელი ან შემამცირებელი აგენტი' : 'Add Acidifying or De-Acidifying Chemical Treatment Agent'}
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-5 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-6 gap-2">
                   <button
                     type="button"
                     onClick={() => setAcidAdditiveType('tartaric')}
@@ -1539,6 +1592,20 @@ export default function EnoCalculators({
                     }`}
                   >
                     {lang === 'ka' ? 'ვაშლმჟავა' : 'Malic Acid'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAcidAdditiveType('lactic');
+                      setAcidProductForm('liquid');
+                      setAcidPurityPct(80);
+                      setAcidDensityGml(1.2);
+                    }}
+                    className={`px-2 py-1.5 text-[10.5px] font-semibold rounded border transition-all cursor-pointer ${
+                      acidAdditiveType === 'lactic' ? 'bg-[#4e0e15] border-[#4e0e15] text-white font-bold' : 'bg-white border-stone-200 text-stone-605'
+                    }`}
+                  >
+                    {lang === 'ka' ? 'რძემჟავა' : 'Lactic Acid'}
                   </button>
                   <button
                     type="button"
@@ -1569,6 +1636,51 @@ export default function EnoCalculators({
                   </button>
                 </div>
               </div>
+
+              <div>
+                <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
+                  {lang === 'ka' ? 'პროდუქტის ფორმა' : 'Product form'}
+                </label>
+                <select
+                  value={acidProductForm}
+                  onChange={(event) => setAcidProductForm(event.target.value as ProductForm)}
+                  className="w-full px-3 py-1.5 bg-stone-50 border border-stone-200 text-xs rounded font-medium outline-none text-slate-805"
+                >
+                  <option value="powder">{lang === 'ka' ? 'ფხვნილი' : 'Powder / solid'}</option>
+                  <option value="liquid">{lang === 'ka' ? 'სითხე' : 'Liquid solution'}</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
+                  {lang === 'ka' ? 'სისუფთავე / კონცენტრაცია (%)' : 'Purity / concentration (%)'}
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="0.1"
+                  value={acidPurityPct}
+                  onChange={(event) => setAcidPurityPct(Math.min(100, Math.max(1, Number(event.target.value) || 1)))}
+                  className="w-full px-3 py-1.5 bg-stone-50 border border-stone-200 text-xs rounded font-medium outline-none text-slate-805"
+                />
+              </div>
+
+              {acidProductForm === 'liquid' && (
+                <div>
+                  <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
+                    {lang === 'ka' ? 'სიმკვრივე (გ/მლ)' : 'Density (g/mL)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    step="0.01"
+                    value={acidDensityGml}
+                    onChange={(event) => setAcidDensityGml(Math.max(0.1, Number(event.target.value) || 0.1))}
+                    className="w-full px-3 py-1.5 bg-stone-50 border border-stone-200 text-xs rounded font-medium outline-none text-slate-805"
+                  />
+                </div>
+              )}
             </div>
           </div>
 
@@ -1598,10 +1710,24 @@ export default function EnoCalculators({
                     {Math.abs(acidOutput.dosageGrams).toLocaleString()} {lang === 'ka' ? 'გრამი' : 'Grams'}
                   </strong>
 
+                  {acidOutput.dosageMillilitres !== undefined && (
+                    <strong className="text-sm font-serif font-bold text-indigo-800">
+                      ≈ {Math.abs(acidOutput.dosageMillilitres).toLocaleString()} {lang === 'ka' ? 'მლ ხსნარი' : 'mL solution'}
+                    </strong>
+                  )}
+
                   <span className="text-[9.5px] font-mono text-stone-600 block mt-1.5">
-                    {lang === 'ka' ? 'დაახლ.' : 'Equals approx'} <strong className="font-extrabold">{Math.abs(acidOutput.dosagPerHL)} g/hL</strong> ({(Math.abs(acidOutput.dosageGrams) / 1000).toFixed(2)} {lang === 'ka' ? 'კგ სულ' : 'kg net weight'})
+                    {lang === 'ka' ? 'კომერციული პროდუქტი:' : 'Commercial product:'} <strong className="font-extrabold">{Math.abs(acidOutput.dosagPerHL)} g/hL</strong> ({(Math.abs(acidOutput.dosageGrams) / 1000).toFixed(2)} {lang === 'ka' ? 'კგ სულ' : 'kg total'})
                   </span>
                 </div>
+
+                {acidOutput.exceedsOivFourGramLimit && (
+                  <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-[10.5px] font-semibold leading-relaxed text-rose-900">
+                    {lang === 'ka'
+                      ? 'სამიზნე მატება 4 გ/ლ-ს (ღვინისმჟავაზე გადაანგარიშებით) აჭარბებს. ეს OIV-ის საერთო ზღვარზე მეტია — ნუ გამოიყენებთ დოზას რეგულაციისა და ლაბორატორიული საცდელი სინჯის გადამოწმების გარეშე.'
+                      : 'The requested increase exceeds 4 g/L expressed as tartaric acid. This is above the OIV cumulative limit; do not apply without regulatory review and a confirmed bench trial.'}
+                  </div>
+                )}
 
                 {/* Chemical contextual advice */}
                 <div className="bg-[#FCFAF8] p-3 rounded-lg border border-[#f0e6da] space-y-1">
@@ -1616,6 +1742,112 @@ export default function EnoCalculators({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {activeSubTab === 'production' && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <section className="bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+            <div>
+              <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
+                <Zap className="w-4 h-4 text-[#801323]" />
+                {lang === 'ka' ? 'საფუარის კვების YAN კალკულატორი' : 'Yeast Nutrition YAN Calculator'}
+              </h3>
+              <p className="mt-1 text-[10.5px] leading-relaxed text-slate-500">
+                {lang === 'ka'
+                  ? 'ითვლის სამიზნე ათვისებად აზოტამდე (YAN) მისასვლელად საჭირო კომერციული საკვების მასას. პროდუქტის „ხელმისაწვდომი აზოტი %“ აიღეთ მომწოდებლის ტექნიკური ფურცლიდან.'
+                  : 'Calculates commercial nutrient mass needed to close the yeast-assimilable nitrogen (YAN) gap. Use the available-nitrogen percentage from the supplier technical sheet.'}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { labelKa: 'ტკბილის მოცულობა (ლ)', labelEn: 'Must volume (L)', value: nutrientVolumeL, setter: setNutrientVolumeL, step: 1 },
+                { labelKa: 'მიმდინარე YAN (მგ N/ლ)', labelEn: 'Current YAN (mg N/L)', value: currentYanMgL, setter: setCurrentYanMgL, step: 1 },
+                { labelKa: 'სამიზნე YAN (მგ N/ლ)', labelEn: 'Target YAN (mg N/L)', value: targetYanMgL, setter: setTargetYanMgL, step: 1 },
+                { labelKa: 'ხელმისაწვდომი აზოტი (%)', labelEn: 'Available nitrogen (%)', value: availableNitrogenPct, setter: setAvailableNitrogenPct, step: 0.1 },
+              ].map(field => (
+                <label key={field.labelEn} className="text-[9px] font-mono font-bold uppercase text-slate-500">
+                  {lang === 'ka' ? field.labelKa : field.labelEn}
+                  <input
+                    type="number"
+                    min="0"
+                    step={field.step}
+                    value={field.value}
+                    onChange={event => field.setter(Math.max(0, Number(event.target.value) || 0))}
+                    className="mt-1 w-full rounded border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-medium text-slate-800 outline-none"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 text-center">
+              <span className="block text-[9px] font-mono uppercase text-indigo-500">
+                {lang === 'ka' ? `YAN დეფიციტი: ${nutrientDose.yanGapMgL.toFixed(0)} მგ N/ლ` : `YAN gap: ${nutrientDose.yanGapMgL.toFixed(0)} mg N/L`}
+              </span>
+              <strong className="mt-1 block text-xl font-serif text-indigo-950">
+                {nutrientDose.nutrientGrams.toLocaleString(undefined, { maximumFractionDigits: 1 })} {lang === 'ka' ? 'გ პროდუქტი' : 'g product'}
+              </strong>
+              <span className="text-[10px] font-mono text-indigo-700">
+                {nutrientDose.nutrientGramsPerHl.toFixed(1)} g/hL
+              </span>
+            </div>
+            <p className="text-[9.5px] leading-relaxed text-amber-800">
+              {lang === 'ka'
+                ? 'ეს არის რაოდენობრივი მოდელი და არა ავტომატური კვების გეგმა. შეამოწმეთ საფუარის შტამი, პოტენციური ალკოჰოლი, დამატების დრო, პროდუქტის ეტიკეტი და ადგილობრივი ზღვარი.'
+                : 'This is a quantity model, not an automatic feeding plan. Confirm yeast strain, potential alcohol, addition timing, product label, and local limits.'}
+            </p>
+          </section>
+
+          <section className="bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
+            <div>
+              <h3 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-2">
+                <Scale className="w-4 h-4 text-[#801323]" />
+                {lang === 'ka' ? 'საცდელი დოზის მარნის მასშტაბზე გადაყვანა' : 'Bench-to-Cellar Dose Scaling'}
+              </h3>
+              <p className="mt-1 text-[10.5px] leading-relaxed text-slate-500">
+                {lang === 'ka'
+                  ? 'გ/ჰლ დოზას გარდაქმნის მთლიან პროდუქტად და, თუ სამუშაო ხსნარის კონცენტრაცია ცნობილია, საჭირო ხსნარის მოცულობად.'
+                  : 'Scales a g/hL bench dose to total product mass and, when stock concentration is known, the working-solution volume.'}
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[
+                { labelKa: 'ღვინის მოცულობა (ლ)', labelEn: 'Wine volume (L)', value: doseVolumeL, setter: setDoseVolumeL, step: 1 },
+                { labelKa: 'დოზა (გ/ჰლ)', labelEn: 'Dose (g/hL)', value: doseGramsPerHl, setter: setDoseGramsPerHl, step: 0.1 },
+                { labelKa: 'ხსნარი (გ/ლ)', labelEn: 'Stock solution (g/L)', value: stockSolutionGramsPerL, setter: setStockSolutionGramsPerL, step: 0.1 },
+              ].map(field => (
+                <label key={field.labelEn} className="text-[9px] font-mono font-bold uppercase text-slate-500">
+                  {lang === 'ka' ? field.labelKa : field.labelEn}
+                  <input
+                    type="number"
+                    min="0"
+                    step={field.step}
+                    value={field.value}
+                    onChange={event => field.setter(Math.max(0, Number(event.target.value) || 0))}
+                    className="mt-1 w-full rounded border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-medium text-slate-800 outline-none"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 text-center">
+                <span className="block text-[9px] font-mono uppercase text-stone-400">{lang === 'ka' ? 'პროდუქტი' : 'Product'}</span>
+                <strong className="mt-1 block text-lg font-serif text-[#4e0e15]">
+                  {scaledDose.productGrams.toLocaleString(undefined, { maximumFractionDigits: 1 })} g
+                </strong>
+              </div>
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 text-center">
+                <span className="block text-[9px] font-mono uppercase text-stone-400">{lang === 'ka' ? 'სამუშაო ხსნარი' : 'Stock solution'}</span>
+                <strong className="mt-1 block text-lg font-serif text-[#4e0e15]">
+                  {(scaledDose.stockSolutionMillilitres || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} mL
+                </strong>
+              </div>
+            </div>
+            <p className="text-[9.5px] leading-relaxed text-stone-500">
+              {lang === 'ka'
+                ? 'მოცულობა ნულის ტოლია, თუ ხსნარის კონცენტრაცია არ არის მითითებული. გამოყენებამდე გადაამოწმეთ შერევის თავსებადობა და მცირე საცდელი სინჯი.'
+                : 'Solution volume is zero when no concentration is entered. Confirm mixing compatibility and the bench trial before application.'}
+            </p>
+          </section>
         </div>
       )}
     </div>

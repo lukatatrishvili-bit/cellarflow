@@ -77,7 +77,7 @@ export function vesselTypeLabel(type: string, lang: Language): string {
 const INVENTORY_CATEGORY_KA: Record<string, string> = {
   yeasts: 'საფუარები', nutritions: 'ნუტრიენტები', additives: 'დანამატები',
   packaging: 'შესაფუთი', bottles: 'ბოთლები', closures: 'საცობები',
-  labels: 'ეტიკეტები', boxes: 'ყუთები', sanitation: 'სანიტარია',
+  capsules: 'კაფსულები', labels: 'ეტიკეტები', boxes: 'ყუთები', sanitation: 'სანიტარია',
   cleaning: 'წმენდა', unassigned: 'მიუკუთვნებელი',
 };
 

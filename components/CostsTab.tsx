@@ -288,7 +288,7 @@ export default function CostsTab({
 
               {fromInventory ? (
                 <div className="grid grid-cols-2 gap-2">
-                  <div><label className={labelCls}>{ka ? 'მასალა' : 'Material'}</label>
+                  <div><label className={labelCls}>{ka ? 'პროდუქტი' : 'Material'}</label>
                     <select value={invId} onChange={e => setInvId(e.target.value)} className={inputCls}>
                       <option value="">{ka ? 'აირჩიეთ' : 'Select…'}</option>
                       {inventory.map(i => <option key={i.id} value={i.id}>{i.name} ({fmt(i.costPerUnit || 0)}/{i.unit})</option>)}

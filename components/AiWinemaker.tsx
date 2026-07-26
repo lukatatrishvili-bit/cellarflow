@@ -128,7 +128,14 @@ export default function AiWinemaker({
       const resp = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: query, cellarState, stream: true, lang })
+        body: JSON.stringify({
+          prompt: query,
+          cellarState,
+          stream: true,
+          lang,
+          contextModule,
+          contextTab,
+        })
       });
 
       if (!resp.ok || !resp.body) {
@@ -461,7 +468,105 @@ export default function AiWinemaker({
       ];
     }
 
-    if (contextTab === 'labs' || contextTab === 'calculators') {
+    if (contextTab === 'transfers') {
+      return [
+        {
+          label: isKa ? 'უსაფრთხო საიდან/სად გეგმა' : 'Safe Source/Destination Plan',
+          query: isKa
+            ? 'მოამზადეთ ამ ღვინის გადატანის განსახილველი გეგმა: შეამოწმეთ საიდან და სად ჭურჭლები, ტევადობა, პარტიის იდენტობა, სისუფთავე და მოსალოდნელი დანაკარგი.'
+            : 'Prepare a review-only wine transfer plan: confirm source and destination vessels, headroom, lot identity, sanitation, and expected loss.',
+        },
+        {
+          label: isKa ? 'გადატანის რისკები' : 'Transfer Risk Check',
+          query: isKa
+            ? 'შეაფასეთ ჟანგბადის, ლექის, ტემპერატურის, ტუმბოსა და შლანგის სანიტარიის რისკები ამ გადატანამდე.'
+            : 'Assess oxygen, lees, temperature, pump, and hose-sanitation risks before this transfer.',
+        },
+        {
+          label: isKa ? 'დანამატების საჭიროება' : 'Transfer Additives',
+          query: isKa
+            ? 'გადატანის შემდეგ რომელი დანამატები შეიძლება გახდეს საჭირო და რომელი ლაბორატორიული შედეგები უნდა დადასტურდეს დოზირებამდე?'
+            : 'Which post-transfer additions may be needed, and which lab results must be confirmed before dosing?',
+        },
+      ];
+    }
+
+    if (contextTab === 'bottling') {
+      return [
+        {
+          label: isKa ? 'ჩამოსხმის მზადყოფნა' : 'Bottling Readiness',
+          query: isKa
+            ? 'შექმენით ჩამოსხმის მზადყოფნის განსახილველი სია: ლაბორატორიული გამოშვება, ფილტრაცია, ბოთლი, საცობი, კაფსულა, ეტიკეტი, ყუთი და საწყობი.'
+            : 'Create a review-only bottling readiness checklist covering lab release, filtration, bottle, closure, capsule, label, box, and storage.',
+        },
+        {
+          label: isKa ? 'შეფუთვის დეფიციტი' : 'Packaging Shortfall',
+          query: isKa
+            ? 'შეამოწმეთ ჩამოსხმისთვის საჭირო შეფუთვის პროდუქტების კატეგორიები, რაოდენობები და შესაძლო დეფიციტი.'
+            : 'Review packaging product categories, required quantities, and likely shortfalls for this bottling run.',
+        },
+        {
+          label: isKa ? 'ჩამოსხმის რისკები' : 'Bottling Risk Gate',
+          query: isKa
+            ? 'რომელი ხარისხის, მიკრობიოლოგიური და მიკვლევადობის პირობები უნდა დაიხუროს ამ პარტიის ჩამოსხმამდე?'
+            : 'Which quality, microbiological, and traceability gates must close before bottling this lot?',
+        },
+      ];
+    }
+
+    if (contextTab === 'inventory') {
+      return [
+        {
+          label: isKa ? 'მარაგის შევსების გეგმა' : 'Restock Plan',
+          query: isKa
+            ? 'მოამზადეთ პროდუქტების მარაგის შევსების განსახილველი გეგმა მინიმალური ზღვრების, დაგეგმილი ოპერაციებისა და მიწოდების ვადების მიხედვით.'
+            : 'Prepare a review-only product restock plan using minimum thresholds, scheduled operations, and supplier lead times.',
+        },
+        {
+          label: isKa ? 'კატეგორიების აუდიტი' : 'Category Audit',
+          query: isKa
+            ? 'შეამოწმეთ, სწორ კატეგორიებშია თუ არა ბოთლები, საცობები, კაფსულები, ეტიკეტები, ყუთები და დანამატები.'
+            : 'Audit whether bottles, closures, capsules, labels, boxes, and additives are assigned to the correct categories.',
+        },
+        {
+          label: isKa ? 'მომავალი დეფიციტი' : 'Forecast Shortage',
+          query: isKa
+            ? 'რომელი პროდუქტები შეიძლება დაგვაკლდეს უახლოესი სამუშაოებისა და ჩამოსხმების მიხედვით? ჩამომიწერეთ მხოლოდ განსახილველი შეკვეთის პროექტი.'
+            : 'Which products may run short based on upcoming work and bottling? Draft a review-only reorder proposal.',
+        },
+      ];
+    }
+
+    if (contextTab === 'calculators') {
+      return [
+        {
+          label: isKa ? 'რძემჟავას დოზის შემოწმება' : 'Lactic Acid Dose Review',
+          query: isKa
+            ? 'მომიმზადეთ რძემჟავას კორექციის პროექტი მოცულობის, მიმდინარე/სამიზნე TA-ის, ხსნარის სისუფთავისა და სიმკვრივის შემოწმებით.'
+            : 'Prepare a lactic-acid adjustment draft using volume, current/target TA, solution purity, and density.',
+        },
+        {
+          label: isKa ? 'YAN კვების გეგმა' : 'YAN Nutrition Plan',
+          query: isKa
+            ? 'მომიმზადეთ YAN-ზე დაფუძნებული საფუარის კვების პროექტი და ჩამომიწერეთ რა მონაცემები უნდა გადავამოწმო დოზირებამდე.'
+            : 'Prepare a YAN-based yeast nutrition draft and list the inputs that must be confirmed before dosing.',
+        },
+        {
+          label: isKa ? 'საცდელი დოზის მასშტაბირება' : 'Scale Bench Dose',
+          query: isKa
+            ? 'ამიხსენით როგორ გადავიყვანო გ/ჰლ საცდელი დოზა მთლიანი პარტიის პროდუქტად და სამუშაო ხსნარის მოცულობად.'
+            : 'Explain how to scale a g/hL bench dose to total product mass and working-solution volume.',
+        },
+        {
+          label: isKa ? 'აქტიური SO₂' : 'Active SO₂ Review',
+          query: isKa
+            ? 'შეამოწმეთ აქტიური და თავისუფალი SO₂-ის სამიზნეები pH-ის, ტემპერატურისა და ალკოჰოლის მიხედვით.'
+            : 'Review active and free SO₂ targets using pH, temperature, and alcohol.',
+        },
+      ];
+    }
+
+    if (contextTab === 'labs') {
       return [
         {
           label: isKa ? 'ქროლადი მჟავიანობის საფრთხეები' : 'High Volatile Acidity Dangers',

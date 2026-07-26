@@ -207,7 +207,7 @@ export default function LabsTab({
       {/* Lab reports database */}
       <div className={`${canCreateLabAnalysis ? 'xl:col-span-2' : 'xl:col-span-3'} p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm text-stone-800 space-y-4`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
-          <h3 className="text-sm font-serif font-bold text-[#4e0e15]">{lang === 'ka' ? 'ლაბორატორიული ქიმიის ისტორია' : 'Lab Chemical History Log'}</h3>
+          <h3 className="text-sm font-serif font-bold text-[#4e0e15]">{lang === 'ka' ? 'ლაბორატორიული შედეგების ისტორია' : 'Laboratory Results History'}</h3>
           <span className="text-xs text-slate-500 font-mono">
             {lang === 'ka' ? `სულ: ${labLogs.length} ჩანაწერი` : `Total: ${labLogs.length} records`}
           </span>

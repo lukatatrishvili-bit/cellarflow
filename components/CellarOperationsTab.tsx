@@ -603,7 +603,7 @@ export default function CellarOperationsTab({
                 ? (ka ? 'ჭურჭელთან დაკავშირებული ცვლილებები მიუწვდომელია.' : 'Vessel-linked changes are unavailable.')
                 : '',
               !canConsumeOperationMaterials
-                ? (ka ? 'მასალის ჩამოწერა და ხარჯის აღრიცხვა მიუწვდომელია.' : 'Material deductions and cost posting are unavailable.')
+                ? (ka ? 'დანამატის ჩამოწერა და ხარჯის აღრიცხვა მიუწვდომელია.' : 'Material deductions and cost posting are unavailable.')
                 : '',
             ].filter(Boolean).join(' ')}
           </p>

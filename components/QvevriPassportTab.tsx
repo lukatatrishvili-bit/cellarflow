@@ -429,7 +429,7 @@ export default function QvevriPassportTab({
         <MetricCard
           label={ka ? 'კანი' : 'Skin contact'}
           value={formatDays(summary.durations.skinContactDays)}
-          detail={ka ? `პირველი გადაღება ${formatDays(summary.durations.daysToFirstRacking)}` : `First racking ${formatDays(summary.durations.daysToFirstRacking)}`}
+          detail={ka ? `პირველი გადატანა ${formatDays(summary.durations.daysToFirstRacking)}` : `First racking ${formatDays(summary.durations.daysToFirstRacking)}`}
           icon={Wine}
           tone="brand"
         />
@@ -558,7 +558,7 @@ export default function QvevriPassportTab({
                 <input type="date" value={form.openingDate} onChange={event => updateForm('openingDate', event.target.value)} className={inputCls} />
               </div>
               <div>
-                <FieldLabel>{ka ? 'პირველი გადაღება' : 'First racking date'}</FieldLabel>
+                <FieldLabel>{ka ? 'პირველი გადატანა' : 'First racking date'}</FieldLabel>
                 <input type="date" value={form.firstRackingDate} onChange={event => updateForm('firstRackingDate', event.target.value)} className={inputCls} />
               </div>
               <div>

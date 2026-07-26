@@ -81,6 +81,56 @@ describe('AI draft actions', () => {
     });
   });
 
+  it('creates a transfer-specific draft with source, destination, volume, and sanitation gates', () => {
+    const actions = deriveAiDraftActions(
+      'Prepare a wine transfer from the source vessel to a clean destination vessel.',
+      { cellarState, contextTab: 'transfers', contextModule: 'gvino' },
+    );
+
+    const transfer = actions.find(action => action.type === 'transfer_plan');
+    expect(transfer).toMatchObject({
+      targetModule: 'transfers',
+      reviewOnly: true,
+      payload: {
+        requiredInputs: ['sourceVesselId', 'destinationVesselId', 'volumeL', 'expectedLossL', 'sanitationStatus'],
+      },
+    });
+  });
+
+  it('creates bottling and inventory drafts without placing orders or mutating records', () => {
+    const bottling = deriveAiDraftActions(
+      'Check bottling readiness, cork stock, capsules, labels, and boxes.',
+      { cellarState, contextTab: 'bottling' },
+    ).find(action => action.type === 'bottling_readiness');
+    expect(bottling?.targetModule).toBe('bottling');
+    expect(bottling?.warnings.join(' ')).toContain('stock shortages');
+
+    const restock = deriveAiDraftActions(
+      'Prepare an urgent inventory reorder from the supplier.',
+      { contextTab: 'inventory' },
+    ).find(action => action.type === 'inventory_restock');
+    expect(restock?.targetModule).toBe('inventory');
+    expect(restock?.warnings.join(' ')).toContain('No order is sent automatically');
+  });
+
+  it('creates human-reviewed YAN nutrition and lactic-acid adjustment drafts', () => {
+    const nutrition = deriveAiDraftActions(
+      'Calculate a YAN nutrient dose for this fermentation.',
+      { cellarState, contextTab: 'fermentation' },
+    ).find(action => action.type === 'fermentation_nutrition');
+    expect(nutrition?.payload).toMatchObject({
+      requiresConfirmedInputs: expect.arrayContaining(['currentYanMgL', 'availableNitrogenPct']),
+    });
+
+    const acid = deriveAiDraftActions(
+      'Plan a lactic acid adjustment using the liquid purity and density.',
+      { cellarState, contextTab: 'calculators' },
+    ).find(action => action.type === 'acid_adjustment');
+    expect(acid?.targetModule).toBe('calculators');
+    expect(acid?.priority).toBe('high');
+    expect(acid?.warnings.join(' ')).toContain('bench trial');
+  });
+
   it('falls back to a human-reviewed task draft for generic protocols', () => {
     const actions = deriveAiDraftActions('Please write a checklist for tomorrow morning cellar rounds.');
 

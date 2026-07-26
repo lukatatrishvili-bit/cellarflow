@@ -212,7 +212,7 @@ export default function FermentationTab({
       : null;
     if (materialsIssue) {
       setFormError(lang === 'ka'
-        ? 'შეამოწმეთ მასალის არჩევანი, რაოდენობა და ხელმისაწვდომი მარაგი.'
+        ? 'შეამოწმეთ დანამატის არჩევანი, რაოდენობა და ხელმისაწვდომი მარაგი.'
         : 'Check the selected materials, quantities, and available stock.');
       return;
     }
@@ -223,7 +223,7 @@ export default function FermentationTab({
       : [];
     if (materialsUsed.length && !onAddCellarOperation) {
       setFormError(lang === 'ka'
-        ? 'მასალების ავტომატური ჩამოწერა ამ სამუშაო სივრცეში ხელმისაწვდომი არ არის.'
+        ? 'დანამატების ავტომატური ჩამოწერა ამ სამუშაო სივრცეში ხელმისაწვდომი არ არის.'
         : 'Automatic material deduction is not available in this workspace.');
       return;
     }
@@ -780,7 +780,7 @@ export default function FermentationTab({
                       <option value="Punchdowns - 2X Daily">{lang === 'ka' ? 'ქუდის ჩაწოლა — დღეში 2-ჯერ (წითელი)' : 'Punchdowns - 2X daily (Reds)'}</option>
                       <option value="Pumpover - Gentle 15m">{lang === 'ka' ? 'გადასხმა — რბილი (15 წთ)' : 'Pumpover - Gentle (15 min)'}</option>
                       <option value="Pumpover - Strong 30m">{lang === 'ka' ? 'გადასხმა — ინტენსიური (30 წთ)' : 'Pumpover - Strong (30 min)'}</option>
-                      <option value="Délestage (Rack & Return)">{lang === 'ka' ? 'დელესტაჟი (გადაღება-დაბრუნება)' : 'Délestage (Rack & Return)'}</option>
+                      <option value="Délestage (Rack & Return)">{lang === 'ka' ? 'დელესტაჟი (გადატანა-დაბრუნება)' : 'Délestage (Rack & Return)'}</option>
                     </select>
                   </div>
                 </div>
@@ -1004,7 +1004,7 @@ export default function FermentationTab({
                           <option value="Punchdowns - 2X Daily">{lang === 'ka' ? 'ქუდის ჩაწოლა — დღეში 2-ჯერ' : 'Punchdowns - 2X Daily'}</option>
                           <option value="Pumpover - Gentle 15m">{lang === 'ka' ? 'გადასხმა — რბილი 15წთ' : 'Pumpover - Gentle 15m'}</option>
                           <option value="Punchdown - Manual 1X">{lang === 'ka' ? 'ქუდის ჩაწოლა — ხელით 1-ჯერ' : 'Punchdown - Manual 1X'}</option>
-                          <option value="Délestage (Rack & Return)">{lang === 'ka' ? 'დელესტაჟი (გადაღება-დაბრუნება)' : 'Délestage (Rack & Return)'}</option>
+                          <option value="Délestage (Rack & Return)">{lang === 'ka' ? 'დელესტაჟი (გადატანა-დაბრუნება)' : 'Délestage (Rack & Return)'}</option>
                           <option value="None (Inert static environment)">{lang === 'ka' ? 'არაფერი (თეთრი/ქვევრი)' : 'None (Whites/Clay)'}</option>
                         </select>
                       </div>

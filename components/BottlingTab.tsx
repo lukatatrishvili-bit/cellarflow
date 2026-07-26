@@ -3,7 +3,6 @@ import { Wine, Package, AlertTriangle, CheckCircle2, RotateCcw, FileDown, X } fr
 import type { Language } from '../lib/i18n';
 import type { WineLot, BottlingRunRecord, InventoryItem } from '../lib/wineryState';
 import {
-  classifyInventoryCostCategory,
   computeBottlingCostPosting,
   type BottlingPackagingComponent,
   type BottlingPackagingSelections,
@@ -18,6 +17,10 @@ import {
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import { applyBottlingCommand, BOTTLING_FORMATS, type BottlingCommandPayload } from '../lib/commands/bottling';
 import type { BottlingReversalCommandPayload } from '../lib/commands/bottlingReversal';
+import {
+  inventoryItemsForPackagingComponent,
+  isInventoryItemForPackagingComponent,
+} from '../lib/inventoryCategories';
 import {
   CommandRequestError,
   createBottlingCommandIntent,
@@ -185,9 +188,26 @@ export default function BottlingTab({
   const effectiveBottlingServiceCost = canUseBottlingCosting ? parseFloat(bottlingServiceCost) || 0 : 0;
   const effectiveStorageLocationId = canPlaceFinishedGoods ? storageLocationId : '';
 
-  const packagingItems = useMemo(() => {
-    const filtered = inventory.filter(i => classifyInventoryCostCategory(i) === 'packaging');
-    return filtered.length > 0 ? filtered : inventory;
+  const packagingItemsByComponent = useMemo(() => Object.fromEntries(
+    PACKAGING_COMPONENTS.map(component => [
+      component.key,
+      inventoryItemsForPackagingComponent(inventory, component.key),
+    ]),
+  ) as Record<BottlingPackagingComponent, InventoryItem[]>, [inventory]);
+
+  useEffect(() => {
+    setPackagingSelections(previous => {
+      const next = { ...previous };
+      let changed = false;
+      for (const [component, itemId] of Object.entries(previous) as Array<[BottlingPackagingComponent, string]>) {
+        const item = inventory.find(candidate => candidate.id === itemId);
+        if (!item || !isInventoryItemForPackagingComponent(item, component)) {
+          delete next[component];
+          changed = true;
+        }
+      }
+      return changed ? next : previous;
+    });
   }, [inventory]);
 
   const costPreview = useMemo(() => computeBottlingCostPosting({
@@ -516,7 +536,7 @@ export default function BottlingTab({
                       <span className="text-[10px] font-bold text-stone-500 block mb-1">{ka ? component.ka : component.en}</span>
                       <select value={packagingSelections[component.key] || ''} onChange={e => setPackaging(component.key, e.target.value)} className={inputCls}>
                         <option value="">{ka ? '— არ არის —' : '— none —'}</option>
-                        {packagingItems.map(item => (
+                        {packagingItemsByComponent[component.key].map(item => (
                           <option key={item.id} value={item.id}>
                             {item.name} · {round1(item.stock)} {item.unit} · {fmtMoney(item.costPerUnit || 0)}/{item.unit}
                           </option>
@@ -546,7 +566,7 @@ export default function BottlingTab({
                   <div id="bottling-packaging-shortfall" role="alert" className="flex items-start gap-2 text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <span>
-                      {ka ? 'ჩამოსხმა დაბლოკილია — შეფუთვის მასალა მარაგში საკმარისი არ არის:' : 'Bottling is blocked until packaging stock is replenished:'}{' '}
+                      {ka ? 'ჩამოსხმა დაბლოკილია — შეფუთვის პროდუქტი მარაგში საკმარისი არ არის:' : 'Bottling is blocked until packaging stock is replenished:'}{' '}
                       {overdrawnPackaging.map(x => `${x.item.name} (${round1(x.required)} required, ${round1(x.available)} available)`).join(', ')}
                     </span>
                   </div>

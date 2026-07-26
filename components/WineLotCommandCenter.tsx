@@ -243,7 +243,7 @@ export default function WineLotCommandCenter({
               <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => setActiveTab('labs') : undefined}>{ka ? 'ლაბორატორია' : 'Lab'}</ActionChip>
               <ActionChip icon={Calculator} onClick={setActiveTab && setCalculatorLotId ? () => { setCalculatorLotId(lot.id); setActiveTab('calculators'); } : undefined}>{ka ? 'კალკულატორი' : 'Calculator'}</ActionChip>
               <ActionChip icon={PackageCheck} onClick={setActiveTab ? () => setActiveTab('bottling') : undefined}>{ka ? 'ჩამოსხმა' : 'Bottling'}</ActionChip>
-              <ActionChip icon={Warehouse} onClick={setActiveTab ? () => setActiveTab('inventory') : undefined}>{ka ? 'მასალები' : 'Materials'}</ActionChip>
+              <ActionChip icon={Warehouse} onClick={setActiveTab ? () => setActiveTab('inventory') : undefined}>{ka ? 'პროდუქტები' : 'Materials'}</ActionChip>
               <ActionChip icon={ShoppingCart} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'გაყიდვების კვალი' : 'Trace sales'}</ActionChip>
               <ActionChip icon={BadgeDollarSign} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'ღირებულების კვალი' : 'Trace value'}</ActionChip>
             </div>

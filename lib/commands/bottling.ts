@@ -5,6 +5,7 @@ import {
   type CostEntry,
 } from '../costing';
 import { computeStock, stockMovementFromBottlingRun, type StockMovement, type StorageLocation } from '../storage';
+import { isInventoryItemForPackagingComponent } from '../inventoryCategories';
 import type { BottlingRunRecord, InventoryItem, WineLot } from '../wineryState';
 
 export const BOTTLING_COMMAND_TYPE = 'cellar.bottling' as const;
@@ -86,6 +87,7 @@ export type BottlingCommandErrorCode =
   | 'bottling_lot_unavailable'
   | 'insufficient_lot_volume'
   | 'packaging_material_not_found'
+  | 'packaging_category_mismatch'
   | 'insufficient_packaging_stock'
   | 'cost_entry_id_conflict'
   | 'storage_location_not_found'
@@ -299,12 +301,20 @@ export function applyBottlingCommand(
   });
 
   const inventoryById = new Map(currentState.inventory.map(item => [item.id, item]));
-  for (const materialId of Object.values(payload.packagingSelections)) {
-    if (!materialId || !inventoryById.has(materialId)) {
+  for (const [component, materialId] of Object.entries(payload.packagingSelections) as Array<[BottlingPackagingComponent, string]>) {
+    const material = materialId ? inventoryById.get(materialId) : undefined;
+    if (!material) {
       throw new BottlingCommandError(
         'packaging_material_not_found',
         `Packaging material ${materialId || '(missing)'} was not found.`,
         404,
+      );
+    }
+    if (!isInventoryItemForPackagingComponent(material, component)) {
+      throw new BottlingCommandError(
+        'packaging_category_mismatch',
+        `${material.name} is not categorized for the ${component} packaging component.`,
+        409,
       );
     }
   }

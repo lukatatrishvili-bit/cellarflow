@@ -20,7 +20,7 @@ export const CELLAR_OPERATIONS: CellarOperationMeta[] = [
   { key: 'measurement', en: 'Temp / Brix check', ka: 'ტემპ. / შაქრის გაზომვა' },
   { key: 'pumpover', en: 'Pump-over (remontage)', ka: 'რემონტაჟი (გადატუმბვა)' },
   { key: 'punchdown', en: 'Punch-down', ka: 'ქუდის ჩაწნეხა' },
-  { key: 'racking', en: 'Transfer / racking', ka: 'გადაღება', affectsVolume: true, needsVesselTo: true },
+  { key: 'racking', en: 'Transfer / racking', ka: 'გადატანა', affectsVolume: true, needsVesselTo: true },
   { key: 'blending', en: 'Blending', ka: 'კუპაჟი', affectsVolume: true, needsVesselTo: true },
   { key: 'sulfitation', en: 'Sulfitation (SO₂)', ka: 'სულფიტაცია', needsMaterial: true },
   { key: 'additive', en: 'Additive addition', ka: 'დანამატის დამატება', needsMaterial: true },

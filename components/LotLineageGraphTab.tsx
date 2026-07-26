@@ -95,7 +95,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   transfer: {
     label: 'Transfer',
-    labelKa: 'გადაღება',
+    labelKa: 'გადატანა',
     icon: Shuffle,
     card: 'border-sky-200 bg-sky-50/80 dark:border-sky-900 dark:bg-sky-950/20',
     badge: 'bg-sky-100 text-sky-800 border-sky-200',
@@ -153,7 +153,7 @@ const typeMeta: Record<LineageNodeType, {
 
 const edgeLabel: Record<LineageEdge['type'], { en: string; ka: string }> = {
   created: { en: 'created', ka: 'შეიქმნა' },
-  transferred: { en: 'moved', ka: 'გადაღება' },
+  transferred: { en: 'moved', ka: 'გადატანა' },
   blended: { en: 'blend component', ka: 'კუპაჟის ნაწილი' },
   operated: { en: 'operation', ka: 'ოპერაცია' },
   bottled: { en: 'bottled', ka: 'ჩამოისხა' },

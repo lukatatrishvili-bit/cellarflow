@@ -98,7 +98,7 @@ router.post('/', async (req, res) => {
   try {
     const auth = await requireCapability(req, res, 'read');
     if (!auth) return;
-    const { prompt, cellarState, stream, lang } = req.body;
+    const { prompt, cellarState, stream, lang, contextModule, contextTab } = req.body;
 
     if (!process.env.GEMINI_API_KEY) {
       return res.status(400).json({
@@ -144,7 +144,19 @@ ${JSON.stringify(cellarState.sampleData || [], null, 2)}
 `;
     }
 
-    const fullPrompt = `${SYSTEM_PROMPT}${languageInstruction}\n\n${chemicalContext}\n\n${historicalContext}\n\nWinemaker Query: ${prompt}\n\nAI Winemaker Response:\n`;
+    const safeContextValue = (value: unknown) => (
+      typeof value === 'string'
+        ? value.replace(/[^a-z0-9_-]/gi, '').slice(0, 48)
+        : ''
+    );
+    const processContext = `
+[CURRENT WORKFLOW CONTEXT]
+- Module: ${safeContextValue(contextModule) || 'unknown'}
+- Screen: ${safeContextValue(contextTab) || 'unknown'}
+Use this workflow context to make the answer operationally relevant. Keep every proposed record-changing action as a reviewable draft.
+`;
+
+    const fullPrompt = `${SYSTEM_PROMPT}${languageInstruction}\n\n${processContext}\n\n${chemicalContext}\n\n${historicalContext}\n\nWinemaker Query: ${prompt}\n\nAI Winemaker Response:\n`;
 
     const client = getAiClient();
 

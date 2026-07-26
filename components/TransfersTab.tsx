@@ -119,7 +119,7 @@ export default function TransfersTab({
     setReasonCategory(restored.payload.category);
     setPumpModel(restored.payload.pump);
     setCommandError(lang === 'ka'
-      ? 'წინა გადაღების შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანების უსაფრთხოდ აღსადგენად დააჭირეთ ხელახლა გაგზავნას.'
+      ? 'წინა გადატანის შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანების უსაფრთხოდ აღსადგენად დააჭირეთ ხელახლა გაგზავნას.'
       : 'A previous transfer is not yet acknowledged. Resubmit to recover the same command safely.');
   }, [lang]);
 
@@ -279,7 +279,7 @@ export default function TransfersTab({
       materials: pendingMaterialPosting.materials,
       operator: pendingMaterialPosting.operator,
       notes: lang === 'ka'
-        ? `გადაღებასთან დაკავშირებული მასალები: ${pendingMaterialPosting.transferId}`
+        ? `გადატანასთან დაკავშირებული დანამატები: ${pendingMaterialPosting.transferId}`
         : `Materials linked to transfer ${pendingMaterialPosting.transferId}`,
     });
     setPendingMaterialPosting(null);
@@ -311,7 +311,7 @@ export default function TransfersTab({
       || destWillOverflow || lossIsInvalid || destinationNeedsCleaning)) return;
     if (!pendingIntent && transferMaterialIssue) {
       setCommandError(lang === 'ka'
-        ? 'შეამოწმეთ გადაღების მასალები, რაოდენობები და ხელმისაწვდომი მარაგი.'
+        ? 'შეამოწმეთ გადატანის დანამატები, რაოდენობები და ხელმისაწვდომი მარაგი.'
         : 'Check the transfer materials, quantities, and available stock.');
       return;
     }
@@ -415,7 +415,7 @@ export default function TransfersTab({
     onUpdateLots(applied.state.lots);
     saveTransfers(applied.state.transfers);
     setOperationReceipt(lang === 'ka'
-      ? `გადაღება ${applied.result.originalTransfer.id} დაბრუნებულია და მაკორექტირებელი ჩანაწერი შენახულია.`
+      ? `გადატანა ${applied.result.originalTransfer.id} დაბრუნებულია და მაკორექტირებელი ჩანაწერი შენახულია.`
       : `Transfer ${applied.result.originalTransfer.id} was reversed with an immutable correction record.`);
     clearReversalForm();
   };
@@ -455,7 +455,7 @@ export default function TransfersTab({
       const response = await submitTransferReversalCommand(intent);
       onApplyTransferReversalCommandResponse(response);
       setOperationReceipt(lang === 'ka'
-        ? `გადაღება ${response.result.originalTransfer.id} დაბრუნებულია და მაკორექტირებელი ჩანაწერი შენახულია.`
+        ? `გადატანა ${response.result.originalTransfer.id} დაბრუნებულია და მაკორექტირებელი ჩანაწერი შენახულია.`
         : `Transfer ${response.result.originalTransfer.id} was reversed with an immutable correction record.`);
       clearReversalForm();
     } catch (error) {
@@ -587,7 +587,7 @@ export default function TransfersTab({
         recs.push({
           id: 'opt-mock-racking',
           title: 'Routine Racking: Clean to Sterilized Tank',
-          titleKa: 'გეგმიური გადაღება: სტერილურ ჭურჭელში',
+          titleKa: 'გეგმიური გადატანა: სტერილურ ჭურჭელში',
           desc: `Rack ${sourceWithVolume.currentVolume}L of wine from ${sourceWithVolume.id} to clean empty ${cleanEmpty.id} to assist clarity.`,
           descKa: `გადაიღეთ ${sourceWithVolume.currentVolume}ლ ღვინო ${sourceWithVolume.id}-დან სუფთა ${cleanEmpty.id}-ში სიკაშკაშის გასაუმჯობესებლად.`,
           sourceId: sourceWithVolume.id,
@@ -734,7 +734,7 @@ export default function TransfersTab({
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             {lang === 'ka'
-              ? 'შეასრულეთ ღვინის გადაღება, დეკანტაცია, ლექიდან მოხსნა და პროპორციული კუპაჟირება ავტომატური მოცულობითი გამოთვლებით.'
+              ? 'შეასრულეთ ღვინის გადატანა, დეკანტაცია, ლექიდან მოხსნა და პროპორციული კუპაჟირება ავტომატური მოცულობითი გამოთვლებით.'
               : 'Perform wine transfers, barrel decantations, Lees rackings, and blend proportional genealogies accurately with automatic volumetric math.'}
           </p>
         </div>
@@ -766,7 +766,7 @@ export default function TransfersTab({
           {/* Source Vessel selector */}
           <div className="bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs space-y-3">
             <h3 className="text-xs font-mono font-bold uppercase text-slate-400 border-b border-stone-100 pb-2">
-              {lang === 'ka' ? 'ნაბიჯი 1: აირჩიეთ საწყისი ჭურჭელი' : 'Step 1: Select Source Vessel'}
+              {lang === 'ka' ? 'ნაბიჯი 1: საიდან' : 'Step 1: Select Source Vessel'}
             </h3>
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
               {vessels.filter(v => v.currentVolume > 0).map(v => {
@@ -821,7 +821,7 @@ export default function TransfersTab({
           {/* Destination Vessel Selector */}
           <div className="bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs space-y-3">
             <h3 className="text-xs font-mono font-bold uppercase text-slate-400 border-b border-stone-100 pb-2">
-              {lang === 'ka' ? 'ნაბიჯი 2: აირჩიეთ მიმღები ჭურჭელი' : 'Step 2: Select Recipient Vessel'}
+              {lang === 'ka' ? 'ნაბიჯი 2: სად' : 'Step 2: Select Recipient Vessel'}
             </h3>
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
               {vessels.filter(v => v.id !== sourceId).map(v => {
@@ -922,7 +922,7 @@ export default function TransfersTab({
             <div className="flex items-center justify-between border-b border-[#e8dfd5]/60 dark:border-stone-800 pb-2">
               <h3 className="text-xs font-serif font-black text-[#4e0e15] dark:text-amber-150 flex items-center gap-1.5 uppercase">
                 <Sparkles className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                {lang === 'ka' ? 'ღვინის გადაღების ჭკვიანი მრჩეველი' : 'AI Cellar Transfer Recommender'}
+                {lang === 'ka' ? 'ღვინის გადატანის ჭკვიანი მრჩეველი' : 'AI Cellar Transfer Recommender'}
               </h3>
               <span className="text-[9px] font-mono text-amber-700 dark:text-amber-455 font-extrabold bg-amber-50 dark:bg-[#140d0e] px-2 py-0.5 rounded border border-amber-200 dark:border-stone-800">
                 {sourceId ? (lang === 'ka' ? 'თავსებადი ჭურჭელი' : 'BEST DESTINATIONS') : (lang === 'ka' ? 'გეგმიური ოპერაციები' : 'RECOMMENDED OPERATIONS')}
@@ -975,7 +975,7 @@ export default function TransfersTab({
               <div className="space-y-2.5">
                 <p className="text-[10.5px] text-slate-550 dark:text-stone-400 italic leading-normal text-left font-medium">
                   {lang === 'ka'
-                    ? `მონაცემების ანალიზი ჭურჭლისთვის ${sourceId} (${sourceVessel?.currentVolume}ლ). აირჩიეთ მიმღები ჭურჭელი მაღალი თავსებადობით:`
+                    ? `მონაცემების ანალიზი ჭურჭლისთვის ${sourceId} (${sourceVessel?.currentVolume}ლ). აირჩიეთ სად გადავიტანოთ მაღალი თავსებადობით:`
                     : `Analyzing best recipients for ${sourceId} holding ${sourceVessel?.currentVolume}L. Select a recommended destination:`}
                 </p>
 
@@ -1041,7 +1041,7 @@ export default function TransfersTab({
             {canExecuteTransfer && (
               <div className="2xl:col-span-7 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
               <h3 className="text-sm font-serif font-bold text-[#4e0e15] border-b pb-2 flex items-center gap-1.5">
-                <Compass className="w-4 h-4 text-[#801323]" /> {lang === 'ka' ? 'გადაღებისა და კუპაჟირების ფორმა' : 'Racking & Blending Form'}
+                <Compass className="w-4 h-4 text-[#801323]" /> {lang === 'ka' ? 'გადატანისა და კუპაჟირების ფორმა' : 'Racking & Blending Form'}
               </h3>
 
               <form onSubmit={handleExecuteTransfer} className="space-y-3.5">
@@ -1049,16 +1049,16 @@ export default function TransfersTab({
                 {/* Visual arrow indicator or active selected summary */}
                 <div className="p-3 bg-stone-50 border border-stone-200/50 rounded-xl flex items-center justify-center gap-4 text-xs font-semibold">
                   <div className="text-center flex-1">
-                    <span className="block text-[8px] font-mono text-slate-400 uppercase">{lang === 'ka' ? 'წყარო' : 'SOURCE'}</span>
-                    <strong className="text-stone-904">{sourceId || (lang === 'ka' ? 'აირჩიეთ წყარო' : 'Choose Source')}</strong>
+                    <span className="block text-[8px] font-mono text-slate-400 uppercase">{lang === 'ka' ? 'საიდან' : 'SOURCE'}</span>
+                    <strong className="text-stone-904">{sourceId || (lang === 'ka' ? 'საიდან' : 'Choose Source')}</strong>
                     <span className="block text-[9px] text-amber-900 font-mono mt-0.5">
                       {sourceVessel ? `${sourceVessel.currentVolume} L` : ''}
                     </span>
                   </div>
                   <ArrowRight className="w-5 h-5 text-slate-400 animate-pulse" />
                   <div className="text-center flex-1 font-sans">
-                    <span className="block text-[8px] font-mono text-slate-400 uppercase">{lang === 'ka' ? 'მიმღები' : 'RECIPIENT'}</span>
-                    <strong className="text-slate-700">{destId || (lang === 'ka' ? 'აირჩიეთ მიმღები' : 'Choose Destination')}</strong>
+                    <span className="block text-[8px] font-mono text-slate-400 uppercase">{lang === 'ka' ? 'სად' : 'RECIPIENT'}</span>
+                    <strong className="text-slate-700">{destId || (lang === 'ka' ? 'სად' : 'Choose Destination')}</strong>
                     <span className="block text-[9px] text-indigo-805 font-mono mt-0.5">
                       {destVessel ? `${destCapRemaining} L ${lang === 'ka' ? 'თავისუფალი' : 'free'}` : ''}
                     </span>
@@ -1172,7 +1172,7 @@ export default function TransfersTab({
                     ? (lang === 'ka' ? 'მუშავდება…' : 'Processing…')
                     : pendingIntent
                       ? (lang === 'ka' ? 'იგივე ბრძანების უსაფრთხოდ აღდგენა' : 'Recover the same transfer safely')
-                      : (lang === 'ka' ? 'დადასტურება და გადაღების დაწყება' : 'Confirm & Initiate Fluid Pump')}
+                      : (lang === 'ka' ? 'დადასტურება და გადატანის დაწყება' : 'Confirm & Initiate Fluid Pump')}
                 </button>
 
               </form>
@@ -1210,7 +1210,7 @@ export default function TransfersTab({
                       <p className="text-[10px] text-slate-400 font-medium">
                         {sourceVessel
                           ? (lang === 'ka' ? `${sourceVessel.id} უსაფრთხოდ იტევს ${sourceVessel.currentVolume} ლ-ს.` : `${sourceVessel.id} shares ${sourceVessel.currentVolume} L volume safely.`)
-                          : (lang === 'ka' ? 'გთხოვთ აირჩიოთ წყარო.' : 'Please configure source.')}
+                          : (lang === 'ka' ? 'გთხოვთ აირჩიოთ, საიდან გადავიტანოთ.' : 'Please configure source.')}
                       </p>
                     </div>
                   </div>
@@ -1225,7 +1225,7 @@ export default function TransfersTab({
                       <p className="text-[10px] text-slate-400 font-medium">
                         {destVessel
                           ? (lang === 'ka' ? `${destVessel.id}-ს აქვს ${destCapRemaining} ლ თავისუფალი ტევადობა.` : `${destVessel.id} supports up to ${destCapRemaining} L empty capacity.`)
-                          : (lang === 'ka' ? 'გთხოვთ აირჩიოთ მიმღები.' : 'Please configure receiver.')}
+                          : (lang === 'ka' ? 'გთხოვთ აირჩიოთ, სად გადავიტანოთ.' : 'Please configure receiver.')}
                       </p>
                     </div>
                   </div>
@@ -1261,7 +1261,7 @@ export default function TransfersTab({
                   {!showsBlendAlert && sourceId && destId && (
                     <div className="p-2 bg-emerald-50/50 border border-emerald-100 rounded-lg text-[10.5px] text-emerald-900 leading-tight flex items-center gap-1">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      {lang === 'ka' ? 'თავსებადი ღვინის პარტიები! პირდაპირი გადაღება კუპაჟირების გამოთვლების გარეშე.' : 'Compatible Wine Lots! Direct transfer without dynamic blending calculations in genealogy.'}
+                      {lang === 'ka' ? 'თავსებადი ღვინის პარტიები! პირდაპირი გადატანა კუპაჟირების გამოთვლების გარეშე.' : 'Compatible Wine Lots! Direct transfer without dynamic blending calculations in genealogy.'}
                     </div>
                   )}
 
@@ -1288,12 +1288,12 @@ export default function TransfersTab({
                   <div>
                     <p className="text-xs font-bold text-rose-950">
                       {lang === 'ka'
-                        ? `გადაღების დაბრუნება: ${reversalTarget.id}`
+                        ? `გადატანის დაბრუნება: ${reversalTarget.id}`
                         : `Reverse transfer ${reversalTarget.id}`}
                     </p>
                     <p className="mt-1 text-[11px] leading-relaxed text-rose-800">
                       {lang === 'ka'
-                        ? 'სისტემა აღადგენს ჭურჭლებსა და პარტიებს მხოლოდ მაშინ, თუ ამ გადაღების შემდეგ ისინი არ შეცვლილა. საწყისი ჩანაწერი ისტორიაში დარჩება.'
+                        ? 'სისტემა აღადგენს ჭურჭლებსა და პარტიებს მხოლოდ მაშინ, თუ ამ გადატანის შემდეგ ისინი არ შეცვლილა. საწყისი ჩანაწერი ისტორიაში დარჩება.'
                         : 'Vessels and lots are restored only if nothing changed them after this transfer. The original entry remains in the audit ledger.'}
                     </p>
                   </div>
@@ -1343,7 +1343,7 @@ export default function TransfersTab({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-[10px] font-mono font-bold text-[#801323] uppercase bg-red-50 px-1.5 py-0.2 rounded">
                         {lang === 'ka'
-                          ? ({racking: 'გადაღება', blend: 'კუპაჟი', filtration: 'ფილტრაცია', bottling: 'ჩამოსხმა', reversal: 'კორექცია'} as Record<string, string>)[record.category] || record.category
+                          ? ({racking: 'გადატანა', blend: 'კუპაჟი', filtration: 'ფილტრაცია', bottling: 'ჩამოსხმა', reversal: 'კორექცია'} as Record<string, string>)[record.category] || record.category
                           : record.category}
                       </span>
                       <span className="font-sans font-black text-xs text-stone-900 flex items-center gap-1">
@@ -1425,7 +1425,7 @@ export default function TransfersTab({
                   </h4>
                   <p className="text-[11px] text-stone-500 dark:text-stone-400 font-serif max-w-xs mt-1.5 leading-relaxed">
                     {lang === 'ka'
-                      ? 'მარანში სითხის გადაღების ან ბლენდირების ჟურნალი ჯერ არ დაწყებულა. ჯერ დაარეგისტრირეთ ჭურჭელი და მიიღეთ ყურძენი — შემდეგ აქ დააფიქსირებთ გადაღებას ჭურჭლიდან ჭურჭელში.'
+                      ? 'მარანში სითხის გადატანის ან ბლენდირების ჟურნალი ჯერ არ დაწყებულა. ჯერ დაარეგისტრირეთ ჭურჭელი და მიიღეთ ყურძენი — შემდეგ აქ დააფიქსირებთ გადატანას ჭურჭლიდან ჭურჭელში.'
                       : 'Liquid transfer, racking, and blending operations will appear here in chronological order. Register vessels and receive grapes first — then record vessel-to-vessel movements from the form above.'}
                   </p>
                 </div>

@@ -91,7 +91,7 @@ const ka: ShellTranslations = {
   lineage: 'გენეალოგია',
   tanks: 'რეზერვუარები',
   cellar_operations: 'ოპერაციები',
-  transfers: 'გადაღება/გადატანა',
+  transfers: 'გადატანა',
   fermentation: 'დუღილი',
   lab_analysis: 'ლაბორატორია',
   bottling: 'ჩამოსხმა',
