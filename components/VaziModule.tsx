@@ -620,7 +620,7 @@ export default function VaziModule({
   const label = {
     title: {
       en: 'Vazi — Vineyard Management',
-      ka: 'ვაზი — ვენახების მართვა',
+      ka: 'ვენახების მართვა',
       it: 'Vazi — Gestione del Vigneto',
       fr: 'Vazi — Viticulture & Vignoble',
       de: 'Vazi — Weinberg-Management'

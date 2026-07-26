@@ -607,7 +607,7 @@ export const translations = {
     portal_appellation: 'აქტიური აპელაცია',
     portal_role: 'აქტიური როლი',
     portal_module_agri: 'სასოფლო-სამეურნეო მოდული',
-    portal_vazi_title: 'ვაზი — ვენახების მართვა',
+    portal_vazi_title: 'ვენახების მართვა',
     portal_vazi_desc: 'ვაზის ფენოლოგიური ფაზები, მზარდი აქტიური ტემპერატურების (GDD) პროგნოზები, მავნებლების წამლობა და ყურძნის სიმწიფის მრუდები.',
     portal_blocks_count: 'რეგისტრირებული ნაკვეთები',
     portal_total_area: 'მთლიანი ფართობი',
