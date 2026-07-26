@@ -76,9 +76,18 @@ describe('ProfileSettingsTab effective-role controls', () => {
     );
 
     expect(markup).toContain('Owner &amp; ERP Admin');
-    expect(markup).toContain('Administrative Database Export');
+    expect(markup).not.toContain('Administrative Database Export');
     expect(markup).toContain('Initialize Clean Estate');
     expect(markup).not.toMatch(/<fieldset[^>]*disabled=""/);
+  });
+
+  it('shows the database export only with the server-issued master-admin capability', () => {
+    const props = settingsProps('Owner/Admin');
+    props.currentUser.isMasterAdmin = true;
+
+    const markup = renderToStaticMarkup(React.createElement(ProfileSettingsTab, props));
+
+    expect(markup).toContain('Administrative Database Export');
   });
 
   it('renders the effective-role explanation in Georgian', () => {

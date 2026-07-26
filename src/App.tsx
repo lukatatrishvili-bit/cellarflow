@@ -1572,7 +1572,6 @@ export default function App() {
           <IntegrationHubTab
             lang={state.lang}
             setToastMessage={state.setToastMessage}
-            setCompanyProfile={state.setCompanyProfile}
           />
         </Suspense>
       ) : state.activeModule === 'settings' ? (

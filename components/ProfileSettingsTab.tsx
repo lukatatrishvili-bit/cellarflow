@@ -888,7 +888,7 @@ export default function ProfileSettingsTab({
 
       <BillingSettingsPanel lang={lang} canManage={isOwnerAdmin} />
 
-      {isOwnerAdmin && (
+      {currentUser.isMasterAdmin === true && (
         <div className="bg-emerald-50/40 border border-emerald-200 p-6 rounded-2xl shadow-sm space-y-4 dark:bg-emerald-950/10 dark:border-emerald-900/40">
           <div>
             <h4 className="text-md font-serif font-black text-emerald-800 uppercase tracking-wide dark:text-emerald-400">

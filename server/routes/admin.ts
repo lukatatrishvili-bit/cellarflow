@@ -6,7 +6,6 @@ import {
   saveCoreMetadata,
   saveUserData,
   resetUserData,
-  createEmptyUserData,
   deleteUserMetadataFromPostgres,
   refreshCoreMetadataFromPostgres,
   getPostgresReadinessProbe,
@@ -128,48 +127,19 @@ router.get('/system-health', async (req, res) => {
 });
 
 // GET /api/admin/export
-router.get('/export', checkWineryScope('admin'), async (req, res) => {
-  const auth = (req as any).wineryContext;
+router.get('/export', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
 
   const db = getDB();
   const exportedAt = new Date().toISOString();
-  let snapshot: any;
-  let filename = exportFilename('cellarflow_export');
-
-  if (isMasterAdmin(auth.username)) {
-    snapshot = {
-      exportedAt,
-      scope: 'system',
-      db: scrubSensitiveForExport(db),
-    };
-    delete snapshot.db.userData;
-    filename = exportFilename('cellarflow_system_export');
-  } else {
-    const user = db.users.find(u => u.username === auth.username);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    const orgId = user.activeOrganizationId;
-    if (!orgId) {
-      return res.status(400).json({ error: 'No active organization to export' });
-    }
-    const organization = db.organizations?.find(o => o.id === orgId);
-    const memberships = db.memberships?.filter(m => m.organizationId === orgId) || [];
-    const invitations = db.invitations?.filter(i => i.organizationId === orgId) || [];
-    snapshot = {
-      exportedAt,
-      scope: 'organization',
-      organization: scrubSensitiveForExport(organization || { id: orgId, name: 'Unnamed Winery' }),
-      currentUser: scrubSensitiveForExport(user),
-      members: memberships.map(m => ({
-        ...scrubSensitiveForExport(m),
-        user: scrubSensitiveForExport(db.users.find(u => u.username === m.userId) || null),
-      })),
-      pendingInvitations: scrubSensitiveForExport(invitations),
-      data: scrubSensitiveForExport(db.orgData?.[orgId] || createEmptyUserData()),
-    };
-    filename = exportFilename(`cellarflow_${orgId}_export`);
-  }
+  const snapshot: any = {
+    exportedAt,
+    scope: 'system',
+    db: scrubSensitiveForExport(db),
+  };
+  delete snapshot.db.userData;
+  const filename = exportFilename('cellarflow_system_export');
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

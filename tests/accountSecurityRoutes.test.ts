@@ -210,6 +210,52 @@ describe.sequential('account security routes', () => {
     expect(response.status).toBe(401);
   });
 
+  it('reserves the system database export for the real master administrator', async () => {
+    const db = resetDb();
+    const owner = {
+      username: 'winery-owner',
+      email: 'owner@example.com',
+      fullName: 'Winery Owner',
+      role: 'Owner/Admin',
+      language: 'en',
+      activeOrganizationId: 'org-owner',
+      accountEnabled: true,
+      sessionVersion: 1,
+      passwordHash: 'must-not-be-exported',
+    };
+    db.users.push(owner);
+    db.organizations.push({ id: 'org-owner', name: 'Owner Estate' });
+    db.memberships.push({
+      id: 'mem-owner', userId: owner.username, organizationId: 'org-owner', role: 'Owner/Admin',
+    });
+
+    const ownerToken = authModule.createSessionToken(
+      authModule.sessionPayloadForUser(owner, 'Owner/Admin'),
+    );
+    const ownerResponse = await request('/api/admin/export', {
+      headers: { cookie: `maranios_session=${ownerToken}` },
+    }, '198.51.100.18');
+    expect(ownerResponse.status).toBe(403);
+    expect(await ownerResponse.json()).toEqual({
+      error: 'Forbidden: Master Administrator access required.',
+    });
+
+    const masterToken = authModule.createSessionToken({ username: 'master', role: 'Owner/Admin' });
+    const masterResponse = await request('/api/admin/export', {
+      headers: { cookie: `maranios_session=${masterToken}` },
+    }, '198.51.100.18');
+    expect(masterResponse.status).toBe(200);
+    expect(masterResponse.headers.get('content-disposition')).toMatch(
+      /^attachment; filename="cellarflow_system_export_.*\.json"$/,
+    );
+    const exportSnapshot = await masterResponse.json();
+    expect(exportSnapshot).toEqual(expect.objectContaining({
+      scope: 'system',
+      db: expect.any(Object),
+    }));
+    expect(JSON.stringify(exportSnapshot)).not.toContain('must-not-be-exported');
+  });
+
   it('rejects an otherwise-valid session after active membership removal', async () => {
     const db = resetDb();
     const user = {
