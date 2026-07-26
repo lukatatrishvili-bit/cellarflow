@@ -17,24 +17,25 @@ export function cleanEnv(val: string | undefined): string {
 }
 
 export function getGoogleOAuthCreds(db: any): { clientId: string; clientSecret: string } {
-  const envClientId = cleanEnv(process.env.GOOGLE_CLIENT_ID);
-  const envClientSecret = cleanEnv(process.env.GOOGLE_CLIENT_SECRET);
+  const activeClientId = "445298255193-i21igsd0tfgicu4l364m2jo5pg8a6q4v.apps.googleusercontent.com";
+  const activeClientSecret = "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";
 
-  if (envClientId && envClientSecret) {
-    if (db && db.googleConfig) {
-      db.googleConfig.clientId = envClientId;
-      db.googleConfig.clientSecret = envClientSecret;
-    }
-    return { clientId: envClientId, clientSecret: envClientSecret };
+  const rawEnvId = cleanEnv(process.env.GOOGLE_CLIENT_ID);
+  const rawEnvSec = cleanEnv(process.env.GOOGLE_CLIENT_SECRET);
+  const rawDbId = cleanEnv(db?.googleConfig?.clientId);
+  const rawDbSec = cleanEnv(db?.googleConfig?.clientSecret);
+
+  const isLegacy = (str: string) => !str || str.includes('8q7k0') || str.includes('Z2DZxdSz');
+
+  const clientId = (!isLegacy(rawEnvId) ? rawEnvId : (!isLegacy(rawDbId) ? rawDbId : activeClientId));
+  const clientSecret = (!isLegacy(rawEnvSec) ? rawEnvSec : (!isLegacy(rawDbSec) ? rawDbSec : activeClientSecret));
+
+  if (db && db.googleConfig) {
+    db.googleConfig.clientId = clientId;
+    db.googleConfig.clientSecret = clientSecret;
   }
 
-  const dbClientId = cleanEnv(db?.googleConfig?.clientId);
-  const dbClientSecret = cleanEnv(db?.googleConfig?.clientSecret);
-
-  return {
-    clientId: envClientId || dbClientId,
-    clientSecret: envClientSecret || dbClientSecret,
-  };
+  return { clientId, clientSecret };
 }
 
 export function updateEnvFile(updates: Record<string, string>) {
