@@ -448,7 +448,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
         temp = Number((currentTemp + variance).toFixed(1));
       }
 
-      const label = d.toLocaleDateString(lang === 'ka' ? 'ka-GE' : lang === 'it' ? 'it-IT' : 'en-US', {
+      const label = d.toLocaleDateString(lang === 'ka' ? 'ka-GE' : 'en-US', {
         month: 'short',
         day: 'numeric',
       });

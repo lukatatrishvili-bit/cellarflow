@@ -45,6 +45,7 @@ export interface RuntimeScaleProbe {
     organizationStateRead?: boolean;
     loginAttemptStoreRead?: boolean;
     securityAuditStoreRead?: boolean;
+    relationalProjectionRead?: boolean;
   };
   errors?: string[];
 }
@@ -223,6 +224,12 @@ export function applyRuntimeScaleReadinessProbe(
     addCompleted('Live PostgreSQL probe confirmed the SecurityAuditEvent table is readable.');
   } else if (probe.checks?.securityAuditStoreRead === false) {
     addBlocker('Live PostgreSQL probe could not read the SecurityAuditEvent table.');
+  }
+
+  if (probe.checks?.relationalProjectionRead === true) {
+    addCompleted('Live PostgreSQL probe confirmed vessel and wine-lot projection tables are readable.');
+  } else if (probe.checks?.relationalProjectionRead === false) {
+    addBlocker('Live PostgreSQL probe could not read the vessel and wine-lot projection tables.');
   }
 
   for (const error of probe.errors || []) {

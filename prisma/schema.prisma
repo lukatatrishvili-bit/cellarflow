@@ -75,6 +75,7 @@ model Organization {
   commandExecutions    CommandExecution[]
   subscription         OrganizationSubscription?
   billingPayments      BillingPayment[]
+  whatsappDeliveries   WhatsAppDelivery[]
   subscriptionRequests SubscriptionRequest[]
   subscriptionAudits   SubscriptionAudit[]
   productionUsage      AnnualProductionUsage[]
@@ -167,6 +168,38 @@ model BillingPayment {
 
   @@index([organizationId, createdAt])
   @@index([status, createdAt])
+}
+
+/// Durable, tenant-scoped delivery state for one task's WhatsApp assignment.
+/// Provider webhooks update this row; phone numbers and access tokens are never
+/// stored here or projected to the browser.
+model WhatsAppDelivery {
+  id                String       @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taskId            String
+  assigneeUsername  String
+  senderUsername    String
+  templateName      String
+  language          String
+  status            String       @default("sending")
+  claimToken        String
+  providerMessageId String?      @unique
+  attemptCount      Int          @default(1)
+  errorCode         String?
+  errorMessage      String?
+  acceptedAt        DateTime?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  lastWebhookAt     DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@unique([organizationId, taskId])
+  @@index([organizationId, status, updatedAt])
+  @@index([status, updatedAt])
 }
 
 model SubscriptionRequest {
@@ -270,7 +303,7 @@ model CompanyProfile {
 }
 
 model Vessel {
-  id                      String       @id
+  id                      String
   organizationId          String
   organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   type                    String
@@ -307,6 +340,8 @@ model Vessel {
   skinContactDurationDays Int?
   firstRackingDate        String?
   sanitationHistory       Json         @default("[]")
+
+  @@id([organizationId, id])
 }
 
 model SecurityAuditEvent {
@@ -324,7 +359,7 @@ model SecurityAuditEvent {
 }
 
 model WineLot {
-  id             String       @id
+  id             String
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name           String
@@ -339,6 +374,8 @@ model WineLot {
   createdAt      String
   history        Json         @default("[]")
   sensoryProfile Json?
+
+  @@id([organizationId, id])
 }
 
 model DailyFermLog {

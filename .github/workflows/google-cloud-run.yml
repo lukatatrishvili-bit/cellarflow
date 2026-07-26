@@ -204,6 +204,16 @@ jobs:
       SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
       MAIL_FROM: ${{ secrets.MAIL_FROM }}
+      WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
+      WHATSAPP_GRAPH_API_VERSION: ${{ vars.WHATSAPP_GRAPH_API_VERSION || 'v26.0' }}
+      WHATSAPP_TASK_TEMPLATE_NAME: ${{ vars.WHATSAPP_TASK_TEMPLATE_NAME || 'cellarflow_task_assignment' }}
+      WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN: ${{ vars.WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN || 'en_US' }}
+      WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA: ${{ vars.WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA || 'ka' }}
+      BILLING_ENABLED: ${{ vars.BILLING_ENABLED || 'false' }}
+      TBC_API_BASE_URL: ${{ vars.TBC_API_BASE_URL || 'https://api.tbcbank.ge' }}
+      TBC_RECURRING_ENABLED: ${{ vars.TBC_RECURRING_ENABLED || 'false' }}
+      BILLING_VAT_LABEL_EN: ${{ vars.BILLING_VAT_LABEL_EN }}
+      BILLING_VAT_LABEL_KA: ${{ vars.BILLING_VAT_LABEL_KA }}
     steps:
       - name: Authenticate with Workload Identity
         if: env.HAS_WIF == 'true'
@@ -360,6 +370,30 @@ jobs:
           )
 
           if [ -n "$CLOUDSQL_INSTANCE" ]; then DEPLOY_ARGS+=(--add-cloudsql-instances "$CLOUDSQL_INSTANCE"); fi
+          if [ "$WHATSAPP_ENABLED" = "true" ]; then
+            DEPLOY_ARGS+=(
+              --update-secrets "WHATSAPP_ACCESS_TOKEN=cellarflow-whatsapp-access-token:latest"
+              --update-secrets "WHATSAPP_PHONE_NUMBER_ID=cellarflow-whatsapp-phone-number-id:latest"
+              --update-secrets "WHATSAPP_WEBHOOK_VERIFY_TOKEN=cellarflow-whatsapp-webhook-verify-token:latest"
+              --update-secrets "WHATSAPP_APP_SECRET=cellarflow-whatsapp-app-secret:latest"
+              --update-env-vars "WHATSAPP_GRAPH_API_VERSION=$WHATSAPP_GRAPH_API_VERSION"
+              --update-env-vars "WHATSAPP_TASK_TEMPLATE_NAME=$WHATSAPP_TASK_TEMPLATE_NAME"
+              --update-env-vars "WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN=$WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN"
+              --update-env-vars "WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA=$WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA"
+            )
+          fi
+          if [ "$BILLING_ENABLED" = "true" ]; then
+            DEPLOY_ARGS+=(
+              --update-secrets "TBC_API_KEY=cellarflow-tbc-api-key:latest"
+              --update-secrets "TBC_CLIENT_ID=cellarflow-tbc-client-id:latest"
+              --update-secrets "TBC_CLIENT_SECRET=cellarflow-tbc-client-secret:latest"
+              --update-secrets "BILLING_CRON_SECRET=cellarflow-billing-cron-secret:latest"
+              --update-env-vars "TBC_API_BASE_URL=$TBC_API_BASE_URL"
+              --update-env-vars "TBC_RECURRING_ENABLED=$TBC_RECURRING_ENABLED"
+            )
+            if [ -n "$BILLING_VAT_LABEL_EN" ]; then DEPLOY_ARGS+=(--update-env-vars "BILLING_VAT_LABEL_EN=$BILLING_VAT_LABEL_EN"); fi
+            if [ -n "$BILLING_VAT_LABEL_KA" ]; then DEPLOY_ARGS+=(--update-env-vars "BILLING_VAT_LABEL_KA=$BILLING_VAT_LABEL_KA"); fi
+          fi
           if [ -n "$SMTP_HOST" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_HOST=$SMTP_HOST"); fi
           if [ -n "$SMTP_PORT" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_PORT=$SMTP_PORT"); fi
           if [ -n "$SMTP_SECURE" ]; then DEPLOY_ARGS+=(--update-env-vars "SMTP_SECURE=$SMTP_SECURE"); fi

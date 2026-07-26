@@ -2,6 +2,10 @@ import express from 'express';
 import { liveSessionRole, parseCookies } from '../middleware/auth';
 import { verifySessionToken } from '../auth';
 import { getUserData, createEmptyUserData } from '../db';
+import {
+  recordClientPerformanceMetric,
+  type ClientPerformanceMetric,
+} from '../operationalTelemetry';
 
 const router = express.Router();
 
@@ -42,8 +46,20 @@ const clientErrors: ClientErrorReport[] = [];
 const clientErrorHits = new Map<string, { count: number; windowStart: number }>();
 const CLIENT_ERROR_WINDOW_MS = 60_000;
 const CLIENT_ERROR_MAX_PER_WINDOW = 5;
+const performanceHits = new Map<string, { count: number; windowStart: number }>();
+const PERFORMANCE_MAX_PER_WINDOW = 12;
 
 const clip = (v: unknown, max: number) => String(v ?? '').slice(0, max);
+const safeRoute = (value: unknown): string => {
+  const raw = clip(value, 300);
+  try {
+    const pathname = new URL(raw, 'https://telemetry.invalid').pathname;
+    const firstSegment = pathname.split('/').filter(Boolean)[0];
+    return firstSegment ? `/${firstSegment.slice(0, 80)}` : '/';
+  } catch {
+    return '';
+  }
+};
 
 export function getRecentClientErrors(): ClientErrorReport[] {
   return [...clientErrors].reverse(); // newest first
@@ -68,12 +84,58 @@ router.post('/client-error', (req, res) => {
     source: clip(req.body?.source, 40) || 'unknown',
     message: clip(req.body?.message, 500),
     stack: clip(req.body?.stack, 4000),
-    url: clip(req.body?.url, 300),
+    url: safeRoute(req.body?.url),
     userAgent: clip(req.headers['user-agent'], 200),
     appVersion: clip(req.body?.appVersion, 40),
     username: session?.username ? String(session.username) : null,
   });
   if (clientErrors.length > MAX_CLIENT_ERRORS) clientErrors.shift();
+
+  res.status(204).end();
+});
+
+const performanceNames = new Set(['LCP', 'INP', 'CLS', 'route_load', 'offline_start']);
+const performanceRatings = new Set(['good', 'needs_improvement', 'poor']);
+const deviceClasses = new Set(['mobile', 'tablet', 'desktop']);
+const networkClasses = new Set(['offline', 'slow', 'standard', 'unknown']);
+const routeClasses = new Set(['landing', 'auth', 'tasks', 'billing', 'public', 'workspace']);
+
+// Public, payload-free browser performance intake. It accepts only bounded
+// numbers and fixed categorical values; URLs, tenant IDs, record IDs, and free
+// text are neither accepted nor retained.
+router.post('/performance', (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  const hit = performanceHits.get(ip);
+  if (!hit || now - hit.windowStart > CLIENT_ERROR_WINDOW_MS) {
+    performanceHits.set(ip, { count: 1, windowStart: now });
+  } else if (++hit.count > PERFORMANCE_MAX_PER_WINDOW) {
+    return res.status(429).json({ ok: false });
+  }
+  if (performanceHits.size > 1000) performanceHits.clear();
+
+  const metrics = Array.isArray(req.body?.metrics) ? req.body.metrics.slice(0, 8) : [];
+  for (const metric of metrics) {
+    if (!metric || typeof metric !== 'object') continue;
+    const value = Number(metric.value);
+    if (
+      !performanceNames.has(metric.name)
+      || !Number.isFinite(value)
+      || value < 0
+      || !performanceRatings.has(metric.rating)
+      || !deviceClasses.has(metric.deviceClass)
+      || !networkClasses.has(metric.networkClass)
+      || !routeClasses.has(metric.routeClass)
+    ) continue;
+    recordClientPerformanceMetric({
+      name: metric.name,
+      value,
+      rating: metric.rating,
+      deviceClass: metric.deviceClass,
+      networkClass: metric.networkClass,
+      routeClass: metric.routeClass,
+    } as Omit<ClientPerformanceMetric, 'at'>);
+  }
 
   res.status(204).end();
 });

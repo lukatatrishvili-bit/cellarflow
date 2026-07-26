@@ -2034,6 +2034,27 @@ export function validateSyncPayload(
             if (item.status && !['pending', 'completed'].includes(item.status)) {
               throw new Error(`Task ${item.id} has invalid status: ${item.status}`);
             }
+            if (item.assignedUserId !== undefined
+              && (typeof item.assignedUserId !== 'string' || item.assignedUserId.length > 160)) {
+              throw new Error(`Task ${item.id} has an invalid assigned user.`);
+            }
+            if (item.whatsappNotification !== undefined) {
+              const notification = item.whatsappNotification;
+              if (!notification || typeof notification !== 'object' || Array.isArray(notification)) {
+                throw new Error(`Task ${item.id} has an invalid WhatsApp notification.`);
+              }
+              if (!['sending', 'accepted', 'sent', 'delivered', 'read', 'failed'].includes(notification.status)) {
+                throw new Error(`Task ${item.id} has an invalid WhatsApp delivery status.`);
+              }
+              if (typeof notification.updatedAt !== 'string' || notification.updatedAt.length > 80
+                || (notification.messageId !== undefined
+                  && (typeof notification.messageId !== 'string' || notification.messageId.length > 500))
+                || (notification.error !== undefined
+                  && (typeof notification.error !== 'string' || notification.error.length > 300))
+                || (notification.language !== undefined && !['en', 'ka'].includes(notification.language))) {
+                throw new Error(`Task ${item.id} has invalid WhatsApp delivery metadata.`);
+              }
+            }
           }
 
           else if (key === 'blocks') {

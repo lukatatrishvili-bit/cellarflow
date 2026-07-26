@@ -1,5 +1,5 @@
 import { getDbRuntimeStatus, getPostgresReadinessProbe, type PostgresReadinessProbe } from './db';
-import { whatsappIsConfigured } from './whatsapp';
+import { whatsappIsFullyConfigured } from './whatsapp';
 
 export const READINESS_PROBE_TIMEOUT_MS = 3_000;
 
@@ -57,9 +57,11 @@ export function buildServiceReadiness(
     env.WHATSAPP_ACCESS_TOKEN,
     env.WHATSAPP_PHONE_NUMBER_ID,
     env.WHATSAPP_GRAPH_API_VERSION,
+    env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+    env.WHATSAPP_APP_SECRET,
   ];
   const whatsapp: OptionalState = whatsappValues.some(value => value?.trim())
-    ? whatsappIsConfigured(env) ? 'ready' : 'degraded'
+    ? whatsappIsFullyConfigured(env) ? 'ready' : 'degraded'
     : 'not_configured';
   const optionalDegraded = [storageBackup, aiAssistant, email, googleOAuth, whatsapp].includes('degraded');
 
@@ -101,6 +103,7 @@ export async function getServiceReadiness(): Promise<ServiceReadiness> {
       loginAttemptStoreRead: false,
       securityAuditStoreRead: false,
       billingStorageRead: false,
+      relationalProjectionRead: false,
     },
     errors: ['Readiness database probe timed out.'],
   };

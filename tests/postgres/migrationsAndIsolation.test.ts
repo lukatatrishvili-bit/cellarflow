@@ -132,6 +132,67 @@ describe('authoritative organization-state isolation', () => {
     });
   });
 
+  it('keeps duplicate vessel and lot projection IDs isolated by organization', async () => {
+    const orgA = organizationId('projection-a');
+    const orgB = organizationId('projection-b');
+    await prisma.$transaction([
+      prisma.organization.create({ data: { id: orgA, name: 'Projection Estate A' } }),
+      prisma.organization.create({ data: { id: orgB, name: 'Projection Estate B' } }),
+    ]);
+
+    const vessel = (organizationId: string, capacity: number) => ({
+      organizationId,
+      id: 'T-01',
+      type: 'tank',
+      shape: 'vertical',
+      capacity,
+      currentVolume: 0,
+      cleaningStatus: 'clean',
+      lastCleaned: '2026-07-26',
+      temperature: 18,
+      coolingJacketActive: false,
+      lastOperation: '',
+    });
+    const lot = (organizationId: string, name: string) => ({
+      organizationId,
+      id: 'LOT-01',
+      name,
+      vintage: 2026,
+      variety: 'Saperavi',
+      vineyardBlock: 'Block 1',
+      region: 'Kakheti',
+      initialVolume: 1000,
+      currentVolume: 1000,
+      wineClass: 'red',
+      stage: 'fermenting',
+      createdAt: '2026-07-26',
+    });
+
+    await prisma.$transaction([
+      prisma.vessel.create({ data: vessel(orgA, 1_000) }),
+      prisma.vessel.create({ data: vessel(orgB, 2_000) }),
+      prisma.wineLot.create({ data: lot(orgA, 'Estate A Saperavi') }),
+      prisma.wineLot.create({ data: lot(orgB, 'Estate B Saperavi') }),
+    ]);
+    await prisma.vessel.update({
+      where: { organizationId_id: { organizationId: orgA, id: 'T-01' } },
+      data: { capacity: 1_250 },
+    });
+
+    await expect(prisma.vessel.findUniqueOrThrow({
+      where: { organizationId_id: { organizationId: orgA, id: 'T-01' } },
+    })).resolves.toMatchObject({ capacity: 1_250 });
+    await expect(prisma.vessel.findUniqueOrThrow({
+      where: { organizationId_id: { organizationId: orgB, id: 'T-01' } },
+    })).resolves.toMatchObject({ capacity: 2_000 });
+    await expect(prisma.wineLot.findUniqueOrThrow({
+      where: { organizationId_id: { organizationId: orgA, id: 'LOT-01' } },
+    })).resolves.toMatchObject({ name: 'Estate A Saperavi' });
+    await expect(prisma.wineLot.findUniqueOrThrow({
+      where: { organizationId_id: { organizationId: orgB, id: 'LOT-01' } },
+    })).resolves.toMatchObject({ name: 'Estate B Saperavi' });
+  });
+
   it('applies compare-and-swap updates to only the targeted organization', async () => {
     const orgA = organizationId('cas-a');
     const orgB = organizationId('cas-b');

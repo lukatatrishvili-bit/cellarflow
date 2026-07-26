@@ -1,5 +1,10 @@
-// Vinea Language Dictionary (English, Georgian, Italian, French, German)
-export type Language = 'en' | 'ka' | 'it' | 'fr' | 'de';
+// English and Georgian are the supported runtime locales for this release.
+// Additional dictionary work stays dormant until it reaches full product parity.
+export {
+  SUPPORTED_LANGUAGES,
+  normalizeSupportedLanguage,
+  type Language,
+} from './language';
 
 export const translations = {
   en: {

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import fs from 'fs';
 import os from 'os';
@@ -30,6 +31,7 @@ function seedWorkspace() {
   db.memberships = [];
   db.invitations = [];
   db.securityAuditEvents = [];
+  db.whatsappDeliveries = [];
   db.orgData = { 'org-whatsapp': dbModule.createEmptyUserData() };
 
   const owner = {
@@ -75,6 +77,8 @@ beforeAll(async () => {
     WHATSAPP_ACCESS_TOKEN: 'test-token',
     WHATSAPP_PHONE_NUMBER_ID: '123456789012345',
     WHATSAPP_GRAPH_API_VERSION: 'v26.0',
+    WHATSAPP_WEBHOOK_VERIFY_TOKEN: 'whatsapp-route-verify-token',
+    WHATSAPP_APP_SECRET: 'whatsapp-route-app-secret',
   };
   vi.doMock('../server/whatsapp', async () => {
     const actual = await vi.importActual<typeof import('../server/whatsapp')>('../server/whatsapp');
@@ -91,6 +95,11 @@ beforeAll(async () => {
   whatsappModule = await import('../server/whatsapp');
 
   const app = express();
+  app.use(
+    '/api/notifications/whatsapp/webhook',
+    express.raw({ type: 'application/json', limit: '256kb' }),
+    notifications.whatsappWebhookRouter,
+  );
   app.use(express.json());
   app.use('/api/notifications', notifications.default);
   app.use('/api/auth', authRoutes.default);
@@ -157,7 +166,13 @@ describe.sequential('WhatsApp notification routes', () => {
       method: 'POST',
       body: JSON.stringify({
         assigneeUsername: 'nino',
-        task: { id: 'task-1', title: 'Check qvevri', priority: 'high', dueDate: '2026-07-24' },
+        task: {
+          id: 'task-1',
+          title: 'Check qvevri',
+          priority: 'high',
+          dueDate: '2026-07-24',
+          assignedUserId: 'nino',
+        },
       }),
     });
 
@@ -181,6 +196,7 @@ describe.sequential('WhatsApp notification routes', () => {
           priority: 'medium',
           dueDate: '2026-07-25',
           description: 'ტემპერატურა',
+          assignedUserId: 'nino',
         },
       }),
     });
@@ -199,6 +215,149 @@ describe.sequential('WhatsApp notification routes', () => {
       }),
       assignedBy: 'Owner Sender',
     }));
+
+    const replay = await request('/api/notifications/whatsapp/tasks', token, {
+      method: 'POST',
+      body: JSON.stringify({
+        assigneeUsername: 'nino',
+        task: {
+          id: 'task-2',
+          title: 'ქვევრის შემოწმება',
+          priority: 'medium',
+          dueDate: '2026-07-25',
+          description: 'ტემპერატურა',
+          assignedUserId: 'nino',
+        },
+      }),
+    });
+    expect(replay.status).toBe(200);
+    expect(whatsappModule.sendWhatsAppTaskAssignment).toHaveBeenCalledTimes(1);
+  });
+
+  it('verifies Meta webhooks and exposes delivered state without phone numbers', async () => {
+    const { owner, recipient } = seedWorkspace();
+    recipient.whatsappOptIn = true;
+    const token = authModule.createSessionToken(authModule.sessionPayloadForUser(owner, 'Owner/Admin'));
+    const accepted = await request('/api/notifications/whatsapp/tasks', token, {
+      method: 'POST',
+      body: JSON.stringify({
+        assigneeUsername: 'nino',
+        task: {
+          id: 'task-webhook',
+          title: 'Check qvevri',
+          priority: 'high',
+          dueDate: '2026-07-26',
+          assignedUserId: 'nino',
+        },
+      }),
+    });
+    expect(accepted.status).toBe(202);
+
+    const verification = await fetch(
+      `${baseUrl}/api/notifications/whatsapp/webhook?hub.mode=subscribe`
+      + '&hub.verify_token=whatsapp-route-verify-token&hub.challenge=verified-123',
+    );
+    expect(verification.status).toBe(200);
+    expect(await verification.text()).toBe('verified-123');
+
+    const webhookBody = Buffer.from(JSON.stringify({
+      object: 'whatsapp_business_account',
+      entry: [{
+        changes: [{
+          field: 'messages',
+          value: {
+            statuses: [{
+              id: 'wamid.route-test',
+              status: 'delivered',
+              timestamp: String(Math.floor(Date.now() / 1_000)),
+            }],
+          },
+        }],
+      }],
+    }));
+    const signature = `sha256=${crypto
+      .createHmac('sha256', process.env.WHATSAPP_APP_SECRET!)
+      .update(webhookBody)
+      .digest('hex')}`;
+    const webhook = await fetch(`${baseUrl}/api/notifications/whatsapp/webhook`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-hub-signature-256': signature,
+      },
+      body: webhookBody,
+    });
+    expect(webhook.status).toBe(200);
+    expect(await webhook.json()).toEqual({ ok: true, received: 1, matched: 1 });
+
+    const status = await request('/api/notifications/whatsapp/task-statuses', token, {
+      method: 'POST',
+      body: JSON.stringify({ taskIds: ['task-webhook'] }),
+    });
+    expect(status.status).toBe(200);
+    const payload = await status.json();
+    expect(payload.deliveries).toEqual([
+      expect.objectContaining({
+        taskId: 'task-webhook',
+        status: 'delivered',
+        messageId: 'wamid.route-test',
+        language: 'ka',
+      }),
+    ]);
+    expect(JSON.stringify(payload)).not.toContain('+995');
+  });
+
+  it('records a provider failure and permits one durable retry', async () => {
+    const { owner, recipient } = seedWorkspace();
+    recipient.whatsappOptIn = true;
+    const token = authModule.createSessionToken(authModule.sessionPayloadForUser(owner, 'Owner/Admin'));
+    vi.mocked(whatsappModule.sendWhatsAppTaskAssignment)
+      .mockRejectedValueOnce(new whatsappModule.WhatsAppDeliveryError('Provider unavailable', 503, 2))
+      .mockResolvedValueOnce({ messageId: 'wamid.retry-success' });
+    const body = JSON.stringify({
+      assigneeUsername: 'nino',
+      task: {
+        id: 'task-retry',
+        title: 'Retry delivery',
+        priority: 'medium',
+        dueDate: '2026-07-26',
+        assignedUserId: 'nino',
+      },
+    });
+
+    const failed = await request('/api/notifications/whatsapp/tasks', token, { method: 'POST', body });
+    expect(failed.status).toBe(502);
+    const failedStatus = await request('/api/notifications/whatsapp/task-statuses', token, {
+      method: 'POST',
+      body: JSON.stringify({ taskIds: ['task-retry'] }),
+    });
+    expect(await failedStatus.json()).toEqual({
+      deliveries: [expect.objectContaining({ taskId: 'task-retry', status: 'failed' })],
+    });
+
+    const retried = await request('/api/notifications/whatsapp/tasks', token, { method: 'POST', body });
+    expect(retried.status).toBe(202);
+    expect(await retried.json()).toEqual(expect.objectContaining({
+      status: 'accepted',
+      messageId: 'wamid.retry-success',
+    }));
+
+    const replay = await request('/api/notifications/whatsapp/tasks', token, { method: 'POST', body });
+    expect(replay.status).toBe(200);
+    expect(whatsappModule.sendWhatsAppTaskAssignment).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects webhook bodies with an invalid signature', async () => {
+    seedWorkspace();
+    const response = await fetch(`${baseUrl}/api/notifications/whatsapp/webhook`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-hub-signature-256': `sha256=${'0'.repeat(64)}`,
+      },
+      body: JSON.stringify({ object: 'whatsapp_business_account', entry: [] }),
+    });
+    expect(response.status).toBe(401);
   });
 
   it('rejects recipients outside the active workspace', async () => {
@@ -218,7 +377,13 @@ describe.sequential('WhatsApp notification routes', () => {
       method: 'POST',
       body: JSON.stringify({
         assigneeUsername: 'outsider',
-        task: { id: 'task-3', title: 'Check tank', priority: 'low', dueDate: '2026-07-26' },
+        task: {
+          id: 'task-3',
+          title: 'Check tank',
+          priority: 'low',
+          dueDate: '2026-07-26',
+          assignedUserId: 'outsider',
+        },
       }),
     });
 

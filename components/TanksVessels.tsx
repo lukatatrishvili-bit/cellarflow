@@ -57,7 +57,10 @@ export default function TanksVessels({
   const t = translations[lang];
   const ka = lang === 'ka';
   const { success, error, info } = useToast();
-  const lText = (obj: Partial<Record<Language, string>>, fallback: string): string => {
+  const lText = (
+    obj: Partial<Record<'en' | 'ka' | 'it' | 'fr' | 'de', string>>,
+    fallback: string,
+  ): string => {
     return obj[lang] || fallback;
   };
 

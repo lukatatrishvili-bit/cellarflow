@@ -2,6 +2,7 @@ name: Scheduled Operations
 
 on:
   schedule:
+    - cron: '23 3 * * *'
     - cron: '17 4 * * 1'
   workflow_dispatch:
 
@@ -16,6 +17,7 @@ concurrency:
 jobs:
   dependency_audit:
     name: Audit production dependencies
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 4 * * 1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -36,6 +38,7 @@ jobs:
 
   production_schema_drift:
     name: Check production migration drift
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 4 * * 1'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -120,5 +123,124 @@ jobs:
             --tasks 1 \
             --max-retries 0 \
             --task-timeout 10m \
+            --execute-now \
+            --wait
+
+          gcloud run jobs deploy "${SERVICE}-projection-check" \
+            --image "$IMAGE_URI" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command npm \
+            --args "run,db:projection-check" \
+            --set-secrets "DATABASE_URL=cellarflow-database-url:latest" \
+            --set-cloudsql-instances "$CLOUDSQL_INSTANCE" \
+            --labels "managed-by=github-actions,operation=projection-check" \
+            --tasks 1 \
+            --max-retries 0 \
+            --task-timeout 10m \
+            --execute-now \
+            --wait
+
+  billing_renewals:
+    name: Process due billing renewals
+    if: >-
+      vars.BILLING_ENABLED == 'true'
+      && (github.event_name == 'workflow_dispatch' || github.event.schedule == '23 3 * * *')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      HAS_WIF: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && secrets.GCP_SERVICE_ACCOUNT != '' }}
+      HAS_SA_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+      CLOUDSQL_INSTANCE: ${{ vars.GCP_CLOUDSQL_INSTANCE }}
+      TBC_API_BASE_URL: ${{ vars.TBC_API_BASE_URL || 'https://api.tbcbank.ge' }}
+      TBC_RECURRING_ENABLED: ${{ vars.TBC_RECURRING_ENABLED || 'false' }}
+    steps:
+      - name: Require billing job configuration
+        run: |
+          set -euo pipefail
+          for VARIABLE_NAME in PROJECT_ID REGION SERVICE CLOUDSQL_INSTANCE; do
+            if [ -z "${!VARIABLE_NAME}" ]; then
+              echo "Required billing-job repository configuration is missing: $VARIABLE_NAME."
+              exit 1
+            fi
+          done
+          if [ "$TBC_RECURRING_ENABLED" != "true" ]; then
+            echo "TBC_RECURRING_ENABLED must be true before the renewal job can run."
+            exit 1
+          fi
+
+          IFS=':' read -r SQL_PROJECT SQL_REGION SQL_INSTANCE SQL_EXTRA <<< "$CLOUDSQL_INSTANCE"
+          if [ -z "$SQL_INSTANCE" ] || [ -n "${SQL_EXTRA:-}" ] \
+            || [ "$SQL_PROJECT" != "$PROJECT_ID" ] || [ "$SQL_REGION" != "$REGION" ]; then
+            echo "GCP_CLOUDSQL_INSTANCE must match PROJECT_ID:REGION:INSTANCE."
+            exit 1
+          fi
+
+      - name: Authenticate with Workload Identity
+        if: env.HAS_WIF == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Authenticate with service account JSON
+        if: env.HAS_WIF != 'true' && env.HAS_SA_KEY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Require Google Cloud authentication
+        if: env.HAS_WIF != 'true' && env.HAS_SA_KEY != 'true'
+        run: |
+          echo "Configure Workload Identity secrets or GCP_SA_KEY."
+          exit 1
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Run idempotent renewals from the deployed image
+        run: |
+          set -euo pipefail
+          LATEST_REVISION="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.latestReadyRevisionName)')"
+          IMAGE_URI="$(gcloud run revisions describe "$LATEST_REVISION" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(spec.containers[0].image)')"
+          RUNTIME_SERVICE_ACCOUNT="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(spec.template.spec.serviceAccountName)')"
+          if [ -z "$LATEST_REVISION" ] || [ -z "$IMAGE_URI" ] || [ -z "$RUNTIME_SERVICE_ACCOUNT" ]; then
+            echo "Could not resolve the deployed revision, image, or runtime service account."
+            exit 1
+          fi
+
+          gcloud run jobs deploy "${SERVICE}-billing-renewals" \
+            --image "$IMAGE_URI" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command npm \
+            --args "run,billing:renewals" \
+            --set-secrets "SESSION_SECRET=cellarflow-session-secret:latest" \
+            --set-secrets "DATABASE_URL=cellarflow-database-url:latest" \
+            --set-secrets "TBC_API_KEY=cellarflow-tbc-api-key:latest" \
+            --set-secrets "TBC_CLIENT_ID=cellarflow-tbc-client-id:latest" \
+            --set-secrets "TBC_CLIENT_SECRET=cellarflow-tbc-client-secret:latest" \
+            --set-cloudsql-instances "$CLOUDSQL_INSTANCE" \
+            --set-env-vars "NODE_ENV=production,TBC_API_BASE_URL=$TBC_API_BASE_URL,TBC_RECURRING_ENABLED=true" \
+            --labels "managed-by=github-actions,operation=billing-renewals" \
+            --tasks 1 \
+            --max-retries 1 \
+            --task-timeout 15m \
             --execute-now \
             --wait

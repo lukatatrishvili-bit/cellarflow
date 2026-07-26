@@ -540,6 +540,8 @@ describe('database persistence', () => {
       subscriptionRequest: readableModel(),
       subscriptionAudit: readableModel(),
       annualProductionUsage: readableModel(),
+      vessel: readableModel(),
+      wineLot: readableModel(),
     };
     const dbModule = await loadDbModuleWithMockPrisma(dbPath, prisma);
 
@@ -556,6 +558,7 @@ describe('database persistence', () => {
         loginAttemptStoreRead: true,
         securityAuditStoreRead: true,
         billingStorageRead: true,
+        relationalProjectionRead: true,
       },
       errors: [],
     });

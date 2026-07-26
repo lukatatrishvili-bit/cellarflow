@@ -15,7 +15,7 @@ import adminRouter, { seedTestUserHandler } from './server/routes/admin';
 import winemakerRouter from './server/routes/winemaker';
 import billingRouter from './server/routes/billing';
 import terroirPulseRouter from './server/routes/terroirPulse';
-import notificationsRouter from './server/routes/notifications';
+import notificationsRouter, { whatsappWebhookRouter } from './server/routes/notifications';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { demoAccountConfig } from './server/config';
 import { getServiceReadiness } from './server/readiness';
@@ -33,8 +33,23 @@ app.disable('x-powered-by'); // Don't advertise the framework/version.
 // If the platform adds more proxy hops, raise this to match the hop count.
 app.set('trust proxy', 1);
 app.use(securityHeaders());
+// Meta signs the exact webhook bytes. Mount this narrow raw-body route before
+// the general JSON parser so signature verification cannot be affected by
+// parsing, whitespace, or key-order normalization.
+app.use(
+  '/api/notifications/whatsapp/webhook',
+  express.raw({ type: 'application/json', limit: '256kb' }),
+  whatsappWebhookRouter,
+);
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+
+// Browser-release fixtures are available only in an explicitly isolated,
+// non-production process. The module is not even loaded by production.
+if (process.env.NODE_ENV !== 'production' && process.env.E2E_TEST_MODE === 'true') {
+  const { default: e2eFixturesRouter } = await import('./server/e2eFixtures');
+  app.use('/api/e2e', e2eFixturesRouter);
+}
 
 // Mount routes
 app.use('/api/auth', authRouter);

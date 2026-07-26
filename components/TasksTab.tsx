@@ -3,6 +3,7 @@ import { ClipboardList, CheckCircle2, MessageCircle, Trash, UserRound } from 'lu
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Task, TaskAssignmentInput } from '../lib/wineryState';
+import { useFormDraft } from '../hooks/useFormDraft';
 
 interface TaskTeamMember {
   username: string;
@@ -10,6 +11,24 @@ interface TaskTeamMember {
   role: string;
   language: 'en' | 'ka';
   whatsappReady: boolean;
+}
+
+interface TaskFormDraft {
+  title: string;
+  priority: 'high' | 'medium' | 'low';
+  dueDate: string;
+  description: string;
+  assignedUserId: string;
+  notifyWhatsApp: boolean;
+}
+
+function taskDraftIsMeaningful(draft: TaskFormDraft): boolean {
+  return Boolean(
+    draft.title.trim()
+    || draft.description.trim()
+    || draft.dueDate
+    || draft.priority !== 'medium',
+  );
 }
 
 interface TasksTabProps {
@@ -36,6 +55,7 @@ interface TasksTabProps {
   setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
   prefilledTaskDesc?: string;
   setPrefilledTaskDesc?: (desc: string) => void;
+  focusTaskId?: string;
   canCreateTask?: boolean;
   canUpdateTask?: boolean;
   canDeleteTask?: boolean;
@@ -64,6 +84,7 @@ export default function TasksTab({
   setPrefilledTaskPriority = () => {},
   prefilledTaskDesc = '',
   setPrefilledTaskDesc = () => {},
+  focusTaskId,
   canCreateTask = true,
   canUpdateTask = true,
   canDeleteTask = true
@@ -72,11 +93,55 @@ export default function TasksTab({
   const isKa = lang === 'ka';
   const [members, setMembers] = React.useState<TaskTeamMember[]>([]);
   const [assignedUserId, setAssignedUserId] = React.useState('');
+  const [dueDate, setDueDate] = React.useState('');
   const [whatsappConfigured, setWhatsAppConfigured] = React.useState(false);
   const [notifyWhatsApp, setNotifyWhatsApp] = React.useState(false);
   const [loadingRecipients, setLoadingRecipients] = React.useState(true);
+  const [sendingWhatsAppTaskIds, setSendingWhatsAppTaskIds] = React.useState<Set<string>>(new Set());
   const selectedMember = members.find(member => member.username === assignedUserId);
   const canSendWhatsApp = Boolean(whatsappConfigured && selectedMember?.whatsappReady);
+  const taskDraft = React.useMemo<TaskFormDraft>(() => ({
+    title: prefilledTaskTitle,
+    priority: prefilledTaskPriority,
+    dueDate,
+    description: prefilledTaskDesc,
+    assignedUserId,
+    notifyWhatsApp,
+  }), [
+    assignedUserId,
+    dueDate,
+    notifyWhatsApp,
+    prefilledTaskDesc,
+    prefilledTaskPriority,
+    prefilledTaskTitle,
+  ]);
+  const restoreTaskDraft = React.useCallback((draft: TaskFormDraft) => {
+    setPrefilledTaskTitle(draft.title);
+    setPrefilledTaskPriority(draft.priority);
+    setDueDate(draft.dueDate);
+    setPrefilledTaskDesc(draft.description);
+    setAssignedUserId(draft.assignedUserId);
+    setNotifyWhatsApp(draft.notifyWhatsApp);
+  }, [
+    setPrefilledTaskDesc,
+    setPrefilledTaskPriority,
+    setPrefilledTaskTitle,
+  ]);
+  const {
+    restored: taskDraftRestored,
+    clear: clearTaskDraft,
+  } = useFormDraft({
+    formId: 'task-create',
+    userId: currentUsername,
+    value: taskDraft,
+    isMeaningful: taskDraftIsMeaningful,
+    onRestore: restoreTaskDraft,
+  });
+  const whatsappTaskKey = tasks
+    .filter(task => task.whatsappNotification)
+    .map(task => task.id)
+    .sort()
+    .join('\u0000');
 
   React.useEffect(() => {
     let active = true;
@@ -108,6 +173,114 @@ export default function TasksTab({
     setNotifyWhatsApp(canSendWhatsApp);
   }, [assignedUserId, canSendWhatsApp]);
 
+  React.useEffect(() => {
+    if (!focusTaskId) return;
+    const taskElement = document.getElementById(`task-${focusTaskId}`);
+    taskElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    taskElement?.focus({ preventScroll: true });
+  }, [focusTaskId, tasks]);
+
+  React.useEffect(() => {
+    const taskIds = whatsappTaskKey ? whatsappTaskKey.split('\u0000') : [];
+    if (taskIds.length === 0 || !onUpdateTaskWhatsAppNotification) return;
+    let active = true;
+
+    const refresh = async () => {
+      const response = await fetch('/api/notifications/whatsapp/task-statuses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskIds }),
+      });
+      if (!response.ok || !active) return;
+      const payload = await response.json().catch(() => ({}));
+      const deliveries = Array.isArray(payload.deliveries) ? payload.deliveries : [];
+      deliveries.forEach((delivery: any) => {
+        const current = tasks.find(task => task.id === delivery.taskId)?.whatsappNotification;
+        const status = ['sending', 'accepted', 'sent', 'delivered', 'read', 'failed'].includes(delivery.status)
+          ? delivery.status as NonNullable<Task['whatsappNotification']>['status']
+          : null;
+        if (!status || !delivery.updatedAt
+          || (current?.status === status
+            && current?.messageId === delivery.messageId
+            && current?.error === delivery.error
+            && current?.updatedAt === delivery.updatedAt)) return;
+        onUpdateTaskWhatsAppNotification(delivery.taskId, {
+          status,
+          ...(typeof delivery.messageId === 'string' ? { messageId: delivery.messageId } : {}),
+          language: delivery.language === 'ka' ? 'ka' : 'en',
+          updatedAt: delivery.updatedAt,
+          ...(typeof delivery.error === 'string' ? { error: delivery.error } : {}),
+        });
+      });
+    };
+
+    void refresh().catch(() => undefined);
+    const interval = window.setInterval(() => void refresh().catch(() => undefined), 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [onUpdateTaskWhatsAppNotification, tasks, whatsappTaskKey]);
+
+  const sendTaskWhatsApp = async (task: Task, assigneeUsername: string, isRetry = false) => {
+    if (!assigneeUsername || sendingWhatsAppTaskIds.has(task.id)) return;
+    setSendingWhatsAppTaskIds(current => new Set(current).add(task.id));
+    onUpdateTaskWhatsAppNotification?.(task.id, {
+      status: 'sending',
+      ...(task.whatsappNotification?.messageId ? { messageId: task.whatsappNotification.messageId } : {}),
+      language: task.whatsappNotification?.language,
+      updatedAt: new Date().toISOString(),
+    });
+    try {
+      const response = await fetch('/api/notifications/whatsapp/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assigneeUsername,
+          task: {
+            id: task.id,
+            title: task.title,
+            priority: task.priority,
+            dueDate: task.dueDate,
+            description: task.description,
+            assignedUserId: assigneeUsername,
+          },
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'WhatsApp notification failed.');
+      const status = ['sending', 'accepted', 'sent', 'delivered', 'read', 'failed'].includes(payload.status)
+        ? payload.status as NonNullable<Task['whatsappNotification']>['status']
+        : 'accepted';
+      onUpdateTaskWhatsAppNotification?.(task.id, {
+        status,
+        ...(typeof payload.messageId === 'string' ? { messageId: payload.messageId } : {}),
+        language: payload.language === 'ka' ? 'ka' : 'en',
+        updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : new Date().toISOString(),
+        ...(typeof payload.error === 'string' ? { error: payload.error } : {}),
+      });
+      setToastMessage?.(isKa
+        ? (isRetry ? 'WhatsApp შეტყობინება ხელახლა გაიგზავნა.' : 'დავალება დაემატა და WhatsApp შეტყობინება მიღებულია.')
+        : (isRetry ? 'WhatsApp notification retried.' : 'Task added and WhatsApp notification accepted.'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'WhatsApp notification failed.';
+      onUpdateTaskWhatsAppNotification?.(task.id, {
+        status: 'failed',
+        error: message.slice(0, 300),
+        updatedAt: new Date().toISOString(),
+      });
+      setToastMessage?.(isKa
+        ? `${isRetry ? 'WhatsApp შეტყობინება' : 'დავალება დაემატა, მაგრამ WhatsApp შეტყობინება'} ვერ გაიგზავნა: ${message}`
+        : `${isRetry ? 'WhatsApp notification' : 'Task added, but WhatsApp notification'} failed: ${message}`);
+    } finally {
+      setSendingWhatsAppTaskIds(current => {
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!canCreateTask) return;
@@ -115,7 +288,6 @@ export default function TasksTab({
     const formData = new FormData(form);
     const title = formData.get('title') as string;
     const priority = formData.get('priority') as 'high' | 'medium' | 'low';
-    const dueDate = formData.get('dueDate') as string;
     const description = formData.get('description') as string;
     if (title.trim()) {
       const createdTask = onAddNewTask(title, priority, dueDate, description, {
@@ -124,47 +296,16 @@ export default function TasksTab({
         notifyWhatsApp: notifyWhatsApp && canSendWhatsApp,
       });
       if (createdTask && notifyWhatsApp && canSendWhatsApp && selectedMember) {
-        void fetch('/api/notifications/whatsapp/tasks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            assigneeUsername: selectedMember.username,
-            task: {
-              id: createdTask.id,
-              title: createdTask.title,
-              priority: createdTask.priority,
-              dueDate: createdTask.dueDate,
-              description: createdTask.description,
-            },
-          }),
-        }).then(async response => {
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(payload.error || 'WhatsApp notification failed.');
-          onUpdateTaskWhatsAppNotification?.(createdTask.id, {
-            status: 'accepted',
-            messageId: typeof payload.messageId === 'string' ? payload.messageId : undefined,
-            language: payload.language === 'ka' ? 'ka' : 'en',
-            updatedAt: new Date().toISOString(),
-          });
-          setToastMessage?.(isKa
-            ? 'დავალება დაემატა და WhatsApp შეტყობინება გაიგზავნა.'
-            : 'Task added and WhatsApp notification accepted.');
-        }).catch(error => {
-          const message = error instanceof Error ? error.message : 'WhatsApp notification failed.';
-          onUpdateTaskWhatsAppNotification?.(createdTask.id, {
-            status: 'failed',
-            error: message.slice(0, 300),
-            updatedAt: new Date().toISOString(),
-          });
-          setToastMessage?.(isKa
-            ? `დავალება დაემატა, მაგრამ WhatsApp შეტყობინება ვერ გაიგზავნა: ${message}`
-            : `Task added, but WhatsApp notification failed: ${message}`);
-        });
+        void sendTaskWhatsApp(createdTask, selectedMember.username);
       }
-      form.reset();
-      setPrefilledTaskTitle('');
-      setPrefilledTaskPriority('medium');
-      setPrefilledTaskDesc('');
+      if (createdTask) {
+        clearTaskDraft();
+        form.reset();
+        setPrefilledTaskTitle('');
+        setPrefilledTaskPriority('medium');
+        setDueDate('');
+        setPrefilledTaskDesc('');
+      }
     }
   };
 
@@ -205,10 +346,16 @@ export default function TasksTab({
         {canCreateTask && (
           <div className="lg:col-span-1 bg-white border border-[#e8dfd5] p-5 rounded-xl h-fit shadow-xs space-y-4">
             <h4 className="font-serif font-bold text-sm text-[#4e0e15] border-b border-stone-100 pb-2">{isKa ? 'მარნის დავალების დაგეგმვა' : 'Schedule Cellar Task'}</h4>
+            {taskDraftRestored && (
+              <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-900">
+                {isKa ? 'შენახული დავალების პროექტი აღდგა.' : 'Your saved task draft was restored.'}
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-3.5 text-xs text-stone-600 font-sans">
               <div>
-                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'დავალების სათაური *' : 'Task Title *'}</label>
+                <label htmlFor="task-title" className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'დავალების სათაური *' : 'Task Title *'}</label>
                 <input
+                  id="task-title"
                   type="text"
                   name="title"
                   value={prefilledTaskTitle}
@@ -222,8 +369,9 @@ export default function TasksTab({
               <div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'პრიორიტეტი' : 'Priority'}</label>
+                    <label htmlFor="task-priority" className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'პრიორიტეტი' : 'Priority'}</label>
                     <select
+                      id="task-priority"
                       name="priority"
                       value={prefilledTaskPriority}
                       onChange={(e) => setPrefilledTaskPriority(e.target.value as any)}
@@ -235,10 +383,13 @@ export default function TasksTab({
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'ვადა' : 'Due Date'}</label>
+                    <label htmlFor="task-due-date" className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'ვადა' : 'Due Date'}</label>
                     <input
+                      id="task-due-date"
                       type="date"
                       name="dueDate"
+                      value={dueDate}
+                      onChange={(event) => setDueDate(event.target.value)}
                       className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2 py-1 text-stone-700 text-xs"
                     />
                   </div>
@@ -298,8 +449,9 @@ export default function TasksTab({
               </div>
 
               <div>
-                <label className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'აღწერა / დეტალები' : 'Description / Details'}</label>
+                <label htmlFor="task-description" className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'აღწერა / დეტალები' : 'Description / Details'}</label>
                 <textarea
+                  id="task-description"
                   name="description"
                   value={prefilledTaskDesc}
                   onChange={(e) => setPrefilledTaskDesc(e.target.value)}
@@ -335,7 +487,14 @@ export default function TasksTab({
 
             <div className="space-y-3">
               {tasks.filter(t => t.status === 'pending').map((task) => (
-                <div key={task.id} className="p-4 border border-stone-100 rounded-xl hover:bg-stone-50/40 transition-all flex justify-between items-start gap-3">
+                <div
+                  key={task.id}
+                  id={`task-${task.id}`}
+                  tabIndex={-1}
+                  className={`p-4 border rounded-xl hover:bg-stone-50/40 transition-all flex justify-between items-start gap-3 focus:outline-none focus:ring-2 focus:ring-[#801323] ${
+                    focusTaskId === task.id ? 'border-[#801323] bg-rose-50/40' : 'border-stone-100'
+                  }`}
+                >
                   <div className="flex gap-3 items-start">
                     <input
                       type="checkbox"
@@ -364,7 +523,7 @@ export default function TasksTab({
                           <span
                             title={task.whatsappNotification.error}
                             className={`inline-flex items-center gap-1 ${
-                              task.whatsappNotification.status === 'accepted'
+                              ['accepted', 'sent', 'delivered', 'read'].includes(task.whatsappNotification.status)
                                 ? 'text-emerald-700'
                                 : task.whatsappNotification.status === 'failed'
                                   ? 'text-rose-600'
@@ -372,13 +531,32 @@ export default function TasksTab({
                             }`}
                           >
                             <MessageCircle className="h-3 w-3" aria-hidden="true" />
-                            {task.whatsappNotification.status === 'accepted'
-                              ? (isKa ? 'WhatsApp მიღებულია' : 'WhatsApp accepted')
+                            {task.whatsappNotification.status === 'read'
+                              ? (isKa ? 'WhatsApp წაკითხულია' : 'WhatsApp read')
+                              : task.whatsappNotification.status === 'delivered'
+                                ? (isKa ? 'WhatsApp მიწოდებულია' : 'WhatsApp delivered')
+                                : task.whatsappNotification.status === 'sent'
+                                  ? (isKa ? 'WhatsApp გაგზავნილია' : 'WhatsApp sent')
+                                  : task.whatsappNotification.status === 'accepted'
+                                    ? (isKa ? 'WhatsApp მიღებულია' : 'WhatsApp accepted')
                               : task.whatsappNotification.status === 'failed'
                                 ? (isKa ? 'WhatsApp ვერ გაიგზავნა' : 'WhatsApp failed')
                                 : (isKa ? 'WhatsApp იგზავნება' : 'WhatsApp sending')}
                           </span>
                         )}
+                        {task.whatsappNotification?.status === 'failed'
+                          && task.assignedUserId
+                          && whatsappConfigured
+                          && canCreateTask && (
+                            <button
+                              type="button"
+                              onClick={() => void sendTaskWhatsApp(task, task.assignedUserId!, true)}
+                              disabled={sendingWhatsAppTaskIds.has(task.id)}
+                              className="rounded-md border border-rose-200 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-wait disabled:opacity-50"
+                            >
+                              {isKa ? 'ხელახლა გაგზავნა' : 'Retry WhatsApp'}
+                            </button>
+                          )}
                       </div>
                     </div>
                   </div>

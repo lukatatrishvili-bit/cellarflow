@@ -44,7 +44,12 @@ export default defineConfig({
     },
   },
   test: {
-    exclude: [...configDefaults.exclude, '**/.claude/worktrees/**', 'tests/postgres/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      '**/.claude/worktrees/**',
+      'tests/postgres/**',
+      'e2e/**',
+    ],
   },
   server: {
     port: 3000,

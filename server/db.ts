@@ -10,6 +10,7 @@ import {
   type TerroirSharingSettings,
 } from '../lib/terroirPulse';
 import { hashToken } from './emailVerification';
+import { syncVesselLotProjection } from './relationalProjection';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -216,6 +217,7 @@ async function loadLocalOrGcsDB(): Promise<void> {
     memberships: [],
     invitations: [],
     securityAuditEvents: [],
+    whatsappDeliveries: [],
     orgData: {}
   };
 }
@@ -268,6 +270,8 @@ export interface DBState {
   memberships: any[];
   invitations: any[];
   securityAuditEvents: any[];
+  /** Local/GCS fallback for durable WhatsApp delivery state when PostgreSQL is unavailable. */
+  whatsappDeliveries: any[];
   orgData: Record<string, UserDataState>;
 }
 
@@ -408,6 +412,7 @@ function normalizeDbState(data: Partial<DBState> & { userData?: Record<string, P
       })
       : [],
     securityAuditEvents: Array.isArray(data?.securityAuditEvents) ? data.securityAuditEvents : [],
+    whatsappDeliveries: Array.isArray(data?.whatsappDeliveries) ? data.whatsappDeliveries : [],
     orgData: {},
   };
 
@@ -455,6 +460,7 @@ function serializeDbState(data: DBState = getDB()): string {
     memberships: data.memberships || [],
     invitations: data.invitations || [],
     securityAuditEvents: data.securityAuditEvents || [],
+    whatsappDeliveries: data.whatsappDeliveries || [],
     orgData: data.orgData || {},
   };
   return JSON.stringify(plain, null, 2);
@@ -602,6 +608,7 @@ function dbFromPostgresRows(rows: {
       createdAt: i.createdAt ? new Date(i.createdAt).toISOString() : undefined,
     })),
     securityAuditEvents: [],
+    whatsappDeliveries: [],
     orgData: {},
   };
 
@@ -645,6 +652,7 @@ export function getDB(): DBState {
       memberships: [],
       invitations: [],
       securityAuditEvents: [],
+      whatsappDeliveries: [],
       orgData: {}
     };
   }
@@ -1126,6 +1134,7 @@ export interface PostgresReadinessProbe {
     loginAttemptStoreRead: boolean;
     securityAuditStoreRead: boolean;
     billingStorageRead?: boolean;
+    relationalProjectionRead: boolean;
   };
   errors: string[];
 }
@@ -1170,6 +1179,7 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
       loginAttemptStoreRead: false,
       securityAuditStoreRead: false,
       billingStorageRead: false,
+      relationalProjectionRead: false,
     },
     errors: [],
   };
@@ -1203,6 +1213,11 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
     probePrismaModelRead((prisma as any).annualProductionUsage, 'AnnualProductionUsage', probe.errors),
   ]);
   probe.checks.billingStorageRead = billingChecks.every(Boolean);
+  const projectionChecks = await Promise.all([
+    probePrismaModelRead((prisma as any).vessel, 'Vessel', probe.errors),
+    probePrismaModelRead((prisma as any).wineLot, 'WineLot', probe.errors),
+  ]);
+  probe.checks.relationalProjectionRead = projectionChecks.every(Boolean);
   probe.ok = Object.values(probe.checks).every(Boolean) && probe.errors.length === 0;
   return probe;
 }
@@ -1340,6 +1355,7 @@ async function persistFullDbToPostgres(
             updatedBy: source,
           },
         });
+        await syncVesselLotProjection(tx, orgId, state);
       }
     });
 
@@ -1397,6 +1413,7 @@ export function getDbRuntimeStatus() {
     memberships: [],
     invitations: [],
     securityAuditEvents: [],
+    whatsappDeliveries: [],
     orgData: {}
   };
   const serializedBytes = Buffer.byteLength(JSON.stringify(db), 'utf8');
@@ -1612,121 +1629,8 @@ export async function saveOrganizationData(
           },
         });
       }
+      await syncVesselLotProjection(tx, orgId, db.orgData[orgId]);
     });
-
-    // Background double-writing of vessels and lots (safe, non-blocking)
-    void (async () => {
-      try {
-        const normalizedData = db.orgData[orgId];
-        // 1. Double-write vessels
-        for (const vessel of normalizedData.vessels || []) {
-          if (!vessel.id) continue;
-          const qvevriFields = {
-            qvevriNumber: vessel.qvevriNumber || null,
-            maraniLocation: vessel.maraniLocation || null,
-            buried: vessel.buried !== undefined && vessel.buried !== null ? Boolean(vessel.buried) : null,
-            lastWashingDate: vessel.lastWashingDate || null,
-            limeWashStatus: vessel.limeWashStatus || null,
-            waxingStatus: vessel.waxingStatus || null,
-            inspectionNotes: vessel.inspectionNotes || null,
-            fillingDate: vessel.fillingDate || null,
-            grapeVariety: vessel.grapeVariety || null,
-            chachaPercentage: vessel.chachaPercentage !== undefined && vessel.chachaPercentage !== null ? Number(vessel.chachaPercentage) : null,
-            stemInclusion: vessel.stemInclusion !== undefined && vessel.stemInclusion !== null ? Boolean(vessel.stemInclusion) : null,
-            mixingFrequency: vessel.mixingFrequency || null,
-            dailyMixingLog: jsonForPrisma(Array.isArray(vessel.dailyMixingLog) ? vessel.dailyMixingLog : []),
-            sealingDate: vessel.sealingDate || null,
-            openingDate: vessel.openingDate || null,
-            skinContactDurationDays: vessel.skinContactDurationDays !== undefined && vessel.skinContactDurationDays !== null ? Number(vessel.skinContactDurationDays) : null,
-            firstRackingDate: vessel.firstRackingDate || null,
-            sanitationHistory: jsonForPrisma(Array.isArray(vessel.sanitationHistory) ? vessel.sanitationHistory : []),
-          };
-          await prisma.vessel.upsert({
-            where: { id: vessel.id },
-            update: {
-              type: vessel.type || '',
-              shape: vessel.shape || '',
-              capacity: Number(vessel.capacity) || 0,
-              currentVolume: Number(vessel.currentVolume) || 0,
-              assignedLotId: vessel.assignedLotId || null,
-              cleaningStatus: vessel.cleaningStatus || 'clean',
-              lastCleaned: vessel.lastCleaned || '',
-              temperature: Number(vessel.temperature) || 0,
-              coolingJacketActive: Boolean(vessel.coolingJacketActive),
-              targetTemperature: vessel.targetTemperature !== undefined && vessel.targetTemperature !== null ? Number(vessel.targetTemperature) : null,
-              lastOperation: vessel.lastOperation || '',
-              locationDetails: vessel.locationDetails || null,
-              xGrid: vessel.xGrid !== undefined && vessel.xGrid !== null ? Number(vessel.xGrid) : null,
-              yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
-              lastSealedDate: vessel.lastSealedDate || null,
-              soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
-              ...qvevriFields,
-            },
-            create: {
-              id: vessel.id,
-              organizationId: orgId,
-              type: vessel.type || '',
-              shape: vessel.shape || '',
-              capacity: Number(vessel.capacity) || 0,
-              currentVolume: Number(vessel.currentVolume) || 0,
-              assignedLotId: vessel.assignedLotId || null,
-              cleaningStatus: vessel.cleaningStatus || 'clean',
-              lastCleaned: vessel.lastCleaned || '',
-              temperature: Number(vessel.temperature) || 0,
-              coolingJacketActive: Boolean(vessel.coolingJacketActive),
-              targetTemperature: vessel.targetTemperature !== undefined && vessel.targetTemperature !== null ? Number(vessel.targetTemperature) : null,
-              lastOperation: vessel.lastOperation || '',
-              locationDetails: vessel.locationDetails || null,
-              xGrid: vessel.xGrid !== undefined && vessel.xGrid !== null ? Number(vessel.xGrid) : null,
-              yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
-              lastSealedDate: vessel.lastSealedDate || null,
-              soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
-              ...qvevriFields,
-            }
-          });
-        }
-
-        // 2. Double-write lots
-        for (const lot of normalizedData.lots || []) {
-          if (!lot.id) continue;
-          await prisma.wineLot.upsert({
-            where: { id: lot.id },
-            update: {
-              name: lot.name || '',
-              vintage: Number(lot.vintage) || 0,
-              variety: lot.variety || '',
-              vineyardBlock: lot.vineyardBlock || '',
-              region: lot.region || '',
-              initialVolume: Number(lot.initialVolume) || 0,
-              currentVolume: Number(lot.currentVolume) || 0,
-              wineClass: lot.wineClass || '',
-              stage: lot.stage || '',
-              createdAt: lot.createdAt || new Date().toISOString(),
-              history: lot.history || [],
-              sensoryProfile: lot.sensoryProfile || null,
-            },
-            create: {
-              id: lot.id,
-              organizationId: orgId,
-              name: lot.name || '',
-              vintage: Number(lot.vintage) || 0,
-              variety: lot.variety || '',
-              vineyardBlock: lot.vineyardBlock || '',
-              region: lot.region || '',
-              initialVolume: Number(lot.initialVolume) || 0,
-              currentVolume: Number(lot.currentVolume) || 0,
-              wineClass: lot.wineClass || '',
-              stage: lot.stage || '',
-              createdAt: lot.createdAt || new Date().toISOString(),
-              history: lot.history || [],
-              sensoryProfile: lot.sensoryProfile || null,
-            }
-          });
-        }
-      } catch (relationalErr) {
-        console.error('[db] background relational double-write failed:', relationalErr);
-      }
-    })();
 
     lastPostgresSaveAt = new Date().toISOString();
     lastPostgresSaveError = null;

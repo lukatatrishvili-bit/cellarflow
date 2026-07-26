@@ -282,23 +282,17 @@ export default function WeatherTab({
   setPrefilledTaskDesc,
   canCreateTask = true,
 }: WeatherTabProps) {
-  const currentLang = (lang === 'ka' || lang === 'it' || lang === 'fr' || lang === 'de') ? lang : 'en';
+  const currentLang = lang;
   const t = dict[currentLang];
 
   const scheduleSprayingLabel = {
     en: 'Schedule Spraying',
     ka: 'წამლობის დაგეგმვა',
-    it: 'Pianifica Irrorazione',
-    fr: 'Planifier la Pulvérisation',
-    de: 'Spritzen Planen'
   }[currentLang] || 'Schedule Spraying';
 
   const scheduleHarvestLabel = {
     en: 'Schedule Harvest',
     ka: 'კრეფის დაგეგმვა',
-    it: 'Pianifica Vendemmia',
-    fr: 'Planifier la Vendange',
-    de: 'Ernte Planen'
   }[currentLang] || 'Schedule Harvest';
 
   const [selectedBlockId, setSelectedBlockId] = useState<string>('');
@@ -613,7 +607,7 @@ export default function WeatherTab({
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
       const currentYear = today.getFullYear();
-      let end2026 = formatDate(twoDaysAgo);
+      const end2026 = formatDate(twoDaysAgo);
       let start2026 = `${currentYear}-04-01`;
       if (end2026 < start2026) {
         start2026 = `${currentYear}-01-01`;

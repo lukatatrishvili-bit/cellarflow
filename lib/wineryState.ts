@@ -315,7 +315,7 @@ export interface Task {
   status: 'pending' | 'completed';
   description: string;
   whatsappNotification?: {
-    status: 'sending' | 'accepted' | 'failed';
+    status: 'sending' | 'accepted' | 'sent' | 'delivered' | 'read' | 'failed';
     messageId?: string;
     language?: 'en' | 'ka';
     updatedAt: string;

@@ -1,0 +1,86 @@
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
+
+interface Fixture {
+  task: { id: string; title: string };
+  owner: { identifier: string; passphrase: string };
+  reader: { identifier: string; passphrase: string };
+}
+
+async function resetFixture(page: Page): Promise<Fixture> {
+  const response = await page.request.post('/api/e2e/reset');
+  expect(response.ok()).toBe(true);
+  return response.json() as Promise<Fixture>;
+}
+
+async function signIn(
+  page: Page,
+  credentials: { identifier: string; passphrase: string },
+): Promise<void> {
+  const identifier = page.locator('#auth-login-identifier');
+  const marketingSignIn = page.getByRole('link', { name: 'Sign in', exact: true }).first();
+  await expect(identifier.or(marketingSignIn)).toBeVisible();
+  if (!await identifier.isVisible()) {
+    await marketingSignIn.click();
+    await expect(identifier).toBeVisible();
+  }
+  await identifier.fill(credentials.identifier);
+  await page.locator('#auth-login-passcode').fill(credentials.passphrase);
+  await page.getByRole('button', { name: 'Enter workspace' }).click();
+  await expect(page.getByRole('button', { name: 'Log Out' })).toBeVisible();
+}
+
+test('owner signs in and reaches the operational overview', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto('/');
+  await signIn(page, fixture.owner);
+
+  await expect(page.getByRole('heading', { name: /Today at Release Gate Estate/ })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Module navigation' })).toBeVisible();
+
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa'])
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+});
+
+test('task deep link survives authentication and focuses the exact task', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto(`/tasks?task=${fixture.task.id}`);
+  await signIn(page, fixture.owner);
+
+  const task = page.locator(`#task-${fixture.task.id}`);
+  await expect(task).toBeVisible();
+  await expect(task).toContainText(fixture.task.title);
+  await expect(task).toBeFocused();
+});
+
+test('unfinished task draft survives a browser refresh', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto(`/tasks?task=${fixture.task.id}`);
+  await signIn(page, fixture.owner);
+
+  await page.getByRole('textbox', { name: 'Task Title *' }).fill('Rack the release-gate lot');
+  await page.getByRole('textbox', { name: 'Description / Details' }).fill('Retain this draft through refresh.');
+  await page.locator('input[name="dueDate"]').fill('2026-07-30');
+  await page.waitForTimeout(650);
+  await page.reload();
+
+  await expect(page.getByRole('status').filter({ hasText: 'Your saved task draft was restored.' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Task Title *' })).toHaveValue('Rack the release-gate lot');
+  await expect(page.getByRole('textbox', { name: 'Description / Details' })).toHaveValue('Retain this draft through refresh.');
+  await expect(page.locator('input[name="dueDate"]')).toHaveValue('2026-07-30');
+});
+
+test('read-only role can inspect a task without mutation controls', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto(`/tasks?task=${fixture.task.id}`);
+  await signIn(page, fixture.reader);
+
+  const task = page.locator(`#task-${fixture.task.id}`);
+  await expect(task).toBeVisible();
+  await expect(page.getByText('You can browse cellar tasks, but your role cannot create new tasks.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Assign Task Directive' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: `${fixture.task.title} cannot be updated by your role` })).toBeDisabled();
+  await expect(page.getByRole('button', { name: `Delete ${fixture.task.title}` })).toHaveCount(0);
+});

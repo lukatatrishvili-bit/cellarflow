@@ -36,7 +36,7 @@ jobs:
   verify:
     name: Release gates
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16-alpine
@@ -103,3 +103,9 @@ jobs:
 
       - name: Smoke-test production startup
         run: npm run test:production-smoke
+
+      - name: Install Chromium for release journeys
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Run browser release journeys
+        run: npm run test:e2e

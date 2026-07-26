@@ -34,6 +34,7 @@ import {
   submitCellarOperationReversalCommand,
   type CellarOperationCommandResponse,
 } from '../lib/commands/client';
+import { useFormDraft } from '../hooks/useFormDraft';
 import OperationMaterialsEditor, {
   materialDraftIssue,
   materialDraftsToUsages,
@@ -79,6 +80,7 @@ interface Props {
   costEntries?: CostEntry[];
   auditLogs?: MaraniOSAuditLog[];
   currentUserName: string;
+  currentUsername?: string;
   currency?: string;
   onAddOperation: (input: CellarOperationInput) => string;
   onUpdateLots?: (lots: WineLot[]) => void;
@@ -109,10 +111,24 @@ const OP_ICONS: Record<CellarOperationType, React.ComponentType<{ className?: st
   vessel_filling: Container, bottling: Package, cleaning: Sparkles, correction: Wrench, custom: Plus,
 };
 
+interface CellarOperationFormDraft {
+  type: CellarOperationType;
+  customLabel: string;
+  lotId: string;
+  vesselId: string;
+  vesselToId: string;
+  materialDrafts: MaterialUsageDraft[];
+  volumeAfter: string;
+  date: string;
+  operator: string;
+  notes: string;
+}
+
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 export default function CellarOperationsTab({
   lang, lots, vessels, inventory, ops, costEntries = [], auditLogs = [], currentUserName,
+  currentUsername = '',
   currency = 'GEL', onAddOperation, onUpdateLots, onUpdateVessels, onUpdateInventory,
   onUpdateOperations, onUpdateCostEntries, onUpdateAuditLogs,
   onApplyCellarOperationCommandResponse, setToastMessage,
@@ -147,6 +163,78 @@ export default function CellarOperationsTab({
 
   const meta = CELLAR_OPERATIONS.find(o => o.key === type)!;
   const lot = lots.find(l => l.id === lotId) || null;
+  const restoredInitialDraftRef = useRef(false);
+  const skipRestoredLotDefaultsRef = useRef(false);
+  const skipRestoredTypeDefaultsRef = useRef(false);
+  const operationDraft = useMemo<CellarOperationFormDraft>(() => ({
+    type,
+    customLabel,
+    lotId,
+    vesselId,
+    vesselToId,
+    materialDrafts,
+    volumeAfter,
+    date,
+    operator,
+    notes,
+  }), [
+    customLabel,
+    date,
+    lotId,
+    materialDrafts,
+    notes,
+    operator,
+    type,
+    vesselId,
+    vesselToId,
+    volumeAfter,
+  ]);
+  const restoreOperationDraft = React.useCallback((draft: CellarOperationFormDraft) => {
+    restoredInitialDraftRef.current = true;
+    skipRestoredLotDefaultsRef.current = true;
+    skipRestoredTypeDefaultsRef.current = true;
+    const restoredType = CELLAR_OPERATIONS.some(operation => operation.key === draft.type)
+      ? draft.type
+      : 'measurement';
+    setType(restoredType);
+    setCustomLabel(draft.customLabel || '');
+    setLotId(lots.some(item => item.id === draft.lotId) ? draft.lotId : '');
+    setVesselId(vessels.some(item => item.id === draft.vesselId) ? draft.vesselId : '');
+    setVesselToId(vessels.some(item => item.id === draft.vesselToId) ? draft.vesselToId : '');
+    setMaterialDrafts(Array.isArray(draft.materialDrafts) ? draft.materialDrafts : []);
+    setVolumeAfter(draft.volumeAfter || '');
+    setDate(/^\d{4}-\d{2}-\d{2}$/.test(draft.date) ? draft.date : today);
+    setOperator(draft.operator || '');
+    setNotes(draft.notes || '');
+  }, [lots, today, vessels]);
+  const operationDraftIsMeaningful = React.useCallback((draft: CellarOperationFormDraft) => {
+    const defaultLot = activeLots[0] || null;
+    const defaultVessel = defaultLot
+      ? vessels.find(item => item.assignedLotId === defaultLot.id)?.id || ''
+      : '';
+    return Boolean(
+      draft.type !== 'measurement'
+      || draft.customLabel.trim()
+      || (draft.lotId && draft.lotId !== defaultLot?.id)
+      || (draft.vesselId && draft.vesselId !== defaultVessel)
+      || draft.vesselToId
+      || draft.materialDrafts.length
+      || draft.volumeAfter
+      || draft.date !== today
+      || draft.operator.trim()
+      || draft.notes.trim(),
+    );
+  }, [activeLots, today, vessels]);
+  const {
+    restored: operationDraftRestored,
+    clear: clearOperationDraft,
+  } = useFormDraft({
+    formId: 'cellar-operation',
+    userId: currentUsername,
+    value: operationDraft,
+    isMeaningful: operationDraftIsMeaningful,
+    onRestore: restoreOperationDraft,
+  });
   const restoreCapturedOperation = (input: CellarOperationInput) => {
     setType(input.type);
     setCustomLabel(input.customLabel || '');
@@ -191,6 +279,7 @@ export default function CellarOperationsTab({
   // Default the batch to the first active lot.
   useEffect(() => {
     if (pendingCellarOperationCommandIntent()) return;
+    if (restoredInitialDraftRef.current) return;
     if (!lotId && activeLots.length) setLotId(activeLots[0].id);
   }, [activeLots, lotId]);
 
@@ -213,6 +302,10 @@ export default function CellarOperationsTab({
   // When the batch changes, default the vessel to the one holding it and prefill volume.
   useEffect(() => {
     if (pendingCellarOperationCommandIntent()) return;
+    if (skipRestoredLotDefaultsRef.current) {
+      skipRestoredLotDefaultsRef.current = false;
+      return;
+    }
     if (!lot) return;
     if (prefillGuard.current) {
       // A scanned vessel was just applied — don't overwrite it (the vessel may
@@ -228,6 +321,10 @@ export default function CellarOperationsTab({
   // When switching to a volume op, seed the "after" field with the current volume.
   useEffect(() => {
     if (pendingCellarOperationCommandIntent()) return;
+    if (skipRestoredTypeDefaultsRef.current) {
+      skipRestoredTypeDefaultsRef.current = false;
+      return;
+    }
     if (meta.affectsVolume && lot && !volumeAfter) setVolumeAfter(String(round1(lot.currentVolume)));
     if (!meta.affectsVolume) setVolumeAfter('');
     if (!meta.needsVesselTo) setVesselToId('');
@@ -247,11 +344,21 @@ export default function CellarOperationsTab({
   const canSubmit = canLogCellarOperation && !!lot && customOk && !overfill && !materialIssue
     && !pendingIntent && !pendingReversalIntent && !isSubmitting && !isReversing;
 
-  const resetSoft = () => { setMaterialDrafts([]); setNotes(''); setCustomLabel(''); };
+  const resetSoft = () => {
+    setType('measurement');
+    setCustomLabel('');
+    setMaterialDrafts([]);
+    setVesselToId('');
+    setVolumeAfter('');
+    setDate(today);
+    setOperator('');
+    setNotes('');
+  };
 
   const finishCommand = () => {
     setPendingIntent(null);
     setCommandError(null);
+    clearOperationDraft();
     resetSoft();
   };
 
@@ -533,6 +640,11 @@ export default function CellarOperationsTab({
             aria-busy={isSubmitting || isReversing}
             className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 disabled:opacity-70 dark:bg-stone-900 dark:border-stone-800"
           >
+          {operationDraftRestored && (
+            <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              {ka ? 'შენახული ოპერაციის პროექტი აღდგა.' : 'Your saved operation draft was restored.'}
+            </div>
+          )}
           {/* Operation type picker */}
           <div>
             <label className={labelCls}>{ka ? 'ოპერაციის ტიპი' : 'Operation type'}</label>

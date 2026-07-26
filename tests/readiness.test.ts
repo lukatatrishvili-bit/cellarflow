@@ -41,6 +41,7 @@ function postgresProbe(overrides: Partial<PostgresReadinessProbe> = {}): Postgre
       organizationStateRead: true,
       loginAttemptStoreRead: true,
       securityAuditStoreRead: true,
+      relationalProjectionRead: true,
     },
     errors: [],
     ...overrides,
@@ -167,6 +168,8 @@ describe('service readiness contract', () => {
         WHATSAPP_ACCESS_TOKEN: 'token',
         WHATSAPP_PHONE_NUMBER_ID: '123456789012345',
         WHATSAPP_GRAPH_API_VERSION: 'v26.0',
+        WHATSAPP_WEBHOOK_VERIFY_TOKEN: 'readiness-webhook-verify-token',
+        WHATSAPP_APP_SECRET: 'readiness-meta-app-secret',
       },
       checkedAt,
     );

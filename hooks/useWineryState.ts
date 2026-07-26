@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { Language } from '../lib/i18n';
+import { normalizeSupportedLanguage, type Language } from '../lib/language';
 import {
   SyncQueueManager,
   IndexedDBQueue,
@@ -260,7 +260,11 @@ export function useWineryState() {
     // by login, which adopts the account's saved language).
     try {
       const stored = typeof window !== 'undefined' ? localStorage.getItem('vinea_lang') : null;
-      if (stored === 'ka' || stored === 'en' || stored === 'it' || stored === 'fr' || stored === 'de') return stored;
+      if (stored) {
+        const supported = normalizeSupportedLanguage(stored);
+        if (supported !== stored) localStorage.setItem('vinea_lang', supported);
+        return supported;
+      }
     } catch { /* ignore */ }
     return 'en';
   });

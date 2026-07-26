@@ -22,6 +22,7 @@ function expectInOrder(source: string, entries: string[]): void {
 describe('release workflow contracts', () => {
   it('runs mandatory release gates for pull requests and main pushes', () => {
     const workflow = readWorkflow('ci.yml');
+    const viteConfig = readRootFile('vite.config.ts');
 
     expect(workflow).toMatch(/pull_request:\s*\n\s+branches: \[main\]/);
     expect(workflow).toMatch(/push:\s*\n\s+branches: \[main\]/);
@@ -39,7 +40,10 @@ describe('release workflow contracts', () => {
       'npm run build',
       'npm test -- tests/bundleBudget.test.ts',
       'npm run test:production-smoke',
+      'playwright install --with-deps chromium',
+      'npm run test:e2e',
     ]);
+    expect(viteConfig).toContain("'e2e/**'");
   });
 
   it('deploys the exact image digest that passed container smoke', () => {
@@ -72,6 +76,12 @@ describe('release workflow contracts', () => {
     expect(workflow).toContain('--retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS"');
     expect(workflow).toContain('--retain-backups-on-delete');
     expect(workflow).toContain('Cloud SQL project and region must match the deployment target.');
+    expect(workflow).toContain("WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}");
+    expect(workflow).toContain('WHATSAPP_WEBHOOK_VERIFY_TOKEN=cellarflow-whatsapp-webhook-verify-token:latest');
+    expect(workflow).toContain('WHATSAPP_APP_SECRET=cellarflow-whatsapp-app-secret:latest');
+    expect(workflow).toContain("BILLING_ENABLED: ${{ vars.BILLING_ENABLED || 'false' }}");
+    expect(workflow).toContain('TBC_CLIENT_SECRET=cellarflow-tbc-client-secret:latest');
+    expect(workflow).toContain('BILLING_CRON_SECRET=cellarflow-billing-cron-secret:latest');
     expectInOrder(workflow, [
       '"$SERVICE_URL/api/health"',
       '"$SERVICE_URL/api/ready"',
@@ -113,7 +123,38 @@ describe('release workflow contracts', () => {
       '--max-retries 0',
       '--execute-now',
       '--wait',
+      '--args "run,db:projection-check"',
     ]);
     expect(workflow).not.toContain('db:migrate:deploy');
+  });
+
+  it('runs an idempotent billing renewal job every day when billing is enabled', () => {
+    const workflow = readWorkflow('scheduled-operations.yml');
+    const script = readRootFile('scripts/processBillingRenewals.ts');
+
+    expect(workflow).toContain("cron: '23 3 * * *'");
+    expect(workflow).toContain("vars.BILLING_ENABLED == 'true'");
+    expect(workflow).toContain('TBC_RECURRING_ENABLED must be true');
+    expectInOrder(workflow, [
+      'status.latestReadyRevisionName',
+      'spec.containers[0].image',
+      '--args "run,billing:renewals"',
+      'SESSION_SECRET=cellarflow-session-secret:latest',
+      'DATABASE_URL=cellarflow-database-url:latest',
+      'TBC_API_KEY=cellarflow-tbc-api-key:latest',
+      'TBC_CLIENT_ID=cellarflow-tbc-client-id:latest',
+      'TBC_CLIENT_SECRET=cellarflow-tbc-client-secret:latest',
+      '--max-retries 1',
+      '--execute-now',
+      '--wait',
+    ]);
+    expect(script).toContain("process.env.NODE_ENV !== 'production'");
+    expect(script).toContain('provider.configured');
+    expect(script).toContain('provider.supportsRecurring');
+    expect(script).toContain('SESSION_SECRET is required');
+    expect(script).toContain('processDueRenewals(provider)');
+    expect(script).toContain("operation: 'billing-renewals'");
+    expect(script).not.toContain('organizationId');
+    expect(script).not.toContain('providerPaymentId');
   });
 });

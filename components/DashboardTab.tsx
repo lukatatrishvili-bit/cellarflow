@@ -116,9 +116,6 @@ interface DashboardMetric {
 const DATE_LOCALES: Record<Language, string> = {
   en: 'en-GB',
   ka: 'ka-GE',
-  it: 'it-IT',
-  fr: 'fr-FR',
-  de: 'de-DE',
 };
 
 const DEFAULT_MODULES = ['vazi', 'gvino'];

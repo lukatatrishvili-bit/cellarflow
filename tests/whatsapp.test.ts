@@ -1,9 +1,13 @@
+import crypto from 'crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildWhatsAppTaskTemplatePayload,
   normalizeWhatsAppPhone,
+  parseWhatsAppWebhookStatusEvents,
   sendWhatsAppTaskAssignment,
+  verifyWhatsAppWebhookSignature,
   whatsappConfigFromEnv,
+  whatsappWebhookConfigFromEnv,
   WhatsAppConfigurationError,
   WhatsAppDeliveryError,
   type WhatsAppCloudConfig,
@@ -29,6 +33,10 @@ describe('WhatsApp task notifications', () => {
   it('stays disabled when no Cloud API credentials are present and rejects partial configuration', () => {
     expect(whatsappConfigFromEnv({})).toBeNull();
     expect(() => whatsappConfigFromEnv({ WHATSAPP_ACCESS_TOKEN: 'only-one-value' })).toThrow(WhatsAppConfigurationError);
+    expect(whatsappWebhookConfigFromEnv({})).toBeNull();
+    expect(() => whatsappWebhookConfigFromEnv({
+      WHATSAPP_WEBHOOK_VERIFY_TOKEN: 'long-enough-verify-token',
+    })).toThrow(WhatsAppConfigurationError);
   });
 
   it('builds the Georgian template variant in the documented parameter order', () => {
@@ -55,7 +63,48 @@ describe('WhatsApp task notifications', () => {
       expect.any(String),
       'შეამოწმეთ ტემპერატურა',
       'ლუკა',
-      'https://cellarflow.example',
+      'https://cellarflow.example/tasks?task=task-1',
+    ]);
+  });
+
+  it('verifies signed webhook bytes and extracts bounded delivery statuses', () => {
+    const rawBody = Buffer.from(JSON.stringify({
+      object: 'whatsapp_business_account',
+      entry: [{
+        changes: [{
+          field: 'messages',
+          value: {
+            statuses: [{
+              id: 'wamid.test-123',
+              status: 'delivered',
+              timestamp: '1785000000',
+            }, {
+              id: 'wamid.test-456',
+              status: 'failed',
+              timestamp: '1785000001',
+              errors: [{ code: 131026, title: 'Message undeliverable' }],
+            }],
+          },
+        }],
+      }],
+    }));
+    const appSecret = 'meta-test-app-secret-value';
+    const signature = `sha256=${crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+    const tamperedSignature = `${signature.slice(0, -1)}${signature.endsWith('0') ? '1' : '0'}`;
+
+    expect(verifyWhatsAppWebhookSignature(rawBody, signature, appSecret)).toBe(true);
+    expect(verifyWhatsAppWebhookSignature(rawBody, tamperedSignature, appSecret)).toBe(false);
+    expect(parseWhatsAppWebhookStatusEvents(JSON.parse(rawBody.toString('utf8')))).toEqual([
+      expect.objectContaining({
+        providerMessageId: 'wamid.test-123',
+        status: 'delivered',
+      }),
+      expect.objectContaining({
+        providerMessageId: 'wamid.test-456',
+        status: 'failed',
+        errorCode: '131026',
+        errorMessage: 'Message undeliverable',
+      }),
     ]);
   });
 

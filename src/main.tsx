@@ -21,6 +21,19 @@ if (container) {
   );
 }
 
+if (import.meta.env.PROD) {
+  const startTelemetry = () => {
+    void import('./performanceTelemetry')
+      .then(({ startPerformanceTelemetry }) => startPerformanceTelemetry())
+      .catch(() => {});
+  };
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback(startTelemetry, { timeout: 2_000 });
+  } else {
+    setTimeout(startTelemetry, 0);
+  }
+}
+
 // Register the service worker only in production builds so it never interferes
 // with the Vite dev server's hot-module reloading.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

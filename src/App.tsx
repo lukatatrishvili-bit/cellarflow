@@ -609,12 +609,38 @@ export default function App() {
   const canViewModule = (moduleId: string, tabId?: string) => (
     canViewUserDestination(state.currentUser, moduleId, tabId)
   );
+  const taskDeepLinkId = typeof window !== 'undefined'
+    && window.location.pathname.replace(/\/+$/, '') === '/tasks'
+    ? new URLSearchParams(window.location.search).get('task')?.trim() || undefined
+    : undefined;
   const accessibleWineryTabGroups = wineryTabGroups
     .map((group) => ({
       ...group,
       tabs: group.tabs.filter((tab) => canViewModule('gvino', tab.id)),
     }))
     .filter((group) => group.tabs.length > 0);
+  useEffect(() => {
+    if (!state.isLoggedIn || !taskDeepLinkId) return;
+    if (!canViewModule('gvino', 'tasks')) {
+      state.setToastMessage(state.lang === 'ka'
+        ? 'თქვენს როლს ამ დავალების ნახვის უფლება არ აქვს.'
+        : 'Your workspace role cannot view this task.');
+      return;
+    }
+    if (state.activeModule !== 'gvino') state.setActiveModule('gvino');
+    if (state.activeTab !== 'tasks') state.setActiveTab('tasks');
+    // The state facade is render-derived; the scalar dependencies are the
+    // navigation events this deep-link repair handles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    state.isLoggedIn,
+    state.currentUser.role,
+    state.currentUser.isMasterAdmin,
+    state.lang,
+    state.activeModule,
+    state.activeTab,
+    taskDeepLinkId,
+  ]);
   const cellarPermissions = useMemo(
     () => cellarWorkflowPermissions(state.currentUser.role),
     [state.currentUser.role],
@@ -1138,7 +1164,7 @@ export default function App() {
             >
               <Search className="w-3.5 h-3.5 text-[#4e0e15] dark:text-amber-300" />
               <span className="flex-1 truncate">{state.lang === 'ka' ? 'ძიება…' : 'Search…'}</span>
-              <kbd className="rounded-md border border-stone-200 bg-white px-1.5 py-0.5 text-[9px] font-black text-stone-400 dark:bg-stone-950 dark:border-stone-700">⌘K</kbd>
+              <kbd className="rounded-md border border-stone-200 bg-white px-1.5 py-0.5 text-[9px] font-black text-stone-600 dark:bg-stone-950 dark:border-stone-700 dark:text-stone-300">⌘K</kbd>
             </button>
           )}
 
@@ -1997,6 +2023,7 @@ export default function App() {
                 costEntries={state.costEntries}
                 auditLogs={state.auditLogs}
                 currentUserName={state.currentUser.fullName}
+                currentUsername={state.currentUser.username}
                 currency={state.companyProfile.currency || 'GEL'}
                 onAddOperation={state.handleAddCellarOperation}
                 onUpdateLots={state.setLots}
@@ -2198,6 +2225,7 @@ export default function App() {
                 setPrefilledTaskPriority={state.setPrefilledTaskPriority}
                 prefilledTaskDesc={state.prefilledTaskDesc}
                 setPrefilledTaskDesc={state.setPrefilledTaskDesc}
+                focusTaskId={taskDeepLinkId}
               />
             )}
 
