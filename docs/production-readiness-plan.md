@@ -149,7 +149,7 @@ Session tokens are HMAC-signed with this key. If `SESSION_SECRET` is not set in 
 **Problem.** No `helmet`/CSP/`X-Frame-Options`/HSTS are set. The SPA is served without framing or content-type protections.
 
 **Change.**
-- Add `helmet` with a Content-Security-Policy compatible with the app's needs (Google OAuth redirect, Google Maps/`@vis.gl`, Gemini calls, inline styles from Tailwind, the service worker).
+- Add `helmet` with a Content-Security-Policy compatible with the app's needs (Google OAuth redirect, OpenStreetMap/Leaflet tiles, Gemini calls, inline styles from Tailwind, the service worker).
 - Enable HSTS (prod only, behind `force_https`).
 - Start CSP in report-only mode if needed to avoid breaking the map/AI integrations, then enforce.
 

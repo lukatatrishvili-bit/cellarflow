@@ -4,9 +4,6 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  define: {
-    'process.env.GOOGLE_MAPS_PLATFORM_KEY': JSON.stringify(process.env.GOOGLE_MAPS_PLATFORM_KEY || '')
-  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './'),
@@ -19,7 +16,8 @@ export default defineConfig({
       'react-dom',
       'lucide-react',
       'motion',
-      '@vis.gl/react-google-maps',
+      'leaflet',
+      'react-leaflet',
       'recharts',
       'react-markdown'
     ],

@@ -1,7 +1,6 @@
 import React, { type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import CellarMap from '../components/CellarMap';
 import TanksVessels from '../components/TanksVessels';
 import { ToastProvider } from '../components/ToastProvider';
 import type { Vessel, WineLot } from '../lib/wineryState';
@@ -140,41 +139,15 @@ describe('TanksVessels action permissions', () => {
     });
 
     expect(markup).toContain('მხოლოდ ნახვის წვდომა.');
-    expect(markup).toContain('შეგიძლიათ ნახოთ ტევადობა, მდგომარეობა და მარნის რუკა');
+    expect(markup).toContain('შეგიძლიათ ნახოთ ტევადობა და მდგომარეობა');
+    expect(markup).not.toContain('მარნის რუკა');
     expect(markup).not.toContain('Read-only vessel access.');
   });
-});
 
-describe('CellarMap vessel permissions', () => {
-  it('keeps map layers and transfer navigation visible but hides layout editing without update access', () => {
-    const markup = renderToStaticMarkup(React.createElement(CellarMap, {
-      lang: 'en',
-      vessels: [vessel],
-      lots: [lot],
-      onUpdateVessels: vi.fn(),
-      canUpdateVessel: false,
-      canExecuteTransfer: false,
-    }));
+  it('does not expose the retired cellar floor-map view', () => {
+    const markup = renderVessels();
 
-    expect(markup).toContain('Interactive Cellar Floor Map');
-    expect(markup).toContain('Variety Color');
-    expect(markup).toContain('Temperature');
-    expect(markup).toContain('Sanitation');
-    expect(markup).toContain('T-READ-1');
+    expect(markup).not.toContain('Interactive Cellar Floor Map');
     expect(markup).not.toContain('Customize Layout');
-    expect(markup).not.toContain('dispatch a transfer');
-  });
-
-  it('retains layout editing by default', () => {
-    const markup = renderToStaticMarkup(React.createElement(CellarMap, {
-      lang: 'en',
-      vessels: [vessel],
-      lots: [lot],
-      onUpdateVessels: vi.fn(),
-      canExecuteTransfer: true,
-    }));
-
-    expect(markup).toContain('Customize Layout');
-    expect(markup).toContain('dispatch a transfer');
   });
 });

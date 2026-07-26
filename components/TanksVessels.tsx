@@ -7,12 +7,11 @@ import type { Vessel, VesselType, WineLot } from '../lib/wineryState';
 import { vesselTypeLabel } from '../lib/enumLabels';
 import {
   ShieldAlert, CheckCircle, Snowflake, RotateCw, Plus, Trash2, Edit,
-  Search, LayoutGrid, List, Map, Database, Droplets, Thermometer, ShieldCheck,
+  Search, LayoutGrid, List, Database, Droplets, Thermometer, ShieldCheck,
   Container as ContainerIcon, FileText, AlertTriangle, ArrowRight,
   ChevronDown, ChevronUp, CircleGauge, MoveRight
 } from 'lucide-react';
 import TankCapacityChart, { ChartTankData } from './TankCapacityChart';
-import CellarMap from './CellarMap';
 import VesselFill from './VesselFill';
 import { Stagger, StaggerItem } from './motion';
 import { useToast } from './ToastProvider';
@@ -26,8 +25,6 @@ interface Props {
   onSelectTank?: (tankId: string) => void;
   selectedTankId?: string | null;
   setActiveTab?: (tab: string) => void;
-  setPrefilledSourceId?: (id: string) => void;
-  setPrefilledDestId?: (id: string) => void;
   wineryName?: string;
   canCreateVessel?: boolean;
   canUpdateVessel?: boolean;
@@ -52,7 +49,7 @@ function qvevriSealNeedsAttention(vessel: Vessel, now = Date.now()): boolean {
 
 export default function TanksVessels({
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
-  setActiveTab, setPrefilledSourceId, setPrefilledDestId,
+  setActiveTab,
   canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true,
   qvevriCount = vessels.filter(vessel => vessel.type === 'qvevri').length,
   renderQvevriRecords,
@@ -67,7 +64,7 @@ export default function TanksVessels({
   const [filterType, setFilterType] = useState<string>('all');
 
   // Custom view modes and search states for intuitive navigation
-  const [viewMode, setViewMode] = useState<'grid' | 'table' | 'map'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<VesselStatusFilter>('all');
   const [workspaceView, setWorkspaceView] = useState<'register' | 'qvevri'>('register');
@@ -649,8 +646,8 @@ export default function TanksVessels({
           </strong>{' '}
           {!canCreateVessel && !canUpdateVessel && !canDeleteVessel
             ? (ka
-                ? 'შეგიძლიათ ნახოთ ტევადობა, მდგომარეობა და მარნის რუკა, მაგრამ ჭურჭლის ჩანაწერებს ვერ შეცვლით.'
-                : 'You can review capacity, status, and the cellar map, but cannot change vessel records.')
+                ? 'შეგიძლიათ ნახოთ ტევადობა და მდგომარეობა, მაგრამ ჭურჭლის ჩანაწერებს ვერ შეცვლით.'
+                : 'You can review vessel capacity and status, but cannot change vessel records.')
             : (ka
                 ? `თქვენი როლი არ გაძლევთ უფლებას: ${missingVesselActionsText}.`
                 : `Your role cannot ${missingVesselActionsText}.`)}
@@ -789,18 +786,6 @@ export default function TanksVessels({
                 title={ka ? 'კომპაქტური ცხრილი' : 'Compact Power-Winery Table'}
               >
                 <List className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('map')}
-                className={`p-1.5 rounded-md cursor-pointer transition-colors ${
-                  viewMode === 'map'
-                    ? 'bg-white text-[#4e0e15] shadow-xs'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-                title={ka ? 'ინტერაქტიული მარნის რუკა' : 'Interactive Cellar Floor Map'}
-              >
-                <Map className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -961,21 +946,6 @@ export default function TanksVessels({
             </button>
           )}
         </div>
-      ) : viewMode === 'map' ? (
-        /* Interactive 2D Cellar Map Floor Layout */
-        <CellarMap
-          lang={lang}
-          vessels={vessels}
-          lots={lots}
-          onUpdateVessels={onUpdateVessels}
-          onSelectTank={onSelectTank}
-          selectedTankId={selectedTankId}
-          setActiveTab={setActiveTab}
-          setPrefilledSourceId={setPrefilledSourceId}
-          setPrefilledDestId={setPrefilledDestId}
-          canUpdateVessel={canUpdateVessel}
-          canExecuteTransfer={canExecuteTransfer}
-        />
       ) : viewMode === 'grid' ? (
         /* Original Premium Glass Cards Grid View */
         <Stagger className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">

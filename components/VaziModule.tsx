@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { lazy, Suspense, useState, useMemo, useEffect, useRef } from 'react';
 import type {
   VineyardBlock,
   PhenologyRecord,
@@ -21,90 +21,26 @@ import { useFocusTrap } from './useFocusTrap';
 import { calculateCadastreCompleteness, cadastreBadgeLabel } from '../lib/cadastre';
 import { calculateVaziRisk, vaziRiskColor } from '../lib/vaziRisk';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
-import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
-
-// Google Maps key is baked in at build time (vite `define`). When it is absent
-// or blank, mounting <APIProvider> with an empty key renders a broken Google
-// error map and floods the console — so we render a calm placeholder instead.
-const MAPS_KEY = (process.env.GOOGLE_MAPS_PLATFORM_KEY || '').trim();
-
-function OpenStreetMapFallback({ lang, center }: { lang: Language; center?: { lat: number; lng: number } }) {
-  const isKa = lang === 'ka';
-  const cLat = center?.lat ?? 41.9056;
-  const cLng = center?.lng ?? 45.474;
-  const bboxDelta = 0.012;
-  const bbox = `${cLng - bboxDelta},${cLat - bboxDelta},${cLng + bboxDelta},${cLat + bboxDelta}`;
-  const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${cLat}%2C${cLng}`;
-
-  return (
-    <div className="relative w-full h-full min-h-[160px] bg-stone-100 dark:bg-stone-900 rounded-lg overflow-hidden border border-stone-200">
-      <iframe
-        title="OpenStreetMap View"
-        width="100%"
-        height="100%"
-        style={{ border: 0, minHeight: '160px' }}
-        loading="lazy"
-        allowFullScreen
-        src={embedUrl}
-      />
-      <div className="absolute bottom-1.5 right-1.5 z-10 bg-white/95 dark:bg-stone-900/95 backdrop-blur-xs px-2 py-0.5 rounded-md text-[9px] font-mono font-bold text-stone-700 dark:text-stone-300 border border-stone-200 shadow-xs flex items-center gap-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-        {isKa ? 'OpenStreetMap (აქტიური)' : 'OpenStreetMap (Live)'}
-      </div>
-    </div>
-  );
-}
-
-interface MapPolygonProps {
-  paths: { lat: number; lng: number }[];
-  fillColor?: string;
-  strokeColor?: string;
-  onClick?: () => void;
-}
-
-function MapPolygon({ paths, fillColor, strokeColor, onClick }: MapPolygonProps) {
-  const map = useMap();
-  const polygonRef = useRef<google.maps.Polygon | null>(null);
-
-  useEffect(() => {
-    if (!map) return;
-
-    const polygon = new google.maps.Polygon({
-      paths,
-      fillColor: fillColor || '#10b981',
-      fillOpacity: 0.45,
-      strokeColor: strokeColor || '#047857',
-      strokeOpacity: 0.8,
-      strokeWeight: 2,
-    });
-
-    polygon.setMap(map);
-    polygonRef.current = polygon;
-
-    let clickListener: google.maps.MapsEventListener | null = null;
-    if (onClick) {
-      clickListener = polygon.addListener('click', onClick);
-    }
-
-    return () => {
-      if (clickListener) {
-        google.maps.event.removeListener(clickListener);
-      }
-      polygon.setMap(null);
-    };
-  }, [map, paths, fillColor, strokeColor, onClick]);
-
-  return null;
-}
+import { appendBoundaryPoint } from '../lib/vineyardMap';
 import { DayWeather, fetchDayWeather, localISODate } from '../lib/weatherApi';
 import {
   Mountain, Wind, Sun, Layers, Plus,
   AlertTriangle, Check, Calendar,
-  Compass, FlaskConical, BarChart3, TrendingUp,
+  FlaskConical, BarChart3, TrendingUp,
   MapPin, ArrowRight,
   Sprout, FileText, CheckSquare, Info, ShieldAlert
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
+
+const VineyardMap = lazy(() => import('./VineyardMap'));
+
+function VineyardMapLoading({ lang }: { lang: Language }) {
+  return (
+    <div className="flex h-full min-h-[160px] items-center justify-center rounded-lg bg-stone-100 text-[10px] font-semibold text-stone-500">
+      {lang === 'ka' ? 'რუკა იტვირთება…' : 'Loading map…'}
+    </div>
+  );
+}
 
 type NavigationTarget = {
   module: 'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics';
@@ -591,8 +527,20 @@ export default function VaziModule({
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   // Real-map polygon (add-block form): geographic boundary saved to the block.
   const [drawnPoints, setDrawnPoints] = useState<{ lat: number; lng: number }[]>([]);
-  // Legacy block-detail "satellite simulation": pixel-space sketch only (visual).
-  const [drawnPixels, setDrawnPixels] = useState<{ x: number; y: number }[]>([]);
+  const [isEditingBlockBoundary, setIsEditingBlockBoundary] = useState(false);
+  const [editingBoundaryPoints, setEditingBoundaryPoints] = useState<{ lat: number; lng: number }[]>([]);
+  const [editingPointLat, setEditingPointLat] = useState(41.9056);
+  const [editingPointLng, setEditingPointLng] = useState(45.474);
+
+  useEffect(() => {
+    if (blocks.length === 0) {
+      if (selectedBlockId !== null) setSelectedBlockId(null);
+      return;
+    }
+    if (!selectedBlockId || !blocks.some(block => block.id === selectedBlockId)) {
+      setSelectedBlockId(blocks[0].id);
+    }
+  }, [blocks, selectedBlockId]);
 
   useEffect(() => {
     if (!canCreateVineyardRecord) {
@@ -616,20 +564,6 @@ export default function VaziModule({
     }
     return { lat: 41.9056, lng: 45.474 };
   }, [blocks]);
-
-  const getBlockPaths = (b: VineyardBlock) => {
-    if (b.boundary && b.boundary.length > 2) {
-      return b.boundary;
-    }
-    const latOffset = 0.0003;
-    const lngOffset = 0.0004;
-    return [
-      { lat: b.latitude - latOffset, lng: b.longitude - lngOffset },
-      { lat: b.latitude + latOffset, lng: b.longitude - lngOffset },
-      { lat: b.latitude + latOffset, lng: b.longitude + lngOffset },
-      { lat: b.latitude - latOffset, lng: b.longitude + lngOffset },
-    ];
-  };
 
   // Multilingual translations lookups
   const label = {
@@ -751,12 +685,21 @@ export default function VaziModule({
   const selectedBlock = useMemo(() => {
     return blocks.find(b => b.id === selectedBlockId) || null;
   }, [blocks, selectedBlockId]);
+  const selectedBlockKey = selectedBlock?.id;
+  const selectedBlockLatitude = selectedBlock?.latitude;
+  const selectedBlockLongitude = selectedBlock?.longitude;
 
   useEffect(() => {
     setShowHarvestPlanForm(false);
     setHarvestPlanStatus(null);
     setHarvestDispatchStatus(null);
-  }, [selectedBlock?.id]);
+    setIsEditingBlockBoundary(false);
+    setEditingBoundaryPoints([]);
+    if (selectedBlockLatitude !== undefined && selectedBlockLongitude !== undefined) {
+      setEditingPointLat(selectedBlockLatitude);
+      setEditingPointLng(selectedBlockLongitude);
+    }
+  }, [selectedBlockKey, selectedBlockLatitude, selectedBlockLongitude]);
   const selectedCadastre = useMemo(() => {
     return selectedBlock ? calculateCadastreCompleteness(selectedBlock) : null;
   }, [selectedBlock]);
@@ -1275,7 +1218,9 @@ export default function VaziModule({
                     {lang === 'ka' ? 'ვენახის ინტერაქტიული რუკა და მიკროკლიმატი' : 'Interactive Estate Block Map & Microclimate'}
                   </h3>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    {lang === 'ka' ? 'აგრონომიული რუკის ფენები და კავშირი საველე მეტეო სადგურებთან' : 'Interactive block layers & real-time field weather parameters'}
+                    {lang === 'ka'
+                      ? 'ნაკვეთის ფენები და არჩეული ვენახის ცოცხალი მეტეო მონაცემები'
+                      : 'Block condition layers with live weather for the selected vineyard'}
                   </p>
                 </div>
 
@@ -1303,39 +1248,25 @@ export default function VaziModule({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
-                {/* Google Map Column */}
+                {/* Interactive vineyard map */}
                 <div className="md:col-span-5 bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col justify-between relative overflow-hidden h-60">
                   <div className="text-[9px] font-mono font-bold text-emerald-800 uppercase tracking-widest flex items-center gap-1">
-                    🛰️ {lang === 'ka' ? 'ვენახის სატელიტური რუკა' : 'Estate GIS Map'}
+                    🗺️ {lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate Block Map'}
                   </div>
 
                   <div className="w-full h-40 mt-2 rounded-lg overflow-hidden border border-stone-200 relative z-0">
-                    {!MAPS_KEY ? <OpenStreetMapFallback lang={lang} center={defaultCenter} /> : (
-                    <APIProvider apiKey={MAPS_KEY}>
-                      <Map
-                        defaultCenter={defaultCenter}
-                        defaultZoom={14}
-                        mapTypeId="hybrid"
-                        gestureHandling="greedy"
-                        disableDefaultUI={true}
-                      >
-                        {blocks.map((b) => {
-                          const paths = getBlockPaths(b);
-                          const isActive = b.id === selectedBlockId;
-                          const fillColor = getBlockColor(b.id);
-                          return (
-                            <MapPolygon
-                              key={b.id}
-                              paths={paths}
-                              fillColor={fillColor}
-                              strokeColor={isActive ? '#4e0e15' : '#78716c'}
-                              onClick={() => setSelectedBlockId(b.id)}
-                            />
-                          );
-                        })}
-                      </Map>
-                    </APIProvider>
-                    )}
+                    <Suspense fallback={<VineyardMapLoading lang={lang} />}>
+                      <VineyardMap
+                        lang={lang}
+                        center={defaultCenter}
+                        blocks={blocks}
+                        selectedBlockId={selectedBlockId}
+                        onSelectBlock={setSelectedBlockId}
+                        getBlockColor={getBlockColor}
+                        heightClassName="h-full min-h-[160px]"
+                        ariaLabel={lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate vineyard block map'}
+                      />
+                    </Suspense>
                   </div>
 
                   {/* Micro legend */}
@@ -2035,61 +1966,124 @@ export default function VaziModule({
                       </div>
                     </div>
 
-                    {/* Virtual Interactive coordinate mapping area */}
-                    <div className="h-32 bg-stone-100/80 rounded-lg border border-stone-200 relative overflow-hidden flex flex-col items-center justify-center">
-                      <div className="absolute top-2 right-2 flex gap-1.5 shrink-0 z-10">
-                        <button
-                          onClick={() => {
-                            setIsDrawingPolygon(!isDrawingPolygon);
-                            setDrawnPixels([]);
-                          }}
-                          className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded cursor-pointer ${
-                            isDrawingPolygon ? 'bg-red-600 text-white' : 'bg-emerald-800 text-white hover:bg-emerald-900'
-                          }`}
-                        >
-                          {isDrawingPolygon ? (lang === 'ka' ? 'გაუქმება' : 'Cancel Map') : (lang === 'ka' ? 'პოლიგონის დახაზვა' : 'Draw Polygon')}
-                        </button>
+                    <div className="space-y-2">
+                      <div className="h-40 bg-stone-100/80 rounded-lg border border-stone-200 relative overflow-hidden">
+                        <Suspense fallback={<VineyardMapLoading lang={lang} />}>
+                          <VineyardMap
+                            lang={lang}
+                            center={{ lat: selectedBlock.latitude, lng: selectedBlock.longitude }}
+                            blocks={isEditingBlockBoundary ? [] : [selectedBlock]}
+                            selectedBlockId={selectedBlock.id}
+                            drawing={isEditingBlockBoundary}
+                            drawingPoints={editingBoundaryPoints}
+                            onMapClick={isEditingBlockBoundary
+                              ? point => {
+                                  setEditingPointLat(parseFloat(point.lat.toFixed(6)));
+                                  setEditingPointLng(parseFloat(point.lng.toFixed(6)));
+                                  setEditingBoundaryPoints(previous => appendBoundaryPoint(previous, point));
+                                }
+                              : undefined}
+                            heightClassName="h-full min-h-[160px]"
+                            ariaLabel={lang === 'ka' ? `${selectedBlock.name} საზღვრის რუკა` : `${selectedBlock.name} boundary map`}
+                            showEmptyState={false}
+                          />
+                        </Suspense>
                       </div>
 
-                      {/* Map backdrop and custom canvas outline helper */}
-                      <div className="absolute inset-0 bg-stone-200 opacity-30 flex items-center justify-center select-none">
-                        <span className="text-[8px] font-mono text-stone-400 uppercase tracking-widest">{lang === 'ka' ? '[სატელიტური ხედის სიმულაცია]' : '[Satellite View Simulation]'}</span>
-                      </div>
-
-                      {isDrawingPolygon ? (
-                        <div
-                          className="absolute inset-0 z-0 cursor-crosshair pb-2 flex flex-col items-center justify-end"
-                          onClick={(e) => {
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            const x = e.clientX - rect.left;
-                            const y = e.clientY - rect.top;
-                            setDrawnPixels([...drawnPixels, { x, y }]);
-                          }}
-                        >
-                          {/* Saperavi drawing points SVG overlay */}
-                          <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                            {drawnPixels.length > 1 && (
-                              <polygon
-                                points={drawnPixels.map(p => `${p.x},${p.y}`).join(' ')}
-                                fill="rgba(16, 185, 129, 0.2)"
-                                stroke="#10b981"
-                                strokeWidth="1.5"
-                              />
-                            )}
-                            {drawnPixels.map((p, i) => (
-                              <circle key={i} cx={p.x} cy={p.y} r="3" fill="#10b981" />
-                            ))}
-                          </svg>
-                          <span className="text-[8px] font-bold font-mono tracking-wider bg-[#4e0e15] text-white px-2 py-0.5 rounded shadow-sm relative z-15">
+                      {isEditingBlockBoundary ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[9px] font-mono text-stone-500">
                             {lang === 'ka'
-                              ? `დააწკაპუნეთ კიდევ ${4 - drawnPixels.length > 0 ? `${4 - drawnPixels.length}` : '0'}-ჯერ საზღვრის დასახაზად`
-                              : `Click ${4 - drawnPixels.length > 0 ? `${4 - drawnPixels.length} more` : 'Completed'} times to snap block boundary`}
+                              ? `დაამატეთ მინიმუმ 3 წერტილი · ${editingBoundaryPoints.length} დამატებულია`
+                              : `Add at least 3 points · ${editingBoundaryPoints.length} added`}
                           </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <label className="sr-only" htmlFor="boundary-point-lat">
+                              {lang === 'ka' ? 'საზღვრის წერტილის განედი' : 'Boundary point latitude'}
+                            </label>
+                            <input
+                              id="boundary-point-lat"
+                              type="number"
+                              step="0.000001"
+                              value={editingPointLat}
+                              onChange={event => setEditingPointLat(Number(event.target.value))}
+                              className="w-24 rounded border border-stone-200 bg-white px-2 py-1 text-[9px] font-mono text-stone-800 outline-none focus:border-emerald-700"
+                            />
+                            <label className="sr-only" htmlFor="boundary-point-lng">
+                              {lang === 'ka' ? 'საზღვრის წერტილის გრძედი' : 'Boundary point longitude'}
+                            </label>
+                            <input
+                              id="boundary-point-lng"
+                              type="number"
+                              step="0.000001"
+                              value={editingPointLng}
+                              onChange={event => setEditingPointLng(Number(event.target.value))}
+                              className="w-24 rounded border border-stone-200 bg-white px-2 py-1 text-[9px] font-mono text-stone-800 outline-none focus:border-emerald-700"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEditingBoundaryPoints(previous => appendBoundaryPoint(previous, {
+                                lat: editingPointLat,
+                                lng: editingPointLng,
+                              }))}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-emerald-100 text-emerald-900 hover:bg-emerald-200 cursor-pointer"
+                            >
+                              + {lang === 'ka' ? 'კოორდინატი' : 'Coordinate'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={editingBoundaryPoints.length === 0}
+                              onClick={() => setEditingBoundaryPoints(previous => previous.slice(0, -1))}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-stone-200 text-stone-700 hover:bg-stone-300 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                            >
+                              ↶ {lang === 'ka' ? 'გაუქმება' : 'Undo'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsEditingBlockBoundary(false);
+                                setEditingBoundaryPoints([]);
+                              }}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-rose-100 text-rose-800 hover:bg-rose-200 cursor-pointer"
+                            >
+                              {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={editingBoundaryPoints.length < 3}
+                              onClick={() => {
+                                if (!canUpdateVineyardRecord || editingBoundaryPoints.length < 3) return;
+                                runVaziMutationIfAllowed(canUpdateVineyardRecord, () => (
+                                  onUpdateBlock(selectedBlock.id, { boundary: editingBoundaryPoints })
+                                ));
+                                setIsEditingBlockBoundary(false);
+                                setEditingBoundaryPoints([]);
+                              }}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-emerald-800 text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                            >
+                              {lang === 'ka' ? 'საზღვრის შენახვა' : 'Save Boundary'}
+                            </button>
+                          </div>
                         </div>
-                      ) : (
-                        <div className="text-center p-3 relative z-10 font-mono">
-                          <Compass className="w-8 h-8 text-emerald-800 mx-auto opacity-70 animate-spin" style={{ animationDuration: '8s' }} />
-                          <span className="text-[8px] uppercase tracking-wider block mt-2 text-stone-500 font-bold">{lang === 'ka' ? 'პოლიგონის კალიბრაცია მზადაა' : 'Polygon Bound Calibrations Ready'}</span>
+                      ) : canUpdateVineyardRecord && (
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const recordedBoundary = selectedBlock.boundary && selectedBlock.boundary.length >= 3
+                                ? selectedBlock.boundary
+                                : selectedBlock.gpsPolygon && selectedBlock.gpsPolygon.length >= 3
+                                  ? selectedBlock.gpsPolygon
+                                  : [];
+                              setEditingBoundaryPoints(recordedBoundary);
+                              setEditingPointLat(selectedBlock.latitude);
+                              setEditingPointLng(selectedBlock.longitude);
+                              setIsEditingBlockBoundary(true);
+                            }}
+                            className="px-2.5 py-1 text-[9px] font-mono font-bold rounded bg-emerald-800 text-white hover:bg-emerald-900 cursor-pointer"
+                          >
+                            {lang === 'ka' ? 'საზღვრის რედაქტირება' : 'Edit Boundary'}
+                          </button>
                         </div>
                       )}
                     </div>
@@ -3212,8 +3206,8 @@ export default function VaziModule({
                 <span className="font-bold block text-emerald-900 font-mono text-[9px] uppercase tracking-wider">📍 {lang === 'ka' ? 'ნაკვეთის მდებარეობა' : 'Block Location'}</span>
                 <p className="text-[10px] text-emerald-900/70 leading-relaxed">
                   {lang === 'ka'
-                    ? 'მოძებნეთ ნებისმიერი ადგილი კოორდინატების დასაყენებლად — მათზეა დამოკიდებული ამინდის სადგური, სატელიტური ხედები და დაავადების რისკის მოდელები. ქვემოთ ხელით დააზუსტეთ განედი/გრძედი.'
-                    : "Search any place to set the block's coordinates — they drive the real-time weather station, satellite views, and disease-risk models. Fine-tune latitude/longitude manually below."}
+                    ? 'მოძებნეთ ნებისმიერი ადგილი კოორდინატების დასაყენებლად — მათზეა დამოკიდებული ამინდი, რუკის ხედები და დაავადების რისკის მოდელები. ქვემოთ ხელით დააზუსტეთ განედი/გრძედი.'
+                    : "Search any place to set the block's coordinates — they drive weather, map views, and disease-risk models. Fine-tune latitude/longitude manually below."}
                 </p>
                 <LocationPicker
                   lang={lang}
@@ -3229,64 +3223,78 @@ export default function VaziModule({
                 />
 
                 <div className="w-full h-40 rounded-lg overflow-hidden border border-stone-200 mt-2 relative z-0">
-                  {!MAPS_KEY ? <OpenStreetMapFallback lang={lang} center={{ lat: addBlockLat, lng: addBlockLng }} /> : (
-                  <APIProvider apiKey={MAPS_KEY}>
-                    <Map
-                      defaultCenter={defaultCenter}
+                  <Suspense fallback={<VineyardMapLoading lang={lang} />}>
+                    <VineyardMap
+                      lang={lang}
                       center={{ lat: addBlockLat, lng: addBlockLng }}
-                      defaultZoom={15}
-                      mapTypeId="hybrid"
-                      gestureHandling="greedy"
-                      disableDefaultUI={true}
-                      onClick={(e) => {
-                        if (e.detail.latLng) {
-                          const lat = e.detail.latLng.lat;
-                          const lng = e.detail.latLng.lng;
-                          if (isDrawingPolygon) {
-                            setDrawnPoints(prev => [...prev, { lat, lng }]);
-                          } else {
-                            setAddBlockLat(parseFloat(lat.toFixed(4)));
-                            setAddBlockLng(parseFloat(lng.toFixed(4)));
-                          }
+                      drawing={isDrawingPolygon}
+                      drawingPoints={drawnPoints}
+                      onMapClick={(point) => {
+                        if (isDrawingPolygon) {
+                          setDrawnPoints(previous => appendBoundaryPoint(previous, point));
+                        } else {
+                          setAddBlockLat(parseFloat(point.lat.toFixed(4)));
+                          setAddBlockLng(parseFloat(point.lng.toFixed(4)));
                         }
                       }}
-                    >
-                      {!isDrawingPolygon && (
-                        <Marker position={{ lat: addBlockLat, lng: addBlockLng }} />
-                      )}
-                      {isDrawingPolygon && drawnPoints.map((pt, idx) => (
-                        <Marker key={idx} position={pt} label={String(idx + 1)} />
-                      ))}
-                      {drawnPoints.length > 1 && (
-                        <MapPolygon paths={drawnPoints} fillColor="#10b981" strokeColor="#047857" />
-                      )}
-                    </Map>
-                  </APIProvider>
-                  )}
+                      heightClassName="h-full min-h-[160px]"
+                      ariaLabel={lang === 'ka' ? 'ახალი ნაკვეთის საზღვრის რუკა' : 'New block boundary map'}
+                      showEmptyState={false}
+                    />
+                  </Suspense>
                 </div>
 
-                <div className="flex items-center justify-between mt-1">
+                <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
                   <button
                     type="button"
+                    disabled={isDrawingPolygon && drawnPoints.length < 3}
                     onClick={() => {
-                      setIsDrawingPolygon(!isDrawingPolygon);
-                      if (!isDrawingPolygon) setDrawnPoints([]);
+                      if (isDrawingPolygon) {
+                        setIsDrawingPolygon(false);
+                      } else {
+                        setDrawnPoints([]);
+                        setIsDrawingPolygon(true);
+                      }
                     }}
-                    className={`px-2.5 py-1 text-[9px] font-mono font-bold uppercase rounded transition-colors cursor-pointer ${
-                      isDrawingPolygon ? 'bg-emerald-800 text-white hover:bg-emerald-900' : 'bg-stone-200 text-stone-700 hover:bg-stone-300'
+                    className={`px-2.5 py-1 text-[9px] font-mono font-bold uppercase rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      isDrawingPolygon ? 'bg-emerald-800 text-white hover:bg-emerald-900 cursor-pointer' : 'bg-stone-200 text-stone-700 hover:bg-stone-300 cursor-pointer'
                     }`}
                   >
-                    {isDrawingPolygon ? (lang === 'ka' ? '🛑 დახაზვის შეჩერება' : '🛑 Stop Drawing') : (lang === 'ka' ? '✏️ ნაკვეთის საზღვრის დახაზვა' : '✏️ Draw Block Boundary')}
+                    {isDrawingPolygon
+                      ? (drawnPoints.length < 3
+                        ? (lang === 'ka' ? `კიდევ ${3 - drawnPoints.length} წერტილი` : `Add ${3 - drawnPoints.length} more point${3 - drawnPoints.length === 1 ? '' : 's'}`)
+                        : (lang === 'ka' ? '✓ საზღვრის დასრულება' : '✓ Finish Boundary'))
+                      : (lang === 'ka' ? '✏️ ნაკვეთის საზღვრის დახაზვა' : '✏️ Draw Block Boundary')}
                   </button>
-                  {isDrawingPolygon && drawnPoints.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setDrawnPoints([])}
-                      className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-rose-100 hover:bg-rose-200 text-rose-800 rounded transition-colors cursor-pointer"
-                    >
-                      🗑️ {lang === 'ka' ? 'წერტილების წაშლა' : 'Clear Points'} ({drawnPoints.length})
-                    </button>
-                  )}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {isDrawingPolygon && (
+                      <button
+                        type="button"
+                        onClick={() => setDrawnPoints(previous => appendBoundaryPoint(previous, { lat: addBlockLat, lng: addBlockLng }))}
+                        className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded transition-colors cursor-pointer"
+                      >
+                        + {lang === 'ka' ? 'კოორდინატის დამატება' : 'Add Coordinate'}
+                      </button>
+                    )}
+                    {drawnPoints.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setDrawnPoints(previous => previous.slice(0, -1))}
+                          className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-stone-100 hover:bg-stone-200 text-stone-700 rounded transition-colors cursor-pointer"
+                        >
+                          ↶ {lang === 'ka' ? 'ბოლო წერტილის გაუქმება' : 'Undo Point'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDrawnPoints([])}
+                          className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-rose-100 hover:bg-rose-200 text-rose-800 rounded transition-colors cursor-pointer"
+                        >
+                          🗑️ {lang === 'ka' ? 'წერტილების წაშლა' : 'Clear Points'} ({drawnPoints.length})
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 

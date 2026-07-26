@@ -3,6 +3,30 @@
 /* One modern UI family, one data family, and full Georgian coverage. */
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap');
 
+.leaflet-container {
+  font-family: inherit;
+}
+
+.vineyard-map--drawing .leaflet-container {
+  cursor: crosshair;
+}
+
+.vineyard-map-point-label {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: white;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.vineyard-map-point-label::before {
+  display: none;
+}
+
 @theme {
   --font-serif: "Outfit", "Noto Sans Georgian", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Outfit", "Noto Sans Georgian", ui-sans-serif, system-ui, sans-serif;

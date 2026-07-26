@@ -1890,8 +1890,6 @@ export default function App() {
                   onSelectTank={state.setSelectedTankId}
                   selectedTankId={state.selectedTankId}
                   setActiveTab={state.setActiveTab}
-                  setPrefilledSourceId={state.setPrefilledSourceId}
-                  setPrefilledDestId={state.setPrefilledDestId}
                   qvevriCount={state.vessels.filter(vessel => vessel.type === 'qvevri').length}
                   renderQvevriRecords={(onBackToVessels, focusedVesselId) => (
                     <QvevriPassportTab
