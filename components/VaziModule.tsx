@@ -20,9 +20,20 @@ import VineyardProjectsTab from './VineyardProjectsTab';
 import { useFocusTrap } from './useFocusTrap';
 import { calculateCadastreCompleteness, cadastreBadgeLabel } from '../lib/cadastre';
 import { calculateVaziRisk, vaziRiskColor } from '../lib/vaziRisk';
+import type { VaziRiskSummary, VaziWeatherRiskInput } from '../lib/vaziRisk';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
-import { appendBoundaryPoint } from '../lib/vineyardMap';
-import { DayWeather, fetchDayWeather, localISODate } from '../lib/weatherApi';
+import {
+  appendBoundaryPoint,
+  hasUsableBoundary,
+  removeBoundaryPoint,
+  validateVineyardBoundary,
+  vineyardBlockBoundary,
+  vineyardBlockGeoJsonFeature,
+  vineyardPolygonAreaHectares,
+  type VineyardBoundaryValidation,
+} from '../lib/vineyardMap';
+import { fetchDayWeather, localISODate } from '../lib/weatherApi';
+import type { DayWeather } from '../lib/weatherApi';
 import {
   Mountain, Wind, Sun, Layers, Plus,
   AlertTriangle, Check, Calendar,
@@ -40,6 +51,75 @@ function VineyardMapLoading({ lang }: { lang: Language }) {
       {lang === 'ka' ? 'რუკა იტვირთება…' : 'Loading map…'}
     </div>
   );
+}
+
+type LiveBlockWeather = VaziWeatherRiskInput & {
+  temp: number;
+  rainMm: number;
+  wind: number;
+  humidity: number;
+  tempMax: number;
+  tempMin: number;
+  frostRisk: string;
+  heatStress: string;
+  sprayConditions: string;
+  diseasePressure: string;
+};
+
+function toLiveBlockWeather(weather: DayWeather): LiveBlockWeather {
+  const temp = weather.current?.temp
+    ?? (weather.daily.tempMax + weather.daily.tempMin) / 2;
+  const wind = weather.current?.wind ?? weather.daily.windMax;
+  const humidity = weather.current?.humidity ?? 0;
+  const rainMm = weather.daily.precipSum;
+
+  return {
+    temp: Math.round(temp),
+    rainMm,
+    wind: Math.round(wind),
+    humidity,
+    tempMax: weather.daily.tempMax,
+    tempMin: weather.daily.tempMin,
+    frostRisk: weather.daily.tempMin < 2 ? 'High' : weather.daily.tempMin < 5 ? 'Medium' : 'None',
+    heatStress: weather.daily.tempMax > 35 ? 'Severe' : weather.daily.tempMax > 30 ? 'Moderate' : 'Optimum',
+    sprayConditions: wind > 14 ? 'Unsafe (High Wind)' : rainMm > 0 ? 'Unsafe (Rain)' : 'Suitable',
+    diseasePressure: humidity > 75 && temp > 18 && rainMm > 0 ? 'High (Downy Mildew Risk)' : 'Low',
+  };
+}
+
+function boundaryValidationMessage(
+  validation: VineyardBoundaryValidation,
+  lang: Language,
+): string {
+  if (validation.valid) {
+    return lang === 'ka'
+      ? `გაზომილი ფართობი: ${validation.areaHectares.toFixed(2)} ჰა`
+      : `Measured area: ${validation.areaHectares.toFixed(2)} ha`;
+  }
+  if (validation.reason === 'self-intersection') {
+    return lang === 'ka'
+      ? 'საზღვარი იკვეთება — წაშალეთ ან გადაალაგეთ გადამკვეთი წერტილი.'
+      : 'Boundary lines cross — remove or redraw the crossing vertex.';
+  }
+  if (validation.reason === 'zero-area') {
+    return lang === 'ka'
+      ? 'წერტილები გამოსადეგ ფართობს არ ქმნის.'
+      : 'The points do not form a measurable area.';
+  }
+  return lang === 'ka'
+    ? `დაამატეთ მინიმუმ 3 წერტილი · ${validation.areaHectares.toFixed(2)} ჰა`
+    : `Add at least 3 points · ${validation.areaHectares.toFixed(2)} ha`;
+}
+
+function downloadBlockGeoJson(block: VineyardBlock): void {
+  const feature = vineyardBlockGeoJsonFeature(block);
+  const blob = new Blob([JSON.stringify(feature, null, 2)], { type: 'application/geo+json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${block.name.trim().replace(/[^a-z0-9_-]+/gi, '-') || block.id}.geojson`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 type NavigationTarget = {
@@ -486,35 +566,6 @@ export default function VaziModule({
   const dispatchNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [mapOverlay, setMapOverlay] = useState<'mildew' | 'moisture' | 'phenology'>('mildew');
-  const getBlockColor = (blockId: string) => {
-    const b = blocks.find(x => x.id === blockId);
-    if (!b) return '#e2e8f0';
-    const risk = calculateVaziRisk({
-      block: b,
-      weather: b.id === selectedBlockId ? blockWeather : null,
-      sprays,
-      scoutings,
-      samplings,
-      harvests,
-      irrigationLogs,
-    });
-
-    if (mapOverlay === 'mildew') {
-      const mildewLevel = [risk.items.downyMildew, risk.items.powderyMildew, risk.items.botrytis]
-        .sort((a, b) => b.score - a.score)[0].level;
-      return vaziRiskColor(mildewLevel);
-    }
-    if (mapOverlay === 'moisture') {
-      return vaziRiskColor(risk.items.waterStress.level);
-    }
-    if (mapOverlay === 'phenology') {
-      if (b.currentPhenology.toLowerCase().includes('veraison')) return '#8b5cf6'; // Veraison (Purple)
-      if (b.currentPhenology.toLowerCase().includes('ripening')) return '#f43f5e'; // Ripening (Rose)
-      if (b.currentPhenology.toLowerCase().includes('fruit set')) return '#10b981'; // Fruit Set (Green)
-      return '#6ee7b7'; // Default / Flowering
-    }
-    return '#cbd5e1';
-  };
 
   // Adding state
   const [showAddBlockModal, setShowAddBlockModal] = useState(false);
@@ -833,55 +884,65 @@ export default function VaziModule({
   const totalArea = useMemo(() => blocks.reduce((acc, b) => acc + b.area, 0), [blocks]);
   const totalVines = useMemo(() => blocks.reduce((acc, b) => acc + b.vinesCount, 0), [blocks]);
 
-  const [blockWeatherData, setBlockWeatherData] = useState<DayWeather | null>(null);
-  const [blockWeatherError, setBlockWeatherError] = useState('');
+  const weatherTargets = useMemo(() => (
+    blocks.map(block => ({
+      id: block.id,
+      latitude: block.latitude,
+      longitude: block.longitude,
+    }))
+  ), [blocks]);
+  const [blockWeatherDataById, setBlockWeatherDataById] = useState<Record<string, DayWeather>>({});
+  const [blockWeatherErrorsById, setBlockWeatherErrorsById] = useState<Record<string, string>>({});
+  const [blockWeatherLoading, setBlockWeatherLoading] = useState(false);
 
   useEffect(() => {
-    if (!selectedBlock) {
-      setBlockWeatherData(null);
-      setBlockWeatherError('');
+    if (weatherTargets.length === 0) {
+      setBlockWeatherDataById({});
+      setBlockWeatherErrorsById({});
+      setBlockWeatherLoading(false);
       return;
     }
 
     let active = true;
-    setBlockWeatherError('');
-    fetchDayWeather(selectedBlock.latitude, selectedBlock.longitude, localISODate())
-      .then((result) => {
-        if (active) setBlockWeatherData(result);
-      })
-      .catch((error) => {
-        if (active) {
-          setBlockWeatherData(null);
-          setBlockWeatherError(error instanceof Error ? error.message : 'Live weather is unavailable.');
+    setBlockWeatherLoading(true);
+    const date = localISODate();
+    Promise.allSettled(weatherTargets.map(async target => ({
+      id: target.id,
+      weather: await fetchDayWeather(target.latitude, target.longitude, date),
+    }))).then((results) => {
+      if (!active) return;
+      const weatherData: Record<string, DayWeather> = {};
+      const weatherErrors: Record<string, string> = {};
+      results.forEach((result, index) => {
+        const blockId = weatherTargets[index].id;
+        if (result.status === 'fulfilled') {
+          weatherData[blockId] = result.value.weather;
+        } else {
+          weatherErrors[blockId] = result.reason instanceof Error
+            ? result.reason.message
+            : 'Live weather is unavailable.';
         }
       });
+      setBlockWeatherDataById(weatherData);
+      setBlockWeatherErrorsById(weatherErrors);
+      setBlockWeatherLoading(false);
+    });
 
     return () => {
       active = false;
     };
-  }, [selectedBlock]);
+  }, [weatherTargets]);
 
-  const blockWeather = useMemo(() => {
-    if (!blockWeatherData) return null;
-    const temp = blockWeatherData.current?.temp
-      ?? (blockWeatherData.daily.tempMax + blockWeatherData.daily.tempMin) / 2;
-    const wind = blockWeatherData.current?.wind ?? blockWeatherData.daily.windMax;
-    const humidity = blockWeatherData.current?.humidity ?? 0;
-    const rainMm = blockWeatherData.daily.precipSum;
-
-    return {
-      temp: Math.round(temp),
-      rainMm,
-      wind: Math.round(wind),
-      humidity,
-      tempMax: blockWeatherData.daily.tempMax,
-      tempMin: blockWeatherData.daily.tempMin,
-      frostRisk: blockWeatherData.daily.tempMin < 2 ? 'High' : blockWeatherData.daily.tempMin < 5 ? 'Medium' : 'None',
-      heatStress: blockWeatherData.daily.tempMax > 35 ? 'Severe' : blockWeatherData.daily.tempMax > 30 ? 'Moderate' : 'Optimum',
-      sprayConditions: wind > 14 ? 'Unsafe (High Wind)' : rainMm > 0 ? 'Unsafe (Rain)' : 'Suitable',
-      diseasePressure: humidity > 75 && temp > 18 && rainMm > 0 ? 'High (Downy Mildew Risk)' : 'Low'
-    };
-  }, [blockWeatherData]);
+  const blockWeatherById = useMemo<Record<string, LiveBlockWeather>>(() => (
+    Object.fromEntries(
+      Object.entries(blockWeatherDataById).map(([blockId, weather]) => (
+        [blockId, toLiveBlockWeather(weather)]
+      )),
+    )
+  ), [blockWeatherDataById]);
+  const mapSelectedBlockId = selectedBlockId || blocks[0]?.id || null;
+  const blockWeather = mapSelectedBlockId ? blockWeatherById[mapSelectedBlockId] || null : null;
+  const blockWeatherError = mapSelectedBlockId ? blockWeatherErrorsById[mapSelectedBlockId] || '' : '';
 
   // GDD is a recorded agronomic value, not a synthetic estimate.
   const computedGDD = useMemo(() => {
@@ -892,18 +953,93 @@ export default function VaziModule({
     return latest?.gdd ?? 0;
   }, [selectedBlock, phenologyLogs]);
 
-  const selectedRisk = useMemo(() => {
-    if (!selectedBlock) return null;
-    return calculateVaziRisk({
-      block: selectedBlock,
-      weather: blockWeather,
-      sprays,
-      scoutings,
-      samplings,
-      harvests,
-      irrigationLogs,
-    });
-  }, [selectedBlock, blockWeather, sprays, scoutings, samplings, harvests, irrigationLogs]);
+  const blockRiskById = useMemo<Record<string, VaziRiskSummary>>(() => (
+    Object.fromEntries(blocks.map(block => [
+      block.id,
+      calculateVaziRisk({
+        block,
+        weather: blockWeatherById[block.id] || null,
+        sprays,
+        scoutings,
+        samplings,
+        harvests,
+        irrigationLogs,
+      }),
+    ]))
+  ), [blocks, blockWeatherById, sprays, scoutings, samplings, harvests, irrigationLogs]);
+
+  const selectedRisk = selectedBlock ? blockRiskById[selectedBlock.id] || null : null;
+  const mapSelectedRisk = mapSelectedBlockId ? blockRiskById[mapSelectedBlockId] || null : null;
+
+  const getBlockColor = (blockId: string) => {
+    const block = blocks.find(item => item.id === blockId);
+    const risk = blockRiskById[blockId];
+    if (!block || !risk) return '#e2e8f0';
+    if (mapOverlay === 'mildew') {
+      const mildewLevel = [
+        risk.items.downyMildew,
+        risk.items.powderyMildew,
+        risk.items.botrytis,
+      ].sort((a, b) => b.score - a.score)[0].level;
+      return vaziRiskColor(mildewLevel);
+    }
+    if (mapOverlay === 'moisture') return vaziRiskColor(risk.items.waterStress.level);
+    if (block.currentPhenology.toLowerCase().includes('veraison')) return '#8b5cf6';
+    if (block.currentPhenology.toLowerCase().includes('ripening')) return '#f43f5e';
+    if (block.currentPhenology.toLowerCase().includes('fruit set')) return '#10b981';
+    return '#6ee7b7';
+  };
+
+  const getBlockTooltipLines = (blockId: string): string[] => {
+    const block = blocks.find(item => item.id === blockId);
+    const risk = blockRiskById[blockId];
+    if (!block || !risk) return [];
+    let layerLine: string;
+    if (mapOverlay === 'mildew') {
+      const item = [
+        risk.items.downyMildew,
+        risk.items.powderyMildew,
+        risk.items.botrytis,
+      ].sort((a, b) => b.score - a.score)[0];
+      layerLine = lang === 'ka'
+        ? `${item.label}: ${item.score}/100`
+        : `${item.label}: ${item.level} · ${item.score}/100`;
+    } else if (mapOverlay === 'moisture') {
+      const item = risk.items.waterStress;
+      layerLine = lang === 'ka'
+        ? `წყლის სტრესი: ${item.score}/100`
+        : `Water stress: ${item.level} · ${item.score}/100`;
+    } else {
+      layerLine = lang === 'ka'
+        ? `ფენოლოგია: ${phenologyLabel(block.currentPhenology, lang)}`
+        : `Phenology: ${phenologyLabel(block.currentPhenology, lang)}`;
+    }
+    const weather = blockWeatherById[blockId];
+    const weatherLine = weather
+      ? `${weather.temp}°C · ${weather.rainMm} mm · ${weather.humidity}% RH`
+      : blockWeatherLoading
+        ? (lang === 'ka' ? 'ცოცხალი ამინდი იტვირთება…' : 'Loading live weather…')
+        : (lang === 'ka' ? 'ცოცხალი ამინდი მიუწვდომელია' : 'Live weather unavailable');
+    return [layerLine, weatherLine];
+  };
+
+  const editingBoundaryValidation = useMemo(
+    () => validateVineyardBoundary(editingBoundaryPoints),
+    [editingBoundaryPoints],
+  );
+  const drawnBoundaryValidation = useMemo(
+    () => validateVineyardBoundary(drawnPoints),
+    [drawnPoints],
+  );
+  const selectedMappedArea = selectedBlock
+    ? vineyardPolygonAreaHectares(vineyardBlockBoundary(selectedBlock))
+    : 0;
+  const selectedHasRecordedBoundary = selectedBlock
+    ? hasUsableBoundary(selectedBlock.boundary) || hasUsableBoundary(selectedBlock.gpsPolygon)
+    : false;
+  const selectedAreaDifferencePercent = selectedBlock?.area
+    ? ((selectedMappedArea - selectedBlock.area) / selectedBlock.area) * 100
+    : 0;
 
   return (
     <div id="vazi-sandbox" className="space-y-6 text-stone-800 animate-fade-in font-sans">
@@ -1219,8 +1355,8 @@ export default function VaziModule({
                   </h3>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                     {lang === 'ka'
-                      ? 'ნაკვეთის ფენები და არჩეული ვენახის ცოცხალი მეტეო მონაცემები'
-                      : 'Block condition layers with live weather for the selected vineyard'}
+                      ? 'ყველა ნაკვეთის რისკის ფენები ცოცხალი მიკროკლიმატით'
+                      : 'Estate-wide condition layers using each block’s live microclimate'}
                   </p>
                 </div>
 
@@ -1228,7 +1364,7 @@ export default function VaziModule({
                 <div className="flex gap-1 bg-stone-50 border border-stone-200 p-0.5 rounded-lg text-[10px]">
                   {[
                     { id: 'mildew', label: lang === 'ka' ? 'ჭრაქი (IPM)' : 'Mildew Risk' },
-                    { id: 'moisture', label: lang === 'ka' ? 'ტენიანობა' : 'Soil Moisture' },
+                    { id: 'moisture', label: lang === 'ka' ? 'წყლის სტრესი' : 'Water Stress' },
                     { id: 'phenology', label: lang === 'ka' ? 'ფენოლოგია' : 'Phenology' }
                   ].map(layer => (
                     <button
@@ -1250,8 +1386,13 @@ export default function VaziModule({
               <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
                 {/* Interactive vineyard map */}
                 <div className="md:col-span-5 bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col justify-between relative overflow-hidden h-60">
-                  <div className="text-[9px] font-mono font-bold text-emerald-800 uppercase tracking-widest flex items-center gap-1">
-                    🗺️ {lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate Block Map'}
+                  <div className="flex items-center justify-between gap-2 text-[9px] font-mono font-bold uppercase tracking-widest text-emerald-800">
+                    <span>🗺️ {lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate Block Map'}</span>
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 normal-case tracking-normal text-emerald-900">
+                      {blockWeatherLoading
+                        ? (lang === 'ka' ? 'ამინდი ახლდება…' : 'Weather updating…')
+                        : `${Object.keys(blockWeatherById).length}/${blocks.length} ${lang === 'ka' ? 'ცოცხალი' : 'live'}`}
+                    </span>
                   </div>
 
                   <div className="w-full h-40 mt-2 rounded-lg overflow-hidden border border-stone-200 relative z-0">
@@ -1260,9 +1401,10 @@ export default function VaziModule({
                         lang={lang}
                         center={defaultCenter}
                         blocks={blocks}
-                        selectedBlockId={selectedBlockId}
+                        selectedBlockId={mapSelectedBlockId}
                         onSelectBlock={setSelectedBlockId}
                         getBlockColor={getBlockColor}
+                        getBlockTooltipLines={getBlockTooltipLines}
                         heightClassName="h-full min-h-[160px]"
                         ariaLabel={lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate vineyard block map'}
                       />
@@ -1281,9 +1423,9 @@ export default function VaziModule({
                     )}
                     {mapOverlay === 'moisture' && (
                       <div className="flex gap-2">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{lang === 'ka' ? 'მშრალი' : 'Dry'}</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'ოპტ.' : 'Opt'}</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />{lang === 'ka' ? 'სველი' : 'Wet'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'დაბალი' : 'Low'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" />{lang === 'ka' ? 'საშ.' : 'Mod'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{lang === 'ka' ? 'მაღალი' : 'High'}</span>
                       </div>
                     )}
                     {mapOverlay === 'phenology' && (
@@ -1306,17 +1448,23 @@ export default function VaziModule({
                       return (
                         <div className="h-full flex flex-col items-center justify-center text-center gap-2 text-stone-500">
                           <AlertTriangle className="w-6 h-6 text-amber-600" />
-                          <strong className="text-xs text-stone-800">{lang === 'ka' ? 'ცოცხალი ამინდი მიუწვდომელია' : 'Live weather unavailable'}</strong>
+                          <strong className="text-xs text-stone-800">
+                            {blockWeatherLoading
+                              ? (lang === 'ka' ? 'ცოცხალი ამინდი იტვირთება…' : 'Loading live weather…')
+                              : (lang === 'ka' ? 'ცოცხალი ამინდი მიუწვდომელია' : 'Live weather unavailable')}
+                          </strong>
                           <span className="text-[10px] max-w-sm">
-                            {blockWeatherError || (lang === 'ka' ? 'მონაცემები არ არის. შეამოწმეთ კავშირი და ნაკვეთის კოორდინატები.' : 'No simulated readings are shown. Check the connection and block coordinates.')}
+                            {blockWeatherLoading
+                              ? (lang === 'ka' ? 'ნაკვეთის მიკროკლიმატის მონაცემები ახლდება.' : 'Updating this block’s microclimate data.')
+                              : blockWeatherError || (lang === 'ka' ? 'მონაცემები არ არის. შეამოწმეთ კავშირი და ნაკვეთის კოორდინატები.' : 'No simulated readings are shown. Check the connection and block coordinates.')}
                           </span>
                         </div>
                       );
                     }
 
                     const { temp, rainMm, wind, humidity } = blockWeather;
-                    const topRisk = selectedRisk
-                      ? [selectedRisk.items.downyMildew, selectedRisk.items.powderyMildew, selectedRisk.items.botrytis, selectedRisk.items.waterStress, selectedRisk.items.phiConflict]
+                    const topRisk = mapSelectedRisk
+                      ? [mapSelectedRisk.items.downyMildew, mapSelectedRisk.items.powderyMildew, mapSelectedRisk.items.botrytis, mapSelectedRisk.items.waterStress, mapSelectedRisk.items.phiConflict]
                         .sort((a, b) => b.score - a.score)[0]
                       : null;
 
@@ -1964,6 +2112,21 @@ export default function VaziModule({
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1">
                         GPS: Lat {selectedBlock.latitude.toFixed(4)}, Lng {selectedBlock.longitude.toFixed(4)}
                       </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono text-stone-600">
+                        <span>
+                          {lang === 'ka' ? 'რეგისტრირებული' : 'Registered'}: {selectedBlock.area.toFixed(2)} ha
+                        </span>
+                        <span>
+                          {selectedHasRecordedBoundary
+                            ? (lang === 'ka' ? 'რუკით გაზომილი' : 'Mapped')
+                            : (lang === 'ka' ? 'მიახლოებითი' : 'Approximate')}: {selectedMappedArea.toFixed(2)} ha
+                        </span>
+                        {selectedHasRecordedBoundary && (
+                          <span className={Math.abs(selectedAreaDifferencePercent) > 10 ? 'font-bold text-amber-700' : 'text-emerald-700'}>
+                            {selectedAreaDifferencePercent >= 0 ? '+' : ''}{selectedAreaDifferencePercent.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -1983,6 +2146,9 @@ export default function VaziModule({
                                   setEditingBoundaryPoints(previous => appendBoundaryPoint(previous, point));
                                 }
                               : undefined}
+                            onRemoveDrawingPoint={isEditingBlockBoundary
+                              ? index => setEditingBoundaryPoints(previous => removeBoundaryPoint(previous, index))
+                              : undefined}
                             heightClassName="h-full min-h-[160px]"
                             ariaLabel={lang === 'ka' ? `${selectedBlock.name} საზღვრის რუკა` : `${selectedBlock.name} boundary map`}
                             showEmptyState={false}
@@ -1992,10 +2158,19 @@ export default function VaziModule({
 
                       {isEditingBlockBoundary ? (
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-[9px] font-mono text-stone-500">
-                            {lang === 'ka'
-                              ? `დაამატეთ მინიმუმ 3 წერტილი · ${editingBoundaryPoints.length} დამატებულია`
-                              : `Add at least 3 points · ${editingBoundaryPoints.length} added`}
+                          <span className={`text-[9px] font-mono ${
+                            editingBoundaryValidation.valid ? 'text-emerald-700' : 'text-amber-700'
+                          }`}>
+                            {boundaryValidationMessage(editingBoundaryValidation, lang)}
+                            {' · '}
+                            {editingBoundaryPoints.length} {lang === 'ka' ? 'წერტილი' : 'vertices'}
+                            {editingBoundaryValidation.valid && selectedBlock.area > 0 && (
+                              <>
+                                {' · '}
+                                {lang === 'ka' ? 'რეგისტრირებულთან სხვაობა' : 'vs registered'}{' '}
+                                {(((editingBoundaryValidation.areaHectares - selectedBlock.area) / selectedBlock.area) * 100).toFixed(1)}%
+                              </>
+                            )}
                           </span>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <label className="sr-only" htmlFor="boundary-point-lat">
@@ -2050,9 +2225,9 @@ export default function VaziModule({
                             </button>
                             <button
                               type="button"
-                              disabled={editingBoundaryPoints.length < 3}
+                              disabled={!editingBoundaryValidation.valid}
                               onClick={() => {
-                                if (!canUpdateVineyardRecord || editingBoundaryPoints.length < 3) return;
+                                if (!canUpdateVineyardRecord || !editingBoundaryValidation.valid) return;
                                 runVaziMutationIfAllowed(canUpdateVineyardRecord, () => (
                                   onUpdateBlock(selectedBlock.id, { boundary: editingBoundaryPoints })
                                 ));
@@ -2065,8 +2240,16 @@ export default function VaziModule({
                             </button>
                           </div>
                         </div>
-                      ) : canUpdateVineyardRecord && (
-                        <div className="flex justify-end">
+                      ) : (
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => downloadBlockGeoJson(selectedBlock)}
+                            className="px-2.5 py-1 text-[9px] font-mono font-bold rounded border border-stone-200 bg-white text-stone-700 hover:bg-stone-100 cursor-pointer"
+                          >
+                            {lang === 'ka' ? 'GeoJSON-ის ჩამოტვირთვა' : 'Export GeoJSON'}
+                          </button>
+                          {canUpdateVineyardRecord && (
                           <button
                             type="button"
                             onClick={() => {
@@ -2084,6 +2267,7 @@ export default function VaziModule({
                           >
                             {lang === 'ka' ? 'საზღვრის რედაქტირება' : 'Edit Boundary'}
                           </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2214,6 +2398,7 @@ export default function VaziModule({
             <form onSubmit={(e) => {
               e.preventDefault();
               if (!canCreateVineyardRecord) return;
+              if (drawnPoints.length > 0 && !drawnBoundaryValidation.valid) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               const targetProblem = fd.get('targetProblem') as string;
@@ -3182,7 +3367,7 @@ export default function VaziModule({
                   estimatedHarvestDate: new Date(2026, 8, 15).toISOString().split('T')[0],
                   notes: note,
                   vineyardCondition,
-                  boundary: drawnPoints.length > 2 ? drawnPoints : undefined
+                  boundary: drawnBoundaryValidation.valid ? drawnPoints : undefined
                 }));
                 form.reset();
                 setDrawnPoints([]);
@@ -3237,6 +3422,9 @@ export default function VaziModule({
                           setAddBlockLng(parseFloat(point.lng.toFixed(4)));
                         }
                       }}
+                      onRemoveDrawingPoint={isDrawingPolygon
+                        ? index => setDrawnPoints(previous => removeBoundaryPoint(previous, index))
+                        : undefined}
                       heightClassName="h-full min-h-[160px]"
                       ariaLabel={lang === 'ka' ? 'ახალი ნაკვეთის საზღვრის რუკა' : 'New block boundary map'}
                       showEmptyState={false}
@@ -3247,7 +3435,7 @@ export default function VaziModule({
                 <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
                   <button
                     type="button"
-                    disabled={isDrawingPolygon && drawnPoints.length < 3}
+                    disabled={isDrawingPolygon && !drawnBoundaryValidation.valid}
                     onClick={() => {
                       if (isDrawingPolygon) {
                         setIsDrawingPolygon(false);
@@ -3261,8 +3449,10 @@ export default function VaziModule({
                     }`}
                   >
                     {isDrawingPolygon
-                      ? (drawnPoints.length < 3
-                        ? (lang === 'ka' ? `კიდევ ${3 - drawnPoints.length} წერტილი` : `Add ${3 - drawnPoints.length} more point${3 - drawnPoints.length === 1 ? '' : 's'}`)
+                      ? (!drawnBoundaryValidation.valid
+                        ? (drawnBoundaryValidation.reason === 'minimum-points'
+                          ? (lang === 'ka' ? `კიდევ ${3 - drawnPoints.length} წერტილი` : `Add ${3 - drawnPoints.length} more point${3 - drawnPoints.length === 1 ? '' : 's'}`)
+                          : (lang === 'ka' ? 'გაასწორეთ საზღვარი' : 'Fix Boundary'))
                         : (lang === 'ka' ? '✓ საზღვრის დასრულება' : '✓ Finish Boundary'))
                       : (lang === 'ka' ? '✏️ ნაკვეთის საზღვრის დახაზვა' : '✏️ Draw Block Boundary')}
                   </button>
@@ -3296,6 +3486,18 @@ export default function VaziModule({
                     )}
                   </div>
                 </div>
+                {drawnPoints.length > 0 && (
+                  <div
+                    role={drawnBoundaryValidation.valid ? 'status' : 'alert'}
+                    className={`rounded-md border px-2.5 py-1.5 text-[9px] font-mono ${
+                      drawnBoundaryValidation.valid
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-amber-200 bg-amber-50 text-amber-800'
+                    }`}
+                  >
+                    {boundaryValidationMessage(drawnBoundaryValidation, lang)}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-3">

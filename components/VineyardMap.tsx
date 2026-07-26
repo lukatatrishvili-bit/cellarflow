@@ -14,6 +14,7 @@ import 'leaflet/dist/leaflet.css';
 import type { Language } from '../lib/i18n';
 import type { VineyardBlock } from '../lib/wineryState';
 import {
+  hasUsableBoundary,
   isValidVineyardMapPoint,
   vineyardBlockBoundary,
   vineyardBlocksBounds,
@@ -31,13 +32,20 @@ interface VineyardMapProps {
   selectedBlockId?: string | null;
   onSelectBlock?: (blockId: string) => void;
   getBlockColor?: (blockId: string) => string;
+  getBlockTooltipLines?: (blockId: string) => string[];
   drawing?: boolean;
   drawingPoints?: VineyardMapPoint[];
   onMapClick?: (point: VineyardMapPoint) => void;
+  onRemoveDrawingPoint?: (index: number) => void;
   heightClassName?: string;
   ariaLabel?: string;
   showEmptyState?: boolean;
 }
+
+type ViewCommand = {
+  type: 'estate' | 'selected';
+  nonce: number;
+};
 
 function MapClickController({
   enabled,
@@ -58,11 +66,13 @@ function MapViewportController({
   blocks,
   center,
   drawing,
+  viewCommand,
   selectedBlockId,
 }: {
   blocks: VineyardBlock[];
   center: VineyardMapPoint;
   drawing: boolean;
+  viewCommand: ViewCommand | null;
   selectedBlockId?: string | null;
 }) {
   const map = useMap();
@@ -82,14 +92,20 @@ function MapViewportController({
   }, [blocks.length, centerIsValid, centerLat, centerLng, drawing, map]);
 
   useEffect(() => {
-    if (drawing || !selectedBlockId) return;
-    const selectedBlock = blocks.find(block => block.id === selectedBlockId);
-    if (!selectedBlock) return;
-    const selectedBounds = vineyardMapBounds(vineyardBlockBoundary(selectedBlock));
-    if (selectedBounds) {
-      map.fitBounds(selectedBounds, { animate: true, maxZoom: 17, padding: [30, 30] });
+    if (drawing || !viewCommand) return;
+    if (viewCommand.type === 'estate' && bounds) {
+      map.fitBounds(bounds, { animate: true, maxZoom: 17, padding: [24, 24] });
+      return;
     }
-  }, [blocks, drawing, map, selectedBlockId]);
+    if (viewCommand.type !== 'selected' || !selectedBlockId) return;
+    const selectedBlock = blocks.find(block => block.id === selectedBlockId);
+    const selectedBounds = selectedBlock
+      ? vineyardMapBounds(vineyardBlockBoundary(selectedBlock))
+      : null;
+    if (selectedBounds) {
+      map.fitBounds(selectedBounds, { animate: true, maxZoom: 18, padding: [30, 30] });
+    }
+  }, [blocks, bounds, drawing, map, selectedBlockId, viewCommand]);
 
   return null;
 }
@@ -101,9 +117,11 @@ export default function VineyardMap({
   selectedBlockId = null,
   onSelectBlock,
   getBlockColor,
+  getBlockTooltipLines,
   drawing = false,
   drawingPoints = [],
   onMapClick,
+  onRemoveDrawingPoint,
   heightClassName = 'h-full min-h-[160px]',
   ariaLabel,
   showEmptyState = true,
@@ -112,6 +130,7 @@ export default function VineyardMap({
     typeof navigator === 'undefined' ? true : navigator.onLine
   ));
   const [tileError, setTileError] = useState(false);
+  const [viewCommand, setViewCommand] = useState<ViewCommand | null>(null);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -156,6 +175,7 @@ export default function VineyardMap({
           blocks={blocks}
           center={center}
           drawing={drawing}
+          viewCommand={viewCommand}
           selectedBlockId={selectedBlockId}
         />
         <MapClickController enabled={Boolean(onMapClick)} onMapClick={onMapClick} />
@@ -164,6 +184,8 @@ export default function VineyardMap({
           const boundary = vineyardBlockBoundary(block);
           if (boundary.length < 3) return null;
           const selected = block.id === selectedBlockId;
+          const isApproximate = !hasUsableBoundary(block.boundary) && !hasUsableBoundary(block.gpsPolygon);
+          const tooltipLines = getBlockTooltipLines?.(block.id) || [];
           return (
             <Polygon
               key={block.id}
@@ -174,6 +196,7 @@ export default function VineyardMap({
                 fillOpacity: selected ? 0.62 : 0.42,
                 opacity: 0.95,
                 weight: selected ? 4 : 2,
+                dashArray: isApproximate ? '7 6' : undefined,
               }}
               eventHandlers={{
                 click: () => onSelectBlock?.(block.id),
@@ -183,7 +206,13 @@ export default function VineyardMap({
                 <strong>{block.name}</strong>
                 <br />
                 {block.grapeVariety} · {block.area.toLocaleString()} ha
-                {!block.boundary?.length && !block.gpsPolygon?.length && (
+                {tooltipLines.map(line => (
+                  <React.Fragment key={line}>
+                    <br />
+                    <span>{line}</span>
+                  </React.Fragment>
+                ))}
+                {isApproximate && (
                   <>
                     <br />
                     <span>{lang === 'ka' ? 'მიახლოებითი საზღვარი' : 'Approximate boundary'}</span>
@@ -232,7 +261,11 @@ export default function VineyardMap({
             center={[point.lat, point.lng]}
             radius={9}
             pathOptions={{ color: '#ffffff', fillColor: '#047857', fillOpacity: 1, weight: 2 }}
-            interactive={false}
+            interactive={Boolean(onRemoveDrawingPoint)}
+            bubblingMouseEvents={false}
+            eventHandlers={onRemoveDrawingPoint
+              ? { click: () => onRemoveDrawingPoint(index) }
+              : undefined}
           >
             <Tooltip permanent direction="center" className="vineyard-map-point-label">
               {index + 1}
@@ -240,6 +273,35 @@ export default function VineyardMap({
           </CircleMarker>
         ))}
       </MapContainer>
+
+      {!drawing && blocks.length > 0 && (
+        <div className="absolute right-3 top-3 z-[500] flex gap-1 rounded-lg border border-stone-200 bg-white/95 p-1 shadow-sm backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={() => setViewCommand({ type: 'estate', nonce: Date.now() })}
+            className="rounded px-2 py-1 text-[9px] font-bold text-stone-700 transition-colors hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+          >
+            {lang === 'ka' ? 'ყველა ნაკვეთი' : 'Fit estate'}
+          </button>
+          {selectedBlockId && (
+            <button
+              type="button"
+              onClick={() => setViewCommand({ type: 'selected', nonce: Date.now() })}
+              className="rounded bg-emerald-800 px-2 py-1 text-[9px] font-bold text-white transition-colors hover:bg-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-700"
+            >
+              {lang === 'ka' ? 'არჩეული' : 'Focus selected'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {drawing && validDrawingPoints.length > 0 && onRemoveDrawingPoint && (
+        <div className="pointer-events-none absolute left-3 top-3 z-[500] rounded-lg border border-emerald-200 bg-white/95 px-2.5 py-1.5 text-[9px] font-semibold text-emerald-950 shadow-sm">
+          {lang === 'ka'
+            ? 'წერტილის წასაშლელად დააჭირეთ მის ნომერს'
+            : 'Select a numbered vertex to remove it'}
+        </div>
+      )}
 
       {mapUnavailable && (
         <div className="pointer-events-none absolute left-3 top-3 z-[500] max-w-[15rem] rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-[10px] font-semibold leading-relaxed text-amber-900 shadow-sm backdrop-blur-sm">

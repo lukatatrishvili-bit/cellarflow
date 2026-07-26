@@ -3,9 +3,14 @@ import type { VineyardBlock } from '../lib/wineryState';
 import {
   appendBoundaryPoint,
   hasUsableBoundary,
+  removeBoundaryPoint,
+  validateVineyardBoundary,
+  vineyardBoundarySelfIntersects,
   vineyardBlockBoundary,
+  vineyardBlockGeoJsonFeature,
   vineyardBlocksBounds,
   vineyardMapBounds,
+  vineyardPolygonAreaHectares,
 } from '../lib/vineyardMap';
 
 function block(overrides: Partial<VineyardBlock> = {}): VineyardBlock {
@@ -104,5 +109,51 @@ describe('vineyard map geometry', () => {
       first,
       { lat: 41.93, lng: 45.49 },
     ]);
+  });
+
+  it('measures a field polygon in hectares and rejects crossed boundaries', () => {
+    const rectangle = [
+      { lat: 0, lng: 0 },
+      { lat: 0.0009, lng: 0 },
+      { lat: 0.0009, lng: 0.001 },
+      { lat: 0, lng: 0.001 },
+    ];
+    const crossed = [rectangle[0], rectangle[2], rectangle[1], rectangle[3]];
+
+    expect(vineyardPolygonAreaHectares(rectangle)).toBeGreaterThan(1);
+    expect(vineyardPolygonAreaHectares(rectangle)).toBeLessThan(1.2);
+    expect(validateVineyardBoundary(rectangle)).toMatchObject({ valid: true });
+    expect(vineyardBoundarySelfIntersects(crossed)).toBe(true);
+    expect(validateVineyardBoundary(crossed)).toMatchObject({
+      valid: false,
+      reason: 'self-intersection',
+    });
+  });
+
+  it('removes a selected vertex without mutating the original list', () => {
+    const points = [
+      { lat: 41.9, lng: 45.4 },
+      { lat: 41.91, lng: 45.41 },
+      { lat: 41.92, lng: 45.42 },
+    ];
+
+    expect(removeBoundaryPoint(points, 1)).toEqual([points[0], points[2]]);
+    expect(removeBoundaryPoint(points, 10)).toBe(points);
+    expect(points).toHaveLength(3);
+  });
+
+  it('exports a closed GeoJSON polygon with provenance and measured area', () => {
+    const boundary = [
+      { lat: 41.9, lng: 45.4 },
+      { lat: 41.91, lng: 45.4 },
+      { lat: 41.91, lng: 45.42 },
+    ];
+    const feature = vineyardBlockGeoJsonFeature(block({ boundary }));
+
+    expect(feature.type).toBe('Feature');
+    expect(feature.properties.boundarySource).toBe('boundary');
+    expect(feature.properties.measuredAreaHectares).toBeGreaterThan(0);
+    expect(feature.geometry.coordinates[0][0]).toEqual([45.4, 41.9]);
+    expect(feature.geometry.coordinates[0].at(-1)).toEqual([45.4, 41.9]);
   });
 });
