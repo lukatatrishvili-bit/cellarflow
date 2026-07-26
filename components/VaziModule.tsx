@@ -28,18 +28,29 @@ import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
 // error map and floods the console — so we render a calm placeholder instead.
 const MAPS_KEY = (process.env.GOOGLE_MAPS_PLATFORM_KEY || '').trim();
 
-function MapUnavailable({ lang }: { lang: Language }) {
+function OpenStreetMapFallback({ lang, center }: { lang: Language; center?: { lat: number; lng: number } }) {
+  const isKa = lang === 'ka';
+  const cLat = center?.lat ?? 41.9056;
+  const cLng = center?.lng ?? 45.474;
+  const bboxDelta = 0.012;
+  const bbox = `${cLng - bboxDelta},${cLat - bboxDelta},${cLng + bboxDelta},${cLat + bboxDelta}`;
+  const embedUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${cLat}%2C${cLng}`;
+
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-stone-100 text-center px-3 dark:bg-stone-900">
-      <span className="text-lg" aria-hidden="true">🗺️</span>
-      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
-        {lang === 'ka' ? 'რუკა მიუწვდომელია' : 'Map unavailable'}
-      </span>
-      <span className="text-[9px] text-stone-400 dark:text-stone-500 max-w-[220px] leading-snug">
-        {lang === 'ka'
-          ? 'Google Maps გასაღები არ არის კონფიგურირებული ამ გარემოში.'
-          : 'Google Maps key is not configured for this environment.'}
-      </span>
+    <div className="relative w-full h-full min-h-[160px] bg-stone-100 dark:bg-stone-900 rounded-lg overflow-hidden border border-stone-200">
+      <iframe
+        title="OpenStreetMap View"
+        width="100%"
+        height="100%"
+        style={{ border: 0, minHeight: '160px' }}
+        loading="lazy"
+        allowFullScreen
+        src={embedUrl}
+      />
+      <div className="absolute bottom-1.5 right-1.5 z-10 bg-white/95 dark:bg-stone-900/95 backdrop-blur-xs px-2 py-0.5 rounded-md text-[9px] font-mono font-bold text-stone-700 dark:text-stone-300 border border-stone-200 shadow-xs flex items-center gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+        {isKa ? 'OpenStreetMap (აქტიური)' : 'OpenStreetMap (Live)'}
+      </div>
     </div>
   );
 }
@@ -1299,7 +1310,7 @@ export default function VaziModule({
                   </div>
 
                   <div className="w-full h-40 mt-2 rounded-lg overflow-hidden border border-stone-200 relative z-0">
-                    {!MAPS_KEY ? <MapUnavailable lang={lang} /> : (
+                    {!MAPS_KEY ? <OpenStreetMapFallback lang={lang} center={defaultCenter} /> : (
                     <APIProvider apiKey={MAPS_KEY}>
                       <Map
                         defaultCenter={defaultCenter}
@@ -3218,7 +3229,7 @@ export default function VaziModule({
                 />
 
                 <div className="w-full h-40 rounded-lg overflow-hidden border border-stone-200 mt-2 relative z-0">
-                  {!MAPS_KEY ? <MapUnavailable lang={lang} /> : (
+                  {!MAPS_KEY ? <OpenStreetMapFallback lang={lang} center={{ lat: addBlockLat, lng: addBlockLng }} /> : (
                   <APIProvider apiKey={MAPS_KEY}>
                     <Map
                       defaultCenter={defaultCenter}
