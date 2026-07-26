@@ -337,7 +337,7 @@ export default function WineryDashboardTab({
                 <ProgressBar
                   value={vesselUsePct}
                   tone={vesselUsePct > 85 ? 'warning' : 'brand'}
-                  label={isKa ? 'ტევადობის გამოყენება' : 'Capacity utilization'}
+                  label={isKa ? 'მარნის ტევადობა' : 'Capacity utilization'}
                 />
               )}
 
