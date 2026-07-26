@@ -17,10 +17,20 @@ export function cleanEnv(val: string | undefined): string {
 }
 
 export function getGoogleOAuthCreds(db: any): { clientId: string; clientSecret: string } {
-  return {
-    clientId: cleanEnv(process.env.GOOGLE_CLIENT_ID) || cleanEnv(db.googleConfig?.clientId),
-    clientSecret: cleanEnv(process.env.GOOGLE_CLIENT_SECRET) || cleanEnv(db.googleConfig?.clientSecret),
-  };
+  const envClientId = cleanEnv(process.env.GOOGLE_CLIENT_ID);
+  const envClientSecret = cleanEnv(process.env.GOOGLE_CLIENT_SECRET);
+  const dbClientId = cleanEnv(db?.googleConfig?.clientId);
+  const dbClientSecret = cleanEnv(db?.googleConfig?.clientSecret);
+
+  const clientId = envClientId || dbClientId;
+  const clientSecret = envClientSecret || dbClientSecret;
+
+  if (db && db.googleConfig && envClientId && envClientSecret) {
+    db.googleConfig.clientId = clientId;
+    db.googleConfig.clientSecret = clientSecret;
+  }
+
+  return { clientId, clientSecret };
 }
 
 export function updateEnvFile(updates: Record<string, string>) {
