@@ -7,13 +7,16 @@ import type { Vessel, VesselType, WineLot } from '../lib/wineryState';
 import { vesselTypeLabel } from '../lib/enumLabels';
 import {
   ShieldAlert, CheckCircle, Snowflake, RotateCw, Plus, Trash2, Edit,
-  Search, LayoutGrid, List, Map, Database, Droplets, Thermometer, ShieldCheck
+  Search, LayoutGrid, List, Map, Database, Droplets, Thermometer, ShieldCheck,
+  Container as ContainerIcon, FileText, AlertTriangle, ArrowRight,
+  ChevronDown, ChevronUp, CircleGauge, MoveRight
 } from 'lucide-react';
 import TankCapacityChart, { ChartTankData } from './TankCapacityChart';
 import CellarMap from './CellarMap';
 import VesselFill from './VesselFill';
 import { Stagger, StaggerItem } from './motion';
 import { useToast } from './ToastProvider';
+import { PageHeader } from './ui/primitives';
 
 interface Props {
   lang: Language;
@@ -30,16 +33,33 @@ interface Props {
   canUpdateVessel?: boolean;
   canDeleteVessel?: boolean;
   canExecuteTransfer?: boolean;
+  qvevriCount?: number;
+  renderQvevriRecords?: (onBackToVessels: () => void, focusedVesselId?: string | null) => React.ReactNode;
+}
+
+type VesselStatusFilter = 'all' | 'attention' | 'ready' | 'empty' | 'occupied' | 'dirty' | 'cooling';
+type VesselSignalKind = 'assignment' | 'fill' | 'hygiene' | 'seal' | 'temperature';
+
+function qvevriSealNeedsAttention(vessel: Vessel, now = Date.now()): boolean {
+  if (vessel.type !== 'qvevri') return false;
+  if (vessel.waxingStatus === 'needed' || vessel.limeWashStatus === 'needed') return true;
+  const sealedAt = vessel.lastSealedDate || vessel.sealingDate;
+  if (!sealedAt) return true;
+  const sealedTimestamp = new Date(sealedAt).getTime();
+  if (!Number.isFinite(sealedTimestamp)) return true;
+  return (now - sealedTimestamp) / 86_400_000 > 120;
 }
 
 export default function TanksVessels({
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
   setActiveTab, setPrefilledSourceId, setPrefilledDestId,
-  canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true
+  canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true,
+  qvevriCount = vessels.filter(vessel => vessel.type === 'qvevri').length,
+  renderQvevriRecords,
 }: Props) {
   const t = translations[lang];
   const ka = lang === 'ka';
-  const { success, info } = useToast();
+  const { success, error, info } = useToast();
   const lText = (obj: Partial<Record<Language, string>>, fallback: string): string => {
     return obj[lang] || fallback;
   };
@@ -49,7 +69,10 @@ export default function TanksVessels({
   // Custom view modes and search states for intuitive navigation
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'map'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'empty' | 'occupied' | 'dirty' | 'cooling'>('all');
+  const [statusFilter, setStatusFilter] = useState<VesselStatusFilter>('all');
+  const [workspaceView, setWorkspaceView] = useState<'register' | 'qvevri'>('register');
+  const [qvevriFocusId, setQvevriFocusId] = useState<string | null>(null);
+  const [showCapacityChart, setShowCapacityChart] = useState(false);
 
   // Custom add vessel state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -120,6 +143,18 @@ export default function TanksVessels({
 
   const handleDeleteVessel = (vId: string) => {
     if (!canDeleteVessel) return;
+    const vessel = vessels.find(v => v.id === vId);
+    if (!vessel) return;
+    if (vessel.currentVolume > 0 || vessel.assignedLotId) {
+      error(ka
+        ? `ჭურჭელი ${vId} ჯერ უნდა დაიცალოს და პარტიას მოშორდეს.`
+        : `Empty ${vId} and remove its lot assignment before decommissioning.`);
+      return;
+    }
+    const confirmed = window.confirm(ka
+      ? `ნამდვილად გსურთ ${vId}-ის ექსპლუატაციიდან ამოღება?`
+      : `Decommission ${vId}? This removes it from the active cellar register.`);
+    if (!confirmed) return;
     const filtered = vessels.filter(v => v.id !== vId);
     onUpdateVessels(filtered);
     info(ka ? `ჭურჭელი ${vId} ამოღებულია ექსპლუატაციიდან` : `Vessel ${vId} decommissioned`);
@@ -128,10 +163,22 @@ export default function TanksVessels({
   const handleAddVessel = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canCreateVessel) return;
-    if (!newId) return;
+    const vesselId = newId.trim();
+    if (!vesselId) {
+      error(ka ? 'შეიყვანეთ ჭურჭლის ID.' : 'Enter a vessel ID.');
+      return;
+    }
+    if (vessels.some(vessel => vessel.id.toLocaleLowerCase() === vesselId.toLocaleLowerCase())) {
+      error(ka ? `ჭურჭელი ${vesselId} უკვე არსებობს.` : `Vessel ${vesselId} already exists.`);
+      return;
+    }
+    if (!Number.isFinite(newCapacity) || newCapacity <= 0) {
+      error(ka ? 'ტევადობა უნდა იყოს ნულზე მეტი.' : 'Capacity must be greater than zero.');
+      return;
+    }
 
     const newVessel: Vessel = {
-      id: newId,
+      id: vesselId,
       type: newType,
       shape: newType === 'barrel' ? 'horizontal' : 'vertical',
       capacity: newCapacity,
@@ -147,12 +194,77 @@ export default function TanksVessels({
     };
 
     onUpdateVessels([...vessels, newVessel]);
-    const addedId = newId;
+    const addedId = vesselId;
     setNewId('');
     setNewLocation('');
     setShowAddForm(false);
     success(ka ? `ახალი ჭურჭელი ${addedId} წარმატებით დაემატა` : `New vessel ${addedId} commissioned successfully`);
   };
+
+  const vesselSignalKind = (vessel: Vessel): VesselSignalKind | null => {
+    const assignedLot = lots.find(lot => lot.id === vessel.assignedLotId);
+    const fill = vessel.capacity > 0 ? (vessel.currentVolume / vessel.capacity) * 100 : 0;
+    if ((vessel.currentVolume > 0 && !vessel.assignedLotId) || (vessel.currentVolume === 0 && vessel.assignedLotId)) {
+      return 'assignment';
+    }
+    if (fill >= 95) return 'fill';
+    if (vessel.cleaningStatus !== 'clean') return 'hygiene';
+    if (qvevriSealNeedsAttention(vessel)) return 'seal';
+    if (assignedLot?.stage === 'fermenting' && (!Number.isFinite(vessel.temperature) || vessel.temperature < 8 || vessel.temperature > 30)) {
+      return 'temperature';
+    }
+    return null;
+  };
+
+  const signalCopy = (vessel: Vessel, kind: VesselSignalKind) => {
+    const assignedLot = lots.find(lot => lot.id === vessel.assignedLotId);
+    const fill = vessel.capacity > 0 ? Math.round((vessel.currentVolume / vessel.capacity) * 100) : 0;
+    const copy = {
+      assignment: {
+        title: ka ? 'პარტიის კავშირი შესამოწმებელია' : 'Lot assignment needs review',
+        detail: ka ? 'მოცულობა და მიბმული პარტია ერთმანეთს არ ემთხვევა.' : 'Volume and lot assignment are out of sync.',
+        action: ka ? 'ჭურჭლის გახსნა' : 'Open vessel',
+      },
+      fill: {
+        title: ka ? `შევსება ${fill}%` : `${fill}% fill level`,
+        detail: ka ? 'შემდეგ ოპერაციამდე შეამოწმეთ თავისუფალი სივრცე.' : 'Check headspace before the next cellar movement.',
+        action: ka ? 'შევსების ნახვა' : 'Review fill',
+      },
+      hygiene: {
+        title: ka ? 'სანიტაცია საჭიროა' : 'Sanitation required',
+        detail: ka ? 'ჭურჭელი წარმოებაში დაბრუნებამდე უნდა გაირეცხოს.' : 'Wash before returning this vessel to production.',
+        action: ka ? 'ჭურჭლის გახსნა' : 'Open vessel',
+      },
+      seal: {
+        title: ka ? 'ქვევრის ცვილი შესამოწმებელია' : 'Qvevri seal check due',
+        detail: ka ? 'ცვილის ან კირის ჩანაწერს განახლება სჭირდება.' : 'Wax or lime-wash evidence needs attention.',
+        action: ka ? 'ქვევრის ჩანაწერი' : 'Open qvevri record',
+      },
+      temperature: {
+        title: ka ? 'დუღილის ტემპერატურა საეჭვოა' : 'Fermentation temperature risk',
+        detail: assignedLot
+          ? (ka ? `${assignedLot.name}: ${vessel.temperature}°C` : `${assignedLot.name}: ${vessel.temperature}°C`)
+          : `${vessel.temperature}°C`,
+        action: ka ? 'ტემპერატურის ნახვა' : 'Review temperature',
+      },
+    } satisfies Record<VesselSignalKind, { title: string; detail: string; action: string }>;
+    return copy[kind];
+  };
+
+  const attentionVessels = vessels
+    .map(vessel => ({ vessel, kind: vesselSignalKind(vessel) }))
+    .filter((item): item is { vessel: Vessel; kind: VesselSignalKind } => Boolean(item.kind))
+    .sort((a, b) => {
+      const priority: Record<VesselSignalKind, number> = { assignment: 0, fill: 1, temperature: 2, hygiene: 3, seal: 4 };
+      return priority[a.kind] - priority[b.kind];
+    });
+  const readyVessels = vessels.filter(vessel =>
+    vessel.currentVolume === 0 &&
+    !vessel.assignedLotId &&
+    vessel.cleaningStatus === 'clean' &&
+    !qvevriSealNeedsAttention(vessel)
+  );
+  const readyCapacity = readyVessels.reduce((sum, vessel) => sum + vessel.capacity, 0);
 
   // Improved reactive filtering system with multi-criteria support
   const filteredVessels = vessels.filter(v => {
@@ -160,9 +272,11 @@ export default function TanksVessels({
     if (filterType !== 'all' && v.type !== filterType) return false;
 
     // 2. Filter by Status filter
+    if (statusFilter === 'attention' && !vesselSignalKind(v)) return false;
+    if (statusFilter === 'ready' && !readyVessels.some(vessel => vessel.id === v.id)) return false;
     if (statusFilter === 'empty' && v.currentVolume > 0) return false;
     if (statusFilter === 'occupied' && (!v.assignedLotId || v.currentVolume === 0)) return false;
-    if (statusFilter === 'dirty' && v.cleaningStatus !== 'dirty') return false;
+    if (statusFilter === 'dirty' && v.cleaningStatus === 'clean') return false;
     if (statusFilter === 'cooling' && !v.coolingJacketActive) return false;
 
     // 3. Search input matches vessel ID, location, or assigned wine description
@@ -184,7 +298,7 @@ export default function TanksVessels({
   const totalCapacity = vessels.reduce((sum, v) => sum + v.capacity, 0);
   const totalUtilization = totalCapacity > 0 ? (totalVolume / totalCapacity) * 100 : 0;
   const coolingActiveCount = vessels.filter(v => v.coolingJacketActive).length;
-  const dirtyCount = vessels.filter(v => v.cleaningStatus === 'dirty').length;
+  const dirtyCount = vessels.filter(v => v.cleaningStatus !== 'clean').length;
 
   const mappedTanks: ChartTankData[] = vessels.map(v => ({
     id: v.id,
@@ -203,162 +317,328 @@ export default function TanksVessels({
   const missingVesselActionsText = ka || missingVesselActions.length < 2
     ? missingVesselActions.join(', ')
     : `${missingVesselActions.slice(0, -1).join(', ')} or ${missingVesselActions.at(-1)}`;
+  const workspaceHeader = (
+    <PageHeader
+      eyebrow={ka ? 'მარნის კონტროლი' : 'Cellar control'}
+      title={ka ? 'ჭურჭლის მართვის ცენტრი' : 'Vessel command center'}
+      description={ka
+        ? 'გადაწყვიტეთ სად წავა ღვინო შემდეგ, რა მოითხოვს ყურადღებას და რომელი ჭურჭელია მზად.'
+        : 'Decide where wine moves next, what needs attention, and which vessel is truly ready.'}
+      icon={ContainerIcon}
+      actions={renderQvevriRecords ? (
+        <div
+          role="group"
+          aria-label={ka ? 'ჭურჭლის სამუშაო სივრცის ხედი' : 'Vessel workspace view'}
+          className="inline-flex w-full rounded-xl bg-stone-100 p-1 lg:w-auto dark:bg-stone-800"
+        >
+          <button
+            type="button"
+            aria-pressed={workspaceView === 'register'}
+            onClick={() => setWorkspaceView('register')}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition-colors lg:flex-none ${
+              workspaceView === 'register'
+                ? 'bg-white text-[#4e0e15] shadow-sm dark:bg-stone-900 dark:text-amber-100'
+                : 'text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100'
+            }`}
+          >
+            <ContainerIcon className="h-4 w-4" />
+            {ka ? 'ყველა ჭურჭელი' : 'All vessels'}
+            <span className="rounded-full bg-stone-200 px-1.5 py-0.5 text-[9px] dark:bg-stone-700">{vessels.length}</span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={workspaceView === 'qvevri'}
+            onClick={() => {
+              setQvevriFocusId(null);
+              setWorkspaceView('qvevri');
+            }}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition-colors lg:flex-none ${
+              workspaceView === 'qvevri'
+                ? 'bg-white text-[#4e0e15] shadow-sm dark:bg-stone-900 dark:text-amber-100'
+                : 'text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100'
+            }`}
+          >
+            <FileText className="h-4 w-4" />
+            {ka ? 'ქვევრის ჩანაწერები' : 'Qvevri records'}
+            <span className="rounded-full bg-stone-200 px-1.5 py-0.5 text-[9px] dark:bg-stone-700">{qvevriCount}</span>
+          </button>
+        </div>
+      ) : undefined}
+    />
+  );
+
+  if (workspaceView === 'qvevri' && renderQvevriRecords) {
+    return (
+      <div className="space-y-4">
+        {workspaceHeader}
+        {renderQvevriRecords(() => setWorkspaceView('register'), qvevriFocusId)}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* 1. D3-Based Tank Capacity glance chart */}
-      <div className="p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-sm">
-        <h3 className="text-base font-serif font-semibold text-[#4e0e15] mb-1">
-          {({
-            en: 'Cellar Capacity Glance',
-            ka: 'მარნის ტევადობის ზოგადი ხედი',
-            it: 'Panoramica della Capacità della Cantina',
-            fr: 'Aperçu de la Capacité de la Cave',
-            de: 'Überblick über die Kellerkapazität'
-          })[lang] || 'Cellar Capacity Glance'}
-        </h3>
-        <p className="text-xs text-slate-500 mb-4">
-          {({
-            en: 'Visualizing active volumes against overall capacity. Red warnings trigger automatically at >95% capacity levels.',
-            ka: 'მიმდინარე აქტიური მოცულობის შედარება საერთო ტევადობასთან. წითელი გაფრთხილება ავტომატურად ირთვება >95%-ით შევსებისას.',
-            it: 'Visualizzazione del volume attivo rispetto alla capacità complessiva. Gli avvisi rossi si attivano automaticamente a livelli di capacità superiori al 95%.',
-            fr: 'Visualisation des volumes actifs par rapport à la capacité globale. Les alertes rouges se déclenchent automatiquement au-dessus de 95 % de capacité.',
-            de: 'Visualisierung des aktiven Volumens im Verhältnis zur Gesamtkapazität. Rote Warnungen werden ab 95 % Füllstand automatisch ausgelöst.'
-          })[lang] || 'Visualizing active volumes against overall capacity. Red warnings trigger automatically at >95% capacity levels.'}
-        </p>
+      {workspaceHeader}
 
-        {/* CONTAINER FOR D3 GRAPHICS (MATCHES CRITICAL CSS SELECTOR FROM TASK) */}
-        <TankCapacityChart tanks={mappedTanks} onSelectTank={onSelectTank} selectedTankId={selectedTankId} />
-      </div>
+      {vessels.length > 0 && (
+        <>
+          <section className="relative overflow-hidden rounded-3xl border border-[#4e0e15] bg-[#31080f] text-white shadow-xl shadow-[#4e0e15]/10">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(214,160,81,0.22),transparent_38%),linear-gradient(135deg,transparent,rgba(128,19,35,0.22))]" />
+            <div className="relative p-5 lg:p-7">
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+                <div className="max-w-2xl">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-amber-100">
+                    <span className={`h-2 w-2 rounded-full ${attentionVessels.length ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
+                    {ka ? 'მეღვინის დღიური ხედვა' : 'Winemaker briefing'}
+                  </span>
+                  <h3 className="mt-4 max-w-xl text-3xl font-black leading-[1.05] tracking-tight lg:text-4xl">
+                    {attentionVessels.length
+                      ? (ka
+                          ? `${attentionVessels.length} გადაწყვეტილება შემდეგ მოძრაობამდე`
+                          : `${attentionVessels.length} ${attentionVessels.length === 1 ? 'decision' : 'decisions'} before the next movement`)
+                      : (ka ? 'მარანი მზადაა შემდეგი მოძრაობისთვის' : 'The cellar is ready for its next movement')}
+                  </h3>
+                  <p className="mt-3 max-w-xl text-sm font-medium leading-relaxed text-stone-300">
+                    {ka
+                      ? 'პირველ რიგში ნაჩვენებია რისკი, სისუფთავე და რეალურად ხელმისაწვდომი ტევადობა.'
+                      : 'Risk, sanitation, and genuinely available capacity are prioritized before the full vessel register.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {canExecuteTransfer && setActiveTab && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('transfers')}
+                      className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-amber-100 px-4 py-2.5 text-xs font-black text-[#4e0e15] shadow-sm transition hover:bg-white"
+                    >
+                      <MoveRight className="h-4 w-4" />
+                      {ka ? 'გადატანის დაგეგმვა' : 'Plan a transfer'}
+                    </button>
+                  )}
+                  {canCreateVessel && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAddForm(true)}
+                      className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-black text-white transition hover:bg-white/15"
+                    >
+                      <Plus className="h-4 w-4" />
+                      {ka ? 'ჭურჭლის დამატება' : 'Add vessel'}
+                    </button>
+                  )}
+                </div>
+              </div>
 
-      {/* Live High-Fidelity Cellar Diagnostics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Metric 1: Capacity Utilized */}
-        <div className="bg-[#FAF8F5] border border-[#f0e6da] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
-              {({
-                en: 'Cellar Volume',
-                ka: 'მარნის მოცულობა',
-                it: 'Volume Cantina',
-                fr: 'Volume Cave',
-                de: 'Keller-Volumen'
-              })[lang] || 'Cellar Volume'}
-            </span>
-            <Droplets className="w-3.5 h-3.5 text-[#801323]" />
-          </div>
-          <div className="mt-2 text-stone-900">
-            <h4 className="text-lg font-serif font-bold text-[#4e0e15]">
-              {totalVolume.toLocaleString()} L
-            </h4>
-            <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1">
-              <span>{Math.round(totalUtilization)}% {lText({ en: 'Filled', ka: 'შევსებული', it: 'Riempito', fr: 'Rempli', de: 'Gefüllt' }, 'Filled')}</span>
-              <span>/ {totalCapacity.toLocaleString()} L</span>
+              <div className="mt-6 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                <button
+                  type="button"
+                  aria-pressed={statusFilter === 'attention'}
+                  onClick={() => {
+                    setWorkspaceView('register');
+                    setFilterType('all');
+                    setSearchTerm('');
+                    setStatusFilter(statusFilter === 'attention' ? 'all' : 'attention');
+                  }}
+                  className={`rounded-2xl border p-3 text-left transition lg:p-4 ${
+                    statusFilter === 'attention'
+                      ? 'border-amber-300 bg-amber-100 text-[#4e0e15]'
+                      : 'border-white/10 bg-white/[0.07] hover:bg-white/10'
+                  }`}
+                >
+                  <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
+                    {ka ? 'ყურადღება' : 'Needs action'}
+                    <AlertTriangle className="h-4 w-4" />
+                  </span>
+                  <strong className="mt-2 block text-2xl font-black">{attentionVessels.length}</strong>
+                  <span className="mt-1 block text-[10px] font-semibold opacity-70">{ka ? 'პრიორიტეტული ჭურჭელი' : 'priority vessels'}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={statusFilter === 'ready'}
+                  onClick={() => {
+                    setWorkspaceView('register');
+                    setFilterType('all');
+                    setSearchTerm('');
+                    setStatusFilter(statusFilter === 'ready' ? 'all' : 'ready');
+                  }}
+                  className={`rounded-2xl border p-3 text-left transition lg:p-4 ${
+                    statusFilter === 'ready'
+                      ? 'border-emerald-300 bg-emerald-100 text-emerald-950'
+                      : 'border-white/10 bg-white/[0.07] hover:bg-white/10'
+                  }`}
+                >
+                  <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
+                    {ka ? 'მზადაა' : 'Ready capacity'}
+                    <ShieldCheck className="h-4 w-4" />
+                  </span>
+                  <strong className="mt-2 block text-2xl font-black">{readyCapacity.toLocaleString()} L</strong>
+                  <span className="mt-1 block text-[10px] font-semibold opacity-70">{readyVessels.length} {ka ? 'სუფთა ჭურჭელი' : 'clean vessels'}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={statusFilter === 'cooling'}
+                  onClick={() => {
+                    setWorkspaceView('register');
+                    setFilterType('all');
+                    setSearchTerm('');
+                    setStatusFilter(statusFilter === 'cooling' ? 'all' : 'cooling');
+                  }}
+                  className={`rounded-2xl border p-3 text-left transition lg:p-4 ${
+                    statusFilter === 'cooling'
+                      ? 'border-sky-300 bg-sky-100 text-sky-950'
+                      : 'border-white/10 bg-white/[0.07] hover:bg-white/10'
+                  }`}
+                >
+                  <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
+                    {ka ? 'გაგრილება' : 'Cooling live'}
+                    <Snowflake className={`h-4 w-4 ${coolingActiveCount ? 'animate-spin' : ''}`} />
+                  </span>
+                  <strong className="mt-2 block text-2xl font-black">{coolingActiveCount}</strong>
+                  <span className="mt-1 block text-[10px] font-semibold opacity-70">{ka ? 'აქტიური პერანგი' : 'active jackets'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQvevriFocusId(null);
+                    setWorkspaceView('qvevri');
+                  }}
+                  disabled={!renderQvevriRecords}
+                  className="rounded-2xl border border-white/10 bg-white/[0.07] p-3 text-left transition hover:bg-white/10 disabled:cursor-default disabled:opacity-60 lg:p-4"
+                >
+                  <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
+                    {ka ? 'ქვევრი' : 'Qvevri records'}
+                    <FileText className="h-4 w-4" />
+                  </span>
+                  <strong className="mt-2 block text-2xl font-black">{qvevriCount}</strong>
+                  <span className="mt-1 block text-[10px] font-semibold opacity-70">{ka ? 'ერთიან რეესტრში' : 'inside this workspace'}</span>
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="w-full bg-slate-100 rounded-full h-1 mt-3 overflow-hidden">
-            <div
-              className="bg-[#801323] h-full transition-all duration-500"
-              style={{ width: `${Math.min(100, totalUtilization)}%` }}
-            />
-          </div>
-        </div>
+          </section>
 
-        {/* Metric 2: Vessel Count */}
-        <div className="bg-[#FAF8F5] border border-[#f0e6da] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
-              {({
-                en: 'Capacity Units',
-                ka: 'ტევადობის ერთეულები',
-                it: 'Unità Capacità',
-                fr: 'Unités de Capacité',
-                de: 'Behälter-Einheiten'
-              })[lang] || 'Capacity Units'}
-            </span>
-            <Database className="w-3.5 h-3.5 text-stone-500" />
-          </div>
-          <div className="mt-2 text-stone-900">
-            <h4 className="text-lg font-serif font-bold text-slate-800">
-              {vessels.length} {({ en: 'Vessels', ka: 'ჭურჭელი', it: 'Recipienti', fr: 'Cuves', de: 'Behälter' })[lang] || 'Vessels'}
-            </h4>
-            <div className="flex gap-2 text-[10px] text-slate-500 mt-1 font-mono">
-              <span className="text-emerald-700 font-bold">{vessels.filter(v => v.currentVolume === 0).length} {ka ? 'ცარიელი' : 'empty'}</span>
-              <span>•</span>
-              <span className="text-[#801323] font-bold">{vessels.filter(v => v.currentVolume > 0).length} {ka ? 'აქტიური' : 'active'}</span>
-            </div>
-          </div>
-          <div className="text-[10px] text-slate-400 mt-3 border-t border-slate-200/50 pt-1">
-            {({ en: 'Capacity ready for transfer', ka: 'მზადაა გადასატანად', it: 'Capacità pronta', fr: 'Prêt pour transfert', de: 'Bereit für Transfer' })[lang] || 'Capacity ready for transfer'}
-          </div>
-        </div>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(20rem,0.55fr)]">
+            <section className="overflow-hidden rounded-2xl border border-[#e8dfd5] bg-white shadow-sm dark:border-stone-800 dark:bg-stone-900">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e8dfd5] px-4 py-4 dark:border-stone-800 lg:px-5">
+                <div>
+                  <h3 className="flex items-center gap-2 text-sm font-black text-stone-900 dark:text-amber-100">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    {ka ? 'მოქმედების რიგი' : 'Action queue'}
+                  </h3>
+                  <p className="mt-1 text-[11px] font-medium text-stone-500 dark:text-stone-400">
+                    {ka ? 'ერთი მიზეზი თითო ჭურჭელზე — ყველაზე კრიტიკული პირველია.' : 'One reason per vessel, with the most critical decisions first.'}
+                  </p>
+                </div>
+                {attentionVessels.length > 4 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterType('all');
+                      setSearchTerm('');
+                      setStatusFilter('attention');
+                    }}
+                    className="inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-[11px] font-black text-[#4e0e15] hover:bg-rose-50 dark:text-amber-200 dark:hover:bg-stone-800"
+                  >
+                    {ka ? 'ყველას ნახვა' : 'Show all'} <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              {attentionVessels.length ? (
+                <div className="divide-y divide-stone-100 dark:divide-stone-800">
+                  {attentionVessels.slice(0, 4).map(({ vessel, kind }) => {
+                    const copy = signalCopy(vessel, kind);
+                    const assignedLot = lots.find(lot => lot.id === vessel.assignedLotId);
+                    const critical = kind === 'assignment' || kind === 'fill' || kind === 'temperature';
+                    return (
+                      <button
+                        type="button"
+                        key={`${vessel.id}-${kind}`}
+                        onClick={() => {
+                          if (kind === 'seal' && renderQvevriRecords) {
+                            setQvevriFocusId(vessel.id);
+                            setWorkspaceView('qvevri');
+                          } else {
+                            onSelectTank?.(vessel.id);
+                          }
+                        }}
+                        className="group flex min-h-20 w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-stone-50 dark:hover:bg-stone-800/70 lg:px-5"
+                      >
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                          critical ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                        }`}>
+                          {kind === 'hygiene' ? <ShieldAlert className="h-5 w-5" /> : kind === 'seal' ? <FileText className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <strong className="text-xs font-black text-stone-900 dark:text-stone-100">{vessel.id}</strong>
+                            {assignedLot && <span className="truncate text-[10px] font-bold text-stone-500">{assignedLot.name}</span>}
+                          </span>
+                          <span className="mt-0.5 block text-xs font-bold text-stone-700 dark:text-stone-200">{copy.title}</span>
+                          <span className="mt-0.5 block text-[10px] font-medium leading-snug text-stone-500 dark:text-stone-400">{copy.detail}</span>
+                        </span>
+                        <span className="hidden shrink-0 items-center gap-1 text-[10px] font-black text-[#4e0e15] group-hover:underline dark:text-amber-200 sm:inline-flex">
+                          {copy.action} <ArrowRight className="h-3.5 w-3.5" />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex min-h-40 items-center justify-center px-5 py-8 text-center">
+                  <div>
+                    <CheckCircle className="mx-auto h-8 w-8 text-emerald-600" />
+                    <strong className="mt-2 block text-sm font-black text-stone-800 dark:text-stone-100">{ka ? 'ღია რისკი არ არის' : 'No open vessel risks'}</strong>
+                    <span className="mt-1 block text-xs text-stone-500">{ka ? 'ჭურჭლები მზადაა მიმდინარე სამუშაოსთვის.' : 'The register is ready for today’s cellar work.'}</span>
+                  </div>
+                </div>
+              )}
+            </section>
 
-        {/* Metric 3: Active Coolers */}
-        <div className="bg-[#FAF8F5] border border-[#f0e6da] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
-              {({
-                en: 'Active Stabilization',
-                ka: 'აქტიური სტაბილიზაცია',
-                it: 'Stabilizzazione Attiva',
-                fr: 'Stabilisation Active',
-                de: 'Aktive Stabilisierung'
-              })[lang] || 'Active Stabilization'}
-            </span>
-            <Snowflake className={`w-3.5 h-3.5 ${coolingActiveCount > 0 ? 'text-sky-600 animate-spin' : 'text-slate-400'}`} />
+            <aside className="rounded-2xl border border-[#e8dfd5] bg-[#faf7f2] p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-[0.14em] text-stone-500">{ka ? 'ტევადობის გეგმა' : 'Capacity plan'}</span>
+                  <strong className="mt-2 block text-3xl font-black text-[#4e0e15] dark:text-amber-100">{totalVolume.toLocaleString()} L</strong>
+                  <span className="mt-1 block text-[11px] font-semibold text-stone-500">{Math.round(totalUtilization)}% {ka ? 'მარნის ტევადობიდან' : `of ${totalCapacity.toLocaleString()} L cellar capacity`}</span>
+                </div>
+                <span className="rounded-xl border border-stone-200 bg-white p-2.5 text-[#4e0e15] dark:border-stone-700 dark:bg-stone-800 dark:text-amber-200">
+                  <CircleGauge className="h-5 w-5" />
+                </span>
+              </div>
+              <div className="mt-5 h-2 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">
+                <div className="h-full rounded-full bg-[#801323] transition-all duration-500" style={{ width: `${Math.min(100, totalUtilization)}%` }} />
+              </div>
+              <dl className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950/40">
+                  <dt className="text-[9px] font-black uppercase tracking-wide text-stone-400">{ka ? 'მზადაა ახლა' : 'Ready now'}</dt>
+                  <dd className="mt-1 text-lg font-black text-emerald-700 dark:text-emerald-300">{readyCapacity.toLocaleString()} L</dd>
+                </div>
+                <div className="rounded-xl border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950/40">
+                  <dt className="text-[9px] font-black uppercase tracking-wide text-stone-400">{ka ? 'გასარეცხი' : 'Needs wash'}</dt>
+                  <dd className={`mt-1 text-lg font-black ${dirtyCount ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>{dirtyCount}</dd>
+                </div>
+              </dl>
+              <button
+                type="button"
+                aria-expanded={showCapacityChart}
+                onClick={() => setShowCapacityChart(value => !value)}
+                className="mt-4 flex min-h-10 w-full items-center justify-between rounded-xl border border-stone-200 bg-white px-3 text-[11px] font-black text-stone-700 transition hover:border-stone-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+              >
+                <span className="flex items-center gap-2"><Droplets className="h-4 w-4 text-[#801323] dark:text-amber-300" />{ka ? 'ტევადობის დიაგრამა' : 'Open capacity chart'}</span>
+                {showCapacityChart ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </button>
+            </aside>
           </div>
-          <div className="mt-2 text-stone-900">
-            <h4 className="text-lg font-serif font-bold text-slate-800 flex items-center gap-1.5">
-              {coolingActiveCount} {({ en: 'Jackets', ka: 'პერანგი', it: 'Giacche', fr: 'Vestes', de: 'Mäntel' })[lang] || 'Jackets'}
-            </h4>
-            <div className="text-[10px] text-slate-500 mt-1 font-mono">
-              {coolingActiveCount > 0
-                ? (ka ? `${coolingActiveCount} აქტიური ტემპერატურის კონტროლერი` : `${coolingActiveCount} active temperature controller runs`)
-                : (ka ? 'ავტომატური პერანგები მოლოდინშია' : 'Automated jackets standard idle')}
-            </div>
-          </div>
-          <div className={`text-[10px] font-semibold mt-3 border-t border-slate-200/50 pt-1 inline-flex items-center gap-1 ${coolingActiveCount > 0 ? 'text-[#0369a1]' : 'text-slate-400'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${coolingActiveCount > 0 ? 'bg-[#0369a1] animate-pulse' : 'bg-slate-300'}`} />
-            <span>{coolingActiveCount > 0 ? (ka ? 'აქტიური გაგრილება' : 'Active cold-plate holding') : (ka ? 'მოლოდინის რეჟიმი' : 'Idle standby')}</span>
-          </div>
-        </div>
 
-        {/* Metric 4: Hygiene status */}
-        <div className="bg-[#FAF8F5] border border-[#f0e6da] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
-              {({
-                en: 'Cellar Hygiene Index',
-                ka: 'ჰიგიენის ინდექსი',
-                it: 'Indice Igiene',
-                fr: 'Hygiène de la Cave',
-                de: 'Reinheits-Index'
-              })[lang] || 'Cellar Hygiene Index'}
-            </span>
-            {dirtyCount > 0 ? (
-              <ShieldAlert className="w-3.5 h-3.5 text-amber-500 animate-bounce" />
-            ) : (
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            )}
-          </div>
-          <div className="mt-2 text-stone-900">
-            <h4 className="text-lg font-serif font-bold text-slate-800">
-              {dirtyCount > 0
-                ? (ka ? `${dirtyCount} გასარეცხი` : `${dirtyCount} pending wash`)
-                : ({ en: 'Pristine Clean', ka: 'იდეალურად სუფთა', it: 'Tutto Pulito', fr: 'Totalement Propre', de: 'Komplett Sauber' })[lang] || 'Pristine Clean'
-              }
-            </h4>
-            <div className="text-[10px] text-slate-500 mt-1 font-mono">
-              {dirtyCount > 0
-                ? (ka ? 'რეკომენდებულია რეცხვის სამუშაოები' : 'Washing tasks recommended')
-                : (ka ? 'არააქტიური ჭურჭლის 100% გარეცხილია' : '100% of inactive units washed')}
-            </div>
-          </div>
-          <div className="text-[10px] text-slate-400 mt-3 border-t border-slate-200/50 pt-1">
-            {dirtyCount > 0 ? (ka ? '⚠️ მაღალი პრიორიტეტის დავალება' : '⚠️ High priority task logged') : (ka ? '✓ მარნის მდგომარეობა კარგია' : '✓ Standard winery health high')}
-          </div>
-        </div>
-      </div>
+          {showCapacityChart && (
+            <section className="rounded-2xl border border-[#e8dfd5] bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+              <div className="mb-4">
+                <h3 className="text-sm font-black text-stone-900 dark:text-amber-100">{ka ? 'მარნის შევსების დიაგრამა' : 'Cellar fill chart'}</h3>
+                <p className="mt-1 text-[11px] text-stone-500">{ka ? 'ჭურჭლის მოცულობები და 95%-ზე მაღალი შევსების რისკი.' : 'Vessel volumes with high-fill risk highlighted above 95%.'}</p>
+              </div>
+              <TankCapacityChart tanks={mappedTanks} onSelectTank={onSelectTank} selectedTankId={selectedTankId} />
+            </section>
+          )}
+        </>
+      )}
 
       {(!canCreateVessel || !canUpdateVessel || !canDeleteVessel) && (
         <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
@@ -469,11 +749,13 @@ export default function TanksVessels({
               </span>
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
+                onChange={(e) => setStatusFilter(e.target.value as VesselStatusFilter)}
                 className="bg-white border border-slate-200 text-xs px-2.5 py-1.5 rounded-lg outline-none text-stone-700 cursor-pointer focus:border-[#4e0e15]"
               >
                 <option value="all">{({ en: 'All Statuses', ka: 'ყველა სტატუსი', it: 'Tutti gli Stati', fr: 'Tous les Statuts', de: 'Alle Status' })[lang] || 'All Statuses'}</option>
-                <option value="empty">{({ en: 'Empty & Ready', ka: 'ცარიელი', it: 'Vuoto', fr: 'Vides', de: 'Leer & Bereit' })[lang] || 'Empty & Ready'}</option>
+                <option value="attention">{ka ? 'საჭიროებს ყურადღებას' : 'Needs Action'}</option>
+                <option value="ready">{ka ? 'სუფთა და მზადაა' : 'Sanitized & Ready'}</option>
+                <option value="empty">{({ en: 'All Empty', ka: 'ყველა ცარიელი', it: 'Vuoto', fr: 'Vides', de: 'Leer' })[lang] || 'All Empty'}</option>
                 <option value="occupied">{({ en: 'Filled / In-use', ka: 'შევსებული', it: 'Occupato', fr: 'Occupés', de: 'In Verwendung' })[lang] || 'Filled / In-use'}</option>
                 <option value="dirty">{({ en: 'Needs Cleaning', ka: 'საჭიროებს რეცხვას', it: 'Da Pulire', fr: 'À Laver', de: 'Reinigungsbedarf' })[lang] || 'Needs Cleaning'}</option>
                 <option value="cooling">{({ en: 'Active Cooling', ka: 'აქტიური გაგრილება', it: 'Raffreddamento', fr: 'Refroidissement actif', de: 'Aktive Kühlung' })[lang] || 'Active Cooling'}</option>
@@ -696,31 +978,45 @@ export default function TanksVessels({
         />
       ) : viewMode === 'grid' ? (
         /* Original Premium Glass Cards Grid View */
-        <Stagger className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 lg:gap-8">
+        <Stagger className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filteredVessels.map(v => {
             const progress = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
             const assignedLot = lots.find(l => l.id === v.assignedLotId);
-            const needsCleaning = v.cleaningStatus === 'dirty';
-            const isOver95 = progress > 95;
+            const needsCleaning = v.cleaningStatus !== 'clean';
+            const isOver95 = progress >= 95;
             const isSelected = v.id === selectedTankId;
+            const signalKind = vesselSignalKind(v);
+            const signal = signalKind ? signalCopy(v, signalKind) : null;
+            const isReady = readyVessels.some(vessel => vessel.id === v.id);
 
             return (
               <StaggerItem key={v.id}>
                 <div
                   onClick={() => onSelectTank?.(v.id)}
-                className={`bg-white border text-stone-800 rounded-xl overflow-hidden shadow-sm flex flex-col transition-all cursor-pointer ${
-                  isSelected
-                    ? 'border-[#801323] ring-2 ring-[#801323]/10 scale-[1.01]'
-                    : isOver95
-                      ? 'border-red-500 shadow-md ring-1 ring-red-100'
-                      : 'border-[#e8dfd5] hover:border-stone-400'
-                }`}
-              >
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onSelectTank?.(v.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={ka ? `${v.id} ჭურჭლის გახსნა` : `Open vessel ${v.id}`}
+                  className={`flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border bg-white text-stone-800 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-[#801323]/40 ${
+                    isSelected
+                      ? 'border-[#801323] ring-2 ring-[#801323]/10'
+                      : isOver95
+                        ? 'border-rose-400 shadow-md ring-1 ring-rose-100'
+                        : signal
+                          ? 'border-amber-300 hover:border-amber-400'
+                          : 'border-[#e8dfd5] hover:-translate-y-0.5 hover:border-stone-400 hover:shadow-md'
+                  }`}
+                >
                 {/* Card Title Header */}
-                <div className="px-4 py-3 bg-[#FAF8F5] border-b border-[#e8dfd5] flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="flex items-start justify-between gap-3 border-b border-[#e8dfd5] bg-[#FAF8F5] px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-2">
                     {isSelected && <span className="w-2 h-2 rounded-full bg-[#801323] animate-pulse" />}
-                    <div>
+                    <div className="min-w-0">
                       <h4 className="text-sm font-serif font-bold text-[#4e0e15] flex items-center gap-1">
                         {v.id}
                         {isSelected && <span className="text-[9px] font-sans font-normal text-stone-400 italic">({({ en: 'selected', ka: 'არჩეული', it: 'selezionato', fr: 'sélectionné', de: 'ausgewählt' })[lang] || 'selected'})</span>}
@@ -730,7 +1026,25 @@ export default function TanksVessels({
                       </p>
                     </div>
                   </div>
-                  {canDeleteVessel && (
+                  <div className="flex shrink-0 items-center gap-2">
+                    {signal ? (
+                      <span className={`rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide ${
+                        signalKind === 'fill' || signalKind === 'assignment' || signalKind === 'temperature'
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : 'border-amber-200 bg-amber-50 text-amber-700'
+                      }`}>
+                        {ka ? 'ყურადღება' : 'Action'}
+                      </span>
+                    ) : isReady ? (
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">
+                        {ka ? 'მზადაა' : 'Ready'}
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-stone-500">
+                        {ka ? 'მუშაობაში' : 'In use'}
+                      </span>
+                    )}
+                    {canDeleteVessel && v.currentVolume === 0 && !v.assignedLotId && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -741,11 +1055,26 @@ export default function TanksVessels({
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 {/* Liquid Graphics Fill Card */}
                 <div className="p-4 flex-1 flex flex-col space-y-4">
+                  {signal && (
+                    <div className={`rounded-xl border px-3 py-2 ${
+                      signalKind === 'fill' || signalKind === 'assignment' || signalKind === 'temperature'
+                        ? 'border-rose-200 bg-rose-50'
+                        : 'border-amber-200 bg-amber-50'
+                    }`}>
+                      <strong className={`block text-[11px] font-black ${
+                        signalKind === 'fill' || signalKind === 'assignment' || signalKind === 'temperature'
+                          ? 'text-rose-800'
+                          : 'text-amber-800'
+                      }`}>{signal.title}</strong>
+                      <span className="mt-0.5 block text-[9px] font-semibold leading-snug text-stone-600">{signal.detail}</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-4">
                     {/* Animated liquid-fill vessel (height = volume, colour = wine class) */}
                     <div className={`shrink-0 flex flex-col items-center ${isOver95 ? 'text-red-600' : 'text-[#4e0e15]'}`}>
@@ -1008,14 +1337,21 @@ export default function TanksVessels({
                 {filteredVessels.map(v => {
                   const progress = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
                   const assignedLot = lots.find(l => l.id === v.assignedLotId);
-                  const needsCleaning = v.cleaningStatus === 'dirty';
-                  const isOver95 = progress > 95;
+                  const needsCleaning = v.cleaningStatus !== 'clean';
+                  const isOver95 = progress >= 95;
                   const isSelected = v.id === selectedTankId;
 
                   return (
                     <tr
                       key={v.id}
                       onClick={() => onSelectTank?.(v.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onSelectTank?.(v.id);
+                        }
+                      }}
+                      tabIndex={0}
                       className={`cursor-pointer transition-colors hover:bg-slate-50/50 ${
                         isSelected ? 'bg-[#FAF8F5] font-semibold' : ''
                       }`}
@@ -1177,7 +1513,7 @@ export default function TanksVessels({
                                 Washing
                               </button>
                             )}
-                            {canDeleteVessel && (
+                            {canDeleteVessel && v.currentVolume === 0 && !v.assignedLotId && (
                               <button
                                 onClick={() => handleDeleteVessel(v.id)}
                                 className="p-1 text-slate-300 hover:text-red-500 rounded cursor-pointer hover:bg-red-50"

@@ -6,7 +6,6 @@ export const WINERY_TAB_IDS = [
   'lots',
   'lineage',
   'vessels',
-  'qvevri',
   'operations',
   'transfers',
   'fermentation',

@@ -23,6 +23,7 @@ import {
   vineyardWorkflowPermissions,
 } from '../lib/workflowPermissions';
 import type { BillingFeature } from '../lib/billing/planCatalog';
+import { clearTenantCachedData } from '../lib/tenantCache';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -82,7 +83,6 @@ import {
   LayoutDashboard,
   Container,
   Grape,
-  Globe2,
   Workflow,
   Wine,
   GitCommit,
@@ -108,7 +108,6 @@ import {
   Coins,
   Warehouse,
   Truck,
-  CheckCircle2,
   Sprout,
   Sun,
   Moon,
@@ -248,6 +247,10 @@ export default function App() {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || 'Could not end the support session.');
       }
+      clearTenantCachedData(localStorage);
+      localStorage.removeItem('vinea_curr_user');
+      localStorage.removeItem('vinea_active_module');
+      localStorage.removeItem('vinea_active_tab');
       window.location.reload();
     } catch (error) {
       state.setToastMessage(error instanceof Error ? error.message : 'Could not end the support session.');
@@ -585,7 +588,6 @@ export default function App() {
       label: state.lang === 'ka' ? 'მარანი' : 'Cellar work',
       tabs: [
         { id: 'vessels', label: t.tanks, icon: Container },
-        { id: 'qvevri', label: state.lang === 'ka' ? 'ქვევრის პასპორტი' : 'Qvevri Passport', icon: FileText },
         { id: 'operations', label: t.cellar_operations || 'Operations', icon: Workflow },
         { id: 'transfers', label: t.transfers, icon: GitCommit },
         { id: 'fermentation', label: t.fermentation, icon: Activity },
@@ -705,6 +707,9 @@ export default function App() {
     return true;
   });
   const activeModuleGroup = moduleGroups.find(group => group.modules.some(mod => mod.id === state.activeModule)) || moduleGroups[0];
+  const activeWineryTab = accessibleWineryTabGroups
+    .flatMap(group => group.tabs)
+    .find(tab => tab.id === state.activeTab);
   useEffect(() => {
     if (!state.isLoggedIn) return;
     if (canViewModule(state.activeModule, state.activeTab)) return;
@@ -851,10 +856,10 @@ export default function App() {
 
       {/* overflow-x clipping lives on <body> (globals.css): an overflow value
           on this wrapper would break position:sticky for the floating header */}
-      <div className="min-h-screen bg-[#f8f6f2] dark:bg-[#0a0607] flex flex-col font-sans relative transition-colors duration-300">
+      <div className="app-shell min-h-screen flex flex-col font-sans relative transition-colors duration-300">
 
-      {/* Ambient, photo-free backdrop: drifting light + terrace contours */}
-      <AuroraBackdrop variant={state.isLoggedIn ? 'subtle' : 'rich'} shouldReduceMotion={perf.shouldReduceMotion} />
+      {/* Keep the expressive backdrop for entry screens; the working app stays quiet. */}
+      {!state.isLoggedIn && <AuroraBackdrop variant="rich" shouldReduceMotion={perf.shouldReduceMotion} />}
 
       {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
       {state.toastMessage && (() => {
@@ -874,7 +879,7 @@ export default function App() {
             className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-100 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-3 elev-float"
           >
             <div className="flex items-center gap-2">
-              <span>🍇</span>
+              <Wine className="h-4 w-4" aria-hidden="true" />
               <span>{state.toastMessage}</span>
             </div>
             {isSyncIssue && (
@@ -968,7 +973,7 @@ export default function App() {
         animate={{ height: showHeader ? 'auto' : 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 34 }}
         style={{ overflow: 'visible' }}
-        className="sticky top-3 z-40"
+        className="app-header-shell sticky top-0 z-40"
       >
       <header
         ref={navRef}
@@ -978,20 +983,18 @@ export default function App() {
           pointerEvents: showHeader ? 'auto' : 'none',
           transition: 'transform 0.34s cubic-bezier(0.22,1,0.36,1), opacity 0.3s ease',
         }}
-        className="relative max-w-[1720px] w-full mx-auto mt-4 px-3 md:px-4 py-2 bg-white/85 backdrop-blur-xl border border-stone-200/80 flex items-center gap-2 rounded-2xl shadow-[0_12px_40px_-12px_rgba(78,14,21,0.25)] dark:bg-[#140d0e]/90 dark:border-[#2a191b] dark:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.7)]">
-        {/* Luxury Top Wine Edge Border */}
-        <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-[#801323] via-[#4e0e15] to-[#c5a059]" />
+        className="app-header relative z-20 max-w-[1600px] w-full mx-auto px-3 md:px-5 py-2 flex items-center gap-2">
 
-        {/* Brand Crest — compact */}
+        {/* Brand mark */}
         <button
           onClick={() => state.setActiveModule('portal')}
-          className="shrink-0 w-9 h-9 bg-gradient-to-br from-[#4e0e15] to-[#210204] text-amber-100 rounded-xl flex items-center justify-center shadow-md font-serif font-black text-lg border border-[#801323] cursor-pointer"
+          className="shrink-0 w-9 h-9 bg-[#651522] text-white rounded-[10px] flex items-center justify-center cursor-pointer transition-colors hover:bg-[#7a1c2b]"
           title="VinOS"
           aria-label="VinOS home"
         >
-          🍇
+          <Wine className="h-4.5 w-4.5" aria-hidden="true" />
         </button>
-        <span className="hidden xl:block text-sm font-serif tracking-[0.22em] text-[#1b1715] font-black dark:text-amber-100 shrink-0">VinOS</span>
+        <span className="hidden xl:block text-sm tracking-tight text-stone-900 font-extrabold dark:text-stone-100 shrink-0">VinOS</span>
 
         {/* LEFT — module navigation */}
         {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
@@ -1002,15 +1005,15 @@ export default function App() {
                 const Icon = group.icon;
                 const isActive = activeModuleGroup.id === group.id;
                 const hasSub = group.modules.length > 1;
-                const tabClass = `relative px-3 py-2 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors duration-200 font-extrabold text-[11px] tracking-wide uppercase ${isActive ? 'text-amber-50' : 'text-stone-600 hover:text-stone-900 hover:bg-[#FAF8F5]/90 dark:text-stone-300 dark:hover:bg-stone-800'}`;
+                const tabClass = `relative px-3 py-2 rounded-[10px] flex items-center gap-1.5 cursor-pointer transition-colors duration-150 font-bold text-[11px] ${isActive ? 'text-[#651522] dark:text-amber-100' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800'}`;
                 const pill = isActive ? (
-                  <motion.span layoutId="module-nav-pill" className="absolute inset-0 bg-[#4e0e15] rounded-xl ring-1 ring-[#801323]/20 shadow-md" transition={{ type: 'spring', stiffness: 480, damping: 38 }} />
+                  <motion.span layoutId="module-nav-pill" className="absolute inset-0 bg-[#f0e6e8] rounded-[10px] dark:bg-[#3a171d]" transition={{ type: 'spring', stiffness: 480, damping: 38 }} />
                 ) : null;
                 if (!hasSub) {
                   return (
                     <button key={group.id} onClick={() => switchModule(group.primary)} title={group.label} aria-label={group.label} aria-current={isActive ? 'page' : undefined} className={tabClass}>
                       {pill}
-                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
+                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-[#651522] dark:text-amber-200' : 'text-stone-500 dark:text-stone-400'}`} />
                       <span className="relative z-10 hidden lg:inline">{group.label}</span>
                     </button>
                   );
@@ -1027,7 +1030,7 @@ export default function App() {
                       className={tabClass}
                     >
                       {pill}
-                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
+                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-[#651522] dark:text-amber-200' : 'text-stone-500 dark:text-stone-400'}`} />
                       <span className="relative z-10 hidden lg:inline">{group.label}</span>
                       <ChevronDown className={`relative z-10 w-3 h-3 transition-transform ${openMenu === group.id ? 'rotate-180' : ''} ${isActive ? 'text-amber-200' : 'text-stone-400'}`} />
                     </button>
@@ -1256,7 +1259,7 @@ export default function App() {
         </div>
       </header>
       {state.currentUser.impersonatedBy && (
-        <div role="status" className="relative max-w-[1720px] w-full mx-auto mt-2 px-4 py-2.5 rounded-xl border border-cyan-300 bg-cyan-50 text-xs font-semibold text-cyan-950 shadow-sm dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-100 flex flex-wrap items-center justify-between gap-3">
+        <div role="status" className="relative max-w-[1600px] w-full mx-auto px-4 py-2.5 border-x border-b border-cyan-200 bg-cyan-50 text-xs font-semibold text-cyan-950 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-100 flex flex-wrap items-center justify-between gap-3">
           <span>
             Support session: viewing the app as <strong>{state.currentUser.fullName}</strong>. Started by {state.currentUser.impersonatedBy}.
           </span>
@@ -1271,7 +1274,7 @@ export default function App() {
         </div>
       )}
       {shouldShowReadOnlyNotice && (
-        <div role="status" className="relative max-w-[1720px] w-full mx-auto mt-2 px-4 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[10px] font-mono font-bold uppercase tracking-wide text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+        <div role="status" className="relative max-w-[1600px] w-full mx-auto px-4 py-2 border-x border-b border-amber-200 bg-amber-50 text-[10px] font-mono font-bold uppercase tracking-wide text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           {state.lang === 'ka' ? 'ამ განყოფილებაში მხოლოდ ნახვა შეგიძლიათ' : 'View-only access in this area'}: {activePermissionModule.replace(/_/g, ' ')}
         </div>
       )}
@@ -1298,65 +1301,17 @@ export default function App() {
           </Suspense>
         </div>
       ) : !state.isLoggedIn ? (
-        <div className="flex-1 flex items-stretch justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
-          <div className="my-auto grid w-full max-w-xl overflow-hidden rounded-3xl border border-stone-200/70 bg-white shadow-[0_35px_90px_-30px_rgba(78,14,21,0.38)] animate-fade-in dark:border-stone-850 dark:bg-stone-950">
-
-            {/* Brand hero — desktop only */}
-            {!isRegistering && (
-            <div className="hidden">
-              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#801323] via-[#c5a059] to-[#801323]" />
-              <div className="absolute -right-12 -bottom-16 text-[260px] leading-none opacity-[0.06] select-none pointer-events-none">🍇</div>
-
-              <div className="relative">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-11 h-11 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-2xl">🍇</div>
-                  <div>
-                    <div className="font-serif font-black tracking-[0.3em] text-lg">VinOS</div>
-                    <div className="text-[9px] font-mono uppercase tracking-[0.25em] text-amber-200/70">Unified Estate ERP</div>
-                  </div>
-                </div>
-
-                <h2 className="mt-10 text-3xl font-serif font-black leading-[1.15]">
-                  {state.lang === 'ka' ? <>ვენახიდან ბოთლამდე,<br />ერთ სამუშაო სივრცეში.</> : <>Vineyard to bottle,<br />in one cellar book.</>}
-                </h2>
-                <p className="mt-3 text-[13px] text-amber-100/70 font-serif italic leading-relaxed max-w-xs">
-                  {t.signin_subtitle || 'Unified Vineyard (Vazi) & Winery (Gvino) management.'}
-                </p>
-
-                <ul className="mt-8 space-y-2.5 text-[12px] text-amber-50/90">
-                  {(state.lang === 'ka' ? [
-                    'სრული მიკვლევადობა ნაკვეთიდან ბოთლამდე',
-                    'ლაბორატორია და ღვინის ქიმიის კონტროლი',
-                    'დუღილისა და მარნის ცოცხალი გაფრთხილებები',
-                    'AI მეღვინის ასისტენტი',
-                  ] : [
-                    'Block-to-bottle traceability',
-                    'Lab panels & molecular SO₂ guardrails',
-                    'Live fermentation & cellar alerts',
-                    'AI winemaker assistant',
-                  ]).map(feat => (
-                    <li key={feat} className="flex items-center gap-2.5">
-                      <CheckCircle2 className="w-4 h-4 text-[#c5a059] shrink-0" />
-                      <span>{feat}</span>
-                    </li>
-                  ))}
-                </ul>
-                <a
-                  href="/terroir-pulse"
-                  className="mt-8 inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-[10px] font-black uppercase tracking-wider text-amber-50 transition-colors hover:bg-white/20"
-                >
-                  <Globe2 className="h-3.5 w-3.5" aria-hidden="true" /> {state.lang === 'ka' ? 'Terroir Pulse-ის ნახვა' : 'Explore Terroir Pulse'}
-                </a>
-              </div>
-            </div>
-            )}
+        <div className="flex-1 flex items-stretch justify-center p-4 sm:p-8 min-h-[82vh]">
+          <div className="my-auto grid w-full max-w-xl overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-[0_18px_50px_-30px_rgba(28,25,23,0.45)] animate-fade-in dark:border-stone-800 dark:bg-stone-950">
             <div className="p-7 sm:p-10 flex flex-col justify-center bg-white text-stone-600 space-y-5 dark:bg-stone-900">
-              {/* Compact brand for mobile */}
+              {/* Compact product identity */}
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-[#31070b] text-amber-100 flex items-center justify-center text-xl border border-[#4e0e15]">🍇</div>
+                <div className="w-10 h-10 rounded-[10px] bg-[#651522] text-white flex items-center justify-center">
+                  <Wine className="h-5 w-5" aria-hidden="true" />
+                </div>
                 <div>
-                  <div className="font-serif font-black tracking-[0.25em] text-[#1b1715] dark:text-amber-100">VinOS</div>
-                  <div className="text-[8px] font-mono uppercase tracking-[0.2em] text-[#c5a059]">Unified Estate ERP</div>
+                  <div className="font-black tracking-tight text-stone-900 dark:text-stone-100">VinOS</div>
+                  <div className="text-[10px] font-medium text-stone-500">{state.lang === 'ka' ? 'ვენახიდან ბოთლამდე' : 'Vineyard to bottle'}</div>
                 </div>
               </div>
 
@@ -1516,7 +1471,7 @@ export default function App() {
           />
         </Suspense>
       ) : state.activeModule === 'vazi' ? (
-        <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 flex flex-col">
+        <main className="app-content flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6 flex flex-col">
           <Suspense fallback={<ModuleLoader />}>
             <VaziModule
               lang={state.lang}
@@ -1758,11 +1713,11 @@ export default function App() {
           />
         </Suspense>
       ) : (
-        <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 flex flex-col lg:flex-row gap-8">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
 
           {/* Sticky sidebar */}
-          <aside className={`shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-20' : 'lg:w-72'} lg:self-start lg:sticky lg:top-24 transition-[width] duration-300`}>
-            <div className="lg:hidden rounded-2xl border border-[#e8dfd5] bg-white/90 p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
+          <aside className={`app-sidebar shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} lg:self-start lg:sticky lg:top-20 transition-[width] duration-300`}>
+            <div className="lg:hidden rounded-xl border border-stone-200 bg-white p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
               <label htmlFor="mobile-winery-section" className="mb-1.5 block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">
                 {state.lang === 'ka' ? 'მარნის განყოფილება' : 'Winery section'}
               </label>
@@ -1783,14 +1738,14 @@ export default function App() {
             </div>
 
             {!state.isSidebarCollapsed && (
-              <div className="hidden lg:block mb-4 rounded-2xl border border-[#e8dfd5] bg-white/90 p-4 shadow-sm dark:border-stone-800 dark:bg-stone-900/90">
+              <div className="app-sidebar-summary hidden lg:block mb-4 p-4 dark:border-stone-800 dark:bg-stone-900/90">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
                       {state.lang === 'ka' ? 'დღის ფოკუსი' : 'Today focus'}
                     </span>
                     <strong className="mt-1 block text-sm font-black text-stone-900 dark:text-amber-100">
-                      {state.lang === 'ka' ? `${activeModuleGroup.label} — სივრცე` : `${activeModuleGroup.label} workspace`}
+                      {activeWineryTab?.label || activeModuleGroup.label}
                     </strong>
                   </div>
                   <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
@@ -1840,7 +1795,7 @@ export default function App() {
             )}
 
             <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
-              {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">{state.lang === 'ka' ? 'მარნის მენიუ' : 'Winery Menu'}</span>}
+              {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">{state.lang === 'ka' ? 'განყოფილებები' : 'Sections'}</span>}
               <button
                 onClick={() => state.setIsSidebarCollapsed(!state.isSidebarCollapsed)}
                 className="ml-auto p-1.5 text-stone-400 hover:text-[#4e0e15] hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
@@ -1868,15 +1823,15 @@ export default function App() {
                           onClick={() => state.setActiveTab(tab.id)}
                           title={tab.label}
                           aria-current={isActive ? 'page' : undefined}
-                          className={`group shrink-0 lg:w-full flex items-center gap-2.5 px-3.5 py-2 lg:py-2.5 rounded-xl text-xs font-semibold tracking-wide whitespace-nowrap cursor-pointer transition-colors ${
+                          className={`group shrink-0 lg:w-full flex items-center gap-2.5 px-3 py-2 lg:py-2.5 rounded-[10px] text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
                             state.isSidebarCollapsed ? 'lg:justify-center' : ''
                           } ${
                             isActive
-                              ? 'bg-[#4e0e15] text-[#fbf9f6] shadow-sm'
-                              : 'text-stone-600 hover:text-[#4e0e15] hover:bg-[#f5efe9] dark:text-stone-300 dark:hover:text-amber-100 dark:hover:bg-stone-900'
+                              ? 'bg-[#f0e6e8] text-[#651522] dark:bg-[#3a171d] dark:text-amber-100'
+                              : 'text-stone-600 hover:text-stone-950 hover:bg-stone-100 dark:text-stone-300 dark:hover:text-stone-100 dark:hover:bg-stone-900'
                           }`}
                         >
-                          <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-400' : 'text-[#4e0e15]/70 group-hover:text-[#4e0e15] dark:text-amber-500/70 dark:group-hover:text-amber-300'}`} />
+                          <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#651522] dark:text-amber-200' : 'text-stone-400 group-hover:text-stone-700 dark:text-stone-500 dark:group-hover:text-stone-300'}`} />
                           <span className={state.isSidebarCollapsed ? 'lg:hidden' : ''}>{tab.label}</span>
                         </button>
                       );
@@ -1888,7 +1843,7 @@ export default function App() {
           </aside>
 
           {/* Content Tabs Area */}
-          <section className="flex-1 min-w-0 space-y-4">
+          <section className="app-content flex-1 min-w-0 space-y-4">
             {!canViewModule('gvino', state.activeTab) ? (
               <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
                 {state.lang === 'ka'
@@ -1937,29 +1892,31 @@ export default function App() {
                   setActiveTab={state.setActiveTab}
                   setPrefilledSourceId={state.setPrefilledSourceId}
                   setPrefilledDestId={state.setPrefilledDestId}
+                  qvevriCount={state.vessels.filter(vessel => vessel.type === 'qvevri').length}
+                  renderQvevriRecords={(onBackToVessels, focusedVesselId) => (
+                    <QvevriPassportTab
+                      embedded
+                      onBackToVessels={onBackToVessels}
+                      activeVesselId={focusedVesselId}
+                      lang={state.lang}
+                      vessels={state.vessels}
+                      lots={state.lots}
+                      fermentationLogs={state.fermLogs}
+                      cellarOps={state.cellarOps}
+                      certificationRecords={state.certificationRecords}
+                      onUpdateVessels={state.setVessels}
+                      canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
+                      setActiveTab={state.setActiveTab}
+                      setSelectedTankId={state.setSelectedTankId}
+                      setToastMessage={state.setToastMessage}
+                      currentUserName={state.currentUser.fullName}
+                    />
+                  )}
                 />
               </div>
             )}
 
-            {/* B1. QVEVRI PASSPORT */}
-            {state.activeTab === 'qvevri' && (
-              <QvevriPassportTab
-                lang={state.lang}
-                vessels={state.vessels}
-                lots={state.lots}
-                fermentationLogs={state.fermLogs}
-                cellarOps={state.cellarOps}
-                certificationRecords={state.certificationRecords}
-                onUpdateVessels={state.setVessels}
-                canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
-                setActiveTab={state.setActiveTab}
-                setSelectedTankId={state.setSelectedTankId}
-                setToastMessage={state.setToastMessage}
-                currentUserName={state.currentUser.fullName}
-              />
-            )}
-
-            {/* B2. GRAPE RECEIVING / INTAKE */}
+            {/* B1. GRAPE RECEIVING / INTAKE */}
             {state.activeTab === 'intake' && (
               <GrapeReceivingTab
                 lang={state.lang}
@@ -2408,7 +2365,7 @@ export default function App() {
       {/* OMNIPRESENT FLOATING AI WIDGET */}
       {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
         <>
-          {/* Glowing floating orb button (hidden when drawer is open) */}
+          {/* Compact assistant launcher (hidden when drawer is open) */}
           <AnimatePresence>
             {!isAiDrawerOpen && (
               <motion.button
@@ -2416,17 +2373,14 @@ export default function App() {
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0, opacity: 0 }}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
+                whileHover={{ y: -1 }}
+                whileTap={{ scale: 0.98 }}
                 onClick={() => setIsAiDrawerOpen(true)}
-                className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-gradient-to-tr from-[#4e0e15] to-[#801323] hover:from-[#801323] hover:to-[#c5a059] text-white rounded-full hidden sm:flex items-center justify-center shadow-[0_8px_30px_rgba(78,14,21,0.55)] border-2 border-[#c5a059]/50 dark:border-amber-400/50 cursor-pointer focus:outline-none transition-all duration-300 group"
+                className="fixed bottom-5 right-5 z-40 h-11 px-3.5 bg-[#651522] hover:bg-[#7a1c2b] text-white rounded-xl hidden sm:flex items-center gap-2 justify-center shadow-lg cursor-pointer focus:outline-none transition-colors"
                 title="Open AI Winemaker Assistant"
               >
-                <div className="absolute inset-0 rounded-full bg-radial-gradient from-transparent to-[#c5a059]/10 animate-pulse" />
-                <span className="text-2xl filter drop-shadow-[0_2px_8px_rgba(255,255,255,0.4)]">🔮</span>
-                <span className="absolute -top-1 -right-1 bg-amber-500 text-[#4e0e15] border border-white text-[9px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-xs">
-                  AI
-                </span>
+                <BrainCircuitIcon className="h-4 w-4" />
+                <span className="text-xs font-bold">{state.lang === 'ka' ? 'AI მეღვინე' : 'AI Winemaker'}</span>
               </motion.button>
             )}
           </AnimatePresence>
@@ -2460,7 +2414,9 @@ export default function App() {
                   {/* Header */}
                   <div className="flex items-center justify-between px-5 py-4 border-b border-[#e8dfd5] dark:border-stone-800 bg-[#FAF8F5] dark:bg-stone-950/40 shrink-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-xl">🔮</span>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#f0e6e8] text-[#651522] dark:bg-stone-800 dark:text-amber-200">
+                        <BrainCircuitIcon className="h-4 w-4" />
+                      </span>
                       <div>
                         <h2 id="ai-winemaker-drawer-title" className="text-sm font-serif font-black text-[#4e0e15] dark:text-amber-150 tracking-wide">
                           AI Winemaker Assistant
@@ -2524,11 +2480,13 @@ export default function App() {
 
 
 
-      <footer className="py-6 px-6 bg-white border-t border-[#e8dfd5] text-center mt-auto text-[10px] text-slate-500 dark:text-slate-400 font-mono font-medium">
-        {state.lang === 'ka'
-          ? 'VinOS • მარნის ოპერაციული მართვა • ოფლაინ მიკვლევადობა'
-          : 'VinOS • Operational Winemaking Control Loop • Offline-capable traceability'}
-      </footer>
+      {!state.isLoggedIn && (
+        <footer className="app-footer py-5 px-6 text-center mt-auto text-[10px] font-medium">
+          {state.lang === 'ka'
+            ? 'VinOS • ვენახიდან ბოთლამდე'
+            : 'VinOS · Vineyard to bottle'}
+        </footer>
+      )}
     </div>
     </ToastProvider>
   );

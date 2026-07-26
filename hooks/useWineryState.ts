@@ -65,6 +65,7 @@ import {
   type AiDraftQueueStatus,
 } from '../lib/aiDraftActions';
 import { isKnownRole } from '../server/permissions';
+import { clearTenantCachedData } from '../lib/tenantCache';
 import type {
   BottlingCommandResponse,
   CellarOperationCommandResponse,
@@ -197,22 +198,6 @@ const createSignedOutUser = (): UserProfile => ({
   whatsappOptIn: false,
   registrationComplete: true,
 });
-
-const TENANT_CACHE_KEYS = [
-  'cf_vessels', 'cf_lots', 'cf_fermlogs', 'cf_lablogs', 'cf_inventory',
-  'cf_tasks', 'cf_notes', 'vinea_blocks', 'vinea_projects', 'vinea_phenology',
-  'vinea_sprays', 'vinea_scoutings', 'vinea_soil', 'vinea_samplings',
-  'vinea_harvests', 'vinea_irrigation', 'vinea_fertilizer', 'vinea_audit_logs',
-  'cf_bottling_history', 'cf_transfers_history', 'cf_grape_intakes',
-  'cf_cellar_ops', 'cf_cost_entries', 'cf_wine_pricing', 'cf_storage_locations',
-  'cf_storage_movements', 'cf_sales_dispatches', 'cf_sales_orders',
-  'cf_supplier_payments', 'cf_certification_records', 'cf_attachments',
-  'cf_crm_leads', 'cf_ai_drafts', 'vinea_company_profile', 'vinea_last_sync_at',
-] as const;
-
-function clearTenantCachedData(storage: Pick<Storage, 'removeItem'>): void {
-  TENANT_CACHE_KEYS.forEach(key => storage.removeItem(key));
-}
 
 export interface CellarNote {
   id: string;
@@ -1334,6 +1319,8 @@ export function useWineryState() {
     }
     const storedModule = localStorage.getItem('vinea_active_module');
     if (storedModule) setActiveModule(storedModule as any);
+    const storedTab = localStorage.getItem('vinea_active_tab');
+    if (storedTab) setActiveTab(storedTab === 'qvevri' ? 'vessels' : storedTab);
 
     // Restore session and sync from server
     const checkSessionAndSync = async () => {
@@ -1608,6 +1595,7 @@ export function useWineryState() {
   }, [currentUser, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_company_profile', JSON.stringify(companyProfile)); }, [companyProfile, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_active_module', activeModule); }, [activeModule, isClient]);
+  useEffect(() => { if (isClient) localStorage.setItem('vinea_active_tab', activeTab); }, [activeTab, isClient]);
 
   useEffect(() => { handleCollectionUpdate('blocks', 'vinea_blocks', blocks); }, [blocks, isClient]);
   useEffect(() => { handleCollectionUpdate('vineyardProjects', 'vinea_projects', vineyardProjects); }, [vineyardProjects, isClient]);

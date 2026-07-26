@@ -8,6 +8,7 @@ import {
 import { useFocusTrap } from './useFocusTrap';
 import { localizedRoleLabel } from '../lib/roleLabels';
 import MasterBillingAdmin from './MasterBillingAdmin';
+import { clearTenantCachedData } from '../lib/tenantCache';
 
 interface MasterAdminPortalProps {
   lang: string;
@@ -394,6 +395,10 @@ export default function MasterAdminPortal({
         body: JSON.stringify({ username }),
       });
       if (res.ok) {
+        clearTenantCachedData(localStorage);
+        localStorage.removeItem('vinea_curr_user');
+        localStorage.removeItem('vinea_active_module');
+        localStorage.removeItem('vinea_active_tab');
         window.location.reload();
       } else {
         const err = await res.json().catch(() => ({}));

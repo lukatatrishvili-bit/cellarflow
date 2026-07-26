@@ -1,15 +1,10 @@
 @import "tailwindcss";
 
-/* Four families: Cormorant Garamond (serif display), Outfit (sans, incl.
-   display weights), JetBrains Mono, and Noto Sans Georgian — none of the Latin
-   families contain Mkhedruli glyphs, so without it every KA string fell back
-   to system fonts. Google Fonts serves it unicode-range-subsetted: browsers
-   only download the Georgian woff2 when Georgian text is actually rendered,
-   so Latin-only sessions pay ~0 bytes. */
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap');
+/* One modern UI family, one data family, and full Georgian coverage. */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap');
 
 @theme {
-  --font-serif: "Cormorant Garamond", "Noto Sans Georgian", Georgia, serif;
+  --font-serif: "Outfit", "Noto Sans Georgian", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Outfit", "Noto Sans Georgian", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Outfit", "Noto Sans Georgian", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Noto Sans Georgian", ui-monospace, SFMono-Regular, monospace;
@@ -27,27 +22,29 @@
   --dur-slow: 420ms;
 
   /* Elevation scale (depth without heavy shadows) */
-  --elev-1: 0 1px 2px rgba(28, 24, 22, 0.04), 0 2px 8px -2px rgba(28, 24, 22, 0.05);
-  --elev-2: 0 4px 12px -2px rgba(28, 24, 22, 0.08), 0 8px 24px -6px rgba(28, 24, 22, 0.06);
-  --elev-float: 0 12px 40px -12px rgba(78, 14, 21, 0.22);
+  --elev-1: 0 1px 2px rgba(28, 25, 23, 0.04), 0 1px 4px rgba(28, 25, 23, 0.035);
+  --elev-2: 0 8px 24px -16px rgba(28, 25, 23, 0.22);
+  --elev-float: 0 18px 48px -24px rgba(28, 25, 23, 0.34);
 
   /* Semantic surface + accent tokens layered over the existing palette */
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-sunken: #f6f3ee;
-  --accent-wine: #4e0e15;
-  --accent-wine-bright: #801323;
-  --accent-gold: #c5a059;
-  --border-hair: rgba(120, 100, 80, 0.14);
+  --surface-sunken: #f5f5f3;
+  --accent-wine: #651522;
+  --accent-wine-bright: #7a1c2b;
+  --accent-gold: #a77d3d;
+  --border-hair: #e7e5e2;
+  --radius-control: 10px;
+  --radius-surface: 14px;
 }
 
 :root.dark {
   --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
   --elev-2: 0 4px 14px -2px rgba(0, 0, 0, 0.55), 0 10px 30px -8px rgba(0, 0, 0, 0.5);
   --elev-float: 0 16px 44px -12px rgba(0, 0, 0, 0.7);
-  --surface: #140d0e;
-  --surface-raised: #1a1113;
-  --surface-sunken: #0a0607;
+  --surface: #171313;
+  --surface-raised: #1d1818;
+  --surface-sunken: #100d0d;
   --accent-wine: #c82c40;
   --accent-gold: #c5a059;
   --border-hair: rgba(197, 160, 89, 0.16);
@@ -128,31 +125,31 @@ textarea:focus-visible,
 }
 
 :root {
-  --background: #fdfdfa;      /* Premium Clean Warm Alabaster */
-  --foreground: #14110f;      /* Deep Charcoal for high contrast readability */
-  --card: #ffffff;            /* Pure White */
-  --border-custom: #e8dfd5;   /* Golden Linen Border */
-  --accent-gold: #c5a059;     /* Kakhuri Clay Amber Gold */
-  --accent-burgundy: #801323; /* Georgian Saperavi Red */
-  --accent-emerald: #0d9488;  /* Fresh Leaf Teal */
+  --background: #f6f6f4;
+  --foreground: #1c1917;
+  --card: #ffffff;
+  --border-custom: #e7e5e2;
+  --accent-gold: #a77d3d;
+  --accent-burgundy: #701827;
+  --accent-emerald: #0f8a76;
 }
 
 :root.dark {
-  --background: #080506;      /* Rich Obsidian Wine Black */
-  --foreground: #faf6f0;      /* Clear Organic White */
-  --card: #12090a;            /* Rich Dark Walnut Card */
-  --border-custom: #2a1618;   /* Dark Warm Burgundy Border */
-  --accent-gold: #c5a059;     /* Gold Accent */
-  --accent-burgundy: #e13d51; /* Vivid Crimson Red for dark mode accessibility */
-  --accent-emerald: #10b981;  /* Emerald */
+  --background: #100d0d;
+  --foreground: #f5f3f1;
+  --card: #191515;
+  --border-custom: #332b2b;
+  --accent-gold: #c29a5b;
+  --accent-burgundy: #e05568;
+  --accent-emerald: #28b899;
 }
 
 body {
   background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
-  font-size: 16px;
-  line-height: 1.62;
+  font-size: 14px;
+  line-height: 1.5;
   overflow-x: hidden;
   margin: 0;
   padding: 0;
@@ -161,12 +158,107 @@ body {
 }
 
 .font-serif {
-  font-family: var(--font-serif) !important;
-  letter-spacing: -0.015em;
+  font-family: var(--font-sans) !important;
+  letter-spacing: -0.02em;
 }
 
 .font-display {
   font-family: var(--font-display) !important;
+}
+
+/* ── Unified application shell ──────────────────────────────────────────── */
+.app-shell {
+  background: var(--background);
+}
+
+.app-header-shell {
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  border-bottom: 1px solid var(--border-custom);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+}
+
+.app-header {
+  min-height: 58px;
+}
+
+.app-sidebar {
+  color: #57534e;
+}
+
+.app-sidebar-summary {
+  border: 1px solid var(--border-custom);
+  border-radius: var(--radius-surface);
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  box-shadow: var(--elev-1);
+}
+
+.app-content {
+  min-width: 0;
+}
+
+.app-content :where(.shadow-sm, .shadow-xs, .shadow-2xs) {
+  box-shadow: var(--elev-1) !important;
+}
+
+.app-content :where(.shadow-md, .shadow-lg, .shadow-xl) {
+  box-shadow: var(--elev-2) !important;
+}
+
+.app-content .rounded-3xl {
+  border-radius: 16px !important;
+}
+
+.app-content .rounded-2xl {
+  border-radius: var(--radius-surface) !important;
+}
+
+.app-content .border-\[\#e8dfd5\],
+.app-content .border-\[\#f0e6da\] {
+  border-color: var(--border-custom) !important;
+}
+
+.app-content .bg-\[\#FAF8F5\],
+.app-content .bg-\[\#fcfbf9\],
+.app-content .bg-\[\#fbfaf8\] {
+  background-color: #fafaf9 !important;
+}
+
+.app-content table {
+  font-variant-numeric: tabular-nums;
+}
+
+.app-content :where(th) {
+  color: #78716c;
+  font-weight: 700;
+}
+
+.app-content :where(td, th) {
+  vertical-align: middle;
+}
+
+.app-content :where(button, [role="button"]) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-footer {
+  color: #78716c;
+  border-top: 1px solid var(--border-custom);
+  background: transparent;
+}
+
+.dark .app-header-shell {
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+}
+
+.dark .app-sidebar {
+  color: #d6d3d1;
+}
+
+@media (max-width: 767px) {
+  .app-header {
+    min-height: 54px;
+  }
 }
 
 
@@ -287,23 +379,28 @@ body {
   color: #140d0e !important;
 }
 
-/* High-end Form Controls Styling */
-input, select, textarea {
-  border-radius: 10px;
-  padding: 8px 12px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+/* Consistent, quiet controls across every module. */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  min-height: 40px;
+  border-radius: var(--radius-control);
+  padding: 8px 11px;
+  border-color: #d8d5d1;
+  background-color: #fff;
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background-color var(--dur-fast) ease;
 }
-.dark input,
+.dark input:not([type="checkbox"]):not([type="radio"]),
 .dark select,
 .dark textarea {
-  background-color: rgba(10, 6, 7, 0.5) !important;
+  background-color: #151111 !important;
   color: var(--foreground) !important;
   border-color: var(--border-custom) !important;
 }
 
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent-burgundy) !important;
-  box-shadow: 0 0 0 2px rgba(128, 19, 35, 0.12) !important;
+  box-shadow: 0 0 0 3px rgba(112, 24, 39, 0.1) !important;
   outline: none;
 }
 .dark input:focus,
@@ -321,13 +418,13 @@ input:focus, select:focus, textarea:focus {
 
 /* Header toolbar and icons accessibility in dark mode */
 .dark header svg {
-  color: #c5a059 !important; /* default icons to gold */
+  color: currentColor !important;
 }
 .dark header nav button svg {
-  color: #c5a059 !important;
+  color: currentColor !important;
 }
 .dark header nav button.bg-\[\#4e0e15\] svg {
-  color: #140d0e !important; /* gold active button text */
+  color: currentColor !important;
 }
 .dark header nav button:not(.bg-\[\#4e0e15\]) {
   color: rgba(246, 241, 235, 0.72) !important;
@@ -337,53 +434,50 @@ input:focus, select:focus, textarea:focus {
   color: #c5a059 !important;
 }
 
-/* Accessibility: Scale up very small fonts to be highly readable */
+/* A compact, readable type scale. The original forced small utility classes
+   to 14–16px and made dense operational screens feel oversized. */
 .text-\[8px\] {
-  font-size: 12px !important;
-  letter-spacing: 0.02em;
+  font-size: 10px !important;
 }
 .text-\[9px\] {
-  font-size: 13px !important;
-  letter-spacing: 0.02em;
+  font-size: 10.5px !important;
 }
 .text-\[10px\] {
-  font-size: 14px !important;
-  letter-spacing: 0.015em;
+  font-size: 11px !important;
 }
 .text-\[11px\] {
-  font-size: 14.5px !important;
-  letter-spacing: 0.01em;
+  font-size: 11.5px !important;
 }
 .text-xs {
-  font-size: 15px !important;
+  font-size: 12.5px !important;
 }
 .text-sm {
-  font-size: 16.5px !important;
+  font-size: 14px !important;
 }
 .text-base {
-  font-size: 18px !important;
+  font-size: 15px !important;
 }
 .text-lg {
-  font-size: 21px !important;
+  font-size: 18px !important;
   letter-spacing: -0.01em;
 }
 .text-xl {
-  font-size: 24px !important;
+  font-size: 20px !important;
   letter-spacing: -0.015em;
 }
 .text-2xl {
-  font-size: 28px !important;
+  font-size: 24px !important;
   letter-spacing: -0.02em;
 }
 .text-3xl {
-  font-size: 34px !important;
+  font-size: 30px !important;
   letter-spacing: -0.025em;
 }
 
 
 .dark header {
-  background-color: rgba(20, 13, 14, 0.95) !important;
-  border-color: var(--border-custom) !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
 }
 
 .dark aside {

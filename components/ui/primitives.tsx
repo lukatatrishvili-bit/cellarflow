@@ -18,7 +18,7 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="bg-white/90 border border-[#e8dfd5] p-5 lg:p-6 rounded-2xl shadow-sm dark:bg-stone-900/90 dark:border-stone-800">
+    <div className="px-0.5 py-1">
       <div className="flex flex-wrap items-start justify-between gap-4">
         {/* The title column must never be crushed by `actions`: several headers
             put fixed-width search/select controls in there, and those refuse to
@@ -27,16 +27,16 @@ export function PageHeader({
             row. `min-w-0` still applies below sm, where actions stack full-width. */}
         <div className="min-w-0 flex-[1_1_24rem] sm:min-w-[18rem]">
           {eyebrow && (
-            <span className="inline-flex rounded-full bg-stone-100 px-2.5 py-1 text-[10px] font-bold text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+            <span className="inline-flex text-[10px] font-bold uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">
               {eyebrow}
             </span>
           )}
-          <h2 className="mt-1.5 flex items-start gap-2 break-words text-2xl font-black leading-tight tracking-tight text-stone-900 dark:text-amber-100">
-            {Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-[#4e0e15] dark:text-amber-300" />}
+          <h2 className="mt-1 flex items-start gap-2 break-words text-2xl font-extrabold leading-tight tracking-tight text-stone-900 dark:text-stone-100">
+            {Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-[#651522] dark:text-amber-200" />}
             <span className="min-w-0">{title}</span>
           </h2>
           {description && (
-            <p className="mt-1 max-w-3xl text-pretty text-sm font-medium leading-relaxed text-stone-500 dark:text-stone-400">
+            <p className="mt-1 max-w-3xl text-pretty text-sm font-normal leading-relaxed text-stone-500 dark:text-stone-400">
               {description}
             </p>
           )}
@@ -63,7 +63,7 @@ export function SectionCard({
   className?: string;
 }) {
   return (
-    <section className={cx('bg-white/90 border border-[#e8dfd5] rounded-2xl shadow-sm dark:bg-stone-900/90 dark:border-stone-800', className)}>
+    <section className={cx('bg-white border border-stone-200 rounded-xl shadow-sm dark:bg-stone-900 dark:border-stone-800', className)}>
       {(title || actions) && (
         <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-start justify-between gap-3 dark:border-stone-800">
           <div className="min-w-0">
@@ -129,7 +129,7 @@ export function MetricCard({
     </>
   );
   const className = cx(
-    'rounded-2xl border border-[#e8dfd5] border-l-4 bg-white/92 p-4 text-left shadow-sm transition-smooth dark:border-stone-800 dark:bg-stone-900/90',
+    'rounded-xl border border-stone-200 border-l-[3px] bg-white p-4 text-left shadow-sm transition-smooth dark:border-stone-800 dark:bg-stone-900',
     tones[tone].split(' ')[0],
     onClick && 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md',
   );
@@ -232,7 +232,7 @@ export function FormSection({
   footer?: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-stone-200 bg-stone-50/50 p-4 dark:border-stone-800 dark:bg-stone-950/30">
+    <section className="rounded-xl border border-stone-200 bg-stone-50/50 p-4 dark:border-stone-800 dark:bg-stone-950/30">
       <div className="mb-3 flex items-start gap-2">
         {Icon && (
           <span className="rounded-xl border border-stone-200 bg-white p-2 text-[#4e0e15] dark:border-stone-800 dark:bg-stone-900 dark:text-amber-200">
@@ -311,7 +311,7 @@ export function ActionButton({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={cx('inline-flex items-center justify-center rounded-xl px-4 py-2 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed', tones[tone], className)}
+      className={cx('inline-flex min-h-10 items-center justify-center rounded-[10px] px-3.5 py-2 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed', tones[tone], className)}
     >
       {children}
     </button>

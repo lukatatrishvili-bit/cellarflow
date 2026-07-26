@@ -103,14 +103,32 @@ describe('TanksVessels action permissions', () => {
     expect(markup).toContain('Your role cannot decommission vessels.');
   });
 
-  it('retains all existing actions by default for backward compatibility', () => {
+  it('retains safe operational actions by default while protecting occupied vessels', () => {
     const markup = renderVessels();
 
+    expect(markup).toContain('Winemaker briefing');
+    expect(markup).toContain('1 decision before the next movement');
+    expect(markup).toContain('Sanitation required');
     expect(markup).toContain('Commission Vessel');
     expect(markup).toContain('title="Set temperature value"');
     expect(markup).toContain('Wash Vessel');
-    expect(markup).toContain('Commission out / destroy vessel');
+    expect(markup).not.toContain('Commission out / destroy vessel');
     expect(markup).not.toContain('Limited vessel access.');
+  });
+
+  it('offers decommission only for an empty, unassigned vessel', () => {
+    const markup = renderVessels({
+      vessels: [{
+        ...vessel,
+        currentVolume: 0,
+        assignedLotId: null,
+        cleaningStatus: 'clean',
+      }],
+    });
+
+    expect(markup).toContain('Ready capacity');
+    expect(markup).toContain('2,000 L');
+    expect(markup).toContain('Commission out / destroy vessel');
   });
 
   it('localizes the read-only explanation in Georgian', () => {

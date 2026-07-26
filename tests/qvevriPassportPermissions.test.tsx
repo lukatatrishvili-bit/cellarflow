@@ -129,10 +129,10 @@ function renderPassport(overrides: Partial<ComponentProps<typeof QvevriPassportT
 }
 
 describe('QvevriPassportTab permissions', () => {
-  it('locks passport fields and hides mutation forms while preserving review data', () => {
+  it('locks qvevri fields and hides mutation forms while preserving review data', () => {
     const markup = renderPassport({ canUpdateVessel: false });
 
-    expect(markup).toContain('Read-only qvevri passport.');
+    expect(markup).toContain('Read-only qvevri records.');
     expect(markup).toContain('Qvevri 7');
     expect(markup).toContain('West Marani');
     expect(markup).toContain('Rkatsiteli Qvevri');
@@ -153,15 +153,34 @@ describe('QvevriPassportTab permissions', () => {
     expect(markup).toContain('>Add mixing</button>');
     expect(markup).toContain('>Add sanitation</button>');
     expect(markup).not.toContain('<fieldset disabled=""');
-    expect(markup).not.toContain('Read-only qvevri passport.');
+    expect(markup).not.toContain('Read-only qvevri records.');
+  });
+
+  it('opens the qvevri selected by the vessel action queue', () => {
+    const focusedVessel: Vessel = {
+      ...vessel,
+      id: 'Q-8',
+      currentVolume: 0,
+      assignedLotId: null,
+      qvevriNumber: 'Qvevri 8',
+      maraniLocation: 'East Marani',
+      locationDetails: 'East Marani',
+    };
+    const markup = renderPassport({
+      vessels: [vessel, focusedVessel],
+      activeVesselId: 'Q-8',
+    });
+
+    expect(markup).toContain('value="Qvevri 8"');
+    expect(markup).toContain('value="East Marani"');
   });
 
   it('localizes read-only guidance in Georgian', () => {
     const markup = renderPassport({ lang: 'ka', canUpdateVessel: false });
 
-    expect(markup).toContain('ქვევრის პასპორტი მხოლოდ სანახავია.');
+    expect(markup).toContain('ქვევრის ჩანაწერები მხოლოდ სანახავია.');
     expect(markup).toContain('შეგიძლიათ ნახოთ იდენტიფიკაცია, მზადყოფნა');
-    expect(markup).not.toContain('Read-only qvevri passport.');
+    expect(markup).not.toContain('Read-only qvevri records.');
     expect(markup).not.toContain('>შენახვა</button>');
   });
 });

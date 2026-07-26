@@ -46,6 +46,9 @@ interface QvevriPassportTabProps {
   setToastMessage?: (message: string) => void;
   currentUserName?: string;
   canUpdateVessel?: boolean;
+  embedded?: boolean;
+  onBackToVessels?: () => void;
+  activeVesselId?: string | null;
 }
 
 interface PassportForm {
@@ -175,10 +178,15 @@ export default function QvevriPassportTab({
   setToastMessage,
   currentUserName = '',
   canUpdateVessel = true,
+  embedded = false,
+  onBackToVessels,
+  activeVesselId,
 }: QvevriPassportTabProps) {
   const ka = lang === 'ka';
   const qvevris = useMemo(() => vessels.filter(vessel => vessel.type === 'qvevri'), [vessels]);
-  const [selectedVesselId, setSelectedVesselId] = useState(qvevris[0]?.id || '');
+  const [selectedVesselId, setSelectedVesselId] = useState(
+    qvevris.some(vessel => vessel.id === activeVesselId) ? activeVesselId! : qvevris[0]?.id || '',
+  );
   const selectedVessel = qvevris.find(vessel => vessel.id === selectedVesselId) || qvevris[0] || null;
   const assignedLot = selectedVessel?.assignedLotId
     ? lots.find(lot => lot.id === selectedVessel.assignedLotId) || null
@@ -281,7 +289,7 @@ export default function QvevriPassportTab({
       firstRackingDate: optionalText(form.firstRackingDate),
       soilTemperature: optionalNumber(form.soilTemperature),
     }));
-    setToastMessage?.(ka ? 'ქვევრის პასპორტი განახლდა.' : `Qvevri passport saved for ${selectedVessel.id}.`);
+    setToastMessage?.(ka ? 'ქვევრის ჩანაწერი განახლდა.' : `Qvevri record saved for ${selectedVessel.id}.`);
   };
 
   const handleAddMixing = () => {
@@ -321,24 +329,34 @@ export default function QvevriPassportTab({
   const openVessel = () => {
     if (!selectedVessel) return;
     setSelectedTankId?.(selectedVessel.id);
-    setActiveTab?.('vessels');
+    if (onBackToVessels) onBackToVessels();
+    else setActiveTab?.('vessels');
   };
 
   if (!qvevris.length) {
     return (
       <div className="space-y-4 text-stone-800 animate-fade-in">
-        <PageHeader
-          eyebrow="Gvino"
-          title={ka ? 'ქვევრის პასპორტი' : 'Qvevri Passport'}
-          description={ka ? 'ქვევრის იდენტიფიკაცია, სანიტარია და წარმოების ჟურნალი.' : 'Qvevri identity, sanitation, workflow, and linked records.'}
-          icon={Container}
-        />
+        {!embedded && (
+          <PageHeader
+            eyebrow="Gvino"
+            title={ka ? 'ქვევრის ჩანაწერები' : 'Qvevri records'}
+            description={ka ? 'ქვევრის იდენტიფიკაცია, სანიტარია და წარმოების ჟურნალი.' : 'Qvevri identity, sanitation, workflow, and linked records.'}
+            icon={Container}
+          />
+        )}
         <SectionCard>
           <EmptyState
             icon={Container}
             title={ka ? 'ქვევრი ჯერ არ არის რეგისტრირებული' : 'No qvevri registered'}
             description={ka ? 'დაამატეთ ქვევრი ჭურჭლის რეესტრში.' : 'Add a qvevri vessel in the cellar register.'}
-            action={<ActionButton onClick={() => setActiveTab?.('vessels')}><Container className="mr-2 h-4 w-4" />Open vessels</ActionButton>}
+            action={(
+              <ActionButton onClick={() => {
+                if (onBackToVessels) onBackToVessels();
+                else setActiveTab?.('vessels');
+              }}>
+                <Container className="mr-2 h-4 w-4" />Open vessels
+              </ActionButton>
+            )}
           />
         </SectionCard>
       </div>
@@ -349,28 +367,37 @@ export default function QvevriPassportTab({
 
   return (
     <div className="space-y-4 text-stone-800 animate-fade-in dark:text-stone-100">
-      <PageHeader
-        eyebrow="Gvino"
-        title={ka ? 'ქვევრის პასპორტი' : 'Qvevri Passport'}
-        description={ka ? 'ქვევრის იდენტიფიკაცია, სანიტარია, დუღილი და ოფიციალური კავშირები.' : 'Qvevri identity, sanitation, fermentation, operations, and official links.'}
-        icon={Container}
-        actions={(
-          <div className="flex flex-wrap gap-2">
-            <ActionButton tone="secondary" onClick={openVessel}>
-              <Container className="mr-2 h-4 w-4" />{ka ? 'ჭურჭელი' : 'Vessel'}
-            </ActionButton>
-            {canUpdateVessel && (
-              <ActionButton onClick={handleSave}>
-                <Save className="mr-2 h-4 w-4" />{ka ? 'შენახვა' : 'Save'}
+      {!embedded && (
+        <PageHeader
+          eyebrow="Gvino"
+          title={ka ? 'ქვევრის ჩანაწერები' : 'Qvevri records'}
+          description={ka ? 'ქვევრის იდენტიფიკაცია, სანიტარია, დუღილი და ოფიციალური კავშირები.' : 'Qvevri identity, sanitation, fermentation, operations, and official links.'}
+          icon={Container}
+          actions={(
+            <div className="flex flex-wrap gap-2">
+              <ActionButton tone="secondary" onClick={openVessel}>
+                <Container className="mr-2 h-4 w-4" />{ka ? 'ჭურჭელი' : 'Vessel'}
               </ActionButton>
-            )}
-          </div>
-        )}
-      />
+              {canUpdateVessel && (
+                <ActionButton onClick={handleSave}>
+                  <Save className="mr-2 h-4 w-4" />{ka ? 'შენახვა' : 'Save'}
+                </ActionButton>
+              )}
+            </div>
+          )}
+        />
+      )}
+      {embedded && canUpdateVessel && (
+        <div className="flex justify-end">
+          <ActionButton onClick={handleSave}>
+            <Save className="mr-2 h-4 w-4" />{ka ? 'შენახვა' : 'Save qvevri record'}
+          </ActionButton>
+        </div>
+      )}
 
       {!canUpdateVessel && (
         <InlineNotice tone="info">
-          <strong>{ka ? 'ქვევრის პასპორტი მხოლოდ სანახავია.' : 'Read-only qvevri passport.'}</strong>{' '}
+          <strong>{ka ? 'ქვევრის ჩანაწერები მხოლოდ სანახავია.' : 'Read-only qvevri records.'}</strong>{' '}
           {ka
             ? 'შეგიძლიათ ნახოთ იდენტიფიკაცია, მზადყოფნა, დაკავშირებული დოკუმენტები და სრული ჟურნალი, მაგრამ ცვლილებებს ვერ შეინახავთ.'
             : 'You can review identity, readiness, linked evidence, and complete histories, but cannot save changes.'}
@@ -379,7 +406,7 @@ export default function QvevriPassportTab({
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard
-          label={ka ? 'მზადყოფნა' : 'Passport'}
+          label={ka ? 'ჩანაწერი' : 'Record'}
           value={`${passportScore}%`}
           detail={<StatusBadge tone={readinessTone(readiness.status)}>{statusLabel(readiness.status)}</StatusBadge>}
           icon={BadgeCheck}
@@ -419,7 +446,9 @@ export default function QvevriPassportTab({
                 <button
                   type="button"
                   key={vessel.id}
-                  onClick={() => setSelectedVesselId(vessel.id)}
+                  onClick={() => {
+                    setSelectedVesselId(vessel.id);
+                  }}
                   className={cx(
                     'w-full rounded-xl border px-3 py-3 text-left transition-colors',
                     active

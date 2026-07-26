@@ -10,10 +10,16 @@ import {
 describe('permission-aware app navigation', () => {
   it('maps each cellar destination to the permission enforced by the server', () => {
     expect(permissionModuleFor('gvino', 'intake')).toBe('grape_intake');
+    // Legacy qvevri links still degrade into the consolidated Vessels area.
     expect(permissionModuleFor('gvino', 'qvevri')).toBe('vessels');
     expect(permissionModuleFor('gvino', 'calculators')).toBe('lab');
     expect(permissionModuleFor('gvino', 'ai')).toBe('tasks');
     expect(permissionModuleFor('docs')).toBe('official_docs');
+  });
+
+  it('keeps qvevri records inside the consolidated Vessels destination', () => {
+    expect(visibleWineryTabIds('Owner/Admin')).toContain('vessels');
+    expect(visibleWineryTabIds('Owner/Admin')).not.toContain('qvevri');
   });
 
   it('only exposes role-relevant cellar destinations to a lab technician', () => {
