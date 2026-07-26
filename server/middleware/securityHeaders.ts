@@ -20,6 +20,7 @@ const cspEnforce = process.env.CSP_ENFORCE === 'true';
 // External origins the client legitimately contacts. Gemini AI is proxied
 // through /api/gemini (same origin), so it needs no CSP allowance.
 const OPEN_METEO = 'https://open-meteo.com https://api.open-meteo.com https://geocoding-api.open-meteo.com https://archive-api.open-meteo.com';
+const OPEN_STREET_MAP = 'https://*.openstreetmap.org https://openstreetmap.org https://www.openstreetmap.org';
 const GMAPS_SCRIPT = 'https://maps.googleapis.com https://maps.gstatic.com';
 const GMAPS_CONNECT = 'https://maps.googleapis.com';
 const GMAPS_IMG = 'https://maps.googleapis.com https://maps.gstatic.com https://*.googleusercontent.com';
@@ -32,12 +33,13 @@ function buildCsp(): string {
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'self'",
+    "frame-src 'self' https://www.openstreetmap.org https://*.openstreetmap.org",
     "form-action 'self'",
     `script-src 'self' 'unsafe-inline' ${GMAPS_SCRIPT}`,
     `style-src 'self' 'unsafe-inline' ${GFONTS_STYLE}`,
-    `img-src 'self' data: blob: ${GMAPS_IMG}`,
+    `img-src 'self' data: blob: ${GMAPS_IMG} ${OPEN_STREET_MAP}`,
     `font-src 'self' data: ${GFONTS_FONT}`,
-    `connect-src 'self' ${OPEN_METEO} ${GMAPS_CONNECT}`,
+    `connect-src 'self' ${OPEN_METEO} ${GMAPS_CONNECT} ${OPEN_STREET_MAP}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
   ].join('; ');

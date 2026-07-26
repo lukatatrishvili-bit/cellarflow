@@ -612,8 +612,12 @@ export default function WeatherTab({
       twoDaysAgo.setDate(today.getDate() - 3);
       const formatDate = (d: Date) => d.toISOString().split('T')[0];
 
-      const end2026 = formatDate(twoDaysAgo);
-      const start2026 = '2026-04-01';
+      const currentYear = today.getFullYear();
+      let end2026 = formatDate(twoDaysAgo);
+      let start2026 = `${currentYear}-04-01`;
+      if (end2026 < start2026) {
+        start2026 = `${currentYear}-01-01`;
+      }
 
       const url2024 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=2024-04-01&end_date=2024-10-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
       const url2025 = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lng}&start_date=2025-04-01&end_date=2025-10-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`;
