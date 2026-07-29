@@ -1,13 +1,18 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
-import type { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord } from '../lib/wineryState';
+import type { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord, InventoryItem } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import { stageLabel, vesselTypeLabel } from '../lib/enumLabels';
 import WineLotCommandCenter from './WineLotCommandCenter';
+import OperationMaterialsEditor, {
+  materialDraftIssue,
+  materialDraftsToUsages,
+  type MaterialUsageDraft,
+} from './OperationMaterialsEditor';
 import { ChevronRight, Compass, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
 
 interface Props {
@@ -29,7 +34,21 @@ interface Props {
   setSelectedTankId?: (tankId: string | null) => void;
   setCalculatorLotId?: (lotId: string) => void;
   setCalculatorLotIdA?: (lotId: string) => void;
+  inventory?: InventoryItem[];
+  onUpdateInventory?: (inventory: InventoryItem[]) => void;
 }
+
+const STAGES_ORDERED: WinemakingStage[] = [
+  'crushing',
+  'fermenting',
+  'maceration',
+  'pressing',
+  'aging',
+  'stabilization',
+  'filtration',
+  'bottled',
+  'sold',
+];
 
 export function commitWineLotMutationIfAllowed(
   allowed: boolean,
@@ -59,7 +78,9 @@ export default function WineLotsTrace({
   setActiveTab,
   setSelectedTankId,
   setCalculatorLotId,
-  setCalculatorLotIdA
+  setCalculatorLotIdA,
+  inventory = [],
+  onUpdateInventory,
 }: Props) {
   const t = translations[lang];
   const [selectedLotId, setSelectedLotId] = useState<string | null>(lots[0]?.id || null);
@@ -94,6 +115,20 @@ export default function WineLotsTrace({
   const [transitionTarget, setTransitionTarget] = useState<WinemakingStage>('crushing');
   const [transitionOperator, setTransitionOperator] = useState('Luka Tatrishvili');
   const [transitionNotes, setTransitionNotes] = useState('');
+  const [transitionMaterialDrafts, setTransitionMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
+  const stageWorkflowRef = useRef<HTMLDivElement>(null);
+
+  const openTransitionForm = () => {
+    if (!canUpdateLot || !selectedLot) return;
+    const currentIndex = STAGES_ORDERED.indexOf(selectedLot.stage);
+    const nextIndex = Math.min(STAGES_ORDERED.length - 1, currentIndex + 1);
+    setTransitionTarget(STAGES_ORDERED[nextIndex]);
+    setTransitionOperator('Luka Tatrishvili');
+    setTransitionNotes('');
+    setTransitionMaterialDrafts([]);
+    setShowTransitionForm(true);
+    window.requestAnimationFrame(() => stageWorkflowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
   // Add Lot State
   const [showAddForm, setShowAddForm] = useState(false);
@@ -438,6 +473,7 @@ export default function WineLotsTrace({
               salesDispatches={salesDispatches}
               currency={currency}
               onEdit={canUpdateLot && !selectedLot.voidedAt ? () => setIsEditingLot(!isEditingLot) : undefined}
+              onChangeStage={canUpdateLot && !selectedLot.voidedAt ? openTransitionForm : undefined}
               onOpenPassport={onOpenPassport}
               setActiveTab={setActiveTab}
               setSelectedTankId={setSelectedTankId}
@@ -740,34 +776,16 @@ export default function WineLotsTrace({
 
             {/* Stage Progress Stepper */}
             {(() => {
-              const stagesOrdered: WinemakingStage[] = [
-                'crushing',
-                'fermenting',
-                'maceration',
-                'pressing',
-                'aging',
-                'stabilization',
-                'filtration',
-                'bottled',
-                'sold'
-              ];
+              const stagesOrdered = STAGES_ORDERED;
 
               return (
-                <div className="space-y-4 border border-stone-200/80 bg-stone-50/50 p-4 rounded-xl dark:bg-stone-900/50 dark:border-stone-800">
+                <div ref={stageWorkflowRef} className="scroll-mt-4 space-y-4 border border-stone-200/80 bg-stone-50/50 p-4 rounded-xl dark:bg-stone-900/50 dark:border-stone-800">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
                       🍇 Winemaking Stage Workflow
                     </h4>
                     {canUpdateLot && <button
-                      onClick={() => {
-                        if (!canUpdateLot) return;
-                        const currentIndex = stagesOrdered.indexOf(selectedLot.stage);
-                        const nextIndex = Math.min(stagesOrdered.length - 1, currentIndex + 1);
-                        setTransitionTarget(stagesOrdered[nextIndex]);
-                        setTransitionOperator('Luka Tatrishvili');
-                        setTransitionNotes('');
-                        setShowTransitionForm(true);
-                      }}
+                      onClick={openTransitionForm}
                       className="px-2 py-1 text-[10px] font-bold text-white bg-[#801323] hover:bg-[#4e0e15] rounded transition-all cursor-pointer shadow-2xs"
                     >
                       {lang === 'ka' ? 'ეტაპის შეცვლა' : 'Advance / Modify Stage'}
@@ -857,10 +875,25 @@ export default function WineLotsTrace({
                         />
                       </div>
 
+                      {onUpdateInventory && (
+                        <OperationMaterialsEditor
+                          lang={lang}
+                          inventory={inventory}
+                          value={transitionMaterialDrafts}
+                          onChange={setTransitionMaterialDrafts}
+                          operationType="additive"
+                          lotVolumeL={selectedLot.currentVolume}
+                          compact
+                        />
+                      )}
+
                       <div className="flex justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => setShowTransitionForm(false)}
+                          onClick={() => {
+                            setShowTransitionForm(false);
+                            setTransitionMaterialDrafts([]);
+                          }}
                           className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded hover:bg-stone-200 cursor-pointer dark:bg-stone-900 dark:text-stone-400 dark:hover:bg-stone-850"
                         >
                           {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
@@ -870,6 +903,20 @@ export default function WineLotsTrace({
                           onClick={() => {
                             if (!canUpdateLot) return;
                             if (transitionOperator.trim() && transitionNotes.trim()) {
+                              const materialIssue = materialDraftIssue(transitionMaterialDrafts, inventory);
+                              if (materialIssue) {
+                                alert(lang === 'ka'
+                                  ? 'შეამოწმეთ არჩეული დანამატი, რაოდენობა და ხელმისაწვდომი მარაგი.'
+                                  : 'Check the selected material, quantity, and available stock.');
+                                return;
+                              }
+                              const materialUsages = materialDraftsToUsages(transitionMaterialDrafts, inventory);
+                              const materialSummary = materialUsages.map(usage => (
+                                `${usage.materialName || usage.materialId} ${usage.quantity} ${usage.unit || ''}`.trim()
+                              )).join(', ');
+                              const historyDescription = materialSummary
+                                ? `${transitionNotes.trim()} · ${lang === 'ka' ? 'დანამატები' : 'Additions'}: ${materialSummary}`
+                                : transitionNotes.trim();
                               const updatedLots = lots.map(l => {
                                 if (l.id === selectedLot.id) {
                                   return {
@@ -879,7 +926,7 @@ export default function WineLotsTrace({
                                       {
                                         date: new Date().toISOString().split('T')[0],
                                         type: lang === 'ka' ? `ეტაპის გადასვლა: ${stageLabel(transitionTarget, lang)}` : `Stage Transition: to ${transitionTarget}`,
-                                        description: transitionNotes,
+                                        description: historyDescription,
                                         operator: transitionOperator
                                       },
                                       ...(l.history || [])
@@ -889,7 +936,18 @@ export default function WineLotsTrace({
                                 return l;
                               });
                               if (!commitWineLotMutationIfAllowed(canUpdateLot, updatedLots, onUpdateLots)) return;
+                              if (onUpdateInventory && materialUsages.length > 0) {
+                                const usedById = new Map<string, number>();
+                                materialUsages.forEach(usage => {
+                                  usedById.set(usage.materialId, (usedById.get(usage.materialId) || 0) + usage.quantity);
+                                });
+                                onUpdateInventory(inventory.map(item => {
+                                  const used = usedById.get(item.id) || 0;
+                                  return used > 0 ? { ...item, stock: Math.max(0, item.stock - used) } : item;
+                                }));
+                              }
                               setShowTransitionForm(false);
+                              setTransitionMaterialDrafts([]);
                             } else {
                               alert(lang === 'ka' ? 'გთხოვთ მიუთითოთ ოპერატორის სახელი და გადასვლის შენიშვნები.' : 'Please provide Operator name and Transition notes.');
                             }

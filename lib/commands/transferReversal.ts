@@ -5,6 +5,7 @@ import type {
   Vessel,
   WineLot,
 } from '../wineryState';
+import type { CostEntry } from '../costing';
 import {
   REVERSAL_REASON_MAX_LENGTH,
   type CommandReversalReceipt,
@@ -21,6 +22,7 @@ export interface TransferReversalCommandState {
   vessels: Vessel[];
   lots: WineLot[];
   transfers: CellarTransferRecord[];
+  costEntries: CostEntry[];
 }
 
 export interface TransferReversalCommandContext {
@@ -34,6 +36,7 @@ export interface TransferReversalCommandResult {
   reversalTransfer: CellarTransferRecord;
   changedVessels: Vessel[];
   changedLots: WineLot[];
+  changedCostEntries: CostEntry[];
   stateVersion?: number;
   receipt: CommandReversalReceipt & {
     kind: 'transfer_reversal';
@@ -56,7 +59,8 @@ export type TransferReversalCommandErrorCode =
   | 'transfer_reversal_snapshot_missing'
   | 'transfer_reversal_dependency_conflict'
   | 'transfer_reversal_resource_missing'
-  | 'transfer_reversal_id_conflict';
+  | 'transfer_reversal_id_conflict'
+  | 'transfer_reversal_cost_conflict';
 
 export class TransferReversalCommandError extends Error {
   constructor(
@@ -186,7 +190,7 @@ export function applyTransferReversalCommand(
 ): AppliedTransferReversalCommand {
   const payload = parseTransferReversalCommandPayload(rawPayload);
   if (!currentState || !Array.isArray(currentState.vessels) || !Array.isArray(currentState.lots)
-    || !Array.isArray(currentState.transfers)) {
+    || !Array.isArray(currentState.transfers) || !Array.isArray(currentState.costEntries)) {
     throw new TransferReversalCommandError(
       'invalid_transfer_reversal_payload',
       'Organization transfer state is unavailable.',
@@ -402,6 +406,52 @@ export function applyTransferReversalCommand(
     details: correctionDescription,
   };
   const changedLotById = new Map(changedLots.map(lot => [lot.id, lot]));
+  const originalBlendCosts = currentState.costEntries.filter(entry => (
+    entry.commandId === original.commandId
+    && entry.sourceRef === original.id
+    && (entry.category === 'blend_in' || entry.category === 'blend_out')
+  ));
+  if (originalBlendCosts.some(entry => entry.reversedByCommandId || entry.reversedAt)) {
+    throw new TransferReversalCommandError(
+      'transfer_reversal_cost_conflict',
+      'One or more blend-cost entries were already compensated.',
+      409,
+    );
+  }
+  const updatedOriginalCosts = originalBlendCosts.map(entry => ({
+    ...entry,
+    reversedByCommandId: context.commandId,
+    reversedAt: timestamp,
+    reversalReason: payload.reason,
+    lastModified: timestamp,
+  }));
+  const reversalCosts = originalBlendCosts.map((entry, index) => ({
+    id: `cost-reversal-${payload.reversalId}-${index + 1}`,
+    commandId: context.commandId,
+    recordKind: 'reversal' as const,
+    lastModified: timestamp,
+    date: operationDate,
+    lotId: entry.lotId,
+    category: entry.category,
+    description: `Reversal of ${entry.description}: ${payload.reason}`,
+    amount: -entry.amount,
+    currency: entry.currency,
+    quantity: entry.quantity,
+    unitCost: entry.unitCost,
+    sourceRef: payload.reversalId,
+    createdBy: context.actorUsername,
+    reversalOfCostEntryId: entry.id,
+    reversalOfCommandId: original.commandId,
+    reversalReason: payload.reason,
+  } satisfies CostEntry));
+  if (reversalCosts.some(reversal => currentState.costEntries.some(entry => entry.id === reversal.id))) {
+    throw new TransferReversalCommandError(
+      'transfer_reversal_cost_conflict',
+      'A blend-cost reversal entry id already exists.',
+      409,
+    );
+  }
+  const updatedOriginalCostById = new Map(updatedOriginalCosts.map(entry => [entry.id, entry]));
 
   return {
     state: {
@@ -416,12 +466,17 @@ export function applyTransferReversalCommand(
         updatedOriginal,
         ...currentState.transfers.filter(item => item.id !== original.id),
       ],
+      costEntries: [
+        ...reversalCosts,
+        ...currentState.costEntries.map(entry => updatedOriginalCostById.get(entry.id) || entry),
+      ],
     },
     result: {
       originalTransfer: updatedOriginal,
       reversalTransfer,
       changedVessels: [restoredSourceVessel, restoredDestinationVessel],
       changedLots,
+      changedCostEntries: [...reversalCosts, ...updatedOriginalCosts],
       receipt: {
         kind: 'transfer_reversal',
         originalCommandId: original.commandId,

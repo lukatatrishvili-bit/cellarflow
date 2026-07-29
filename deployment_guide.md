@@ -2,6 +2,14 @@
 
 This guide explains how to build, run, and publish the Vinea ERP application in a production environment.
 
+## Canonical deployment target
+
+This repository deploys to **Google Cloud Run only**. The production service is
+`cellarflow-app` in project `cellarflow`, region `europe-west1`. Do not publish
+this application through ChatGPT Sites or another static hosting target: the
+application depends on its Express API, Cloud SQL, Secret Manager, and GCS
+backup configuration.
+
 ---
 
 ## Technical Architecture Overview
@@ -139,11 +147,21 @@ boot smoke in that order.
 * runs the image as a single-task, zero-retry Cloud Run migration job and waits for success;
 * resolves the image digest and deploys with `gcloud run deploy --image`;
 * verifies that Cloud Run's latest ready revision references the expected digest;
+* updates three deterministic AI monitoring jobs (hourly, daily, and weekly);
+* updates an AI email delivery job and schedules it every 15 minutes;
+* secures every AI schedule with an OAuth-authenticated Cloud Scheduler trigger;
 * public unauthenticated access
 * `--max-instances=1` by default for conservative rollout
 * GCS-backed `db.json` backup
 * automatic bucket creation if missing
 * `/api/health` verification and an explicit commit/revision/image summary
+
+The scheduled AI jobs run the same verified image digest as the service.
+Monitoring remains rules-only and cannot spend model tokens. Delivery reads the
+durable outbox, rechecks the recipient's current opt-in and role, and processes
+at most 100 records per execution. Master administrators can inspect run leases,
+delivery backlog, and terminal failures from **AI Operations** in the admin
+console; manual retry is available only after eligibility is revalidated.
 
 There is no deployment-time source rebuild. The digest that passed the
 container smoke is used by both the migration job and the Cloud Run service.
@@ -362,9 +380,13 @@ For the "Continue with Google" button to successfully authenticate users using t
     * Add **Authorized JavaScript Origins** (if running custom domains or testing):
       * Local: `http://localhost:3000`
       * Production: `https://cellarflow-app-445298255193.europe-west1.run.app`
-    * Add **Authorized Redirect URIs**:
+      * Production (alternate Cloud Run hostname): `https://cellarflow-app-tzjx5orr7q-ew.a.run.app`
+    * Add **Authorized Redirect URIs** — the app derives the callback from the
+      host it was reached on (`appBaseUrl`), so **every** hostname the service
+      answers on needs an entry or that host gets `redirect_uri_mismatch`:
       * Local: `http://localhost:3000/api/auth/google/callback`
       * Production: `https://cellarflow-app-445298255193.europe-west1.run.app/api/auth/google/callback`
+      * Production (alternate): `https://cellarflow-app-tzjx5orr7q-ew.a.run.app/api/auth/google/callback`
     * Click **Create** and copy the generated **Client ID** and **Client Secret**.
  
  ### Step 6.2: Set Environment Variables
@@ -380,6 +402,47 @@ For the "Continue with Google" button to successfully authenticate users using t
   gcloud run deploy cellarflow-app --set-env-vars GOOGLE_CLIENT_ID="your_client_id_here",GOOGLE_CLIENT_SECRET="your_client_secret_here",ALLOW_RUNTIME_OAUTH_CONFIG=false --region europe-west1
   ```
 * **Production safety**: keep `ALLOW_RUNTIME_OAUTH_CONFIG=false`. In production, the in-browser setup screen at `/api/auth/google/login?reconfigure=true` and the `/api/auth/google/configure` endpoint are blocked by default so OAuth credentials cannot be changed from the public app. If you ever enable `ALLOW_RUNTIME_OAUTH_CONFIG=true` for maintenance, redeploy it back to `false` immediately after updating credentials.
+
+### Step 6.3: Replacing a deleted or rotated OAuth client
+
+`Access blocked: Authorization Error — Error 401: deleted_client` on the Google
+consent page means the client ID the app sent no longer exists in Cloud Console.
+No code change can revive it; a new client has to be created and rolled out.
+
+Confirm which failure you have before rebuilding anything — a dead client answers
+the token endpoint distinctly (`deleted_client` vs `invalid_client` for a wrong
+secret, and `invalid_grant` for a client that is alive and well):
+
+```bash
+curl -s -X POST https://oauth2.googleapis.com/token -d "grant_type=authorization_code&code=probe&client_id=$GOOGLE_CLIENT_ID&client_secret=$GOOGLE_CLIENT_SECRET&redirect_uri=http://localhost:3000/api/auth/google/callback"
+```
+
+Then create a replacement client per Step 6.1 and publish it:
+
+```bash
+printf %s "NEW_CLIENT_ID" | gcloud secrets versions add cellarflow-google-client-id --project=cellarflow --data-file=-
+```
+
+```bash
+printf %s "NEW_CLIENT_SECRET" | gcloud secrets versions add cellarflow-google-client-secret --project=cellarflow --data-file=-
+```
+
+```bash
+gcloud run services update cellarflow-app --region europe-west1 --project cellarflow --update-secrets "GOOGLE_CLIENT_ID=cellarflow-google-client-id:latest,GOOGLE_CLIENT_SECRET=cellarflow-google-client-secret:latest"
+```
+
+Cloud Run resolves `:latest` at instance start, so the service update above is
+what actually picks up the new secret versions. Use `printf %s` (never `echo` or
+PowerShell `Out-File`) — a trailing newline or a UTF-8 BOM in the secret payload
+makes Google reject the token exchange with a misleading `invalid_client`.
+
+Finally, verify the deployed service is pointing at the new client:
+
+```bash
+curl -s -o /dev/null -D - https://cellarflow-app-445298255193.europe-west1.run.app/api/auth/google/login
+```
+
+The `location:` header shows the `client_id` in use.
 
 ---
 

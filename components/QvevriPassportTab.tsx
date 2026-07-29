@@ -24,11 +24,10 @@ import {
   InlineNotice,
   MetricCard,
   PageHeader,
-  ProgressBar,
   SectionCard,
   StatusBadge,
-  cx,
 } from './ui/primitives';
+import DateInput from './ui/DateInput';
 
 type QvevriStatus = 'unknown' | 'needed' | 'done';
 type QvevriLogEntry = NonNullable<Vessel['dailyMixingLog']>[number];
@@ -200,7 +199,7 @@ export default function QvevriPassportTab({
   });
   const [sanitationDraft, setSanitationDraft] = useState<LogDraft>({
     date: todayIso(),
-    action: 'Wash / lime / wax check',
+    action: 'Wash / lime check',
     operator: currentUserName,
     notes: '',
   });
@@ -210,10 +209,14 @@ export default function QvevriPassportTab({
       setSelectedVesselId('');
       return;
     }
+    if (activeVesselId && qvevris.some(vessel => vessel.id === activeVesselId)) {
+      setSelectedVesselId(activeVesselId);
+      return;
+    }
     if (!selectedVesselId || !qvevris.some(vessel => vessel.id === selectedVesselId)) {
       setSelectedVesselId(qvevris[0].id);
     }
-  }, [qvevris, selectedVesselId]);
+  }, [activeVesselId, qvevris, selectedVesselId]);
 
   useEffect(() => {
     setForm(formFromVessel(selectedVessel, assignedLot));
@@ -305,7 +308,7 @@ export default function QvevriPassportTab({
       dailyMixingLog: [entry, ...(vessel.dailyMixingLog || [])],
     }));
     setMixingDraft({ date: todayIso(), action: 'Punchdown / cap wetting', operator: currentUserName, notes: '' });
-    setToastMessage?.(ka ? 'ქვევრის მორევის ჩანაწერი დაემატა.' : 'Qvevri mixing log added.');
+    setToastMessage?.(ka ? 'ქვევრის დარევის ჩანაწერი დაემატა.' : 'Qvevri mixing log added.');
   };
 
   const handleAddSanitation = () => {
@@ -322,7 +325,7 @@ export default function QvevriPassportTab({
       lastCleaned: sanitationDraft.date,
       sanitationHistory: [entry, ...(vessel.sanitationHistory || [])],
     }));
-    setSanitationDraft({ date: todayIso(), action: 'Wash / lime / wax check', operator: currentUserName, notes: '' });
+    setSanitationDraft({ date: todayIso(), action: 'Wash / lime check', operator: currentUserName, notes: '' });
     setToastMessage?.(ka ? 'სანიტარული ჩანაწერი დაემატა.' : 'Qvevri sanitation log added.');
   };
 
@@ -427,7 +430,7 @@ export default function QvevriPassportTab({
           tone="neutral"
         />
         <MetricCard
-          label={ka ? 'კანი' : 'Skin contact'}
+          label={ka ? 'კანთან კონტაქტი' : 'Skin contact'}
           value={formatDays(summary.durations.skinContactDays)}
           detail={ka ? `პირველი გადატანა ${formatDays(summary.durations.daysToFirstRacking)}` : `First racking ${formatDays(summary.durations.daysToFirstRacking)}`}
           icon={Wine}
@@ -435,48 +438,7 @@ export default function QvevriPassportTab({
         />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_360px]">
-        <SectionCard title={ka ? 'ქვევრები' : 'Qvevri register'} icon={Container}>
-          <div className="space-y-2">
-            {qvevris.map(vessel => {
-              const lot = vessel.assignedLotId ? lots.find(item => item.id === vessel.assignedLotId) : null;
-              const vesselReadiness = evaluateQvevriPassport(vessel, lot || undefined);
-              const active = vessel.id === selectedVessel.id;
-              return (
-                <button
-                  type="button"
-                  key={vessel.id}
-                  onClick={() => {
-                    setSelectedVesselId(vessel.id);
-                  }}
-                  className={cx(
-                    'w-full rounded-xl border px-3 py-3 text-left transition-colors',
-                    active
-                      ? 'border-[#4e0e15] bg-[#4e0e15] text-amber-50'
-                      : 'border-stone-200 bg-stone-50 text-stone-700 hover:border-[#4e0e15]/40 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-200'
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-black">{vessel.qvevriNumber || vessel.id}</div>
-                      <div className={cx('mt-0.5 text-[10px] font-semibold', active ? 'text-amber-100/80' : 'text-stone-500 dark:text-stone-400')}>
-                        {lot?.id || (ka ? 'პარტიის გარეშე' : 'No lot')} · {fillPct(vessel)}%
-                      </div>
-                    </div>
-                    <StatusBadge tone={readinessTone(vesselReadiness.status)}>{vesselReadiness.score}%</StatusBadge>
-                  </div>
-                  <div className={cx('mt-2 truncate text-[11px] font-semibold', active ? 'text-amber-100/80' : 'text-stone-500 dark:text-stone-400')}>
-                    {vessel.maraniLocation || vessel.locationDetails || (ka ? 'მდებარეობის გარეშე' : 'No location')}
-                  </div>
-                  <div className="mt-2">
-                    <ProgressBar value={vesselReadiness.score} tone={vesselReadiness.status === 'ready' ? 'success' : vesselReadiness.status === 'needs_review' ? 'warning' : 'danger'} />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </SectionCard>
-
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
           {readiness.missing.length > 0 && (
             <InlineNotice tone={readiness.status === 'needs_review' ? 'warning' : 'danger'}>
@@ -489,7 +451,7 @@ export default function QvevriPassportTab({
           <SectionCard
             title={ka ? 'იდენტიფიკაცია და მოვლა' : 'Identity and care'}
             icon={MapPin}
-            actions={<StatusBadge tone={summary.limeWashStatus === 'done' && summary.waxingStatus === 'done' ? 'success' : 'warning'}>{summary.limeWashStatus}/{summary.waxingStatus}</StatusBadge>}
+            actions={<StatusBadge tone={summary.limeWashStatus === 'done' ? 'success' : 'warning'}>{summary.limeWashStatus}</StatusBadge>}
           >
             <fieldset disabled={!canUpdateVessel} className="grid gap-3 md:grid-cols-2 disabled:cursor-not-allowed disabled:opacity-75">
               <div>
@@ -502,7 +464,7 @@ export default function QvevriPassportTab({
               </div>
               <div>
                 <FieldLabel required>{ka ? 'ბოლო რეცხვა' : 'Last washing date'}</FieldLabel>
-                <input type="date" value={form.lastWashingDate} onChange={event => updateForm('lastWashingDate', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.lastWashingDate} onValueChange={value => updateForm('lastWashingDate', value)} className={inputCls} required />
               </div>
               <div>
                 <FieldLabel required>{ka ? 'ნიადაგის ტემპერატურა' : 'Soil temperature C'}</FieldLabel>
@@ -517,7 +479,7 @@ export default function QvevriPassportTab({
                 </select>
               </div>
               <div>
-                <FieldLabel>{ka ? 'ცვილის სტატუსი' : 'Waxing status'}</FieldLabel>
+                <FieldLabel>{ka ? 'ცვილის სტატუსი (არასავალდებულო)' : 'Waxing status (optional)'}</FieldLabel>
                 <select aria-label="Waxing status" value={form.waxingStatus} onChange={event => updateForm('waxingStatus', event.target.value as QvevriStatus)} className={inputCls}>
                   <option value="unknown">{ka ? 'უცნობი' : 'Unknown'}</option>
                   <option value="needed">{ka ? 'საჭიროა' : 'Needed'}</option>
@@ -539,7 +501,7 @@ export default function QvevriPassportTab({
             <fieldset disabled={!canUpdateVessel} className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 disabled:cursor-not-allowed disabled:opacity-75">
               <div>
                 <FieldLabel required>{ka ? 'შევსების თარიღი' : 'Filling date'}</FieldLabel>
-                <input type="date" value={form.fillingDate} onChange={event => updateForm('fillingDate', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.fillingDate} onValueChange={value => updateForm('fillingDate', value)} className={inputCls} required />
               </div>
               <div>
                 <FieldLabel required>{ka ? 'ყურძნის ჯიში' : 'Grape variety'}</FieldLabel>
@@ -551,22 +513,22 @@ export default function QvevriPassportTab({
               </div>
               <div>
                 <FieldLabel required>{ka ? 'დალუქვის თარიღი' : 'Sealing date'}</FieldLabel>
-                <input type="date" value={form.sealingDate} onChange={event => updateForm('sealingDate', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.sealingDate} onValueChange={value => updateForm('sealingDate', value)} className={inputCls} required />
               </div>
               <div>
                 <FieldLabel>{ka ? 'გახსნის თარიღი' : 'Opening date'}</FieldLabel>
-                <input type="date" value={form.openingDate} onChange={event => updateForm('openingDate', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.openingDate} onValueChange={value => updateForm('openingDate', value)} className={inputCls} />
               </div>
               <div>
                 <FieldLabel>{ka ? 'პირველი გადატანა' : 'First racking date'}</FieldLabel>
-                <input type="date" value={form.firstRackingDate} onChange={event => updateForm('firstRackingDate', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.firstRackingDate} onValueChange={value => updateForm('firstRackingDate', value)} className={inputCls} />
               </div>
               <div>
                 <FieldLabel>{ka ? 'კანთან კონტაქტი დღეებში' : 'Skin contact days'}</FieldLabel>
                 <input type="number" min="0" step="1" value={form.skinContactDurationDays} onChange={event => updateForm('skinContactDurationDays', event.target.value)} className={inputCls} />
               </div>
               <div className="md:col-span-2">
-                <FieldLabel>{ka ? 'მორევის სიხშირე' : 'Mixing frequency'}</FieldLabel>
+                <FieldLabel>{ka ? 'დარევის სიხშირე' : 'Mixing frequency'}</FieldLabel>
                 <input value={form.mixingFrequency} onChange={event => updateForm('mixingFrequency', event.target.value)} className={inputCls} />
               </div>
               <label className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300">
@@ -608,18 +570,18 @@ export default function QvevriPassportTab({
             </div>
           </SectionCard>
 
-          <SectionCard title={ka ? 'ყოველდღიური მორევა' : 'Daily mixing log'} icon={ClipboardList}>
+          <SectionCard title={ka ? 'ყოველდღიური დარევა' : 'Daily mixing log'} icon={ClipboardList}>
             <div className="space-y-3">
               {canUpdateVessel && (
                 <div className="space-y-3">
                   <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
-                    <input type="date" value={mixingDraft.date} onChange={event => setMixingDraft(prev => ({ ...prev, date: event.target.value }))} className={inputCls} />
+                    <DateInput lang={lang} value={mixingDraft.date} onValueChange={value => setMixingDraft(prev => ({ ...prev, date: value }))} className={inputCls} required />
                     <input value={mixingDraft.action} onChange={event => setMixingDraft(prev => ({ ...prev, action: event.target.value }))} className={inputCls} />
                   </div>
                   <input value={mixingDraft.operator} onChange={event => setMixingDraft(prev => ({ ...prev, operator: event.target.value }))} className={inputCls} placeholder="Operator" />
                   <textarea value={mixingDraft.notes} onChange={event => setMixingDraft(prev => ({ ...prev, notes: event.target.value }))} className={textareaCls} placeholder="Notes" />
                   <ActionButton onClick={handleAddMixing} className="w-full">
-                    <Plus className="mr-2 h-4 w-4" />{ka ? 'მორევის დამატება' : 'Add mixing'}
+                    <Plus className="mr-2 h-4 w-4" />{ka ? 'დარევის დამატება' : 'Add mixing'}
                   </ActionButton>
                 </div>
               )}
@@ -628,7 +590,7 @@ export default function QvevriPassportTab({
                   <LogRow key={`${entry.date}-${entry.action}-${index}`} entry={entry} />
                 ))}
                 {(!selectedVessel.dailyMixingLog || selectedVessel.dailyMixingLog.length === 0) && (
-                  <p className="text-[11px] font-semibold text-stone-500">{ka ? 'შერევის ჩანაწერი არ არის.' : 'No mixing entries.'}</p>
+                  <p className="text-[11px] font-semibold text-stone-500">{ka ? 'დარევის ჩანაწერი არ არის.' : 'No mixing entries.'}</p>
                 )}
               </div>
             </div>
@@ -639,7 +601,7 @@ export default function QvevriPassportTab({
               {canUpdateVessel && (
                 <div className="space-y-3">
                   <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
-                    <input type="date" value={sanitationDraft.date} onChange={event => setSanitationDraft(prev => ({ ...prev, date: event.target.value }))} className={inputCls} />
+                    <DateInput lang={lang} value={sanitationDraft.date} onValueChange={value => setSanitationDraft(prev => ({ ...prev, date: value }))} className={inputCls} required />
                     <input value={sanitationDraft.action} onChange={event => setSanitationDraft(prev => ({ ...prev, action: event.target.value }))} className={inputCls} />
                   </div>
                   <input value={sanitationDraft.operator} onChange={event => setSanitationDraft(prev => ({ ...prev, operator: event.target.value }))} className={inputCls} placeholder="Operator" />

@@ -27,11 +27,7 @@ try {
       ) {
         value = value.slice(1, -1);
       }
-      if (
-        process.env[key] === undefined ||
-        (key === 'GOOGLE_CLIENT_ID' && process.env[key]?.includes('8q7k0')) ||
-        (key === 'GOOGLE_CLIENT_SECRET' && process.env[key]?.includes('Z2DZxdSz'))
-      ) {
+      if (process.env[key] === undefined) {
         process.env[key] = value;
       }
     }

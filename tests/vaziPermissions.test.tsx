@@ -205,7 +205,7 @@ describe('Vazi permission-aware workspace', () => {
     expect(markup).toContain('New harvest plan');
     expect(markup).toContain(`Set a target date and expected yield for ${block.name}`);
     expect(markup).toContain('Target harvest date');
-    expect(markup).toContain(`value="${block.estimatedHarvestDate}"`);
+    expect(markup).toContain('value="15/09/2026"');
     expect(markup).toContain('Estimated yield (tons)');
     expect(markup).toContain('Picking method');
     expect(markup).toContain('Hand-picked');

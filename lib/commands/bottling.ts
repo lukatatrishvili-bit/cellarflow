@@ -20,6 +20,13 @@ export const BOTTLING_FORMATS = [
   { key: 'ceramic', litres: 0.75, kind: 'ceramic' },
 ] as const;
 
+export function bottlingFormatLitres(key: string): number | null {
+  if (key === 'ceramic') return 0.75;
+  if (!/^(?:\d+|\d*\.\d+)$/.test(key)) return null;
+  const litres = Number(key);
+  return Number.isFinite(litres) && litres > 0 && litres <= 30 ? litres : null;
+}
+
 const PACKAGING_COMPONENTS = ['bottle', 'closure', 'capsule', 'label', 'box'] as const;
 const RECORD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -159,15 +166,14 @@ function parseFormats(value: unknown): Record<string, number> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new BottlingCommandError('invalid_bottling_payload', 'formats must be an object.', 400);
   }
-  const supportedKeys = new Set<string>(BOTTLING_FORMATS.map(format => format.key));
   const formats: Record<string, number> = {};
   let totalUnits = 0;
   for (const [key, rawCount] of Object.entries(value)) {
-    if (!supportedKeys.has(key) || typeof rawCount !== 'number' || !Number.isSafeInteger(rawCount)
+    if (bottlingFormatLitres(key) === null || typeof rawCount !== 'number' || !Number.isSafeInteger(rawCount)
       || rawCount < 0 || rawCount > MAX_UNITS) {
       throw new BottlingCommandError(
         'invalid_bottling_payload',
-        `formats.${key} must be a supported non-negative whole-unit count.`,
+        `formats.${key} must use a bottle size from 0 to 30 litres and a non-negative whole-unit count.`,
         400,
       );
     }
@@ -268,15 +274,13 @@ export function applyBottlingCommand(
     throw new BottlingCommandError('bottling_state_inconsistent', 'The wine lot has an invalid stored volume.', 409);
   }
 
-  const totalBottles = BOTTLING_FORMATS
-    .filter(format => format.kind === 'bottle')
-    .reduce((sum, format) => sum + (payload.formats[format.key] || 0), 0);
-  const totalCeramic = BOTTLING_FORMATS
-    .filter(format => format.kind === 'ceramic')
-    .reduce((sum, format) => sum + (payload.formats[format.key] || 0), 0);
+  const totalCeramic = payload.formats.ceramic || 0;
+  const totalBottles = Object.entries(payload.formats)
+    .filter(([key]) => key !== 'ceramic')
+    .reduce((sum, [, count]) => sum + count, 0);
   const totalUnits = totalBottles + totalCeramic;
-  const volumeBottledL = round1(BOTTLING_FORMATS.reduce(
-    (sum, format) => sum + (payload.formats[format.key] || 0) * format.litres,
+  const volumeBottledL = round1(Object.entries(payload.formats).reduce(
+    (sum, [key, count]) => sum + count * (bottlingFormatLitres(key) || 0),
     0,
   ));
   if (volumeBottledL > lot.currentVolume + EPSILON) {
@@ -374,9 +378,9 @@ export function applyBottlingCommand(
   const timestamp = context.performedAt.toISOString();
   const remainingLotVolumeL = Math.max(0, round1(lot.currentVolume - volumeBottledL));
   const fullyBottled = remainingLotVolumeL <= 0.5;
-  const breakdown = BOTTLING_FORMATS
-    .filter(format => (payload.formats[format.key] || 0) > 0)
-    .map(format => `${payload.formats[format.key]}×${format.key === 'ceramic' ? 'ceramic 0.75 L' : `${format.key} L`}`)
+  const breakdown = Object.entries(payload.formats)
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => `${count}×${key === 'ceramic' ? 'ceramic 0.75 L' : `${key} L`}`)
     .join(', ');
   const updatedLot = stamped<WineLot>({
     ...lot,

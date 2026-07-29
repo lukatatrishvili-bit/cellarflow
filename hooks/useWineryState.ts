@@ -40,7 +40,12 @@ import type {
 import { CELLAR_OPERATIONS, deductStock, estimateMustVolumeL } from '../lib/wineryOperations';
 import { signAuditEntries } from '../lib/auditHash';
 import type { CostEntry } from '../lib/costing';
-import { grapeIntakeCostEntry, materialCostEntryFromOperation } from '../lib/costing';
+import {
+  automaticLabCostEntry,
+  grapeIntakeCostEntry,
+  materialCostEntryFromOperation,
+  resolveCostAutomationSettings,
+} from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
 import {
   storageLocationReferences,
@@ -415,15 +420,7 @@ export function useWineryState() {
   const [crmLeads, setCrmLeads] = useState<CrmLeadRecord[]>([]);
   const [aiDrafts, setAiDrafts] = useState<AiDraftQueueItem[]>([]);
 
-  // Daily fermentation inputs
-  const [logTankId, setLogTankId] = useState('');
-  const [logLotId, setLogLotId] = useState('');
-  const [logTemp, setLogTemp] = useState(20);
-  const [logDensity, setLogDensity] = useState(1.005);
-  const [logSugar, setLogSugar] = useState(12);
-  const [logPH, setLogPH] = useState(3.5);
-  const [logNotes, setLogNotes] = useState('');
-  const [logCap, setLogCap] = useState('Punchdowns - 2X');
+  // FermentationTab owns its own daily-reading form state and commit handler.
   const [chartLotId, setChartLotId] = useState<string>('');
   const [selectedTankId, setSelectedTankId] = useState<string | null>(null);
 
@@ -678,6 +675,11 @@ export function useWineryState() {
       transfers: transfers.some(transfer => transfer.id === result.transfer.id)
         ? transfers
         : [result.transfer, ...transfers],
+      costEntries: result.costEntries.length
+        ? [...result.costEntries, ...costEntries.filter(entry => (
+            !result.costEntries.some(changed => changed.id === entry.id)
+          ))]
+        : costEntries,
     });
   };
 
@@ -702,6 +704,14 @@ export function useWineryState() {
       vessels: vessels.map(vessel => changedVessels.get(vessel.id) || vessel),
       lots: lots.map(lot => changedLots.get(lot.id) || lot),
       transfers: nextTransfers,
+      costEntries: result.changedCostEntries.length
+        ? [
+            ...result.changedCostEntries,
+            ...costEntries.filter(entry => (
+              !result.changedCostEntries.some(changed => changed.id === entry.id)
+            )),
+          ]
+        : costEntries,
     });
   };
 
@@ -1078,7 +1088,7 @@ export function useWineryState() {
     setAiDrafts([]);
   };
 
-  const handleAuthRegister = async (profileData: RegistrationProfileData) => {
+  const handleAuthRegister = async (profileData: RegistrationProfileData): Promise<boolean> => {
     setLoginError(null);
     setVerificationPending(null);
     try {
@@ -1093,7 +1103,7 @@ export function useWineryState() {
         // New accounts must confirm their email before the session is created.
         if (user && user.requiresVerification) {
           setVerificationPending({ email: user.email || profileData.email, devVerifyUrl: user.devVerifyUrl });
-          return;
+          return true;
         }
 
         setCurrentUser(user);
@@ -1111,12 +1121,15 @@ export function useWineryState() {
         if (initialDB) {
           updateAllStates(initialDB);
         }
+        return true;
       } else {
         const err = await res.json();
         setLoginError(err.error || 'Registration failed');
+        return false;
       }
     } catch (err) {
       setLoginError('Could not reach secure registration gateway');
+      return false;
     }
   };
 
@@ -2087,29 +2100,6 @@ export function useWineryState() {
     return opId;
   };
 
-  const handleAddFermLog = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!logLotId || !logTankId) return;
-
-    const newLog: DailyFermLog = {
-      id: createUniqueRecordId('flog', fermLogs.map(item => item.id)),
-      tankId: logTankId,
-      lotId: logLotId,
-      date: new Date().toISOString().split('T')[0],
-      temperature: logTemp,
-      density: logDensity,
-      sugar: logSugar,
-      ph: logPH,
-      tastingNotes: logNotes || 'Healthy cap dynamics, fermenting raw juice perfectly.',
-      capManagement: logCap,
-      additives: 'None / DAP calculated'
-    };
-
-    setFermLogs([newLog, ...fermLogs]);
-    setLogNotes('');
-    setToastMessage(lang === 'ka' ? 'ფერმენტაციის ჩანაწერი დაემატა!' : 'Fermentation log added successfully!');
-  };
-
   const handleAddLabLog = (e: React.FormEvent) => {
     e.preventDefault();
     if (!labLotId || !labTankId) return;
@@ -2133,6 +2123,17 @@ export function useWineryState() {
     };
 
     setLabLogs([newLab, ...labLogs]);
+    const automaticLabCost = automaticLabCostEntry({
+      analysisId: newLab.id,
+      date: newLab.date,
+      lotId: newLab.lotId,
+      currency: companyProfile.currency || 'GEL',
+      createdBy: currentUser.fullName || currentUser.username,
+      settings: resolveCostAutomationSettings(companyProfile.costAutomation),
+    });
+    if (automaticLabCost && !costEntries.some(entry => entry.id === automaticLabCost.id)) {
+      setCostEntries(previous => [automaticLabCost, ...previous]);
+    }
 
     // Auto-update wine lots
     const targetLot = lots.find(l => l.id === labLotId);
@@ -2643,14 +2644,6 @@ export function useWineryState() {
     aiDrafts, setAiDrafts,
 
     // Inputs
-    logTankId, setLogTankId,
-    logLotId, setLogLotId,
-    logTemp, setLogTemp,
-    logDensity, setLogDensity,
-    logSugar, setLogSugar,
-    logPH, setLogPH,
-    logNotes, setLogNotes,
-    logCap, setLogCap,
     chartLotId, setChartLotId,
     selectedTankId, setSelectedTankId,
 
@@ -2711,7 +2704,6 @@ export function useWineryState() {
     handleAddCellarOperation,
     handleAddSupplierPayment,
     handleDeleteSupplierPayment,
-    handleAddFermLog,
     handleAddLabLog,
     handleToggleTaskStatus,
     handleAddNewTask,

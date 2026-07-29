@@ -531,7 +531,7 @@ export const translations = {
     bottle_count: 'ჩამოსხმული რაოდენობა (ბოთლი)',
     closure_type: 'საცობის ტიპი',
     bottle_type: 'მინის ბოთლის ტიპი',
-    capsule_type: 'კაფსულა / კაფსულის ტიპი',
+    capsule_type: 'ჩაჩი / ჩაჩის ტიპი',
     label_version: 'ეტიკეტის ვერსია',
     box_size: 'ყუთის ზომა (ბოთლი ყუთში)',
     final_parameters: 'ჩამოსხმისწინა ლაბორატორიული შემოწმება',

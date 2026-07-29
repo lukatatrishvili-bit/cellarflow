@@ -32,7 +32,9 @@ model User {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  memberships Membership[]
+  memberships               Membership[]
+  aiNotificationOutbox      AiNotificationOutbox[]
+  aiNotificationPreferences AiNotificationPreference[]
 }
 
 model Organization {
@@ -44,41 +46,45 @@ model Organization {
   memberships Membership[]
   invitations Invitation[]
 
-  companyProfile       CompanyProfile?
-  vessels              Vessel[]
-  lots                 WineLot[]
-  fermlogs             DailyFermLog[]
-  lablogs              LabAnalysis[]
-  inventory            InventoryItem[]
-  tasks                Task[]
-  notes                Note[]
-  blocks               VineyardBlock[]
-  vineyardProjects     VineyardPlantingProject[]
-  phenologyLogs        PhenologyRecord[]
-  sprays               SprayRecord[]
-  scoutings            ScoutingRecord[]
-  soilRecords          SoilAnalysisRecord[]
-  samplings            GrapeSamplingRecord[]
-  harvests             HarvestRecord[]
-  irrigationLogs       IrrigationRecord[]
-  fertilizerLogs       FertilizationRecord[]
-  auditLogs            AuditLog[]
-  bottlingRuns         BottlingRun[]
-  transfers            Transfer[]
-  grapeIntakes         GrapeIntake[]
-  cellarOps            CellarOp[]
-  costEntries          CostEntry[]
-  storageLocations     StorageLocation[]
-  stockMovements       StockMovement[]
-  salesDispatches      SalesDispatch[]
-  salesOrders          SalesOrder[]
-  commandExecutions    CommandExecution[]
-  subscription         OrganizationSubscription?
-  billingPayments      BillingPayment[]
-  whatsappDeliveries   WhatsAppDelivery[]
-  subscriptionRequests SubscriptionRequest[]
-  subscriptionAudits   SubscriptionAudit[]
-  productionUsage      AnnualProductionUsage[]
+  companyProfile            CompanyProfile?
+  vessels                   Vessel[]
+  lots                      WineLot[]
+  fermlogs                  DailyFermLog[]
+  lablogs                   LabAnalysis[]
+  inventory                 InventoryItem[]
+  tasks                     Task[]
+  notes                     Note[]
+  blocks                    VineyardBlock[]
+  vineyardProjects          VineyardPlantingProject[]
+  phenologyLogs             PhenologyRecord[]
+  sprays                    SprayRecord[]
+  scoutings                 ScoutingRecord[]
+  soilRecords               SoilAnalysisRecord[]
+  samplings                 GrapeSamplingRecord[]
+  harvests                  HarvestRecord[]
+  irrigationLogs            IrrigationRecord[]
+  fertilizerLogs            FertilizationRecord[]
+  auditLogs                 AuditLog[]
+  bottlingRuns              BottlingRun[]
+  transfers                 Transfer[]
+  grapeIntakes              GrapeIntake[]
+  cellarOps                 CellarOp[]
+  costEntries               CostEntry[]
+  storageLocations          StorageLocation[]
+  stockMovements            StockMovement[]
+  salesDispatches           SalesDispatch[]
+  salesOrders               SalesOrder[]
+  commandExecutions         CommandExecution[]
+  subscription              OrganizationSubscription?
+  billingPayments           BillingPayment[]
+  whatsappDeliveries        WhatsAppDelivery[]
+  subscriptionRequests      SubscriptionRequest[]
+  subscriptionAudits        SubscriptionAudit[]
+  productionUsage           AnnualProductionUsage[]
+  aiModelCallUsage          AiModelCallUsage[]
+  aiMonitoringRuns          AiMonitoringRun[]
+  aiNotificationOutbox      AiNotificationOutbox[]
+  aiNotificationPreferences AiNotificationPreference[]
 
   /// Authoritative JSONB snapshot of the full winery/vineyard ERP state.
   /// The detailed collection tables below are retained for compatibility but
@@ -94,6 +100,103 @@ model OrganizationState {
   updatedBy      String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+/// Atomic, organization-scoped model-call reservations. Kept outside the
+/// client-synced JSONB snapshot so multiple Cloud Run instances share one hard
+/// daily ceiling.
+model AiModelCallUsage {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  usageDate      DateTime     @db.Date
+  callCount      Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@id([organizationId, usageDate])
+  @@index([usageDate])
+}
+
+/// One lease-protected deterministic monitoring pass for one winery and
+/// cadence window. This prevents overlapping schedulers from evaluating and
+/// notifying the same winery twice.
+model AiMonitoringRun {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cadence        String
+  windowStart    DateTime
+  status         String       @default("running")
+  claimToken     String
+  attemptCount   Int          @default(1)
+  startedAt      DateTime     @default(now())
+  completedAt    DateTime?
+  failedAt       DateTime?
+  evaluated      Int          @default(0)
+  created        Int          @default(0)
+  escalated      Int          @default(0)
+  autoResolved   Int          @default(0)
+  outboxQueued   Int          @default(0)
+  wineryStatus   String?
+  briefing       String?
+  errorMessage   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, cadence, windowStart])
+  @@index([status, updatedAt])
+  @@index([organizationId, createdAt])
+}
+
+/// Transactional hand-off between finding detection and future delivery
+/// workers. Payloads contain only the validated finding projection; provider
+/// credentials and contact details never enter this table.
+model AiNotificationOutbox {
+  id                String       @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  eventKey          String
+  channel           String       @default("email")
+  findingId         String
+  findingDedupeKey  String
+  recipientUsername String
+  recipient         User         @relation(fields: [recipientUsername], references: [username], onDelete: Cascade)
+  recipientRole     String
+  severity          String
+  priority          Int
+  area              String
+  payload           Json
+  status            String       @default("pending")
+  attemptCount      Int          @default(0)
+  availableAt       DateTime     @default(now())
+  claimToken        String?
+  claimedAt         DateTime?
+  deliveredAt       DateTime?
+  failedAt          DateTime?
+  lastError         String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@unique([organizationId, eventKey, recipientUsername, channel])
+  @@index([status, availableAt])
+  @@index([organizationId, recipientUsername, createdAt])
+}
+
+/// Explicit, winery-scoped user consent for proactive AI delivery. Email is
+/// disabled by default and `emailEnabledAt` prevents retroactive backlog sends.
+model AiNotificationPreference {
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  username        String
+  user            User         @relation(fields: [username], references: [username], onDelete: Cascade)
+  emailEnabled    Boolean      @default(false)
+  emailEnabledAt  DateTime?
+  minimumSeverity String       @default("warning")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@id([organizationId, username])
+  @@index([organizationId, emailEnabled])
 }
 
 /// Durable, organization-scoped idempotency claim and replayable command result.

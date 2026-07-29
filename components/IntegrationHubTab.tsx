@@ -63,7 +63,7 @@ interface PublicHub extends Omit<IntegrationHubState, 'jobs'> {
 }
 
 const DEFAULT_MAPPING_ROWS: Array<Pick<FieldMappingInput, 'localField' | 'externalField' | 'required'>> = [
-  { localField: 'localId', externalField: 'CellarFlowID', required: true },
+  { localField: 'localId', externalField: 'VinOSID', required: true },
   { localField: 'name', externalField: 'Description', required: true },
   { localField: 'externalId', externalField: 'Ref', required: false },
 ];
@@ -450,8 +450,8 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
             <form onSubmit={saveConnector} className="space-y-4">
               <InlineNotice tone="warning">
                 {ka
-                  ? 'CellarFlow არ აზიარებს თავის ბაზას 1C-სთან. ბუღალტრულ აპლიკაციებს შეუძლიათ დააბრუნონ დოკუმენტის, გადახდის, შეფასების, დღგ/გადასახადის და ოფიციალური ID მეტამონაცემები ამ კონტროლირებადი ფენის მეშვეობით.'
-                  : 'CellarFlow does not share its database with 1C. Accounting apps can return document, payment, valuation, VAT/tax, and official ID metadata through this controlled layer.'}
+                  ? 'VinOS არ აზიარებს თავის ბაზას 1C-სთან. ბუღალტრულ აპლიკაციებს შეუძლიათ დააბრუნონ დოკუმენტის, გადახდის, შეფასების, დღგ/გადასახადის და ოფიციალური ID მეტამონაცემები ამ კონტროლირებადი ფენის მეშვეობით.'
+                  : 'VinOS does not share its database with 1C. Accounting apps can return document, payment, valuation, VAT/tax, and official ID metadata through this controlled layer.'}
               </InlineNotice>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-800 dark:bg-stone-950/40">
@@ -711,7 +711,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
                     <div className="mt-2 rounded-lg bg-white p-2 text-[10px] dark:bg-stone-900">
                       <strong>{conflict.fieldPath}</strong>
                       <div className="mt-1 grid grid-cols-2 gap-2 font-mono text-stone-500">
-                        <span>CellarFlow: {JSON.stringify(conflict.localValue)}</span>
+                        <span>VinOS: {JSON.stringify(conflict.localValue)}</span>
                         <span>{ka ? 'გარე' : 'External'}: {JSON.stringify(conflict.externalValue)}</span>
                       </div>
                     </div>
@@ -782,7 +782,7 @@ export default function IntegrationHubTab({ lang = 'en', setToastMessage }: Inte
               <table className="w-full text-left text-xs">
                 <thead className="text-[9px] uppercase tracking-widest text-stone-500 dark:text-stone-400">
                   <tr className="border-b border-stone-200 dark:border-stone-800">
-                    <th className="py-2 pr-3">{ka ? 'CellarFlow ველი' : 'CellarFlow field'}</th>
+                    <th className="py-2 pr-3">{ka ? 'VinOS ველი' : 'VinOS field'}</th>
                     <th className="py-2 pr-3">{ka ? 'გარე ველი' : 'External field'}</th>
                     <th className="py-2 pr-3">{ka ? 'გარდაქმნა' : 'Transform'}</th>
                     <th className="py-2">{ka ? 'სავალდებულო' : 'Required'}</th>

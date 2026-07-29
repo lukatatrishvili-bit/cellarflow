@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   BadgeDollarSign,
+  Activity,
   Calculator,
   FlaskConical,
   GitMerge,
@@ -41,6 +42,7 @@ interface Props {
   salesDispatches: SalesDispatchRecord[];
   currency: string;
   onEdit?: () => void;
+  onChangeStage?: () => void;
   onOpenPassport?: (lotId: string) => void;
   setActiveTab?: (tab: string) => void;
   setSelectedTankId?: (tankId: string | null) => void;
@@ -113,6 +115,7 @@ export default function WineLotCommandCenter({
   salesDispatches,
   currency,
   onEdit,
+  onChangeStage,
   onOpenPassport,
   setActiveTab,
   setSelectedTankId,
@@ -168,6 +171,7 @@ export default function WineLotCommandCenter({
           </div>
 
           <div className="flex flex-wrap gap-2">
+            {onChangeStage && <ActionChip icon={Activity} onClick={onChangeStage}>{ka ? 'ეტაპის შეცვლა' : 'Change stage'}</ActionChip>}
             {onEdit && <ActionChip icon={Pencil} onClick={onEdit}>{ka ? 'რედაქტირება' : 'Edit'}</ActionChip>}
             <ActionChip icon={GitMerge} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'გენეალოგია' : 'Lineage'}</ActionChip>
             <ActionChip icon={FileText} onClick={onOpenPassport ? () => onOpenPassport(lot.id) : undefined}>{ka ? 'პასპორტი' : 'Passport'}</ActionChip>

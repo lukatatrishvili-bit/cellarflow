@@ -8,6 +8,21 @@ import {
 } from '../server/routes/sync';
 
 describe('sync authorization', () => {
+  it('rejects server-owned AI findings even for an owner', () => {
+    const incoming = {
+      aiFindings: [{
+        id: 'ai-forged',
+        source: 'rule',
+        severity: 'critical',
+        status: 'new',
+        dedupeKey: 'forged',
+        requiresHumanConfirmation: true,
+      }],
+    };
+    expect(authorizeSyncPayload('Owner/Admin', { aiFindings: [] }, incoming, undefined))
+      .toMatch(/server-owned/i);
+  });
+
   it('distinguishes preserved cost data from a gated cost mutation', () => {
     const userDb = { costEntries: [{ id: 'cost-1', amount: 500, lastModified: '2026-07-20T00:00:00Z' }] };
 

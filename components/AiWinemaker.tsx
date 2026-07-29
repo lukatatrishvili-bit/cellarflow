@@ -6,6 +6,7 @@ import type { Language } from '../lib/i18n';
 import { Sparkles, Send, Bot, HelpCircle, Loader2, ClipboardList, CheckSquare, X, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Skeleton } from './motion';
+import DateInput from './ui/DateInput';
 import {
   deriveAiDraftActions,
   draftActionLabel,
@@ -310,7 +311,7 @@ export default function AiWinemaker({
       onAddNewTask(tk.title, tk.priority, taskDueDate, tk.desc);
     });
     setShowOrderModal(false);
-    alert(lang === 'ka' ? `სამუშაო დავალების ${selected.length} დავალება წარმატებით გაიგზავნა მართვის სიებში!` : `Deployed ${selected.length} tasks successfully to MaraniOS checklist!`);
+    alert(lang === 'ka' ? `სამუშაო დავალების ${selected.length} დავალება წარმატებით გაიგზავნა მართვის სიებში!` : `Deployed ${selected.length} tasks successfully to VinOS checklist!`);
   };
 
   const handleReviewDraftActions = (content: string) => {
@@ -496,7 +497,7 @@ export default function AiWinemaker({
         {
           label: isKa ? 'ჩამოსხმის მზადყოფნა' : 'Bottling Readiness',
           query: isKa
-            ? 'შექმენით ჩამოსხმის მზადყოფნის განსახილველი სია: ლაბორატორიული გამოშვება, ფილტრაცია, ბოთლი, საცობი, კაფსულა, ეტიკეტი, ყუთი და საწყობი.'
+            ? 'შექმენით ჩამოსხმის მზადყოფნის განსახილველი სია: ლაბორატორიული გამოშვება, ფილტრაცია, ბოთლი, საცობი, ჩაჩი, ეტიკეტი, ყუთი და საწყობი.'
             : 'Create a review-only bottling readiness checklist covering lab release, filtration, bottle, closure, capsule, label, box, and storage.',
         },
         {
@@ -842,10 +843,10 @@ export default function AiWinemaker({
               {/* Due Date */}
               <div className="border-t border-stone-150 pt-3 flex items-center justify-between text-[11px]">
                 <span className="text-stone-500 font-bold">{lang === 'ka' ? 'შესრულების ვადა:' : 'Scheduled Due Date:'}</span>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={taskDueDate}
-                  onChange={(e) => setTaskDueDate(e.target.value)}
+                  onValueChange={setTaskDueDate}
                   className="px-2 py-1 border border-stone-200 rounded font-bold text-xs"
                 />
               </div>
@@ -945,10 +946,10 @@ export default function AiWinemaker({
 
               <div className="border-t border-stone-150 pt-3 flex items-center justify-between text-[11px]">
                 <span className="text-stone-500 font-bold">{lang === 'ka' ? 'დავალების ვადა:' : 'Task Due Date:'}</span>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={taskDueDate}
-                  onChange={(e) => setTaskDueDate(e.target.value)}
+                  onValueChange={setTaskDueDate}
                   className="px-2 py-1 border border-stone-200 rounded font-bold text-xs"
                 />
               </div>

@@ -51,6 +51,7 @@ function state(overrides: Partial<TransferCommandState> = {}): TransferCommandSt
     ],
     lots: [lot({ id: 'LOT-A', name: 'Estate Saperavi' })],
     transfers: [],
+    costEntries: [],
     ...overrides,
   };
 }
@@ -134,6 +135,26 @@ describe('cellar.transfer domain command', () => {
         lot({ id: 'LOT-A', name: 'Saperavi', currentVolume: 1_000 }),
         lot({ id: 'LOT-B', name: 'Cabernet', variety: 'Cabernet Sauvignon', currentVolume: 400 }),
       ],
+      costEntries: [
+        {
+          id: 'cost-a',
+          date: '2026-07-01',
+          lotId: 'LOT-A',
+          category: 'grape',
+          description: 'Source cost',
+          amount: 1_000,
+          currency: 'GEL',
+        },
+        {
+          id: 'cost-b',
+          date: '2026-07-01',
+          lotId: 'LOT-B',
+          category: 'grape',
+          description: 'Destination cost',
+          amount: 800,
+          currency: 'GEL',
+        },
+      ],
     });
     const applied = applyTransferCommand(current, { ...payload, lossLiters: 10 }, context);
 
@@ -155,6 +176,12 @@ describe('cellar.transfer domain command', () => {
     ]));
     const resultingTotal = applied.state.lots.reduce((sum, item) => sum + item.currentVolume, 0);
     expect(resultingTotal).toBe(1_390);
+    expect(applied.result.costEntries).toEqual([
+      expect.objectContaining({ lotId: 'LOT-A', category: 'blend_out', amount: -200 }),
+      expect.objectContaining({ lotId: 'LOT-B', category: 'blend_out', amount: -800 }),
+      expect.objectContaining({ lotId: 'blend-test-0001', category: 'blend_in', amount: 1_000 }),
+    ]);
+    expect(applied.state.costEntries.reduce((sum, entry) => sum + entry.amount, 0)).toBe(1_800);
   });
 
   it('rejects insufficient source volume and destination overflow', () => {

@@ -1,5 +1,5 @@
 {
-  "name": "maranios",
+  "name": "vinos",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,6 +16,8 @@
     "test:watch": "vitest",
     "test:production-smoke": "tsx scripts/productionBootSmoke.ts",
     "billing:renewals": "tsx scripts/processBillingRenewals.ts",
+    "ai:monitor": "tsx scripts/runAiMonitoring.ts",
+    "ai:deliver": "tsx scripts/deliverAiNotifications.ts",
     "db:check-drift": "tsx scripts/checkMigrationDrift.ts",
     "db:migrate:deploy": "tsx scripts/deployMigrations.ts",
     "db:projection-check": "tsx scripts/checkRelationalProjection.ts",

@@ -1213,7 +1213,7 @@ export default function EnoCalculators({
                   <button
                     type="button"
                     onClick={() => {
-                      const text = `Vinea Blending Recipe\n====================\nDate: ${new Date().toLocaleDateString()}\nTotal Blend Target: ${multiBlendOutput.totalVolume} L\n\nComposition:\n` +
+                      const text = `VinOS Blending Recipe\n====================\nDate: ${new Date().toLocaleDateString()}\nTotal Blend Target: ${multiBlendOutput.totalVolume} L\n\nComposition:\n` +
                         multiBlendOutput.lotBreakdown.map(b => `- ${b.name} (${b.id}): ${b.pct.toFixed(1)}% (${b.volume.toFixed(0)} L)`).join('\n') +
                         `\n\nPredicted Chemistry:\n- Finished ABV: ${multiBlendOutput.finalABV.toFixed(2)}%\n- Titratable Acidity: ${multiBlendOutput.finalTA.toFixed(2)} g/L\n- Blended pH: ${multiBlendOutput.finalPH.toFixed(2)}\n- Estimated Unit Cost: $${multiBlendOutput.finalCost.toFixed(2)}/L`;
 

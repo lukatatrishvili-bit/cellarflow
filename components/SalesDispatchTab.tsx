@@ -15,6 +15,7 @@ import type { Language } from '../lib/i18n';
 import type { BottlingRunRecord, SalesDispatchRecord, SalesOrderRecord, WineLot } from '../lib/wineryState';
 import { rollupLots, type CostEntry } from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
+import DateInput from './ui/DateInput';
 import {
   availableToSell,
   computeDispatchFinancials,
@@ -798,16 +799,16 @@ export default function SalesDispatchTab({
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className={labelCls}>{ka ? 'შეკვეთის თარიღი' : 'Order date'}</label>
-                    <input type="date" value={orderDate} onChange={e => setOrderDate(e.target.value)} className={inputCls} />
+                    <DateInput lang={lang} value={orderDate} onValueChange={setOrderDate} className={inputCls} required />
                   </div>
                   <div>
                     <label className={labelCls}>{ka ? 'გატანის ვადა' : 'Dispatch by'}</label>
-                    <input type="date" value={requestedDispatchDate} onChange={e => setRequestedDispatchDate(e.target.value)} className={inputCls} />
+                    <DateInput lang={lang} value={requestedDispatchDate} onValueChange={setRequestedDispatchDate} className={inputCls} />
                   </div>
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'დაჯავშნა თარიღამდე' : 'Reserve until'}</label>
-                  <input type="date" value={reservedUntil} onChange={e => setReservedUntil(e.target.value)} className={inputCls} />
+                  <DateInput lang={lang} value={reservedUntil} onValueChange={setReservedUntil} className={inputCls} />
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'საწყობის ლოკაცია' : 'Storage location'}</label>
@@ -898,7 +899,7 @@ export default function SalesDispatchTab({
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
-                    <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+                    <DateInput lang={lang} value={date} onValueChange={setDate} className={inputCls} required />
                   </div>
                   <div>
                     <label className={labelCls}>{ka ? 'ოპერატორი' : 'Operator'}</label>

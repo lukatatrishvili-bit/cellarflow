@@ -73,6 +73,7 @@ export async function executeCellarOperationCommand(
           commandId: validateCommandId(input.commandId),
           actorUsername: input.actorUsername,
           currency: typeof companyProfile.currency === 'string' ? companyProfile.currency : 'GEL',
+          costAutomation: companyProfile.costAutomation,
           performedAt: input.performedAt || new Date(),
         },
       );

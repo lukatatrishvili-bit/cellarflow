@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, Loader2, RefreshCw, Save, X } from 'lucide-react';
 import { PLAN_CATALOG, type BillingFeature, type BillingInterval, type PlanId } from '../lib/billing/planCatalog';
+import DateInput from './ui/DateInput';
 
 interface AdminOverview {
   organizations: Array<{ id: string; name: string }>;
@@ -148,7 +149,7 @@ export default function MasterBillingAdmin({ isKa, onMessage }: { isKa: boolean;
             <div><label className={labelClass}>{isKa ? 'სტატუსი' : 'Status'}</label><select className={fieldClass} value={status} onChange={event => setStatus(event.target.value)}>{statuses.map(value => <option key={value}>{value}</option>)}</select></div>
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
-            <div><label className={labelClass}>{isKa ? 'განახლების თარიღი' : 'Renewal date'}</label><input type="date" className={fieldClass} value={renewsAt} onChange={event => setRenewsAt(event.target.value)} /></div>
+            <div><label className={labelClass}>{isKa ? 'განახლების თარიღი' : 'Renewal date'}</label><DateInput lang={isKa ? 'ka' : 'en'} className={fieldClass} value={renewsAt} onValueChange={setRenewsAt} /></div>
             <div><label className={labelClass}>{isKa ? 'მოცულობის ლიმიტი (L)' : 'Capacity override (L)'}</label><input type="number" min="0" className={fieldClass} value={capacityOverride} onChange={event => setCapacityOverride(event.target.value)} placeholder={isKa ? 'გეგმის მიხედვით' : 'Use plan default'} /></div>
             <div><label className={labelClass}>{isKa ? 'შეთანხმებული ფასი (₾)' : 'Custom price (GEL)'}</label><input type="number" min="0" step="0.01" className={fieldClass} value={customPriceGel} onChange={event => setCustomPriceGel(event.target.value)} /></div>
           </div>

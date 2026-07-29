@@ -685,6 +685,7 @@ router.post('/cellar.transfer', checkWineryScope('write'), async (req, res) => {
           vessels: refreshed.data.vessels,
           lots: refreshed.data.lots,
           transfers: refreshed.data.transfers,
+          costEntries: refreshed.data.costEntries,
         },
       } : {}),
     });
@@ -752,6 +753,7 @@ router.post('/cellar.transfer.reverse', checkWineryScope('write'), async (req, r
           vessels: refreshed.data.vessels,
           lots: refreshed.data.lots,
           transfers: refreshed.data.transfers,
+          costEntries: refreshed.data.costEntries,
         },
       } : {}),
     });

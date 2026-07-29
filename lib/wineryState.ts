@@ -658,6 +658,23 @@ export interface OperationMaterialUsage {
   purpose?: string;
 }
 
+export interface OperationCostProfile {
+  /** Expected hands-on time used to prefill an operation's automatic labor cost. */
+  laborHours: number;
+  /** Expected electricity use used to prefill an operation's automatic energy cost. */
+  energyKwh: number;
+}
+
+export interface CostAutomationSettings {
+  enabled: boolean;
+  laborRatePerHour: number;
+  energyRatePerKwh: number;
+  overheadPercent: number;
+  ownGrapeCostPerKg: number;
+  labAnalysisCost: number;
+  operationProfiles: Partial<Record<CellarOperationType, OperationCostProfile>>;
+}
+
 export interface CellarOperationReversalSnapshotV1 {
   version: 1;
   lot: {
@@ -735,6 +752,9 @@ export interface CellarOperation {
   unit?: string;
   /** One or more inventory-backed materials consumed by this operation. */
   materials?: OperationMaterialUsage[];
+  /** Captured cost-driver facts used by automatic costing. */
+  laborHours?: number;
+  energyKwh?: number;
   operator: string;
   notes: string;
   /** Exact before-state captured by new transactional operation commands. */
@@ -957,6 +977,7 @@ export interface HarvestRecord {
 }
 
 // Global Audit Log
+export type VinOSAuditLog = MaraniOSAuditLog;
 export interface MaraniOSAuditLog {
   id: string;
   commandId?: string;
@@ -1022,6 +1043,15 @@ export interface CompanyProfile {
   measurementUnits: 'metric' | 'imperial';
   /** ISO-ish currency code for cost accounting (GEL/EUR/USD/…). Defaults to GEL. */
   currency?: string;
+  /** Automatic production-cost drivers and rates. Disabled until explicitly enabled. */
+  costAutomation?: CostAutomationSettings;
+  /**
+   * Intelligence-layer settings and winery-specific targets (SO₂ band,
+   * fermentation temperature range, VA ceiling, stock cover). Stored loosely so
+   * an older client never loses a newer winery's configuration; read it through
+   * `resolveAiConfig` in lib/ai/config, never directly.
+   */
+  aiConfig?: unknown;
   latitude?: number;
   longitude?: number;
 }

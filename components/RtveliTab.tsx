@@ -12,6 +12,7 @@ import {
   type SupplierLedgerRow,
 } from '../lib/rtveli';
 import { isActiveHarvestIntake } from '../lib/harvestIntakeIntegrity';
+import DateInput from './ui/DateInput';
 
 interface Props {
   lang: Language;
@@ -389,7 +390,7 @@ export default function RtveliTab({
               </div>
               <div>
                 <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
-                <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={payDate} onValueChange={setPayDate} className={inputCls} required />
               </div>
             </div>
             <div>

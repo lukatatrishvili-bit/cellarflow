@@ -302,7 +302,9 @@ export function applyCellarOperationReversalCommand(
         409,
       );
     }
-    const expectedVesselVolume = original.volumeAfterL ?? snapshot.vessel.currentVolume;
+    const expectedVesselVolume = original.volumeAfterL === undefined
+      ? snapshot.vessel.currentVolume
+      : snapshot.vessel.currentVolume + (original.volumeAfterL - snapshot.lot.currentVolume);
     if (original.vesselId !== vessel.id || vessel.assignedLotId !== original.lotId
       || !sameNumber(vessel.currentVolume, expectedVesselVolume)
       || vessel.lastOperation !== snapshot.operationDescription

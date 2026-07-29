@@ -53,7 +53,6 @@ export function evaluateQvevriPassport(vessel: Vessel, lot?: WineLot): QvevriPas
     { key: 'capacity', label: 'Capacity', labelKa: 'ტევადობა', complete: vessel.capacity > 0 },
     { key: 'lastWashingDate', label: 'Last washing date', labelKa: 'ბოლო რეცხვის თარიღი', complete: hasValue(vessel.lastWashingDate || vessel.lastCleaned) },
     { key: 'limeWashStatus', label: 'Lime wash status', labelKa: 'კირით დამუშავება', complete: vessel.limeWashStatus === 'done' },
-    { key: 'waxingStatus', label: 'Waxing status', labelKa: 'ცვილის სტატუსი', complete: vessel.waxingStatus === 'done' },
     { key: 'inspectionNotes', label: 'Inspection notes', labelKa: 'ინსპექციის შენიშვნები', complete: hasValue(vessel.inspectionNotes) },
     { key: 'fillingDate', label: 'Filling date', labelKa: 'შევსების თარიღი', complete: hasValue(vessel.fillingDate || lot?.createdAt) },
     { key: 'grapeVariety', label: 'Grape variety', labelKa: 'ყურძნის ჯიში', complete: hasValue(vessel.grapeVariety || lot?.variety) },

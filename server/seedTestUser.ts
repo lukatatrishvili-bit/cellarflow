@@ -948,5 +948,6 @@ export function getSeederData(orgId: string): UserDataState {
     attachments: [],
     crmLeads: [],
     aiDrafts: [],
+    aiFindings: [],
   };
 }

@@ -173,7 +173,7 @@ export function deriveAiDraftActions(content: string, context: DraftContext = {}
   ]);
   const bottlingLike = contextTab === 'bottling' || hasAny(text, [
     'bottling', 'bottle run', 'cork', 'closure', 'capsule', 'packaging',
-    'ჩამოსხმა', 'საცობი', 'კაფსულა', 'ეტიკეტი',
+    'ჩამოსხმა', 'საცობი', 'ჩაჩი', 'კაფსულა', 'ეტიკეტი',
   ]);
   const inventoryLike = contextTab === 'inventory' || hasAny(text, [
     'inventory', 'restock', 'reorder', 'supplier', 'stock shortage',

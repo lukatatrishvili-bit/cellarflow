@@ -15,7 +15,12 @@ import type {
   MaraniOSAuditLog,
 } from '../lib/wineryState';
 import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
-import type { CostEntry } from '../lib/costing';
+import {
+  automaticOperationCostEntries,
+  operationCostProfile,
+  resolveCostAutomationSettings,
+  type CostEntry,
+} from '../lib/costing';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
   applyCellarOperationCommand,
@@ -41,6 +46,7 @@ import OperationMaterialsEditor, {
   materialUsagesToDrafts,
   type MaterialUsageDraft,
 } from './OperationMaterialsEditor';
+import DateInput from './ui/DateInput';
 
 export type { CellarOperationInput } from '../lib/commands/cellarOperation';
 
@@ -82,6 +88,7 @@ interface Props {
   currentUserName: string;
   currentUsername?: string;
   currency?: string;
+  costAutomation?: unknown;
   onAddOperation: (input: CellarOperationInput) => string;
   onUpdateLots?: (lots: WineLot[]) => void;
   onUpdateVessels?: (vessels: Vessel[]) => void;
@@ -122,14 +129,22 @@ interface CellarOperationFormDraft {
   date: string;
   operator: string;
   notes: string;
+  laborHours: string;
+  energyKwh: string;
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
+const catLabelForPreview = (category: CostEntry['category'], ka: boolean) => {
+  if (category === 'labor') return ka ? 'შრომა' : 'Labor';
+  if (category === 'energy') return ka ? 'ენერგია' : 'Energy';
+  if (category === 'overhead') return ka ? 'ზედნადები' : 'Overhead';
+  return category;
+};
 
 export default function CellarOperationsTab({
   lang, lots, vessels, inventory, ops, costEntries = [], auditLogs = [], currentUserName,
   currentUsername = '',
-  currency = 'GEL', onAddOperation, onUpdateLots, onUpdateVessels, onUpdateInventory,
+  currency = 'GEL', costAutomation, onAddOperation, onUpdateLots, onUpdateVessels, onUpdateInventory,
   onUpdateOperations, onUpdateCostEntries, onUpdateAuditLogs,
   onApplyCellarOperationCommandResponse, setToastMessage,
   prefillVesselId, clearPrefill,
@@ -140,6 +155,11 @@ export default function CellarOperationsTab({
 }: Props) {
   const ka = lang === 'ka';
   const today = new Date().toISOString().slice(0, 10);
+  const automationSettings = useMemo(
+    () => resolveCostAutomationSettings(costAutomation),
+    [costAutomation],
+  );
+  const initialCostProfile = operationCostProfile(automationSettings, 'measurement');
 
   const activeLots = useMemo(() => lots.filter(l => !l.voidedAt && l.stage !== 'sold'), [lots]);
 
@@ -153,6 +173,12 @@ export default function CellarOperationsTab({
   const [date, setDate] = useState(today);
   const [operator, setOperator] = useState('');
   const [notes, setNotes] = useState('');
+  const [laborHours, setLaborHours] = useState(
+    automationSettings.enabled ? String(initialCostProfile.laborHours) : '',
+  );
+  const [energyKwh, setEnergyKwh] = useState(
+    automationSettings.enabled ? String(initialCostProfile.energyKwh) : '',
+  );
   const [pendingIntent, setPendingIntent] = useState<PendingCommandIntent<CellarOperationCommandPayload> | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -163,6 +189,14 @@ export default function CellarOperationsTab({
 
   const meta = CELLAR_OPERATIONS.find(o => o.key === type)!;
   const lot = lots.find(l => l.id === lotId) || null;
+  const lotVessels = useMemo(
+    () => vessels.filter(vessel => vessel.assignedLotId === lotId),
+    [lotId, vessels],
+  );
+  const lotAllocatedVolume = useMemo(
+    () => lotVessels.reduce((sum, vessel) => sum + vessel.currentVolume, 0),
+    [lotVessels],
+  );
   const restoredInitialDraftRef = useRef(false);
   const skipRestoredLotDefaultsRef = useRef(false);
   const skipRestoredTypeDefaultsRef = useRef(false);
@@ -177,9 +211,13 @@ export default function CellarOperationsTab({
     date,
     operator,
     notes,
+    laborHours,
+    energyKwh,
   }), [
     customLabel,
     date,
+    energyKwh,
+    laborHours,
     lotId,
     materialDrafts,
     notes,
@@ -206,12 +244,18 @@ export default function CellarOperationsTab({
     setDate(/^\d{4}-\d{2}-\d{2}$/.test(draft.date) ? draft.date : today);
     setOperator(draft.operator || '');
     setNotes(draft.notes || '');
-  }, [lots, today, vessels]);
+    const restoredProfile = operationCostProfile(automationSettings, restoredType);
+    setLaborHours(draft.laborHours || (automationSettings.enabled ? String(restoredProfile.laborHours) : ''));
+    setEnergyKwh(draft.energyKwh || (automationSettings.enabled ? String(restoredProfile.energyKwh) : ''));
+  }, [automationSettings, lots, today, vessels]);
   const operationDraftIsMeaningful = React.useCallback((draft: CellarOperationFormDraft) => {
     const defaultLot = activeLots[0] || null;
     const defaultVessel = defaultLot
       ? vessels.find(item => item.assignedLotId === defaultLot.id)?.id || ''
       : '';
+    const defaultProfile = operationCostProfile(automationSettings, draft.type);
+    const defaultLabor = automationSettings.enabled ? String(defaultProfile.laborHours) : '';
+    const defaultEnergy = automationSettings.enabled ? String(defaultProfile.energyKwh) : '';
     return Boolean(
       draft.type !== 'measurement'
       || draft.customLabel.trim()
@@ -222,9 +266,11 @@ export default function CellarOperationsTab({
       || draft.volumeAfter
       || draft.date !== today
       || draft.operator.trim()
-      || draft.notes.trim(),
+      || draft.notes.trim()
+      || draft.laborHours !== defaultLabor
+      || draft.energyKwh !== defaultEnergy,
     );
-  }, [activeLots, today, vessels]);
+  }, [activeLots, automationSettings, today, vessels]);
   const {
     restored: operationDraftRestored,
     clear: clearOperationDraft,
@@ -235,7 +281,7 @@ export default function CellarOperationsTab({
     isMeaningful: operationDraftIsMeaningful,
     onRestore: restoreOperationDraft,
   });
-  const restoreCapturedOperation = (input: CellarOperationInput) => {
+  const restoreCapturedOperation = React.useCallback((input: CellarOperationInput) => {
     setType(input.type);
     setCustomLabel(input.customLabel || '');
     setLotId(input.lotId);
@@ -252,7 +298,14 @@ export default function CellarOperationsTab({
     setDate(input.date);
     setOperator(input.operator);
     setNotes(input.notes || '');
-  };
+    const restoredProfile = operationCostProfile(automationSettings, input.type);
+    setLaborHours(input.laborHours != null
+      ? String(input.laborHours)
+      : automationSettings.enabled ? String(restoredProfile.laborHours) : '');
+    setEnergyKwh(input.energyKwh != null
+      ? String(input.energyKwh)
+      : automationSettings.enabled ? String(restoredProfile.energyKwh) : '');
+  }, [automationSettings]);
 
   useEffect(() => {
     const restored = pendingCellarOperationCommandIntent();
@@ -262,7 +315,7 @@ export default function CellarOperationsTab({
     setCommandError(ka
       ? 'წინა ოპერაციის შედეგი ჯერ არ არის დადასტურებული. იგივე ბრძანება ხელახლა გაგზავნეთ.'
       : 'A previous cellar operation is not yet acknowledged. Resubmit to recover the same command safely.');
-  }, [ka]);
+  }, [ka, restoreCapturedOperation]);
 
   useEffect(() => {
     const restored = pendingCellarOperationReversalCommandIntent();
@@ -285,19 +338,23 @@ export default function CellarOperationsTab({
 
   // Scanned / drawer-selected vessel: apply once, selecting its batch too.
   const prefillGuard = useRef(false);
+  const prefillAppliedRef = useRef(false);
   useEffect(() => {
     if (pendingCellarOperationCommandIntent()) return;
-    if (!prefillVesselId) return;
+    if (!prefillVesselId || prefillAppliedRef.current) return;
     const vessel = vessels.find(v => v.id === prefillVesselId);
-    if (vessel) {
-      prefillGuard.current = true;
-      setVesselId(vessel.id);
-      if (vessel.assignedLotId && lots.some(l => l.id === vessel.assignedLotId)) {
-        setLotId(vessel.assignedLotId);
-      }
+    // Vessels hydrate asynchronously, so a scanned id cannot always be resolved
+    // on first mount. Keep the prefill pending until they arrive rather than
+    // clearing it — this effect re-runs when `vessels` lands.
+    if (!vessel) return;
+    prefillAppliedRef.current = true;
+    prefillGuard.current = true;
+    setVesselId(vessel.id);
+    if (vessel.assignedLotId && lots.some(l => l.id === vessel.assignedLotId)) {
+      setLotId(vessel.assignedLotId);
     }
     clearPrefill?.();
-  }, [prefillVesselId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [prefillVesselId, vessels]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When the batch changes, default the vessel to the one holding it and prefill volume.
   useEffect(() => {
@@ -339,10 +396,50 @@ export default function CellarOperationsTab({
   const materials = canConsumeOperationMaterials
     ? materialDraftsToUsages(materialDrafts, inventory)
     : [];
+  const laborHoursNum = laborHours === '' ? undefined : Number.parseFloat(laborHours);
+  const energyKwhNum = energyKwh === '' ? undefined : Number.parseFloat(energyKwh);
+  const materialCostTotal = materials.reduce((sum, usage) => {
+    const item = inventory.find(candidate => candidate.id === usage.materialId);
+    return sum + usage.quantity * (item?.costPerUnit || 0);
+  }, 0);
+  const automaticCostPreview = useMemo(() => automaticOperationCostEntries({
+    operationId: 'preview',
+    date,
+    lotId: lot?.id || '',
+    operationType: type,
+    laborHours: laborHoursNum,
+    energyKwh: energyKwhNum,
+    materialCostTotal,
+    currency,
+    settings: automationSettings,
+  }), [
+    automationSettings,
+    currency,
+    date,
+    energyKwhNum,
+    laborHoursNum,
+    lot?.id,
+    materialCostTotal,
+    type,
+  ]);
+  const automaticCostTotal = automaticCostPreview.reduce((sum, entry) => sum + entry.amount, 0);
+  const laborHoursInvalid = automationSettings.enabled
+    && (laborHoursNum === undefined || !Number.isFinite(laborHoursNum) || laborHoursNum < 0);
+  const energyKwhInvalid = automationSettings.enabled
+    && (energyKwhNum === undefined || !Number.isFinite(energyKwhNum) || energyKwhNum < 0);
 
   const customOk = type !== 'custom' || customLabel.trim().length > 0;
   const canSubmit = canLogCellarOperation && !!lot && customOk && !overfill && !materialIssue
+    && !laborHoursInvalid && !energyKwhInvalid
     && !pendingIntent && !pendingReversalIntent && !isSubmitting && !isReversing;
+
+  const selectOperationType = (nextType: CellarOperationType) => {
+    setType(nextType);
+    if (!automationSettings.enabled) return;
+    const profile = operationCostProfile(automationSettings, nextType);
+    setLaborHours(String(profile.laborHours));
+    setEnergyKwh(String(profile.energyKwh));
+  };
 
   const resetSoft = () => {
     setType('measurement');
@@ -353,6 +450,9 @@ export default function CellarOperationsTab({
     setDate(today);
     setOperator('');
     setNotes('');
+    const defaultProfile = operationCostProfile(automationSettings, 'measurement');
+    setLaborHours(automationSettings.enabled ? String(defaultProfile.laborHours) : '');
+    setEnergyKwh(automationSettings.enabled ? String(defaultProfile.energyKwh) : '');
   };
 
   const finishCommand = () => {
@@ -381,6 +481,7 @@ export default function CellarOperationsTab({
         commandId: intent.commandId,
         actorUsername: currentUserName,
         currency,
+        costAutomation,
         performedAt: new Date(intent.capturedAt),
       },
     );
@@ -543,6 +644,8 @@ export default function CellarOperationsTab({
       vesselToId: meta.needsVesselTo ? (vesselToId || null) : null,
       volumeAfterL: meta.affectsVolume && volNum != null ? volNum : undefined,
       materials: materials.length ? materials : undefined,
+      laborHours: automationSettings.enabled ? laborHoursNum : undefined,
+      energyKwh: automationSettings.enabled ? energyKwhNum : undefined,
       operator: operator.trim() || currentUserName,
       notes: notes.trim(),
     }, {
@@ -653,7 +756,7 @@ export default function CellarOperationsTab({
                 const Icon = OP_ICONS[o.key];
                 const active = type === o.key;
                 return (
-                  <button key={o.key} type="button" onClick={() => setType(o.key)}
+                  <button key={o.key} type="button" onClick={() => selectOperationType(o.key)}
                     className={`flex flex-col items-center gap-1 px-1.5 py-2 rounded-lg border text-center transition-colors cursor-pointer ${active ? 'bg-[#4e0e15] text-amber-50 border-[#4e0e15]' : 'bg-stone-50 text-stone-500 border-stone-200 hover:border-[#4e0e15]/40 dark:bg-stone-900 dark:border-stone-800'}`}>
                     <Icon className="w-4 h-4" />
                     <span className="text-[8.5px] font-bold leading-tight">{ka ? o.ka : o.en}</span>
@@ -690,11 +793,22 @@ export default function CellarOperationsTab({
                     <label className={labelCls}>{meta.needsVesselTo ? (ka ? 'ჭურჭელი (-დან)' : 'Vessel (from)') : (ka ? 'ჭურჭელი' : 'Vessel')}</label>
                     <select value={vesselId} onChange={e => setVesselId(e.target.value)} className={inputCls}>
                       <option value="">{ka ? '— არცერთი —' : '— none —'}</option>
-                      {vessels.map(v => <option key={v.id} value={v.id}>{v.id}</option>)}
+                      {lotVessels.map(v => (
+                        <option key={v.id} value={v.id}>
+                          {v.id} — {round1(v.currentVolume)} L
+                        </option>
+                      ))}
                     </select>
                   </div>
                 )}
               </div>
+              {lot && lotVessels.length > 0 && (
+                <p className="mt-1 text-[10px] font-semibold text-stone-500">
+                  {ka
+                    ? `პარტია განაწილებულია ${lotVessels.length} ჭურჭელში: ${round1(lotAllocatedVolume)} / ${round1(lot.currentVolume)} ლ`
+                    : `Lot allocated across ${lotVessels.length} vessels: ${round1(lotAllocatedVolume)} / ${round1(lot.currentVolume)} L`}
+                </p>
+              )}
 
               {canUseOperationVessels && meta.needsVesselTo && (
                 <div>
@@ -717,6 +831,57 @@ export default function CellarOperationsTab({
                 />
               )}
 
+              {automationSettings.enabled && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-900/70 dark:bg-emerald-950/20">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-bold text-emerald-900 dark:text-emerald-200">
+                        {ka ? 'ავტომატური ხარჯთაღრიცხვა' : 'Automatic costing'}
+                      </p>
+                      <p className="text-[9px] font-semibold text-emerald-700/80 dark:text-emerald-300/70">
+                        {ka ? 'შრომა, ენერგია და ზედნადები ამ ოპერაციასთან ერთად ჩაიწერება.' : 'Labor, energy, and overhead will post with this operation.'}
+                      </p>
+                    </div>
+                    <strong className="whitespace-nowrap text-sm font-black text-emerald-900 dark:text-emerald-200">
+                      {automaticCostTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}
+                    </strong>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div>
+                      <label className={labelCls}>{ka ? 'შრომა (საათი)' : 'Labor (hours)'}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.05"
+                        value={laborHours}
+                        onChange={event => setLaborHours(event.target.value)}
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>{ka ? 'ენერგია (კვტ⋅სთ)' : 'Energy (kWh)'}</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.1"
+                        value={energyKwh}
+                        onChange={event => setEnergyKwh(event.target.value)}
+                        className={inputCls}
+                      />
+                    </div>
+                  </div>
+                  {automaticCostPreview.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-semibold text-emerald-800/80 dark:text-emerald-300/80">
+                      {automaticCostPreview.map(entry => (
+                        <span key={entry.category}>
+                          {catLabelForPreview(entry.category, ka)}: {entry.amount.toFixed(2)} {currency}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {meta.affectsVolume && (
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -734,7 +899,7 @@ export default function CellarOperationsTab({
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
-                  <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+                  <DateInput lang={lang} value={date} onValueChange={setDate} className={inputCls} required />
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'ოპერატორი' : 'Operator'}</label>

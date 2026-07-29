@@ -404,9 +404,9 @@ body {
 }
 
 /* Consistent, quiet controls across every module. */
-input:not([type="checkbox"]):not([type="radio"]),
+:where(input:not([type="checkbox"]):not([type="radio"]),
 select,
-textarea {
+textarea) {
   min-height: 40px;
   border-radius: var(--radius-control);
   padding: 8px 11px;
@@ -414,9 +414,9 @@ textarea {
   background-color: #fff;
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background-color var(--dur-fast) ease;
 }
-.dark input:not([type="checkbox"]):not([type="radio"]),
-.dark select,
-.dark textarea {
+.dark :where(input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea) {
   background-color: #151111 !important;
   color: var(--foreground) !important;
   border-color: var(--border-custom) !important;

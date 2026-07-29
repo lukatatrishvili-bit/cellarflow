@@ -80,6 +80,7 @@ export async function executeHarvestIntakeCommand(
           actorUsername: input.actorUsername,
           currency,
           region,
+          costAutomation: profile.costAutomation,
           performedAt: input.performedAt || new Date(),
         },
       );

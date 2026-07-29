@@ -50,6 +50,7 @@ import OperationMaterialsEditor, {
   materialDraftsToUsages,
   type MaterialUsageDraft,
 } from './OperationMaterialsEditor';
+import DateInput from './ui/DateInput';
 
 interface Props {
   lang: Language;
@@ -82,6 +83,11 @@ export interface FermentationReadingUpdatePermissions {
   canUpdateFermentationLot: boolean;
   canUpdateFermentationVessel: boolean;
 }
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+const usesCapManagement = (lot: Pick<WineLot, 'wineClass'> | null | undefined) => (
+  lot?.wineClass === 'red' || lot?.wineClass === 'amber'
+);
 
 export function dispatchFermentationReadingUpdates(
   permissions: FermentationReadingUpdatePermissions,
@@ -159,6 +165,7 @@ export default function FermentationTab({
   const [logDensity, setLogDensity] = useState(1.012);
   const [logSugar, setLogSugar] = useState(24);
   const [logPH, setLogPH] = useState(3.45);
+  const [logDate, setLogDate] = useState(todayIso());
   const [logNotes, setLogNotes] = useState('');
   const [logCap, setLogCap] = useState('Punchdowns - 2X');
   const [materialDrafts, setMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
@@ -232,7 +239,9 @@ export default function FermentationTab({
         `${item.materialName || item.materialId} ${item.quantity}${item.unit || ''}${item.purpose ? ` (${item.purpose})` : ''}`
       )).join(', ')
       : 'None';
-    const readingDate = new Date().toISOString().split('T')[0];
+    const readingDate = logDate;
+    const readingLot = lots.find(item => item.id === lotId);
+    const capManagement = usesCapManagement(readingLot) ? logCap : 'None';
     const linkedOperationId = materialsUsed.length
       ? onAddCellarOperation?.({
         date: readingDate,
@@ -258,7 +267,7 @@ export default function FermentationTab({
       sugar: logSugar,
       ph: logPH,
       tastingNotes: logNotes.trim(),
-      capManagement: logCap,
+      capManagement,
       additives: materialSummary,
       ...(materialsUsed.length ? { materialsUsed } : {}),
       ...(linkedOperationId ? { linkedOperationId } : {}),
@@ -274,11 +283,11 @@ export default function FermentationTab({
             ...l,
             history: [
               {
-                date: new Date().toISOString().split('T')[0],
+                date: readingDate,
                 type: lang === 'ka' ? 'დუღილის ჩანაწერი' : 'Fermentation Log Entry',
                 description: lang === 'ka'
-                  ? `სიმკვრივე: ${logDensity} SG, შაქარი: ${logSugar} გ/ლ, ტემპ.: ${logTemp}°C. ქუდი: ${logCap}. შენიშვნა: ${logNotes.trim() || 'შენიშვნის გარეშე'}`
-                  : `Density: ${logDensity} SG, Sugar: ${logSugar} g/L, Temp: ${logTemp}°C. Cap: ${logCap}. Note: ${logNotes.trim() || 'No notes entered'}`,
+                  ? `სიმკვრივე: ${logDensity} SG, შაქარი: ${logSugar} გ/ლ, ტემპ.: ${logTemp}°C.${usesCapManagement(readingLot) ? ` ქუდის მართვა: ${capManagement}.` : ''} შენიშვნა: ${logNotes.trim() || 'შენიშვნის გარეშე'}`
+                  : `Density: ${logDensity} SG, Sugar: ${logSugar} g/L, Temp: ${logTemp}°C.${usesCapManagement(readingLot) ? ` Cap: ${capManagement}.` : ''} Note: ${logNotes.trim() || 'No notes entered'}`,
                 operator: currentUser.fullName
               },
               ...(l.history || [])
@@ -293,6 +302,7 @@ export default function FermentationTab({
 
     // Reset log inputs
     setLogNotes('');
+    setLogDate(todayIso());
     setMaterialDrafts([]);
     setFormError('');
     setExpLogFormLotId(null);
@@ -306,6 +316,7 @@ export default function FermentationTab({
     setLogTankId(associatedVessel ? associatedVessel.id : '');
     setFormError(associatedVessel ? '' : (lang === 'ka' ? 'ჩანაწერის შენახვამდე მიაბით პარტია ჭურჭელს.' : 'Assign this lot to a vessel before saving a fermentation reading.'));
     setExpLogFormLotId(lot.id);
+    setLogDate(todayIso());
 
     // Default reasonable entries
     const lotLogs = physicalFermLogs.filter(log => log.lotId === lot.id);
@@ -722,6 +733,16 @@ export default function FermentationTab({
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
+                    <label className="block text-[10px] font-semibold text-stone-500 mb-0.5">{lang === 'ka' ? 'თარიღი (დღე/თვე/წელი)' : 'Date (day/month/year)'}</label>
+                    <DateInput
+                      lang={lang}
+                      value={logDate}
+                      onValueChange={setLogDate}
+                      required
+                      className="w-full px-2 py-1 text-xs border rounded bg-white font-mono"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-[10px] font-semibold text-stone-500 mb-0.5">{lang === 'ka' ? 'მიბმული ჭურჭელი' : 'Assigned Vessel / Tank'}</label>
                     <input
                       type="text"
@@ -730,7 +751,7 @@ export default function FermentationTab({
                       className="w-full px-2 py-1 text-xs border bg-stone-100 rounded text-stone-500 font-bold"
                     />
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <label className="block text-[10px] font-semibold text-stone-500 mb-0.5">{lang === 'ka' ? 'ტემპერატურა (°C)' : 'Temperature (°C)'}</label>
                     <input
                       type="number" step="0.1" value={logTemp}
@@ -768,21 +789,26 @@ export default function FermentationTab({
                       className="w-full px-2 py-1 text-xs border rounded bg-white font-mono"
                     />
                   </div>
-                  <div>
+                  {usesCapManagement(lots.find(item => item.id === generalLotId)) ? <div>
                     <label className="block text-[10px] font-semibold text-stone-500 mb-0.5">{lang === 'ka' ? 'ქუდის ოპერაციები' : 'Cap Operations'}</label>
                     <select
                       value={logCap}
                       onChange={(e) => setLogCap(e.target.value)}
                       className="w-full px-2 py-1 text-xs border rounded bg-white text-stone-800"
                     >
-                      <option value="None - Whites">{lang === 'ka' ? 'არაფერი / დალექვა (თეთრი)' : 'None / Sedimentation (Whites)'}</option>
-                      <option value="Punchdowns - 1X Daily">{lang === 'ka' ? 'ქუდის ჩაწოლა — დღეში 1-ჯერ' : 'Punchdown - 1X daily'}</option>
-                      <option value="Punchdowns - 2X Daily">{lang === 'ka' ? 'ქუდის ჩაწოლა — დღეში 2-ჯერ (წითელი)' : 'Punchdowns - 2X daily (Reds)'}</option>
-                      <option value="Pumpover - Gentle 15m">{lang === 'ka' ? 'გადასხმა — რბილი (15 წთ)' : 'Pumpover - Gentle (15 min)'}</option>
-                      <option value="Pumpover - Strong 30m">{lang === 'ka' ? 'გადასხმა — ინტენსიური (30 წთ)' : 'Pumpover - Strong (30 min)'}</option>
+                      <option value="Punchdowns - 1X Daily">{lang === 'ka' ? 'დარევა — დღეში 1-ჯერ' : 'Punchdown - 1X daily'}</option>
+                      <option value="Punchdowns - 2X Daily">{lang === 'ka' ? 'დარევა — დღეში 2-ჯერ' : 'Punchdowns - 2X daily'}</option>
+                      <option value="Pumpover - Gentle 15m">{lang === 'ka' ? 'რემონტაჟი — რბილი (15 წთ)' : 'Pumpover - Gentle (15 min)'}</option>
+                      <option value="Pumpover - Strong 30m">{lang === 'ka' ? 'რემონტაჟი — ინტენსიური (30 წთ)' : 'Pumpover - Strong (30 min)'}</option>
                       <option value="Délestage (Rack & Return)">{lang === 'ka' ? 'დელესტაჟი (გადატანა-დაბრუნება)' : 'Délestage (Rack & Return)'}</option>
                     </select>
-                  </div>
+                  </div> : (
+                    <div className="flex items-end">
+                      <p className="w-full rounded-lg border border-sky-100 bg-sky-50 px-2.5 py-2 text-[10px] font-medium text-sky-800">
+                        {lang === 'ka' ? 'ქუდის მართვა თეთრი ღვინისთვის არ გამოიყენება.' : 'Cap management does not apply to white wine.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {canConsumeFermentationMaterials && (
@@ -951,6 +977,16 @@ export default function FermentationTab({
 
                       <div className="grid grid-cols-2 gap-2">
                         <div>
+                          <label className="block text-[9px] font-medium text-slate-500">{lang === 'ka' ? 'თარიღი (დღე/თვე/წელი)' : 'Date (day/month/year)'}</label>
+                          <DateInput
+                            lang={lang}
+                            value={logDate}
+                            onValueChange={setLogDate}
+                            required
+                            className="w-full px-2 py-0.5 text-xs border rounded bg-white font-mono"
+                          />
+                        </div>
+                        <div>
                           <label className="block text-[9px] font-medium text-slate-500">{lang === 'ka' ? 'ტემპ. (°C)' : 'Temp (°C)'}</label>
                           <input
                             type="number" step="0.1" value={logTemp}
@@ -994,20 +1030,19 @@ export default function FermentationTab({
                         </div>
                       </div>
 
-                      <div>
+                      {usesCapManagement(lot) && <div>
                         <label className="block text-[9px] font-medium text-slate-500">{lang === 'ka' ? 'ქუდის მართვის რუტინა' : 'Cap Management Routine'}</label>
                         <select
                           value={logCap}
                           onChange={(e) => setLogCap(e.target.value)}
                           className="w-full px-2 py-1 text-xs border rounded bg-white"
                         >
-                          <option value="Punchdowns - 2X Daily">{lang === 'ka' ? 'ქუდის ჩაწოლა — დღეში 2-ჯერ' : 'Punchdowns - 2X Daily'}</option>
-                          <option value="Pumpover - Gentle 15m">{lang === 'ka' ? 'გადასხმა — რბილი 15წთ' : 'Pumpover - Gentle 15m'}</option>
-                          <option value="Punchdown - Manual 1X">{lang === 'ka' ? 'ქუდის ჩაწოლა — ხელით 1-ჯერ' : 'Punchdown - Manual 1X'}</option>
+                          <option value="Punchdowns - 2X Daily">{lang === 'ka' ? 'დარევა — დღეში 2-ჯერ' : 'Punchdowns - 2X Daily'}</option>
+                          <option value="Pumpover - Gentle 15m">{lang === 'ka' ? 'რემონტაჟი — რბილი 15 წთ' : 'Pumpover - Gentle 15m'}</option>
+                          <option value="Punchdown - Manual 1X">{lang === 'ka' ? 'დარევა — ხელით 1-ჯერ' : 'Punchdown - Manual 1X'}</option>
                           <option value="Délestage (Rack & Return)">{lang === 'ka' ? 'დელესტაჟი (გადატანა-დაბრუნება)' : 'Délestage (Rack & Return)'}</option>
-                          <option value="None (Inert static environment)">{lang === 'ka' ? 'არაფერი (თეთრი/ქვევრი)' : 'None (Whites/Clay)'}</option>
                         </select>
-                      </div>
+                      </div>}
 
                       {canConsumeFermentationMaterials && (
                         <OperationMaterialsEditor

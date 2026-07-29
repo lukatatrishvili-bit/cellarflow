@@ -19,6 +19,7 @@ type ShellTranslationKey =
   | 'notes'
   | 'calculators'
   | 'ai_assistant'
+  | 'ai_intelligence'
   | 'nav_portal'
   | 'nav_vazi'
   | 'nav_gvino'
@@ -60,6 +61,7 @@ const en: ShellTranslations = {
   notes: 'Notes',
   calculators: 'Winemaking Calculators',
   ai_assistant: 'AI Winemaker',
+  ai_intelligence: 'Winery Intelligence',
   nav_portal: 'Dashboard Portal',
   nav_vazi: 'Vazi (Vineyard)',
   nav_gvino: 'Gvino (Winery)',
@@ -100,6 +102,7 @@ const ka: ShellTranslations = {
   notes: 'შენიშვნა',
   calculators: 'კალკულატორები',
   ai_assistant: 'AI მეღვინე',
+  ai_intelligence: 'მარნის ინტელექტი',
   nav_portal: 'მთავარი პორტალი',
   nav_vazi: 'ვაზი (ვენახები)',
   nav_gvino: 'ღვინო (მარანი)',

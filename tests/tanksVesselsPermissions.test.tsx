@@ -125,7 +125,7 @@ describe('TanksVessels action permissions', () => {
       }],
     });
 
-    expect(markup).toContain('Ready capacity');
+    expect(markup).toContain('Empty and clean');
     expect(markup).toContain('2,000 L');
     expect(markup).toContain('Commission out / destroy vessel');
   });

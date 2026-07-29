@@ -1,12 +1,60 @@
 import { describe, expect, it } from 'vitest';
 import {
+  automaticLabCostEntry,
+  automaticOperationCostEntries,
   classifyInventoryCostCategory,
   computeBottlingCostPosting,
+  DEFAULT_COST_AUTOMATION_SETTINGS,
   grapeIntakeCostEntry,
   materialCostEntryFromOperation,
 } from '../lib/costing';
 
 describe('automatic cost entries', () => {
+  it('calculates labor, energy, and overhead from an operation profile', () => {
+    const entries = automaticOperationCostEntries({
+      operationId: 'op-auto-1',
+      date: '2026-10-03',
+      lotId: 'LOT-SAP-2026',
+      operationType: 'racking',
+      laborHours: 2,
+      energyKwh: 6,
+      materialCostTotal: 10,
+      currency: 'GEL',
+      settings: {
+        ...DEFAULT_COST_AUTOMATION_SETTINGS,
+        enabled: true,
+        laborRatePerHour: 20,
+        energyRatePerKwh: 0.5,
+        overheadPercent: 10,
+      },
+    });
+
+    expect(entries).toEqual([
+      expect.objectContaining({ id: 'cost-labor-op-auto-1', category: 'labor', amount: 40 }),
+      expect.objectContaining({ id: 'cost-energy-op-auto-1', category: 'energy', amount: 3 }),
+      expect.objectContaining({ id: 'cost-overhead-op-auto-1', category: 'overhead', amount: 5.3 }),
+    ]);
+  });
+
+  it('posts a configured laboratory charge once per analysis id', () => {
+    expect(automaticLabCostEntry({
+      analysisId: 'lab-42',
+      date: '2026-10-04',
+      lotId: 'LOT-SAP-2026',
+      currency: 'GEL',
+      settings: {
+        ...DEFAULT_COST_AUTOMATION_SETTINGS,
+        enabled: true,
+        labAnalysisCost: 32.5,
+      },
+    })).toMatchObject({
+      id: 'cost-lab-lab-42',
+      category: 'other',
+      amount: 32.5,
+      sourceRef: 'lab-42',
+    });
+  });
+
   it('creates a grape cost entry from intake cost per kg', () => {
     const entry = grapeIntakeCostEntry({
       id: 'intake-1',

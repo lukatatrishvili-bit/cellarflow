@@ -13,6 +13,7 @@ import type { Language } from '../lib/i18n';
 import type { VineyardPlantingProject, VineyardProjectStatus } from '../lib/wineryState';
 import { evaluateVineyardProjectReadiness } from '../lib/vineyardProjects';
 import { GEORGIAN_GRAPE_VARIETIES } from '../lib/georgianWineKnowledge';
+import DateInput from './ui/DateInput';
 import {
   ActionButton,
   EmptyState,
@@ -449,11 +450,11 @@ export default function VineyardProjectsTab({
               <TextField label="Row direction" value={form.rowDirection} onChange={value => updateForm('rowDirection', value)} />
               <div>
                 <FieldLabel>{ka ? 'დამტკიცების თარიღი' : 'Approval date'}</FieldLabel>
-                <input type="date" value={form.approvalDate} onChange={event => updateForm('approvalDate', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.approvalDate} onValueChange={value => updateForm('approvalDate', value)} className={inputCls} />
               </div>
               <div>
                 <FieldLabel>{ka ? 'დამტკიცების ვადა' : 'Approval valid until'}</FieldLabel>
-                <input type="date" value={form.approvalValidUntil} onChange={event => updateForm('approvalValidUntil', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.approvalValidUntil} onValueChange={value => updateForm('approvalValidUntil', value)} className={inputCls} />
               </div>
               <div className="md:col-span-2">
                 <FieldLabel>{ka ? 'სარწყავი გეგმა' : 'Irrigation plan'}</FieldLabel>

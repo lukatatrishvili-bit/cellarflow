@@ -24,7 +24,7 @@ export async function renderDocumentXlsx(doc: RenderedDocument): Promise<Blob> {
   const n = cols.length;
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'MaraniOS';
+  wb.creator = 'VinOS';
   wb.created = new Date();
   const ws = wb.addWorksheet(`დანართი ${t.annexNumber}`, {
     pageSetup: {

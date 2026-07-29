@@ -16,6 +16,7 @@ import {
   Wine,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
+import DateInput from './ui/DateInput';
 import type {
   BottlingRunRecord,
   CertificationApplicationStatus,
@@ -649,10 +650,10 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Sample date' : 'Sample date'}</FieldLabel>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={form.sampleDate || ''}
-                  onChange={event => updateForm('sampleDate', event.target.value || undefined)}
+                  onValueChange={value => updateForm('sampleDate', value || undefined)}
                   disabled={!canManageCertification}
                   className={editableControlClass}
                 />
@@ -788,10 +789,10 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Issue date' : 'Issue date'}</FieldLabel>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={form.issueDate || ''}
-                  onChange={event => updateForm('issueDate', event.target.value || undefined)}
+                  onValueChange={value => updateForm('issueDate', value || undefined)}
                   disabled={!canManageCertification}
                   className={editableControlClass}
                 />
@@ -799,10 +800,10 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Expiry date' : 'Expiry date'}</FieldLabel>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={form.expiryDate || ''}
-                  onChange={event => updateForm('expiryDate', event.target.value || undefined)}
+                  onValueChange={value => updateForm('expiryDate', value || undefined)}
                   disabled={!canManageCertification}
                   className={editableControlClass}
                 />

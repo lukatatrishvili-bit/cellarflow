@@ -9,6 +9,7 @@ import type {
   GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord, CellarOperation,
   BottlingRunRecord, SalesDispatchRecord, DocumentAttachment,
 } from '../lib/wineryState';
+import DateInput from './ui/DateInput';
 import {
   listForms, buildDocument, buildFilename, type ExportContext, type FilterId,
 } from '../lib/georgianForms';
@@ -499,11 +500,11 @@ export default function OfficialDocsTab(props: Props) {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className={labelCls}>{ka ? 'დან' : 'From'}</label>
-                  <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} aria-label={ka ? 'თარიღიდან' : 'From date'} />
+                  <DateInput lang={lang} value={from} onValueChange={setFrom} className={inputCls} aria-label={ka ? 'თარიღიდან' : 'From date'} />
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'მდე' : 'To'}</label>
-                  <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} aria-label={ka ? 'თარიღამდე' : 'To date'} />
+                  <DateInput lang={lang} value={to} onValueChange={setTo} className={inputCls} aria-label={ka ? 'თარიღამდე' : 'To date'} />
                 </div>
               </div>
             )}

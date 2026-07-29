@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Vessel, VesselType, WineLot } from '../lib/wineryState';
@@ -39,11 +39,11 @@ type VesselSignalKind = 'assignment' | 'fill' | 'hygiene' | 'seal' | 'temperatur
 
 function qvevriSealNeedsAttention(vessel: Vessel, now = Date.now()): boolean {
   if (vessel.type !== 'qvevri') return false;
-  if (vessel.waxingStatus === 'needed' || vessel.limeWashStatus === 'needed') return true;
+  if (vessel.limeWashStatus === 'needed') return true;
   const sealedAt = vessel.lastSealedDate || vessel.sealingDate;
-  if (!sealedAt) return true;
+  if (!sealedAt) return false;
   const sealedTimestamp = new Date(sealedAt).getTime();
-  if (!Number.isFinite(sealedTimestamp)) return true;
+  if (!Number.isFinite(sealedTimestamp)) return false;
   return (now - sealedTimestamp) / 86_400_000 > 120;
 }
 
@@ -51,7 +51,6 @@ export default function TanksVessels({
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
   setActiveTab,
   canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true,
-  qvevriCount = vessels.filter(vessel => vessel.type === 'qvevri').length,
   renderQvevriRecords,
 }: Props) {
   const t = translations[lang];
@@ -73,17 +72,35 @@ export default function TanksVessels({
   const [workspaceView, setWorkspaceView] = useState<'register' | 'qvevri'>('register');
   const [qvevriFocusId, setQvevriFocusId] = useState<string | null>(null);
   const [showCapacityChart, setShowCapacityChart] = useState(false);
+  const vesselRegisterRef = useRef<HTMLDivElement>(null);
 
   // Custom add vessel state
   const [showAddForm, setShowAddForm] = useState(false);
   const [newId, setNewId] = useState('');
   const [newType, setNewType] = useState<VesselType>('stainless_steel');
-  const [newCapacity, setNewCapacity] = useState(2000);
+  const [newCapacity, setNewCapacity] = useState('2000');
   const [newLocation, setNewLocation] = useState('');
 
   // Editing temperature state
   const [editingTempId, setEditingTempId] = useState<string | null>(null);
   const [tempInputValue, setTempInputValue] = useState<number>(15);
+
+  const openVessel = (vessel: Vessel) => {
+    if (vessel.type === 'qvevri' && renderQvevriRecords) {
+      setQvevriFocusId(vessel.id);
+      setWorkspaceView('qvevri');
+      return;
+    }
+    onSelectTank?.(vessel.id);
+  };
+
+  const applyStatusFilter = (nextFilter: VesselStatusFilter) => {
+    setWorkspaceView('register');
+    setFilterType('all');
+    setSearchTerm('');
+    setStatusFilter(current => current === nextFilter ? 'all' : nextFilter);
+    window.requestAnimationFrame(() => vesselRegisterRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
   const handleClean = (vId: string) => {
     if (!canUpdateVessel) return;
@@ -172,7 +189,8 @@ export default function TanksVessels({
       error(ka ? `ჭურჭელი ${vesselId} უკვე არსებობს.` : `Vessel ${vesselId} already exists.`);
       return;
     }
-    if (!Number.isFinite(newCapacity) || newCapacity <= 0) {
+    const parsedCapacity = Number(newCapacity);
+    if (!Number.isFinite(parsedCapacity) || parsedCapacity <= 0) {
       error(ka ? 'ტევადობა უნდა იყოს ნულზე მეტი.' : 'Capacity must be greater than zero.');
       return;
     }
@@ -181,7 +199,7 @@ export default function TanksVessels({
       id: vesselId,
       type: newType,
       shape: newType === 'barrel' ? 'horizontal' : 'vertical',
-      capacity: newCapacity,
+      capacity: parsedCapacity,
       currentVolume: 0,
       assignedLotId: null,
       cleaningStatus: 'clean',
@@ -236,8 +254,8 @@ export default function TanksVessels({
         action: ka ? 'ჭურჭლის გახსნა' : 'Open vessel',
       },
       seal: {
-        title: ka ? 'ქვევრის ცვილი შესამოწმებელია' : 'Qvevri seal check due',
-        detail: ka ? 'ცვილის ან კირის ჩანაწერს განახლება სჭირდება.' : 'Wax or lime-wash evidence needs attention.',
+        title: ka ? 'ქვევრის მოვლა შესამოწმებელია' : 'Qvevri care check due',
+        detail: ka ? 'კირით დამუშავების ან დალუქვის ჩანაწერს განახლება სჭირდება.' : 'Lime-wash or sealing evidence needs attention.',
         action: ka ? 'ქვევრის ჩანაწერი' : 'Open qvevri record',
       },
       temperature: {
@@ -325,45 +343,6 @@ export default function TanksVessels({
         ? 'გადაწყვიტეთ სად წავა ღვინო შემდეგ, რა მოითხოვს ყურადღებას და რომელი ჭურჭელია მზად.'
         : 'Decide where wine moves next, what needs attention, and which vessel is truly ready.'}
       icon={ContainerIcon}
-      actions={renderQvevriRecords ? (
-        <div
-          role="group"
-          aria-label={ka ? 'ჭურჭლის სამუშაო სივრცის ხედი' : 'Vessel workspace view'}
-          className="inline-flex w-full rounded-xl bg-stone-100 p-1 lg:w-auto dark:bg-stone-800"
-        >
-          <button
-            type="button"
-            aria-pressed={workspaceView === 'register'}
-            onClick={() => setWorkspaceView('register')}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition-colors lg:flex-none ${
-              workspaceView === 'register'
-                ? 'bg-white text-[#4e0e15] shadow-sm dark:bg-stone-900 dark:text-amber-100'
-                : 'text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100'
-            }`}
-          >
-            <ContainerIcon className="h-4 w-4" />
-            {ka ? 'ყველა ჭურჭელი' : 'All vessels'}
-            <span className="rounded-full bg-stone-200 px-1.5 py-0.5 text-[9px] dark:bg-stone-700">{vessels.length}</span>
-          </button>
-          <button
-            type="button"
-            aria-pressed={workspaceView === 'qvevri'}
-            onClick={() => {
-              setQvevriFocusId(null);
-              setWorkspaceView('qvevri');
-            }}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-bold transition-colors lg:flex-none ${
-              workspaceView === 'qvevri'
-                ? 'bg-white text-[#4e0e15] shadow-sm dark:bg-stone-900 dark:text-amber-100'
-                : 'text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100'
-            }`}
-          >
-            <FileText className="h-4 w-4" />
-            {ka ? 'ქვევრის ჩანაწერები' : 'Qvevri records'}
-            <span className="rounded-full bg-stone-200 px-1.5 py-0.5 text-[9px] dark:bg-stone-700">{qvevriCount}</span>
-          </button>
-        </div>
-      ) : undefined}
     />
   );
 
@@ -382,23 +361,22 @@ export default function TanksVessels({
 
       {vessels.length > 0 && (
         <>
-          <section className="relative overflow-hidden rounded-3xl border border-[#4e0e15] bg-[#31080f] text-white shadow-xl shadow-[#4e0e15]/10">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(214,160,81,0.22),transparent_38%),linear-gradient(135deg,transparent,rgba(128,19,35,0.22))]" />
-            <div className="relative p-5 lg:p-7">
+          <section className="overflow-hidden rounded-2xl border border-[#e8dfd5] bg-white shadow-sm dark:border-stone-800 dark:bg-stone-900">
+            <div className="p-4 lg:p-5">
               <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
                 <div className="max-w-2xl">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-amber-100">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-stone-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-stone-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
                     <span className={`h-2 w-2 rounded-full ${attentionVessels.length ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
                     {ka ? 'მეღვინის დღიური ხედვა' : 'Winemaker briefing'}
                   </span>
-                  <h3 className="mt-4 max-w-xl text-3xl font-black leading-[1.05] tracking-tight lg:text-4xl">
+                  <h3 className="mt-3 max-w-xl text-xl font-black leading-tight tracking-tight text-stone-900 dark:text-stone-100 lg:text-2xl">
                     {attentionVessels.length
                       ? (ka
                           ? `${attentionVessels.length} გადაწყვეტილება შემდეგ მოძრაობამდე`
                           : `${attentionVessels.length} ${attentionVessels.length === 1 ? 'decision' : 'decisions'} before the next movement`)
                       : (ka ? 'მარანი მზადაა შემდეგი მოძრაობისთვის' : 'The cellar is ready for its next movement')}
                   </h3>
-                  <p className="mt-3 max-w-xl text-sm font-medium leading-relaxed text-stone-300">
+                  <p className="mt-2 max-w-xl text-xs font-medium leading-relaxed text-stone-500 dark:text-stone-400">
                     {ka
                       ? 'პირველ რიგში ნაჩვენებია რისკი, სისუფთავე და რეალურად ხელმისაწვდომი ტევადობა.'
                       : 'Risk, sanitation, and genuinely available capacity are prioritized before the full vessel register.'}
@@ -409,7 +387,7 @@ export default function TanksVessels({
                     <button
                       type="button"
                       onClick={() => setActiveTab('transfers')}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-amber-100 px-4 py-2.5 text-xs font-black text-[#4e0e15] shadow-sm transition hover:bg-white"
+                      className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-4 py-2 text-xs font-black text-[#4e0e15] transition hover:border-stone-300 hover:bg-white dark:border-stone-700 dark:bg-stone-800 dark:text-amber-100"
                     >
                       <MoveRight className="h-4 w-4" />
                       {ka ? 'გადატანის დაგეგმვა' : 'Plan a transfer'}
@@ -419,7 +397,7 @@ export default function TanksVessels({
                     <button
                       type="button"
                       onClick={() => setShowAddForm(true)}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-black text-white transition hover:bg-white/15"
+                      className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#4e0e15] px-4 py-2 text-xs font-black text-white transition hover:bg-[#6b151e]"
                     >
                       <Plus className="h-4 w-4" />
                       {ka ? 'ჭურჭლის დამატება' : 'Add vessel'}
@@ -428,20 +406,15 @@ export default function TanksVessels({
                 </div>
               </div>
 
-              <div className="mt-6 grid grid-cols-2 gap-2 lg:grid-cols-4">
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <button
                   type="button"
                   aria-pressed={statusFilter === 'attention'}
-                  onClick={() => {
-                    setWorkspaceView('register');
-                    setFilterType('all');
-                    setSearchTerm('');
-                    setStatusFilter(statusFilter === 'attention' ? 'all' : 'attention');
-                  }}
+                  onClick={() => applyStatusFilter('attention')}
                   className={`rounded-2xl border p-3 text-left transition lg:p-4 ${
                     statusFilter === 'attention'
                       ? 'border-amber-300 bg-amber-100 text-[#4e0e15]'
-                      : 'border-white/10 bg-white/[0.07] hover:bg-white/10'
+                      : 'border-stone-200 bg-stone-50 text-stone-700 hover:border-amber-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200'
                   }`}
                 >
                   <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
@@ -454,20 +427,15 @@ export default function TanksVessels({
                 <button
                   type="button"
                   aria-pressed={statusFilter === 'ready'}
-                  onClick={() => {
-                    setWorkspaceView('register');
-                    setFilterType('all');
-                    setSearchTerm('');
-                    setStatusFilter(statusFilter === 'ready' ? 'all' : 'ready');
-                  }}
+                  onClick={() => applyStatusFilter('ready')}
                   className={`rounded-2xl border p-3 text-left transition lg:p-4 ${
                     statusFilter === 'ready'
                       ? 'border-emerald-300 bg-emerald-100 text-emerald-950'
-                      : 'border-white/10 bg-white/[0.07] hover:bg-white/10'
+                      : 'border-stone-200 bg-stone-50 text-stone-700 hover:border-emerald-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200'
                   }`}
                 >
                   <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
-                    {ka ? 'მზადაა' : 'Ready capacity'}
+                    {ka ? 'ცარიელი და სუფთაა' : 'Empty and clean'}
                     <ShieldCheck className="h-4 w-4" />
                   </span>
                   <strong className="mt-2 block text-2xl font-black">{readyCapacity.toLocaleString()} L</strong>
@@ -476,16 +444,11 @@ export default function TanksVessels({
                 <button
                   type="button"
                   aria-pressed={statusFilter === 'cooling'}
-                  onClick={() => {
-                    setWorkspaceView('register');
-                    setFilterType('all');
-                    setSearchTerm('');
-                    setStatusFilter(statusFilter === 'cooling' ? 'all' : 'cooling');
-                  }}
+                  onClick={() => applyStatusFilter('cooling')}
                   className={`rounded-2xl border p-3 text-left transition lg:p-4 ${
                     statusFilter === 'cooling'
                       ? 'border-sky-300 bg-sky-100 text-sky-950'
-                      : 'border-white/10 bg-white/[0.07] hover:bg-white/10'
+                      : 'border-stone-200 bg-stone-50 text-stone-700 hover:border-sky-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200'
                   }`}
                 >
                   <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
@@ -493,23 +456,7 @@ export default function TanksVessels({
                     <Snowflake className={`h-4 w-4 ${coolingActiveCount ? 'animate-spin' : ''}`} />
                   </span>
                   <strong className="mt-2 block text-2xl font-black">{coolingActiveCount}</strong>
-                  <span className="mt-1 block text-[10px] font-semibold opacity-70">{ka ? 'აქტიური პერანგი' : 'active jackets'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setQvevriFocusId(null);
-                    setWorkspaceView('qvevri');
-                  }}
-                  disabled={!renderQvevriRecords}
-                  className="rounded-2xl border border-white/10 bg-white/[0.07] p-3 text-left transition hover:bg-white/10 disabled:cursor-default disabled:opacity-60 lg:p-4"
-                >
-                  <span className="flex items-center justify-between text-[10px] font-black uppercase tracking-wide opacity-75">
-                    {ka ? 'ქვევრი' : 'Qvevri records'}
-                    <FileText className="h-4 w-4" />
-                  </span>
-                  <strong className="mt-2 block text-2xl font-black">{qvevriCount}</strong>
-                  <span className="mt-1 block text-[10px] font-semibold opacity-70">{ka ? 'ერთიან რეესტრში' : 'inside this workspace'}</span>
+                  <span className="mt-1 block text-[10px] font-semibold opacity-70">{ka ? 'გაგრილება ჩართულია' : 'cooling enabled'}</span>
                 </button>
               </div>
             </div>
@@ -552,12 +499,7 @@ export default function TanksVessels({
                         type="button"
                         key={`${vessel.id}-${kind}`}
                         onClick={() => {
-                          if (kind === 'seal' && renderQvevriRecords) {
-                            setQvevriFocusId(vessel.id);
-                            setWorkspaceView('qvevri');
-                          } else {
-                            onSelectTank?.(vessel.id);
-                          }
+                          openVessel(vessel);
                         }}
                         className="group flex min-h-20 w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-stone-50 dark:hover:bg-stone-800/70 lg:px-5"
                       >
@@ -634,7 +576,14 @@ export default function TanksVessels({
                 <h3 className="text-sm font-black text-stone-900 dark:text-amber-100">{ka ? 'მარნის შევსების დიაგრამა' : 'Cellar fill chart'}</h3>
                 <p className="mt-1 text-[11px] text-stone-500">{ka ? 'ჭურჭლის მოცულობები და 95%-ზე მაღალი შევსების რისკი.' : 'Vessel volumes with high-fill risk highlighted above 95%.'}</p>
               </div>
-              <TankCapacityChart tanks={mappedTanks} onSelectTank={onSelectTank} selectedTankId={selectedTankId} />
+              <TankCapacityChart
+                tanks={mappedTanks}
+                onSelectTank={tankId => {
+                  const vessel = vessels.find(item => item.id === tankId);
+                  if (vessel) openVessel(vessel);
+                }}
+                selectedTankId={selectedTankId}
+              />
             </section>
           )}
         </>
@@ -658,7 +607,7 @@ export default function TanksVessels({
       )}
 
       {/* 2. Top advanced command and control panel */}
-      <div className="space-y-4">
+      <div ref={vesselRegisterRef} className="scroll-mt-4 space-y-4">
         {/* Core Filters Row */}
         <div className="flex flex-col lg:flex-row gap-3 justify-between items-stretch lg:items-center bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs">
           {/* Material classification tab filters */}
@@ -754,7 +703,7 @@ export default function TanksVessels({
               >
                 <option value="all">{({ en: 'All Statuses', ka: 'ყველა სტატუსი', it: 'Tutti gli Stati', fr: 'Tous les Statuts', de: 'Alle Status' })[lang] || 'All Statuses'}</option>
                 <option value="attention">{ka ? 'საჭიროებს ყურადღებას' : 'Needs Action'}</option>
-                <option value="ready">{ka ? 'სუფთა და მზადაა' : 'Sanitized & Ready'}</option>
+                <option value="ready">{ka ? 'ცარიელი და სუფთაა' : 'Empty & Clean'}</option>
                 <option value="empty">{({ en: 'All Empty', ka: 'ყველა ცარიელი', it: 'Vuoto', fr: 'Vides', de: 'Leer' })[lang] || 'All Empty'}</option>
                 <option value="occupied">{({ en: 'Filled / In-use', ka: 'შევსებული', it: 'Occupato', fr: 'Occupés', de: 'In Verwendung' })[lang] || 'Filled / In-use'}</option>
                 <option value="dirty">{({ en: 'Needs Cleaning', ka: 'საჭიროებს რეცხვას', it: 'Da Pulire', fr: 'À Laver', de: 'Reinigungsbedarf' })[lang] || 'Needs Cleaning'}</option>
@@ -797,7 +746,22 @@ export default function TanksVessels({
 
       {/* 3. Add Vessel Form Popup */}
       {canCreateVessel && showAddForm && (
-        <form onSubmit={handleAddVessel} className="p-4 bg-white border border-[#4e0e15] rounded-xl grid grid-cols-1 sm:grid-cols-4 gap-4 items-end shadow">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/55 p-4 backdrop-blur-[2px]"
+          onMouseDown={() => setShowAddForm(false)}
+        >
+        <form
+          role="dialog"
+          aria-modal="true"
+          aria-label={ka ? 'ჭურჭლის დამატება' : 'Add vessel'}
+          onMouseDown={event => event.stopPropagation()}
+          onSubmit={handleAddVessel}
+          className="grid max-h-[90vh] w-full max-w-2xl grid-cols-1 items-end gap-4 overflow-y-auto rounded-2xl border border-[#e8dfd5] bg-white p-5 shadow-2xl sm:grid-cols-2"
+        >
+          <div className="sm:col-span-2">
+            <h3 className="text-lg font-black text-stone-900">{ka ? 'ახალი ჭურჭელი' : 'New vessel'}</h3>
+            <p className="mt-1 text-xs text-stone-500">{ka ? 'შეავსეთ ჭურჭლის ძირითადი მონაცემები.' : 'Enter the vessel’s core details.'}</p>
+          </div>
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">
               {({
@@ -868,14 +832,26 @@ export default function TanksVessels({
               type="number"
               required
               value={newCapacity}
-              onChange={(e) => setNewCapacity(parseInt(e.target.value) || 0)}
+              onChange={(e) => setNewCapacity(e.target.value)}
               className="w-full px-2.5 py-1.5 text-xs bg-[#FAF8F5] border border-slate-200 rounded outline-none"
             />
           </div>
-          <div className="flex gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">
+              {ka ? 'მდებარეობა' : 'Location'}
+            </label>
+            <input
+              type="text"
+              value={newLocation}
+              onChange={(e) => setNewLocation(e.target.value)}
+              placeholder={ka ? 'მაგ. მთავარი მარანი' : 'e.g. Main cellar'}
+              className="w-full rounded border border-slate-200 bg-[#FAF8F5] px-2.5 py-1.5 text-xs outline-none"
+            />
+          </div>
+          <div className="flex gap-2 sm:col-span-2 sm:justify-end">
             <button
               type="submit"
-              className="px-4 py-1.5 bg-[#4e0e15] text-white text-xs font-semibold rounded hover:bg-[#6b151e] flex-1 cursor-pointer"
+              className="flex-1 cursor-pointer rounded bg-[#4e0e15] px-4 py-2 text-xs font-semibold text-white hover:bg-[#6b151e] sm:flex-none"
             >
               {({
                 en: 'Register Vessel',
@@ -894,6 +870,7 @@ export default function TanksVessels({
             </button>
           </div>
         </form>
+        </div>
       )}
 
       {/* 4. Executive Vessel Visual Workspace */}
@@ -965,11 +942,11 @@ export default function TanksVessels({
             return (
               <StaggerItem key={v.id}>
                 <div
-                  onClick={() => onSelectTank?.(v.id)}
+                  onClick={() => openVessel(v)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      onSelectTank?.(v.id);
+                      openVessel(v);
                     }
                   }}
                   role="button"
@@ -1010,7 +987,7 @@ export default function TanksVessels({
                       </span>
                     ) : isReady ? (
                       <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">
-                        {ka ? 'მზადაა' : 'Ready'}
+                        {ka ? 'ცარიელი და სუფთაა' : 'Empty & Clean'}
                       </span>
                     ) : (
                       <span className="rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-stone-500">
@@ -1317,11 +1294,11 @@ export default function TanksVessels({
                   return (
                     <tr
                       key={v.id}
-                      onClick={() => onSelectTank?.(v.id)}
+                      onClick={() => openVessel(v)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
-                          onSelectTank?.(v.id);
+                          openVessel(v);
                         }
                       }}
                       tabIndex={0}

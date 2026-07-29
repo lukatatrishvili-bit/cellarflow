@@ -10,6 +10,7 @@ import type {
   OperationMaterialUsage,
 } from '../lib/wineryState';
 import type { CellarOperationInput } from '../lib/commands/cellarOperation';
+import type { CostEntry } from '../lib/costing';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
   applyTransferCommand,
@@ -56,6 +57,8 @@ interface Props {
   vessels: Vessel[];
   lots: WineLot[];
   inventory?: InventoryItem[];
+  costEntries?: CostEntry[];
+  currency?: string;
   onUpdateVessels: (newVessels: Vessel[]) => void;
   onUpdateLots: (newLots: WineLot[]) => void;
   onAddCellarOperation?: (input: CellarOperationInput) => string;
@@ -64,6 +67,7 @@ interface Props {
   clearPrefilled?: () => void;
   pastTransfers: CellarTransferRecord[];
   onUpdateTransfers: (transfers: CellarTransferRecord[]) => void;
+  onUpdateCostEntries?: (entries: CostEntry[]) => void;
   onApplyTransferCommandResponse?: (response: TransferCommandResponse) => void;
   onApplyTransferReversalCommandResponse?: (response: TransferReversalCommandResponse) => void;
   canExecuteTransfer?: boolean;
@@ -75,8 +79,10 @@ interface Props {
 type TransferRecord = CellarTransferRecord;
 
 export default function TransfersTab({
-  lang, vessels, lots, inventory = [], onUpdateVessels, onUpdateLots, onAddCellarOperation,
+  lang, vessels, lots, inventory = [], costEntries = [], currency = 'GEL',
+  onUpdateVessels, onUpdateLots, onAddCellarOperation,
   prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers,
+  onUpdateCostEntries,
   onApplyTransferCommandResponse, onApplyTransferReversalCommandResponse,
   canExecuteTransfer = true, canSanitizeVessels = true,
   canConsumeTransferMaterials = false, canReverseTransfer = true,
@@ -106,6 +112,9 @@ export default function TransfersTab({
     transferId: string;
     materials: OperationMaterialUsage[];
   } | null>(null);
+  const totalRecordedLoss = pastTransfers
+    .filter(record => record.recordKind !== 'reversal' && !record.reversedByCommandId)
+    .reduce((sum, record) => sum + (Number(record.loss) || 0), 0);
 
   useEffect(() => {
     const restored = pendingTransferCommandIntent();
@@ -288,17 +297,19 @@ export default function TransfersTab({
 
   const applyTransferLocally = (intent: PendingCommandIntent<TransferCommandPayload>) => {
     const applied = applyTransferCommand(
-      { vessels, lots, transfers: pastTransfers },
+      { vessels, lots, transfers: pastTransfers, costEntries },
       intent.payload,
       {
         commandId: intent.commandId,
         actorUsername: intent.payload.operator || 'Cellar Crew',
+        currency,
         performedAt: new Date(),
       },
     );
     onUpdateVessels(applied.state.vessels);
     onUpdateLots(applied.state.lots);
     saveTransfers(applied.state.transfers);
+    onUpdateCostEntries?.(applied.state.costEntries);
     setOperationReceipt(localizedReceipt(applied.result));
     queueTransferMaterials(applied.result);
     resetTransferForm();
@@ -403,7 +414,7 @@ export default function TransfersTab({
     intent: PendingCommandIntent<TransferReversalCommandPayload>,
   ) => {
     const applied = applyTransferReversalCommand(
-      { vessels, lots, transfers: pastTransfers },
+      { vessels, lots, transfers: pastTransfers, costEntries },
       intent.payload,
       {
         commandId: intent.commandId,
@@ -414,6 +425,7 @@ export default function TransfersTab({
     onUpdateVessels(applied.state.vessels);
     onUpdateLots(applied.state.lots);
     saveTransfers(applied.state.transfers);
+    onUpdateCostEntries?.(applied.state.costEntries);
     setOperationReceipt(lang === 'ka'
       ? `გადატანა ${applied.result.originalTransfer.id} დაბრუნებულია და მაკორექტირებელი ჩანაწერი შენახულია.`
       : `Transfer ${applied.result.originalTransfer.id} was reversed with an immutable correction record.`);
@@ -1104,7 +1116,7 @@ export default function TransfersTab({
 
                 <div className="grid grid-cols-2 gap-3.5">
                   <div>
-                    <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">{lang === 'ka' ? 'ტუმბოს მოდელი / შლანგის ნიშანი' : 'Pump Model / Hose Tag'}</label>
+                    <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">{lang === 'ka' ? 'ტუმბოს მოდელი' : 'Pump model'}</label>
                     <input
                       type="text"
                       required
@@ -1276,7 +1288,12 @@ export default function TransfersTab({
           <div className="p-5 bg-white border border-[#e8dfd5] rounded-xl shadow-xs space-y-3 text-stone-850">
             <h3 className="text-sm font-serif font-bold text-stone-900 border-b border-stone-100 pb-2 flex items-center justify-between">
               <span>{lang === 'ka' ? 'გადაადგილებების ჟურნალი' : 'Winery Translocation Movement Logs Ledger'}</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-[#FAF8F5] border font-bold text-slate-400">{pastTransfers.length} {lang === 'ka' ? 'ჩანაწერი' : 'Recorded'}</span>
+              <span className="flex items-center gap-2">
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-mono font-bold text-amber-800">
+                  {lang === 'ka' ? 'ჯამური დანაკარგი' : 'Total loss'}: {Math.round(totalRecordedLoss * 100) / 100} L
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-[#FAF8F5] border font-bold text-slate-400">{pastTransfers.length} {lang === 'ka' ? 'ჩანაწერი' : 'Recorded'}</span>
+              </span>
             </h3>
 
             {reversalTarget && (

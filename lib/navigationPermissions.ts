@@ -2,6 +2,7 @@ import { can, canAccess, type PermissionModule } from '../server/permissions';
 
 export const WINERY_TAB_IDS = [
   'dashboard',
+  'intelligence',
   'intake',
   'lots',
   'lineage',
@@ -20,7 +21,17 @@ export const WINERY_TAB_IDS = [
 
 export type WineryTabId = (typeof WINERY_TAB_IDS)[number];
 
-const OPERATIONAL_WINERY_TAB_IDS = WINERY_TAB_IDS.filter((tabId) => tabId !== 'dashboard');
+/**
+ * Cross-module surfaces that summarise the cellar rather than owning data of
+ * their own. They carry no permission module: they are visible whenever the
+ * role can reach at least one operational destination, and their contents are
+ * filtered per record by the module that actually owns each row.
+ */
+export const AGGREGATE_WINERY_TAB_IDS: readonly WineryTabId[] = ['dashboard', 'intelligence'];
+
+const OPERATIONAL_WINERY_TAB_IDS = WINERY_TAB_IDS.filter(
+  (tabId) => !AGGREGATE_WINERY_TAB_IDS.includes(tabId),
+);
 
 export function permissionModuleFor(moduleId: string, tabId?: string): PermissionModule {
   if (moduleId === 'gvino') {
@@ -67,9 +78,10 @@ export function canViewAppDestination(role: unknown, moduleId: string, tabId?: s
   if (moduleId === 'portal' || moduleId === 'settings') return true;
   if (moduleId === 'integrations') return can(role, 'admin');
 
-  // The cellar overview is an aggregate surface. It is useful whenever at
-  // least one operational cellar destination is available to the role.
-  if (moduleId === 'gvino' && (tabId === undefined || tabId === 'dashboard')) {
+  // The cellar overview and the intelligence centre are aggregate surfaces.
+  // They are useful whenever at least one operational cellar destination is
+  // available to the role, and they never expose more than that role can read.
+  if (moduleId === 'gvino' && (tabId === undefined || AGGREGATE_WINERY_TAB_IDS.includes(tabId as WineryTabId))) {
     return OPERATIONAL_WINERY_TAB_IDS.some((candidate) => (
       canAccess(role, permissionModuleFor('gvino', candidate), 'view')
     ));

@@ -10,6 +10,8 @@ import { localizedRoleLabel } from '../lib/roleLabels';
 import MasterBillingAdmin from './MasterBillingAdmin';
 import { clearTenantCachedData } from '../lib/tenantCache';
 
+const AiOperationsAdmin = React.lazy(() => import('./AiOperationsAdmin'));
+
 interface MasterAdminPortalProps {
   lang: string;
   currentUser: { username: string; fullName: string };
@@ -187,7 +189,7 @@ export default function MasterAdminPortal({
   setToastMessage
 }: MasterAdminPortalProps) {
   const isKa = lang === 'ka';
-  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'billing' | 'ops' | 'audit' | 'client-errors' | 'terminal'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'billing' | 'ai-ops' | 'ops' | 'audit' | 'client-errors' | 'terminal'>('stats');
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -651,6 +653,7 @@ export default function MasterAdminPortal({
         <nav className="w-56 border-r border-cyan-900/20 bg-[#090708] p-4 flex flex-col gap-2 shrink-0">
           <span className="text-[9px] uppercase text-cyan-800 font-bold tracking-widest mb-2 block">{isKa ? 'ინტერფეისები' : 'Interfaces'}</span>
           {[
+            { id: 'ai-ops', label: isKa ? 'AI ოპერაციები' : 'AI Operations', icon: Cpu },
             { id: 'billing', label: isKa ? 'გამოწერები და ფასები' : 'Subscriptions', icon: CreditCard },
             { id: 'stats', label: isKa ? 'სისტემის მდგომარეობა' : 'System Health', icon: Activity },
             { id: 'users', label: isKa ? 'მომხმარებლები' : 'User Accounts', icon: User },
@@ -1072,7 +1075,7 @@ export default function MasterAdminPortal({
                     <div className="flex flex-col sm:flex-row gap-3">
                       <a
                         href={systemHealth?.actions.exportUrl || '/api/admin/export'}
-                        download="cellarflow_export.json"
+                        download="vinos_export.json"
                         className="flex-1 py-2.5 bg-emerald-950/40 hover:bg-emerald-950/70 text-emerald-300 hover:text-emerald-200 border border-emerald-500/20 hover:border-emerald-500/40 rounded-xl text-xs font-bold cursor-pointer transition-all uppercase tracking-wider text-center"
                       >
                         {isKa ? 'სანიტიზებული სარეზერვო JSON-ის ჩამოტვირთვა' : 'Download Sanitized Backup JSON'}
@@ -1664,6 +1667,28 @@ export default function MasterAdminPortal({
                   exit={{ opacity: 0, y: -10 }}
                 >
                   <MasterBillingAdmin isKa={isKa} onMessage={setToastMessage} />
+                </motion.div>
+              )}
+
+              {activeTab === 'ai-ops' && (
+                <motion.div
+                  key="ai-ops"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <React.Suspense
+                    fallback={(
+                      <div className="flex min-h-[55vh] items-center justify-center gap-3 text-cyan-400">
+                        <RefreshCw className="h-5 w-5 animate-spin" />
+                        <span className="text-xs font-bold uppercase tracking-widest">
+                          {isKa ? 'AI ოპერაციების ჩატვირთვა...' : 'Loading AI operations...'}
+                        </span>
+                      </div>
+                    )}
+                  >
+                    <AiOperationsAdmin isKa={isKa} onMessage={setToastMessage} />
+                  </React.Suspense>
                 </motion.div>
               )}
 

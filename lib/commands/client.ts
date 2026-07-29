@@ -103,6 +103,7 @@ export interface TransferCommandResponse {
     vessels: Vessel[];
     lots: WineLot[];
     transfers: CellarTransferRecord[];
+    costEntries: CostEntry[];
   };
 }
 
@@ -116,6 +117,7 @@ export interface TransferReversalCommandResponse {
     vessels: Vessel[];
     lots: WineLot[];
     transfers: CellarTransferRecord[];
+    costEntries: CostEntry[];
   };
 }
 

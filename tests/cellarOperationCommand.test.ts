@@ -152,6 +152,47 @@ describe('cellar.operation domain command', () => {
     expect(applied.state.auditLogs).toHaveLength(1);
   });
 
+  it('automatically posts labor, energy, and overhead when costing is enabled', () => {
+    const applied = applyCellarOperationCommand(state(), {
+      operationId: 'OP-AUTO-COST-1',
+      auditId: 'AUDIT-AUTO-COST-1',
+      operation: {
+        date: '2026-09-10',
+        type: 'racking',
+        lotId: 'LOT-CELLAR-1',
+        vesselId: null,
+        vesselToId: null,
+        laborHours: 2,
+        energyKwh: 5,
+        operator: 'Nino',
+        notes: '',
+      },
+    }, {
+      ...context,
+      costAutomation: {
+        enabled: true,
+        laborRatePerHour: 20,
+        energyRatePerKwh: 1,
+        overheadPercent: 10,
+      },
+    });
+
+    expect(applied.result.costEntries).toEqual([
+      expect.objectContaining({ category: 'labor', amount: 40, quantity: 2 }),
+      expect.objectContaining({ category: 'energy', amount: 5, quantity: 5 }),
+      expect.objectContaining({ category: 'overhead', amount: 4.5 }),
+    ]);
+    expect(applied.result.receipt.costPosted).toBe(49.5);
+    expect(applied.result.operation.reversalSnapshot).toMatchObject({
+      version: 2,
+      costEntries: [
+        { id: 'cost-labor-OP-AUTO-COST-1', amount: 40 },
+        { id: 'cost-energy-OP-AUTO-COST-1', amount: 5 },
+        { id: 'cost-overhead-OP-AUTO-COST-1', amount: 4.5 },
+      ],
+    });
+  });
+
   it('deducts several additions from one operation and posts one linked cost per material', () => {
     const multiState = state({
       inventory: [
@@ -211,14 +252,38 @@ describe('cellar.operation domain command', () => {
     }));
   });
 
-  it('requires the operating vessel and lot to agree before changing their state', () => {
+  it('requires the operating vessel to belong to the selected lot', () => {
     expect(() => applyCellarOperationCommand(state({
       vessels: [vessel({ assignedLotId: 'LOT-OTHER' })],
     }), payload, context)).toThrowError(expect.objectContaining({ code: 'cellar_operation_vessel_mismatch' }));
 
-    expect(() => applyCellarOperationCommand(state({
+    const applied = applyCellarOperationCommand(state({
       vessels: [vessel({ currentVolume: 900 })],
-    }), payload, context)).toThrowError(expect.objectContaining({ code: 'cellar_operation_volume_inconsistent' }));
+    }), payload, context);
+    expect(applied.result.vessel?.currentVolume).toBe(900);
+  });
+
+  it('applies a lot-level volume change to one operating vessel when the lot is distributed', () => {
+    const applied = applyCellarOperationCommand(state({
+      vessels: [
+        vessel({ id: 'TANK-CELLAR-1', currentVolume: 600 }),
+        vessel({ id: 'TANK-CELLAR-2', currentVolume: 320 }),
+      ],
+    }), {
+      operationId: 'OP-SPLIT-PRESS-1',
+      auditId: 'AUDIT-SPLIT-PRESS-1',
+      operation: {
+        ...payload.operation,
+        type: 'pressing',
+        materialId: undefined,
+        dose: undefined,
+        volumeAfterL: 850,
+      },
+    }, context);
+
+    expect(applied.result.lot.currentVolume).toBe(850);
+    expect(applied.result.vessel?.currentVolume).toBe(530);
+    expect(applied.state.vessels.find(item => item.id === 'TANK-CELLAR-2')?.currentVolume).toBe(320);
   });
 
   it('validates volume changes against operation semantics and vessel capacity', () => {

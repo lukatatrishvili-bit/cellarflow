@@ -15,7 +15,12 @@ import {
   isActiveBottlingRun,
 } from '../lib/bottlingIntegrity';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
-import { applyBottlingCommand, BOTTLING_FORMATS, type BottlingCommandPayload } from '../lib/commands/bottling';
+import {
+  applyBottlingCommand,
+  BOTTLING_FORMATS,
+  bottlingFormatLitres,
+  type BottlingCommandPayload,
+} from '../lib/commands/bottling';
 import type { BottlingReversalCommandPayload } from '../lib/commands/bottlingReversal';
 import {
   inventoryItemsForPackagingComponent,
@@ -31,6 +36,7 @@ import {
   submitBottlingReversalCommand,
   type BottlingCommandResponse,
 } from '../lib/commands/client';
+import DateInput from './ui/DateInput';
 
 interface Props {
   lang: Language;
@@ -86,7 +92,7 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const PACKAGING_COMPONENTS: Array<{ key: BottlingPackagingComponent; en: string; ka: string }> = [
   { key: 'bottle', en: 'Bottle / ceramic', ka: 'ბოთლი / კერამიკა' },
   { key: 'closure', en: 'Cork / closure', ka: 'საცობი' },
-  { key: 'capsule', en: 'Capsule', ka: 'კაფსულა' },
+  { key: 'capsule', en: 'Capsule', ka: 'ჩაჩი' },
   { key: 'label', en: 'Label', ka: 'ეტიკეტი' },
   { key: 'box', en: 'Box / case', ka: 'ყუთი' },
 ];
@@ -133,6 +139,8 @@ export default function BottlingTab({
   const [lotNumber, setLotNumber] = useState('');
   const [operator, setOperator] = useState('');
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [customBottleSize, setCustomBottleSize] = useState('0.75');
+  const [customBottleCount, setCustomBottleCount] = useState('');
   const [packagingSelections, setPackagingSelections] = useState<BottlingPackagingSelections>({});
   const [bottlesPerBox, setBottlesPerBox] = useState('6');
   const [bottlingServiceCost, setBottlingServiceCost] = useState('');
@@ -171,12 +179,29 @@ export default function BottlingTab({
   const lot = lots.find(l => l.id === lotId) || null;
   const availableL = lot ? lot.currentVolume : 0;
 
+  const displayedFormats = useMemo(() => {
+    const known = new Set(BOTTLE_FORMATS.map(format => format.key));
+    const custom = Object.keys(counts)
+      .filter(key => !known.has(key) && bottlingFormatLitres(key) !== null)
+      .map(key => ({
+        key,
+        litres: bottlingFormatLitres(key) as number,
+        labelKa: `${key} ლ`,
+        kind: 'bottle' as const,
+      }));
+    return [...BOTTLE_FORMATS, ...custom];
+  }, [counts]);
   const volumeBottledL = useMemo(
-    () => round1(BOTTLE_FORMATS.reduce((acc, f) => acc + (counts[f.key] || 0) * f.litres, 0)),
+    () => round1(Object.entries(counts).reduce(
+      (acc, [key, count]) => acc + count * (bottlingFormatLitres(key) || 0),
+      0,
+    )),
     [counts],
   );
-  const totalBottles = BOTTLE_FORMATS.filter(f => f.kind === 'bottle').reduce((a, f) => a + (counts[f.key] || 0), 0);
-  const totalCeramic = BOTTLE_FORMATS.filter(f => f.kind === 'ceramic').reduce((a, f) => a + (counts[f.key] || 0), 0);
+  const totalCeramic = counts.ceramic || 0;
+  const totalBottles = Object.entries(counts)
+    .filter(([key]) => key !== 'ceramic')
+    .reduce((sum, [, count]) => sum + count, 0);
 
   const overfill = volumeBottledL > availableL + 0.001;
   const noBottles = totalBottles + totalCeramic === 0;
@@ -255,6 +280,15 @@ export default function BottlingTab({
     setPendingIntent(null);
     setCommandError(null);
     resetForm();
+  };
+
+  const addCustomBottleFormat = () => {
+    const litres = Number(customBottleSize);
+    const count = Number(customBottleCount);
+    if (!Number.isFinite(litres) || litres <= 0 || litres > 30 || !Number.isSafeInteger(count) || count <= 0) return;
+    const key = String(litres);
+    setCounts(previous => ({ ...previous, [key]: (previous[key] || 0) + count }));
+    setCustomBottleCount('');
   };
 
   const applyBottlingLocally = (intent: PendingCommandIntent<BottlingCommandPayload>) => {
@@ -496,7 +530,7 @@ export default function BottlingTab({
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
-                  <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+                  <DateInput lang={lang} value={date} onValueChange={setDate} className={inputCls} required />
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'ლოტის №' : 'Lot №'}</label>
@@ -512,7 +546,7 @@ export default function BottlingTab({
               <div>
                 <label className={labelCls}>{ka ? 'ბოთლის ფორმატები (ცალი)' : 'Bottle formats (units)'}</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {BOTTLE_FORMATS.map(f => (
+                  {displayedFormats.map(f => (
                     <div key={f.key} className={`border rounded-lg px-2.5 py-1.5 ${f.kind === 'ceramic' ? 'border-amber-300 bg-amber-50/40 dark:bg-amber-950/20' : 'border-stone-200 dark:border-stone-800'}`}>
                       <span className="text-[10px] font-bold text-stone-500 block">{f.labelKa}</span>
                       <input type="number" min={0} value={counts[f.key] || ''} placeholder="0"
@@ -520,6 +554,39 @@ export default function BottlingTab({
                         className="w-full bg-transparent text-sm font-bold text-stone-800 outline-none dark:text-amber-50" />
                     </div>
                   ))}
+                </div>
+                <div className="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2 rounded-lg border border-dashed border-stone-300 bg-stone-50 p-2 dark:border-stone-700 dark:bg-stone-900">
+                  <label className="text-[9px] font-bold text-stone-500">
+                    {ka ? 'სხვა ზომა (ლ)' : 'Custom size (L)'}
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="30"
+                      step="0.001"
+                      value={customBottleSize}
+                      onChange={event => setCustomBottleSize(event.target.value)}
+                      className="mt-1 w-full rounded border border-stone-200 bg-white px-2 py-1.5 text-xs font-bold outline-none"
+                    />
+                  </label>
+                  <label className="text-[9px] font-bold text-stone-500">
+                    {ka ? 'რაოდენობა' : 'Units'}
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={customBottleCount}
+                      onChange={event => setCustomBottleCount(event.target.value)}
+                      placeholder="0"
+                      className="mt-1 w-full rounded border border-stone-200 bg-white px-2 py-1.5 text-xs font-bold outline-none"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={addCustomBottleFormat}
+                    className="self-end rounded bg-[#4e0e15] px-3 py-2 text-[10px] font-bold text-white hover:bg-[#6b151e]"
+                  >
+                    {ka ? 'დამატება' : 'Add'}
+                  </button>
                 </div>
               </div>
 

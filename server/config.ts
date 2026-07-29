@@ -16,26 +16,28 @@ export function cleanEnv(val: string | undefined): string {
   return val.replace(/^\uFEFF/, '').trim();
 }
 
+/**
+ * Google OAuth credentials, resolved as a pair: environment (Secret Manager /
+ * Cloud Run / .env) first, runtime `db.googleConfig` only as a fallback. The
+ * pair is never mixed — an ID from one client with a secret from another fails
+ * the token exchange in a way that is very hard to read from the outside.
+ *
+ * Never hardcode a client here. A credential baked into the source outlives the
+ * client itself: once it is deleted in Cloud Console every deployment keeps
+ * redirecting to it and users land on Google's "Error 401: deleted_client"
+ * page instead of this app's OAuth setup screen.
+ */
 export function getGoogleOAuthCreds(db: any): { clientId: string; clientSecret: string } {
-  const activeClientId = "445298255193-i21igsd0tfgicu4l364m2jo5pg8a6q4v.apps.googleusercontent.com";
-  const activeClientSecret = "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";
+  const envId = cleanEnv(process.env.GOOGLE_CLIENT_ID);
+  const envSecret = cleanEnv(process.env.GOOGLE_CLIENT_SECRET);
+  if (envId && envSecret) return { clientId: envId, clientSecret: envSecret };
 
-  const rawEnvId = cleanEnv(process.env.GOOGLE_CLIENT_ID);
-  const rawEnvSec = cleanEnv(process.env.GOOGLE_CLIENT_SECRET);
-  const rawDbId = cleanEnv(db?.googleConfig?.clientId);
-  const rawDbSec = cleanEnv(db?.googleConfig?.clientSecret);
+  const dbId = cleanEnv(db?.googleConfig?.clientId);
+  const dbSecret = cleanEnv(db?.googleConfig?.clientSecret);
+  if (dbId && dbSecret) return { clientId: dbId, clientSecret: dbSecret };
 
-  const isLegacy = (str: string) => !str || str.includes('8q7k0') || str.includes('Z2DZxdSz');
-
-  const clientId = (!isLegacy(rawEnvId) ? rawEnvId : (!isLegacy(rawDbId) ? rawDbId : activeClientId));
-  const clientSecret = (!isLegacy(rawEnvSec) ? rawEnvSec : (!isLegacy(rawDbSec) ? rawDbSec : activeClientSecret));
-
-  if (db && db.googleConfig) {
-    db.googleConfig.clientId = clientId;
-    db.googleConfig.clientSecret = clientSecret;
-  }
-
-  return { clientId, clientSecret };
+  // Partial config: report what is set so the caller shows the setup screen.
+  return { clientId: envId || dbId, clientSecret: envSecret || dbSecret };
 }
 
 export function updateEnvFile(updates: Record<string, string>) {

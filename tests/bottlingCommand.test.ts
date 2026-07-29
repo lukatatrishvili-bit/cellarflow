@@ -200,6 +200,8 @@ describe('cellar.bottling domain command', () => {
       .toThrowError(expect.objectContaining({ code: 'invalid_bottling_payload', statusCode: 400 }));
     expect(() => parseBottlingCommandPayload({ ...payload, formats: { '0.75': 1.5 } }))
       .toThrowError(expect.objectContaining({ code: 'invalid_bottling_payload' }));
+    expect(parseBottlingCommandPayload({ ...payload, formats: { '0.33': 100 } }).formats)
+      .toEqual({ '0.33': 100 });
     expect(() => parseBottlingCommandPayload({ ...payload, date: '2026-02-30' }))
       .toThrowError(expect.objectContaining({ code: 'invalid_bottling_payload' }));
   });

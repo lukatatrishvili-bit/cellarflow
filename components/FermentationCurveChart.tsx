@@ -195,8 +195,9 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
     // Right Y Scale: Density Specific Gravity (SG)
     const minSG = d3.min(formattedData, (d) => d.density) || 0.990;
     const maxSG = d3.max(formattedData, (d) => d.density) || 1.110;
+    const densityFloor = showForecastLine ? Math.min(minSG, 0.990) : minSG;
     const yDensityScale = d3.scaleLinear()
-      .domain([minSG - 0.005, maxSG + 0.005])
+      .domain([densityFloor - 0.005, maxSG + 0.005])
       .range([height, 0]);
 
     // Draw grid background lines
@@ -492,7 +493,7 @@ export default function FermentationCurveChart({ logs, selectedLotId, lang = 'en
             ref={svgRef}
             width={dimensions.width}
             height={dimensions.height}
-            className="overflow-visible block max-w-full"
+            className="block max-w-full overflow-hidden"
           />
 
           {/* D3 Multi-axis Legends */}

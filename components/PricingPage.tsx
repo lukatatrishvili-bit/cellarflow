@@ -159,7 +159,7 @@ export default function PricingPage({ lang, isLoggedIn, currentRole, onLanguageC
       <header className="sticky top-0 z-20 border-b border-[#e8dfd5]/80 bg-[#f8f6f2]/90 px-4 py-3 backdrop-blur-xl dark:border-white/10 dark:bg-[#0a0607]/90">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
           <a href="/" className="flex items-center gap-2 text-sm font-black text-[#4e0e15] dark:text-[#d7b36a]">
-            <ArrowLeft className="h-4 w-4" /> Cellarflow
+            <ArrowLeft className="h-4 w-4" /> VinOS
           </a>
           <div className="flex items-center gap-2">
             {(['en', 'ka'] as Language[]).map(code => (

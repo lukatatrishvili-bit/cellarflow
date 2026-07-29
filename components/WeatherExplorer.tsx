@@ -9,6 +9,7 @@ import {
   fetchDayWeather, describeWeatherCode, localISODate, maxForecastDate, DayWeather
 } from '../lib/weatherApi';
 import LocationPicker, { PickedLocation } from './LocationPicker';
+import DateInput from './ui/DateInput';
 
 interface Props {
   lang: Language;
@@ -189,12 +190,12 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
             <label className="text-[9px] uppercase font-mono block mb-1.5 font-bold text-stone-400">
               {ka ? 'თარიღი' : 'Date'}
             </label>
-            <input
-              type="date"
+            <DateInput
+              lang={lang}
               value={date}
               min="1940-01-01"
               max={maxForecastDate()}
-              onChange={(e) => e.target.value && setDate(e.target.value)}
+              onValueChange={value => value && setDate(value)}
               className="bg-stone-50 border border-stone-200 px-3 py-2 rounded-lg text-xs font-bold text-stone-700 outline-none cursor-pointer"
             />
             <div className="mt-1.5 flex gap-1">

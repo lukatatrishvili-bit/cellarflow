@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Warehouse, Plus, Trash2, Boxes, Thermometer, Droplet, PackagePlus, LockKeyhole } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { WineLot, BottlingRunRecord, SalesDispatchRecord, SalesOrderRecord } from '../lib/wineryState';
+import DateInput from './ui/DateInput';
 import {
   computeStock,
   isFinishedGoodsLot,
@@ -599,7 +600,7 @@ export default function StorageTab({
                   ))}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div><label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label><input type="date" value={mDate} onChange={e => setMDate(e.target.value)} disabled={formLocked} className={inputCls} /></div>
+                  <div><label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label><DateInput lang={lang} value={mDate} onValueChange={setMDate} disabled={formLocked} className={inputCls} required /></div>
                   <div><label className={labelCls}>{ka ? 'ბოთლი' : 'Bottles'}</label><input type="number" min={1} value={mQty} onChange={e => setMQty(e.target.value)} disabled={formLocked} className={inputCls} /></div>
                 </div>
                 <div>

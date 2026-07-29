@@ -902,7 +902,7 @@ export default function ProfileSettingsTab({
           </div>
           <a
             href="/api/admin/export"
-            download="cellarflow_export.json"
+            download="vinos_export.json"
             className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-xs cursor-pointer shadow-xs transition-colors flex items-center justify-center gap-2 text-center text-decoration-none"
           >
             📥 {lang === 'ka' ? 'მონაცემთა ბაზის ჩამოტვირთვა' : 'Export and Download Database JSON'}

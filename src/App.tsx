@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
+import type { AiFinding } from '../lib/ai/types';
 import { useWineryState } from '../hooks/useWineryState';
 import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
@@ -46,6 +47,8 @@ const BottlingTab = lazyRetry(() => import('../components/BottlingTab'));
 const EnoCalculators = lazyRetry(() => import('../components/EnoCalculators'));
 const InventoryTab = lazyRetry(() => import('../components/InventoryTab'));
 const AiWinemaker = lazyRetry(() => import('../components/AiWinemaker'));
+const AiIntelligenceTab = lazyRetry(() => import('../components/AiIntelligenceTab'));
+const AiSignalStrip = lazyRetry(() => import('../components/AiSignalStrip'));
 const TasksTab = lazyRetry(() => import('../components/TasksTab'));
 const NotesTab = lazyRetry(() => import('../components/NotesTab'));
 const OfficialDocsTab = lazyRetry(() => import('../components/OfficialDocsTab'));
@@ -521,6 +524,57 @@ export default function App() {
     return combined.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
   }, [state.vessels, state.lots, state.fermLogs, state.labLogs, state.inventory, state.tasks, activeTelemetry, state.lang]);
 
+  // Everything the intelligence layer reads, assembled once. Both the
+  // contextual signal strip and the intelligence centre consume this
+  // evaluation, so the rule engine runs once per state change, not per screen.
+  const intelligenceData = useMemo(() => ({
+    vessels: state.vessels,
+    lots: state.lots,
+    fermLogs: state.fermLogs,
+    labLogs: state.labLogs,
+    inventory: state.inventory,
+    tasks: state.tasks,
+    cellarOps: state.cellarOps,
+    transfers: state.transfers,
+    bottlingRuns: state.bottlingRuns,
+    grapeIntakes: state.grapeIntakes,
+    blocks: state.blocks,
+    scoutings: state.scoutings,
+    sprays: state.sprays,
+    samplings: state.samplings,
+    harvests: state.harvests,
+    certifications: state.certificationRecords,
+    salesOrders: state.salesOrders,
+    companyProfile: state.companyProfile,
+  }), [
+    state.vessels, state.lots, state.fermLogs, state.labLogs, state.inventory, state.tasks,
+    state.cellarOps, state.transfers, state.bottlingRuns, state.grapeIntakes, state.blocks,
+    state.scoutings, state.sprays, state.samplings, state.harvests, state.certificationRecords,
+    state.salesOrders, state.companyProfile,
+  ]);
+
+  const [intelligenceFindings, setIntelligenceFindings] = useState<AiFinding[]>([]);
+  useEffect(() => {
+    let active = true;
+    if (!state.isLoggedIn) {
+      setIntelligenceFindings([]);
+      return () => { active = false; };
+    }
+
+    // The detectors are substantial but not required for the public/login
+    // shell. Load them after authentication, then keep evaluating locally on
+    // every relevant state change.
+    void import('../lib/ai/rules').then(({ evaluateRules }) => {
+      if (!active) return;
+      setIntelligenceFindings(evaluateRules({
+        ...intelligenceData,
+        lang: state.lang,
+        config: state.companyProfile.aiConfig,
+      }).findings);
+    });
+    return () => { active = false; };
+  }, [intelligenceData, state.lang, state.companyProfile.aiConfig, state.isLoggedIn]);
+
   const handleSelectAlert = (a: Alert) => {
     const tabByCategory: Record<Alert['category'], string> = {
       so2: 'labs',
@@ -574,6 +628,7 @@ export default function App() {
       label: state.lang === 'ka' ? 'მიმოხილვა' : 'Overview',
       tabs: [
         { id: 'dashboard', label: t.overview, icon: LayoutDashboard },
+        { id: 'intelligence', label: t.ai_intelligence, icon: BrainCircuitIcon },
       ],
     },
     {
@@ -1342,7 +1397,7 @@ export default function App() {
               </div>
 
               {state.verificationPending && (
-                <div className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/30 dark:border-amber-900/60">
+                <div role="status" aria-live="polite" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/30 dark:border-amber-900/60">
                   <div className="flex items-start gap-2.5">
                     <MailCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
                     <div className="min-w-0">
@@ -1407,7 +1462,7 @@ export default function App() {
                       setAuthSubmitting(true);
                       state.setLoginError(null);
                       try {
-                        await state.handleAuthRegister({
+                        const registered = await state.handleAuthRegister({
                           email: submission.email,
                           fullName: submission.fullName,
                           passcode: submission.passcode,
@@ -1422,6 +1477,7 @@ export default function App() {
                           enabledModules: ['vazi', 'gvino'],
                           enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
                         });
+                        if (registered) setIsRegistering(false);
                       } finally {
                         setAuthSubmitting(false);
                       }
@@ -1634,6 +1690,7 @@ export default function App() {
             bottlingRuns={state.bottlingRuns}
             costEntries={state.costEntries}
             onUpdateCostEntries={state.setCostEntries}
+            onUpdateCompany={state.setCompanyProfile}
             pricing={state.winePricing}
             onUpdatePricing={state.setWinePricing}
             onNavigate={handleNavigate}
@@ -1641,6 +1698,7 @@ export default function App() {
             canDeleteCost={canAccess(state.currentUser.role, 'costs', 'delete') && billingAllows('production_cost_tracking')}
             canUpdatePricing={canAccess(state.currentUser.role, 'sales', 'update')}
             canExportCosts={canAccess(state.currentUser.role, 'costs', 'export') && canAccess(state.currentUser.role, 'sales', 'export') && billingAllows('advanced_reports')}
+            canManageAutomation={canAccess(state.currentUser.role, 'costs', 'update') && billingAllows('production_cost_tracking')}
           />
         </Suspense>
       ) : state.activeModule === 'storage' ? (
@@ -1878,6 +1936,20 @@ export default function App() {
             ) : (
             <Suspense fallback={<ModuleLoader />}>
 
+            {/* Contextual intelligence: appears only when this screen's own
+                area has something at warning severity or above. */}
+            {state.activeTab !== 'intelligence' && (
+              <Suspense fallback={null}>
+                <AiSignalStrip
+                  findings={intelligenceFindings}
+                  activeTab={state.activeTab}
+                  role={state.currentUser.role}
+                  lang={state.lang}
+                  onOpen={() => state.setActiveTab('intelligence')}
+                />
+              </Suspense>
+            )}
+
             {/* A. DASHBOARD TAB */}
             {state.activeTab === 'dashboard' && (
               <WineryDashboardTab
@@ -1900,6 +1972,59 @@ export default function App() {
                 setPrefilledTaskPriority={state.setPrefilledTaskPriority}
                 setPrefilledTaskDesc={state.setPrefilledTaskDesc}
               />
+            )}
+
+            {/* A1. WINERY INTELLIGENCE */}
+            {state.activeTab === 'intelligence' && (
+              <Suspense fallback={<ModuleLoader />}>
+                <AiIntelligenceTab
+                  lang={state.lang}
+                  role={state.currentUser.role}
+                  aiConfig={state.companyProfile.aiConfig}
+                  canConfigure={canAccess(state.currentUser.role, 'company_profile', 'update')}
+                  canReview={canAccess(state.currentUser.role, 'tasks', 'update')}
+                  onConfigSaved={(aiConfig) => {
+                    state.setCompanyProfile((current) => ({ ...current, aiConfig }));
+                  }}
+                  data={intelligenceData}
+                  findings={intelligenceFindings}
+                  onCreateTask={canAccess(state.currentUser.role, 'tasks', 'create')
+                    ? (title, priority, dueDate, description) => {
+                      state.handleAddNewTask(title, priority, dueDate, description);
+                    }
+                    : undefined}
+                  onNavigate={(targetModule) => {
+                    // Findings name the module they belong to; map it onto the
+                    // winery tab that actually shows that work.
+                    const tabByModule: Record<string, string> = {
+                      tasks: 'tasks',
+                      labs: 'labs',
+                      operations: 'operations',
+                      transfers: 'transfers',
+                      bottling: 'bottling',
+                      inventory: 'inventory',
+                      fermentation: 'fermentation',
+                      calculators: 'calculators',
+                      vessels: 'vessels',
+                      lots: 'lots',
+                    };
+                    if (targetModule === 'vazi') {
+                      state.setActiveModule('vazi');
+                      return;
+                    }
+                    if (targetModule === 'documents' || targetModule === 'certification') {
+                      state.setActiveModule('docs');
+                      return;
+                    }
+                    const tab = tabByModule[targetModule];
+                    if (tab) {
+                      state.setActiveModule('gvino');
+                      state.setActiveTab(tab);
+                    }
+                  }}
+                  setToastMessage={state.setToastMessage}
+                />
+              </Suspense>
             )}
 
             {/* B. VESSELS TAB */}
@@ -1949,6 +2074,7 @@ export default function App() {
                 intakes={state.grapeIntakes}
                 currentUserName={state.currentUser.fullName}
                 currency={state.companyProfile.currency || 'GEL'}
+                costAutomation={state.companyProfile.costAutomation}
                 region={state.companyProfile.region || 'Kakheti'}
                 onReceiveGrapes={state.handleReceiveGrapes}
                 lots={state.lots}
@@ -1985,6 +2111,8 @@ export default function App() {
                 stockMovements={state.stockMovements}
                 salesOrders={state.salesOrders}
                 salesDispatches={state.salesDispatches}
+                inventory={state.inventory}
+                onUpdateInventory={state.setInventory}
                 currency={state.companyProfile.currency || 'GEL'}
                 setActiveTab={state.setActiveTab}
                 setSelectedTankId={state.setSelectedTankId}
@@ -2024,6 +2152,7 @@ export default function App() {
                 currentUserName={state.currentUser.fullName}
                 currentUsername={state.currentUser.username}
                 currency={state.companyProfile.currency || 'GEL'}
+                costAutomation={state.companyProfile.costAutomation}
                 onAddOperation={state.handleAddCellarOperation}
                 onUpdateLots={state.setLots}
                 onUpdateVessels={state.setVessels}
@@ -2032,6 +2161,8 @@ export default function App() {
                 onUpdateCostEntries={state.setCostEntries}
                 onUpdateAuditLogs={state.setAuditLogs}
                 onApplyCellarOperationCommandResponse={state.applyCellarOperationCommandResponse}
+                prefillVesselId={state.prefilledOpVesselId}
+                clearPrefill={() => state.setPrefilledOpVesselId('')}
                 {...cellarPermissions.operations}
                 setToastMessage={state.setToastMessage}
               />
@@ -2044,6 +2175,8 @@ export default function App() {
                 vessels={state.vessels}
                 lots={state.lots}
                 inventory={state.inventory}
+                costEntries={state.costEntries}
+                currency={state.companyProfile.currency || 'GEL'}
                 onUpdateVessels={state.setVessels}
                 onUpdateLots={state.setLots}
                 onAddCellarOperation={state.handleAddCellarOperation}
@@ -2052,6 +2185,7 @@ export default function App() {
                 prefilledDestId={state.prefilledDestId}
                 pastTransfers={state.transfers}
                 onUpdateTransfers={state.setTransfers}
+                onUpdateCostEntries={state.setCostEntries}
                 onApplyTransferCommandResponse={state.applyTransferCommandResponse}
                 onApplyTransferReversalCommandResponse={state.applyTransferReversalCommandResponse}
                 clearPrefilled={() => {

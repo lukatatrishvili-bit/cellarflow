@@ -908,6 +908,9 @@ export function validateSyncPayload(
       if (key === 'users') {
         throw new Error('Modifying user credentials via sync is forbidden');
       }
+      if (key === 'aiFindings') {
+        throw new Error('AI findings are server-owned and cannot be modified via sync');
+      }
       if (key === 'companyProfile') {
         const profile = collections[key];
         if (profile && typeof profile === 'object') {
@@ -2792,6 +2795,9 @@ export function authorizeSyncPayload(
   if (deletionError) return deletionError;
 
   for (const [collection, incoming] of Object.entries(collections)) {
+    if (collection === 'aiFindings') {
+      return 'Forbidden: AI findings are server-owned and cannot be modified via sync.';
+    }
     if (!moduleForSyncCollection(collection)) {
       return `Forbidden: ${collection} is not an authorized sync collection.`;
     }

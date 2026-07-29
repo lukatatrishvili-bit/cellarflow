@@ -48,6 +48,55 @@ describe('database persistence', () => {
     expect(saved.users).toContainEqual({ username: 'alice', role: 'Owner/Admin' });
   });
 
+  it('serializes the cache without indentation', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
+    const dbPath = path.join(root, 'db.json');
+    const dbModule = await loadDbModule(dbPath);
+
+    const db = dbModule.getDB();
+    db.users.push({ username: 'alice', role: 'Owner/Admin' });
+    dbModule.saveDB();
+
+    // saveDB runs on every mutation and the result is written to disk and
+    // uploaded to GCS — pretty-printing costs ~30% of the payload for nothing.
+    const raw = fs.readFileSync(dbPath, 'utf8');
+    expect(raw).not.toMatch(/\n\s+"users"/);
+    expect(JSON.parse(raw).users).toContainEqual({ username: 'alice', role: 'Owner/Admin' });
+  });
+
+  it('uploads the organization save to GCS exactly once', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
+    const dbPath = path.join(root, 'db.json');
+    const uploadDb = vi.fn(async () => {});
+
+    vi.resetModules();
+    vi.doUnmock('@prisma/client');
+    vi.doMock('../server/gcsStore', () => ({
+      gcsEnabled: true,
+      uploadDb,
+      downloadDb: vi.fn(async () => null),
+      gcsTarget: () => 'gs://test-bucket/db.json',
+    }));
+    process.env = { ...originalEnv, DATABASE_PATH: dbPath, GCS_BUCKET: 'test-bucket' };
+    const dbModule = await import('../server/db');
+
+    const db = dbModule.getDB();
+    db.users.push({ username: 'alice', email: 'alice@example.com', fullName: 'Alice', role: 'Owner/Admin', activeOrganizationId: 'org-1' });
+    db.organizations.push({ id: 'org-1', name: 'Alice Estate' });
+    db.memberships.push({ id: 'mem-1', userId: 'alice', organizationId: 'org-1', role: 'Owner/Admin' });
+
+    await dbModule.saveUserData('alice', dbModule.createEmptyUserData());
+
+    // Without Postgres, GCS is the durable store — the save must reach it, but
+    // a single save must not queue a second identical upload (which would also
+    // pin a full serialized copy of the database in memory until it fired).
+    expect(uploadDb).toHaveBeenCalledTimes(1);
+    await dbModule.flushPendingGcsBackup();
+    expect(uploadDb).toHaveBeenCalledTimes(1);
+
+    vi.doUnmock('../server/gcsStore');
+  });
+
   it('does not use the shared legacy db.json.tmp filename', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-db-'));
     const dbPath = path.join(root, 'db.json');

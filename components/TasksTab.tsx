@@ -4,6 +4,7 @@ import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Task, TaskAssignmentInput } from '../lib/wineryState';
 import { useFormDraft } from '../hooks/useFormDraft';
+import DateInput from './ui/DateInput';
 
 interface TaskTeamMember {
   username: string;
@@ -384,12 +385,12 @@ export default function TasksTab({
                   </div>
                   <div>
                     <label htmlFor="task-due-date" className="text-[10px] uppercase font-mono block mb-1 font-semibold text-stone-500">{isKa ? 'ვადა' : 'Due Date'}</label>
-                    <input
+                    <DateInput
                       id="task-due-date"
-                      type="date"
                       name="dueDate"
+                      lang={lang}
                       value={dueDate}
-                      onChange={(event) => setDueDate(event.target.value)}
+                      onValueChange={setDueDate}
                       className="w-full bg-white border border-[#e8dfd5] rounded-lg px-2 py-1 text-stone-700 text-xs"
                     />
                   </div>

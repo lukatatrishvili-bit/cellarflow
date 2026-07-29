@@ -59,6 +59,28 @@ function initialState(blend = false): TransferCommandState {
       ...(blend ? [lot({ id: 'LOT-B', name: 'Cabernet', currentVolume: 400 })] : []),
     ],
     transfers: [],
+    costEntries: blend
+      ? [
+          {
+            id: 'cost-a',
+            date: '2026-07-01',
+            lotId: 'LOT-A',
+            category: 'grape',
+            description: 'Source cost',
+            amount: 1_000,
+            currency: 'GEL',
+          },
+          {
+            id: 'cost-b',
+            date: '2026-07-01',
+            lotId: 'LOT-B',
+            category: 'grape',
+            description: 'Destination cost',
+            amount: 800,
+            currency: 'GEL',
+          },
+        ]
+      : [],
   };
 }
 
@@ -157,6 +179,13 @@ describe('cellar.transfer.reverse domain command', () => {
       }),
     ]));
     expect(reversed.state.lots).toHaveLength(3);
+    expect(reversed.result.changedCostEntries.filter(entry => entry.recordKind === 'reversal'))
+      .toEqual([
+        expect.objectContaining({ lotId: 'LOT-A', category: 'blend_out', amount: 200 }),
+        expect.objectContaining({ lotId: 'LOT-B', category: 'blend_out', amount: 800 }),
+        expect.objectContaining({ lotId: originalPayload.blendLotId, category: 'blend_in', amount: -1_000 }),
+      ]);
+    expect(reversed.state.costEntries.reduce((sum, entry) => sum + entry.amount, 0)).toBe(1_800);
   });
 
   it('rejects compensation when dependent work changed an affected resource', () => {

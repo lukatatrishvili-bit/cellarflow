@@ -1,5 +1,10 @@
 import { signAuditEntries } from '../auditHash';
-import { materialCostEntryFromOperation, type CostEntry } from '../costing';
+import {
+  automaticOperationCostEntries,
+  materialCostEntryFromOperation,
+  resolveCostAutomationSettings,
+  type CostEntry,
+} from '../costing';
 import { CELLAR_OPERATIONS } from '../wineryOperations';
 import type {
   CellarOperation,
@@ -47,6 +52,7 @@ export interface CellarOperationCommandContext {
   commandId: string;
   actorUsername: string;
   currency: string;
+  costAutomation?: unknown;
   performedAt: Date;
 }
 
@@ -294,6 +300,8 @@ function parseOperation(value: unknown): CellarOperationInput {
     );
   }
   const materials = parseMaterials(input.materials);
+  const laborHours = finiteNumber(input.laborHours, 'operation.laborHours', 0, 10_000);
+  const energyKwh = finiteNumber(input.energyKwh, 'operation.energyKwh', 0, 10_000_000);
   if (materials.length > 0 && materialId) {
     throw new CellarOperationCommandError(
       'invalid_cellar_operation_payload',
@@ -312,6 +320,8 @@ function parseOperation(value: unknown): CellarOperationInput {
     ...(volumeAfterL !== undefined ? { volumeAfterL } : {}),
     ...(materialId ? { materialId, dose: dose as number } : {}),
     ...(materials.length ? { materials } : {}),
+    ...(laborHours !== undefined ? { laborHours } : {}),
+    ...(energyKwh !== undefined ? { energyKwh } : {}),
     operator: textValue(input.operator, 'operation.operator', 120, true),
     notes: textValue(input.notes, 'operation.notes', 2_000),
   };
@@ -388,23 +398,17 @@ export function applyCellarOperationCommand(
   const volumeBeforeL = storedQuantity(lot.currentVolume, `Lot ${lot.id}`);
 
   let vessel: Vessel | undefined;
+  let vesselVolumeBefore: number | undefined;
   if (input.vesselId) {
     vessel = currentState.vessels.find(item => item.id === input.vesselId);
     if (!vessel) {
       throw new CellarOperationCommandError('cellar_operation_vessel_not_found', 'The operating vessel was not found.', 404);
     }
-    const vesselVolume = storedQuantity(vessel.currentVolume, `Vessel ${vessel.id}`);
+    vesselVolumeBefore = storedQuantity(vessel.currentVolume, `Vessel ${vessel.id}`);
     if (vessel.assignedLotId !== lot.id) {
       throw new CellarOperationCommandError(
         'cellar_operation_vessel_mismatch',
         'The operating vessel must be assigned to the selected lot.',
-        409,
-      );
-    }
-    if (Math.abs(vesselVolume - volumeBeforeL) > EPSILON) {
-      throw new CellarOperationCommandError(
-        'cellar_operation_volume_inconsistent',
-        'The lot and operating vessel volumes do not match.',
         409,
       );
     }
@@ -435,9 +439,18 @@ export function applyCellarOperationCommand(
         409,
       );
     }
-    if (vessel) {
+    if (vessel && vesselVolumeBefore !== undefined) {
       const capacity = storedQuantity(vessel.capacity, `Vessel ${vessel.id} capacity`);
-      if (input.volumeAfterL > capacity + EPSILON) {
+      const volumeDelta = input.volumeAfterL - volumeBeforeL;
+      const resultingVesselVolume = vesselVolumeBefore + volumeDelta;
+      if (resultingVesselVolume < -EPSILON) {
+        throw new CellarOperationCommandError(
+          'cellar_operation_volume_inconsistent',
+          'The volume change exceeds the amount held in the operating vessel.',
+          409,
+        );
+      }
+      if (resultingVesselVolume > capacity + EPSILON) {
         throw new CellarOperationCommandError(
           'cellar_operation_vessel_capacity_exceeded',
           'The resulting volume exceeds the operating vessel capacity.',
@@ -495,6 +508,8 @@ export function applyCellarOperationCommand(
     descriptionParts.push(input.vesselToId ? `${input.vesselId} → ${input.vesselToId}` : input.vesselId);
   }
   if (hasVolumeChange) descriptionParts.push(`${volumeBeforeL} → ${input.volumeAfterL} L`);
+  if (input.laborHours !== undefined) descriptionParts.push(`labor ${input.laborHours} h`);
+  if (input.energyKwh !== undefined) descriptionParts.push(`energy ${input.energyKwh} kWh`);
   if (input.notes) descriptionParts.push(input.notes);
   const description = descriptionParts.join(' · ');
 
@@ -512,7 +527,7 @@ export function applyCellarOperationCommand(
     } : {}),
   }, timestamp);
 
-  const generatedCosts = materialRecords.flatMap(({ material, usage }) => {
+  const generatedMaterialCosts = materialRecords.flatMap(({ material, usage }) => {
     const generated = materialCostEntryFromOperation({
       ...baseOperation,
       materialId: material.id,
@@ -525,13 +540,26 @@ export function applyCellarOperationCommand(
     });
     return generated ? [generated] : [];
   });
+  const generatedAutomaticCosts = automaticOperationCostEntries({
+    operationId: baseOperation.id,
+    date: baseOperation.date,
+    lotId: baseOperation.lotId,
+    operationType: baseOperation.type,
+    laborHours: baseOperation.laborHours,
+    energyKwh: baseOperation.energyKwh,
+    materialCostTotal: generatedMaterialCosts.reduce((sum, item) => sum + item.amount, 0),
+    currency: context.currency || 'GEL',
+    createdBy: input.operator || context.actorUsername,
+    settings: resolveCostAutomationSettings(context.costAutomation),
+  });
+  const generatedCosts = [...generatedMaterialCosts, ...generatedAutomaticCosts];
   const generatedCostIds = new Set<string>();
   for (const generated of generatedCosts) {
     if (generatedCostIds.has(generated.id)
       || currentState.costEntries.some(item => item.id === generated.id)) {
       throw new CellarOperationCommandError(
         'cellar_operation_cost_id_conflict',
-        'The derived material-cost entry already exists.',
+        'A derived operation-cost entry already exists.',
         409,
       );
     }
@@ -556,7 +584,8 @@ export function applyCellarOperationCommand(
     notes: description,
   }, timestamp);
   const auditLog = signAuditEntries([unsignedAudit], currentState.auditLogs)[0];
-  const reversalSnapshot: CellarOperationReversalSnapshot = input.materials?.length
+  const useV2Snapshot = materialRecords.length > 1 || costEntries.length > 1;
+  const reversalSnapshot: CellarOperationReversalSnapshot = useV2Snapshot
     ? {
       version: 2,
       lot: {
@@ -631,9 +660,12 @@ export function applyCellarOperationCommand(
       sourceRef: operation.id,
     }, ...(lot.history || [])],
   }, timestamp);
+  const resultingVesselVolume = vessel && vesselVolumeBefore !== undefined && hasVolumeChange
+    ? roundedQuantity(vesselVolumeBefore + ((input.volumeAfterL as number) - volumeBeforeL))
+    : vessel?.currentVolume;
   const updatedVessel = vessel ? stamped<Vessel>({
     ...vessel,
-    ...(hasVolumeChange ? { currentVolume: input.volumeAfterL as number } : {}),
+    ...(hasVolumeChange ? { currentVolume: resultingVesselVolume as number } : {}),
     lastCommandId: context.commandId,
     lastOperation: description,
   }, timestamp) : undefined;

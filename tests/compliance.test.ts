@@ -285,7 +285,6 @@ describe('qvevri durations', () => {
     expect(readiness.missing).toEqual(expect.arrayContaining([
       'Marani location',
       'Lime wash status',
-      'Waxing status',
       'Inspection notes',
       'Filling date',
       'Grape variety',

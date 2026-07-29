@@ -73,6 +73,12 @@ describe('release workflow contracts', () => {
     expect(workflow).toContain('[[ "$DEPLOYED_IMAGE" != *@"$IMAGE_DIGEST" ]]');
     expect(workflow).toContain('PRODUCTION_SMOKE_EXPECT_READINESS=not-ready');
     expect(workflow).toContain('--retained-backups-count "$CLOUDSQL_RETAINED_BACKUPS"');
+    expect(workflow).toContain('Deploy and schedule deterministic AI operations');
+    expect(workflow).toContain('"run,ai:monitor,--,${cadence}"');
+    expect(workflow).toContain('"run,ai:deliver,--,100"');
+    expect(workflow).toContain('"*/15 * * * *"');
+    expect(workflow).toContain('roles/run.invoker');
+    expect(workflow).toContain('--oauth-service-account-email "$RUNTIME_SERVICE_ACCOUNT"');
     expect(workflow).toContain('--retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS"');
     expect(workflow).toContain('--retain-backups-on-delete');
     expect(workflow).toContain('Cloud SQL project and region must match the deployment target.');

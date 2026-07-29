@@ -13,9 +13,11 @@ import commandsRouter from './server/routes/commands';
 import telemetryRouter from './server/routes/telemetry';
 import adminRouter, { seedTestUserHandler } from './server/routes/admin';
 import winemakerRouter from './server/routes/winemaker';
+import aiRouter from './server/routes/ai';
 import billingRouter from './server/routes/billing';
 import terroirPulseRouter from './server/routes/terroirPulse';
 import notificationsRouter, { whatsappWebhookRouter } from './server/routes/notifications';
+import aiOperationsAdminRouter from './server/routes/aiOperationsAdmin';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { demoAccountConfig } from './server/config';
 import { getServiceReadiness } from './server/readiness';
@@ -59,8 +61,10 @@ app.use('/api/integrations', integrationsRouter);
 app.use('/api/attachments', attachmentsRouter);
 app.use('/api/commands', commandsRouter);
 app.use('/api/telemetry', telemetryRouter);
+app.use('/api/admin/ai-operations', aiOperationsAdminRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/gemini', winemakerRouter);
+app.use('/api/ai', aiRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/terroir-pulse', terroirPulseRouter);
 app.use('/api/notifications', notificationsRouter);
@@ -154,7 +158,7 @@ if (isProd) {
   const vite = await createViteServer({
     server: {
       middlewareMode: true,
-      hmr: { server }
+      ws: { server }
     },
     appType: 'spa',
   });
@@ -180,10 +184,10 @@ if (process.env.VITEST !== 'true') {
   // instance. CPU is throttled between requests, so a debounced GCS backup may
   // still be pending — this is the last guaranteed chance to persist it.
   let shuttingDown = false;
-  const gracefulShutdown = (signal: string) => {
+  const flushAndExit = (reason: string, exitCode: number) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[server] ${signal} received, flushing pending backup before exit...`);
+    console.log(`[server] ${reason}, flushing pending backup before exit...`);
     server.close();
     const timeout = setTimeout(() => {
       console.error('[server] shutdown flush timed out, exiting.');
@@ -193,7 +197,7 @@ if (process.env.VITEST !== 'true') {
       .then(() => {
         console.log('[server] shutdown flush complete.');
         clearTimeout(timeout);
-        process.exit(0);
+        process.exit(exitCode);
       })
       .catch((err) => {
         console.error('[server] shutdown flush failed:', err);
@@ -201,8 +205,23 @@ if (process.env.VITEST !== 'true') {
         process.exit(1);
       });
   };
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => flushAndExit('SIGTERM received', 0));
+  process.on('SIGINT', () => flushAndExit('SIGINT received', 0));
+
+  // A crash never reaches the signal handlers above: Node's default for an
+  // uncaught exception or rejection is to print and exit, which would discard
+  // every write buffered since the last GCS upload. Express only catches throws
+  // inside route handlers — timers and background promises land here instead.
+  // The process state is undefined once this fires, so we always exit rather
+  // than resume; the flush is a best-effort push of already-serialized bytes.
+  process.on('uncaughtException', (err) => {
+    console.error('[server] uncaught exception:', err);
+    flushAndExit('uncaught exception', 1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[server] unhandled rejection:', reason);
+    flushAndExit('unhandled rejection', 1);
+  });
 }
 
 // Re-export for test compatibility

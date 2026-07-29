@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { AlertTriangle, Plus, Search, Trash2 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type {
   CellarOperationType,
@@ -150,10 +150,20 @@ export default function OperationMaterialsEditor({
   compact = false,
 }: Props) {
   const ka = lang === 'ka';
+  const [searchTerm, setSearchTerm] = useState('');
   const ordered = useMemo(
     () => orderedInventory(inventory, operationType),
     [inventory, operationType],
   );
+  const filteredInventory = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase();
+    if (!query) return ordered;
+    return ordered.filter(item => (
+      item.name.toLocaleLowerCase().includes(query)
+      || item.category.toLocaleLowerCase().includes(query)
+      || item.id.toLocaleLowerCase().includes(query)
+    ));
+  }, [ordered, searchTerm]);
   const issue = materialDraftIssue(value, inventory);
   const update = (key: string, patch: Partial<MaterialUsageDraft>) => {
     onChange(value.map(line => line.key === key ? { ...line, ...patch } : line));
@@ -182,6 +192,18 @@ export default function OperationMaterialsEditor({
         </button>
       </div>
 
+      <label className="relative block">
+        <span className="sr-only">{ka ? 'დანამატის ძიება' : 'Search materials'}</span>
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-indigo-400" />
+        <input
+          type="search"
+          value={searchTerm}
+          onChange={event => setSearchTerm(event.target.value)}
+          placeholder={ka ? 'დანამატის ძიება სახელით ან კატეგორიით…' : 'Search by name or category…'}
+          className="w-full rounded-lg border border-indigo-100 bg-white py-2 pl-8 pr-3 text-[10px] font-semibold text-stone-700 outline-none focus:border-indigo-400"
+        />
+      </label>
+
       {value.length === 0 && (
         <button
           type="button"
@@ -198,6 +220,9 @@ export default function OperationMaterialsEditor({
 
       {value.map(line => {
         const selected = inventory.find(item => item.id === line.materialId);
+        const selectableInventory = selected && !filteredInventory.some(item => item.id === selected.id)
+          ? [selected, ...filteredInventory]
+          : filteredInventory;
         const quantity = Number(line.quantity);
         const rate = doseRate(selected, quantity, lotVolumeL);
         const remaining = selected && Number.isFinite(quantity)
@@ -214,7 +239,7 @@ export default function OperationMaterialsEditor({
                   className="mt-1 w-full rounded-md border border-stone-200 bg-stone-50 px-2 py-1.5 text-[10px] font-semibold normal-case tracking-normal text-stone-700"
                 >
                   <option value="">{ka ? '— აირჩიეთ —' : '— select —'}</option>
-                  {ordered.map(item => (
+                  {selectableInventory.map(item => (
                     <option key={item.id} value={item.id}>
                       {item.name} · {item.stock} {item.unit} · {item.category}
                     </option>

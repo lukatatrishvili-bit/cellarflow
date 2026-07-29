@@ -1,5 +1,9 @@
 import { signAuditEntries } from '../auditHash';
-import { grapeIntakeCostEntry, type CostEntry } from '../costing';
+import {
+  grapeIntakeCostEntry,
+  resolveCostAutomationSettings,
+  type CostEntry,
+} from '../costing';
 import { PDO_RULES } from '../pdo';
 import { estimateMustVolumeL } from '../wineryOperations';
 import type {
@@ -52,6 +56,7 @@ export interface HarvestIntakeCommandContext {
   actorUsername: string;
   currency: string;
   region: string;
+  costAutomation?: unknown;
   performedAt: Date;
 }
 
@@ -350,6 +355,7 @@ export function applyHarvestIntakeCommand(
   }
 
   const input = payload.intake;
+  const costAutomation = resolveCostAutomationSettings(context.costAutomation);
   let block: VineyardBlock | undefined;
   if (input.source === 'own') {
     if (!input.blockId) {
@@ -493,7 +499,16 @@ export function applyHarvestIntakeCommand(
     estimatedVolumeL,
     createdLotId: payload.lotId,
     currency: context.currency || 'GEL',
-    ...(input.costPerKg ? { grapePrice: input.grapePrice || input.costPerKg } : {}),
+    ...(
+      input.costPerKg
+        ? { grapePrice: input.grapePrice || input.costPerKg }
+        : input.source === 'own' && costAutomation.enabled && !input.totalCost && !input.grapePrice
+          ? {
+              costPerKg: costAutomation.ownGrapeCostPerKg,
+              grapePrice: costAutomation.ownGrapeCostPerKg,
+            }
+          : {}
+    ),
   }), timestamp);
 
   let costEntry = grapeIntakeCostEntry(baseIntake, {

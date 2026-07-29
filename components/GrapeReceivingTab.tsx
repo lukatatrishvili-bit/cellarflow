@@ -8,7 +8,8 @@ import type {
 import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryOperations';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS, inferWineClassForVariety } from '../lib/georgianWineKnowledge';
 import { EmptyState } from './ui/primitives';
-import type { CostEntry } from '../lib/costing';
+import DateInput from './ui/DateInput';
+import { resolveCostAutomationSettings, type CostEntry } from '../lib/costing';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
   applyHarvestIntakeCommand,
@@ -36,6 +37,7 @@ interface Props {
   intakes: GrapeIntakeRecord[];
   currentUserName: string;
   currency: string;
+  costAutomation?: unknown;
   region?: string;
   onReceiveGrapes: (input: Omit<GrapeIntakeRecord, 'id' | 'createdLotId' | 'netWeightKg' | 'estimatedVolumeL'>) => string;
   lots?: WineLot[];
@@ -114,7 +116,7 @@ const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flat
 
 export default function GrapeReceivingTab({
   lang, vessels, blocks, harvests, intakes, currentUserName,
-  currency, region = 'Kakheti',
+  currency, costAutomation, region = 'Kakheti',
   onReceiveGrapes, setActiveTab, setToastMessage,
   lots = [], costEntries = [], auditLogs = [],
   onUpdateLots, onUpdateVessels, onUpdateHarvests, onUpdateIntakes,
@@ -144,7 +146,6 @@ export default function GrapeReceivingTab({
   const [labAnalysisNumber, setLabAnalysisNumber] = useState('');
   const [cadastralCode, setCadastralCode] = useState('');
   const [municipality, setMunicipality] = useState('');
-  const [community, setCommunity] = useState('');
   const [village, setVillage] = useState('');
   const [microzone, setMicrozone] = useState('');
   const [grossWeightKg, setGross] = useState('');
@@ -181,9 +182,17 @@ export default function GrapeReceivingTab({
   const yieldPct = parseFloat(juiceYieldPct) || 0;
   const estVolumeL = estimateMustVolumeL(net, yieldPct);
   const potentialAbv = brixToPotentialAlcohol(parseFloat(brix) || 0);
+  const costAutomationSettings = useMemo(
+    () => resolveCostAutomationSettings(costAutomation),
+    [costAutomation],
+  );
   const costPerKgNum = canPostIntakeCost ? parseFloat(costPerKg) || 0 : 0;
   const explicitTotalCost = canPostIntakeCost ? parseFloat(totalCost) || 0 : 0;
-  const computedFruitCost = Math.round((explicitTotalCost || (net * costPerKgNum)) * 100) / 100;
+  const automaticOwnGrapeRate = source === 'own' && costAutomationSettings.enabled
+    ? costAutomationSettings.ownGrapeCostPerKg
+    : 0;
+  const effectiveFruitRate = costPerKgNum || automaticOwnGrapeRate;
+  const computedFruitCost = Math.round((explicitTotalCost || (net * effectiveFruitRate)) * 100) / 100;
 
   const permittedDestinationVesselId = canFillDestinationVessel ? destinationVesselId : '';
   const destVessel = vessels.find(v => v.id === permittedDestinationVesselId) || null;
@@ -225,7 +234,6 @@ export default function GrapeReceivingTab({
     }
     setCadastralCode(b.cadastralCode || b.id || '');
     setMunicipality(b.municipality || '');
-    setCommunity(b.community || '');
     setVillage(b.village || b.vineyardName || '');
     setMicrozone(b.microzone || '');
   };
@@ -263,7 +271,6 @@ export default function GrapeReceivingTab({
     setLabAnalysisNumber(input.labAnalysisNumber || '');
     setCadastralCode(input.cadastralCode || '');
     setMunicipality(input.municipality || '');
-    setCommunity(input.community || '');
     setVillage(input.village || '');
     setMicrozone(input.microzone || '');
     setGross(String(input.grossWeightKg));
@@ -325,7 +332,7 @@ export default function GrapeReceivingTab({
     setHarvestRecordId(''); setVariety(''); setGross(''); setTare('');
     setBrix(''); setPh(''); setTa(''); setTemp(''); setCostPerKg(''); setTotalCost(''); setNotes(''); setDest('');
     setTransportName(''); setTransportNumber(''); setWeighingDocumentNumber(''); setLabAnalysisNumber('');
-    setSupplierIdCode(''); setCadastralCode(''); setMunicipality(''); setCommunity(''); setVillage(''); setMicrozone('');
+    setSupplierIdCode(''); setCadastralCode(''); setMunicipality(''); setVillage(''); setMicrozone('');
     setPaymentStatus('not_applicable');
   };
 
@@ -344,7 +351,6 @@ export default function GrapeReceivingTab({
       labAnalysisNumber: labAnalysisNumber.trim() || undefined,
       cadastralCode: cadastralCode.trim() || block?.cadastralCode || undefined,
       municipality: municipality.trim() || block?.municipality || undefined,
-      community: community.trim() || block?.community || undefined,
       village: village.trim() || block?.village || block?.vineyardName || undefined,
       microzone: microzone.trim() || block?.microzone || undefined,
       variety: variety.trim(),
@@ -404,6 +410,7 @@ export default function GrapeReceivingTab({
         actorUsername: currentUserName,
         currency,
         region,
+        costAutomation,
         performedAt: new Date(intent.capturedAt),
       },
     );
@@ -700,7 +707,7 @@ export default function GrapeReceivingTab({
             </div>
             <div>
               <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+              <DateInput lang={lang} value={date} onValueChange={setDate} className={inputCls} required />
             </div>
           </div>
 
@@ -733,10 +740,6 @@ export default function GrapeReceivingTab({
               <div>
                 <label className={labelCls}>{ka ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
                 <input type="text" value={municipality} onChange={e => setMunicipality(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>{ka ? 'თემი' : 'Community'}</label>
-                <input type="text" value={community} onChange={e => setCommunity(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className={labelCls}>{ka ? 'სოფელი / მიკროზონა' : 'Village / microzone'}</label>
@@ -776,7 +779,7 @@ export default function GrapeReceivingTab({
             <div>
               <label className={labelCls}>{ka ? 'სულ ყურძნის ხარჯი' : `Total fruit cost (${currency})`}</label>
               <input type="number" min={0} step="0.01" value={totalCost} onChange={e => setTotalCost(e.target.value)}
-                placeholder={costPerKgNum > 0 && net > 0 ? String(Math.round(net * costPerKgNum * 100) / 100) : 'optional override'} className={inputCls} />
+                placeholder={effectiveFruitRate > 0 && net > 0 ? String(Math.round(net * effectiveFruitRate * 100) / 100) : 'optional override'} className={inputCls} />
             </div>
             <div>
               <label className={labelCls}>{ka ? 'გადახდის სტატუსი' : 'Payment status'}</label>
@@ -788,6 +791,13 @@ export default function GrapeReceivingTab({
               </select>
             </div>
           </div>
+          {automaticOwnGrapeRate > 0 && !costPerKgNum && !explicitTotalCost && (
+            <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-semibold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300">
+              {ka
+                ? `საკუთარი ყურძნის ავტომატური ფასი: ${automaticOwnGrapeRate.toFixed(2)} ${currency}/კგ`
+                : `Automatic own-grape rate: ${automaticOwnGrapeRate.toFixed(2)} ${currency}/kg`}
+            </div>
+          )}
           {computedFruitCost > 0 && (
             <div className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 dark:bg-emerald-950/20 dark:text-emerald-300 dark:border-emerald-900">
               {ka ? 'ხარჯების წიგნში ჩაიწერება:' : 'Will post to cost ledger:'} <strong>{computedFruitCost.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}</strong>

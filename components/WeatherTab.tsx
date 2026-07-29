@@ -1541,8 +1541,8 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
 
                 <p className="text-xs text-stone-600 leading-relaxed">
                   {lang === 'ka'
-                    ? `მიმდინარე ინფექციის კერების და რისკების ანალიზი წარმოებს რეალურ დროში, ${activeBlock?.name || 'Vinea'} ნაკვეთის კოორდინატებზე დაფუძნებული ციფრული მეტეოროლოგიური ტელემეტრიის საფუძველზე. სისტემა აფასებს Plasmopara (ჭრაქი), Oidium (ნაცარი) და Botrytis (ლპობა) გამრავლებას გარემო ფაქტორების მიხედვით.`
-                    : `Infection risks and physiological pathogen pressures are assessed live, based on precise GPS grid meteorological telemetry for the ${activeBlock?.name || 'Vinea'} block. The bio-pathological model continuously recalculates Plasmopara viticola, Uncinula necator, and Botrytis cinerea outbreak potential from active humidity, canopy leaf wetness indicators, and temperature gradients.`}
+                    ? `მიმდინარე ინფექციის კერების და რისკების ანალიზი წარმოებს რეალურ დროში, ${activeBlock?.name || 'VinOS'} ნაკვეთის კოორდინატებზე დაფუძნებული ციფრული მეტეოროლოგიური ტელემეტრიის საფუძველზე. სისტემა აფასებს Plasmopara (ჭრაქი), Oidium (ნაცარი) და Botrytis (ლპობა) გამრავლებას გარემო ფაქტორების მიხედვით.`
+                    : `Infection risks and physiological pathogen pressures are assessed live, based on precise GPS grid meteorological telemetry for the ${activeBlock?.name || 'VinOS'} block. The bio-pathological model continuously recalculates Plasmopara viticola, Uncinula necator, and Botrytis cinerea outbreak potential from active humidity, canopy leaf wetness indicators, and temperature gradients.`}
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">

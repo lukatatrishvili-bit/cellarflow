@@ -59,6 +59,7 @@ export async function executeCellarTransferReversalCommand(
           vessels: Array.isArray(storedData.vessels) ? storedData.vessels as any[] : [],
           lots: Array.isArray(storedData.lots) ? storedData.lots as any[] : [],
           transfers: Array.isArray(storedData.transfers) ? storedData.transfers as any[] : [],
+          costEntries: Array.isArray(storedData.costEntries) ? storedData.costEntries as any[] : [],
         },
         input.payload,
         {

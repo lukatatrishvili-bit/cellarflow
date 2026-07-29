@@ -54,16 +54,22 @@ export async function executeCellarTransferCommand(
       const storedData = stored.data && typeof stored.data === 'object' && !Array.isArray(stored.data)
         ? stored.data as Record<string, unknown>
         : {};
+      const profile = storedData.companyProfile && typeof storedData.companyProfile === 'object'
+        && !Array.isArray(storedData.companyProfile)
+        ? storedData.companyProfile as Record<string, unknown>
+        : {};
       const applied = applyTransferCommand(
         {
           vessels: Array.isArray(storedData.vessels) ? storedData.vessels as any[] : [],
           lots: Array.isArray(storedData.lots) ? storedData.lots as any[] : [],
           transfers: Array.isArray(storedData.transfers) ? storedData.transfers as any[] : [],
+          costEntries: Array.isArray(storedData.costEntries) ? storedData.costEntries as any[] : [],
         },
         input.payload,
         {
           commandId: validateCommandId(input.commandId),
           actorUsername: input.actorUsername,
+          currency: typeof profile.currency === 'string' ? profile.currency : 'GEL',
           performedAt: input.performedAt || new Date(),
         },
       );

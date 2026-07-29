@@ -15,6 +15,7 @@ import type {
 import type { Language } from '../lib/i18n';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
+import DateInput from './ui/DateInput';
 import IpmPhenoscheme from './IpmPhenoscheme';
 import VineyardProjectsTab from './VineyardProjectsTab';
 import { useFocusTrap } from './useFocusTrap';
@@ -324,16 +325,16 @@ export function HarvestPlanForm({ lang, block, onCreate, onCancel }: HarvestPlan
           <label htmlFor={`${fieldIdPrefix}-date`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
             {lang === 'ka' ? 'სამიზნე თარიღი' : 'Target harvest date'}
           </label>
-          <input
+          <DateInput
             ref={dateInputRef}
             id={`${fieldIdPrefix}-date`}
-            type="date"
+            lang={lang}
             value={targetDate}
             required
             aria-invalid={Boolean(errors.estimatedHarvestDate)}
             aria-describedby={errors.estimatedHarvestDate ? `${fieldIdPrefix}-date-error` : `${fieldIdPrefix}-guidance`}
-            onChange={(event) => {
-              setTargetDate(event.target.value);
+            onValueChange={(value) => {
+              setTargetDate(value);
               setErrors(current => ({ ...current, estimatedHarvestDate: undefined }));
             }}
             className={`h-10 w-full rounded-lg border bg-white px-3 text-xs font-mono text-stone-900 outline-none focus:ring-2 focus:ring-emerald-200 ${errors.estimatedHarvestDate ? 'border-red-500' : 'border-emerald-200 focus:border-emerald-700'}`}
@@ -3123,13 +3124,13 @@ export default function VaziModule({
                             >
                               {lang === 'ka' ? 'ფაქტობრივი თარიღი' : 'Actual harvest date'}
                             </label>
-                            <input
+                            <DateInput
                               id={`harvest-date-${harvest.id}`}
-                              type="date"
+                              lang={lang}
                               value={harvestDispatchDates[harvest.id] || localISODate()}
-                              onChange={(event) => setHarvestDispatchDates(current => ({
+                              onValueChange={(value) => setHarvestDispatchDates(current => ({
                                 ...current,
-                                [harvest.id]: event.target.value,
+                                [harvest.id]: value,
                               }))}
                               className="h-9 w-full rounded border border-stone-250 bg-white px-2 text-xs font-mono text-stone-900 outline-none focus:border-emerald-700"
                             />

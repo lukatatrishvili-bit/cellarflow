@@ -9,6 +9,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import QvevriCrossSection from './QvevriCrossSection';
 import { ambientMotionEnabled, prefersReducedMotion } from './motion';
 import { useFocusTrap } from './useFocusTrap';
+import DateInput from './ui/DateInput';
 
 const WINE_COLORS: Record<string, { liquid: string; surface: string }> = {
   red: { liquid: '#5a1020', surface: '#7c1c30' },
@@ -650,9 +651,9 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                       <div className="grid grid-cols-2 gap-3 bg-[#FCFAF8] p-3 rounded-lg border border-amber-200">
                         <div>
                           <label className="block text-[9px] uppercase font-mono text-amber-800 font-bold mb-1">Last Sealed Date</label>
-                          <input
-                            type="date"
-                            value={editLastSealedDate} onChange={(e) => setEditLastSealedDate(e.target.value)}
+                          <DateInput
+                            lang={lang}
+                            value={editLastSealedDate} onValueChange={setEditLastSealedDate}
                             className="w-full bg-white border border-[#e8dfd5] p-1.5 rounded outline-none text-stone-800"
                           />
                         </div>

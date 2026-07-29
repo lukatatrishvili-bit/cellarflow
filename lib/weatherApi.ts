@@ -68,10 +68,21 @@ export function maxForecastDate(): string {
   return addDays(localISODate(), 15);
 }
 
-export async function searchLocations(query: string): Promise<GeoLocation[]> {
-  const q = query.trim();
-  if (q.length < 2) return [];
-  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`;
+const GEORGIAN_TO_LATIN: Record<string, string> = {
+  ა: 'a', ბ: 'b', გ: 'g', დ: 'd', ე: 'e', ვ: 'v', ზ: 'z', თ: 't',
+  ი: 'i', კ: 'k', ლ: 'l', მ: 'm', ნ: 'n', ო: 'o', პ: 'p', ჟ: 'zh',
+  რ: 'r', ს: 's', ტ: 't', უ: 'u', ფ: 'p', ქ: 'k', ღ: 'gh', ყ: 'q',
+  შ: 'sh', ჩ: 'ch', ც: 'ts', ძ: 'dz', წ: 'ts', ჭ: 'ch', ხ: 'kh',
+  ჯ: 'j', ჰ: 'h',
+};
+
+/** Open-Meteo has sparse Georgian-script aliases; transliteration keeps local searches useful. */
+export function transliterateGeorgianLocation(value: string): string {
+  return Array.from(value).map(char => GEORGIAN_TO_LATIN[char] || char).join('');
+}
+
+async function fetchLocationMatches(query: string): Promise<GeoLocation[]> {
+  const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=en&format=json`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Geocoding failed (${res.status})`);
   const json = await res.json();
@@ -83,6 +94,17 @@ export async function searchLocations(query: string): Promise<GeoLocation[]> {
     admin1: r.admin1,
     elevation: r.elevation,
   }));
+}
+
+export async function searchLocations(query: string): Promise<GeoLocation[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const direct = await fetchLocationMatches(q);
+  if (direct.length > 0 || !/[\u10A0-\u10FF]/u.test(q)) return direct;
+
+  const transliterated = transliterateGeorgianLocation(q).trim();
+  if (!transliterated || transliterated.toLocaleLowerCase() === q.toLocaleLowerCase()) return direct;
+  return fetchLocationMatches(transliterated);
 }
 
 const HOURLY_FIELDS = 'temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m';

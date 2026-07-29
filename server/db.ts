@@ -258,6 +258,8 @@ export interface UserDataState {
   attachments: any[];
   crmLeads: any[];
   aiDrafts: any[];
+  /** Intelligence-layer findings with their review lifecycle. */
+  aiFindings: any[];
   integrationHub?: IntegrationHubState;
   /** Explicit, revocable opt-in for the public privacy-preserving vintage pulse. */
   terroirSharing?: TerroirSharingSettings;
@@ -311,6 +313,7 @@ export function createEmptyUserData(): UserDataState {
     attachments: [],
     crmLeads: [],
     aiDrafts: [],
+    aiFindings: [],
     integrationHub: createEmptyIntegrationHubState(),
     terroirSharing: { ...DEFAULT_TERROIR_SHARING_SETTINGS },
     companyProfile: {
@@ -376,6 +379,7 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     crmLeads: Array.isArray(data.crmLeads) ? data.crmLeads : [],
     aiDrafts: Array.isArray(data.aiDrafts) ? data.aiDrafts : [],
+    aiFindings: Array.isArray(data.aiFindings) ? data.aiFindings : [],
     integrationHub: ensureIntegrationHubState(data.integrationHub),
     terroirSharing: normalizeTerroirSharingSettings(
       data.terroirSharing,
@@ -463,7 +467,10 @@ function serializeDbState(data: DBState = getDB()): string {
     whatsappDeliveries: data.whatsappDeliveries || [],
     orgData: data.orgData || {},
   };
-  return JSON.stringify(plain, null, 2);
+  // Minified on purpose: this runs on every mutation and the result is written
+  // to disk and uploaded to GCS. Indentation is ~35% of the payload for a blob
+  // no human reads — use the admin snapshot export when you want it readable.
+  return JSON.stringify(plain);
 }
 
 function jsonForPrisma(value: unknown): any {
@@ -717,14 +724,18 @@ function writeLocalJsonBackup(jsonStr: string): void {
   }
 }
 
-export function saveDB(options: { syncPostgres?: boolean } = {}): void {
+export function saveDB(options: { syncPostgres?: boolean; gcsBackup?: boolean } = {}): void {
   if (!dbData) return;
   const jsonStr = serializeDbState(dbData);
 
   writeLocalJsonBackup(jsonStr);
 
   if (options.syncPostgres === false) {
-    if (!isPostgresConfigured() || postgresDisabledAfterFailure) backupJsonToGcs(jsonStr);
+    // `gcsBackup: true` lets callers that always want a GCS copy reuse this
+    // serialization instead of stringifying the whole database a second time.
+    if (options.gcsBackup || !isPostgresConfigured() || postgresDisabledAfterFailure) {
+      backupJsonToGcs(jsonStr);
+    }
     return;
   }
 
@@ -752,9 +763,12 @@ export async function forceSaveDB(): Promise<ReturnType<typeof getDbRuntimeStatu
 }
 
 async function syncCoreDbToPrisma(): Promise<void> {
-  const prisma = await getPrisma();
-  if (!prisma || !dbData) return;
   try {
+    // getPrisma() can reject (dynamic import / client construction). This runs
+    // as a floating promise from saveDB, so an escape here becomes an unhandled
+    // rejection and takes the process down — keep it inside the guard.
+    const prisma = await getPrisma();
+    if (!prisma || !dbData) return;
     await persistFullDbToPostgres('memory-cache');
   } catch (err) {
     // persistFullDbToPostgres records the detailed error. Keep this background
@@ -1586,8 +1600,7 @@ export async function saveOrganizationData(
 
   const prisma = await getPrisma();
   if (!prisma) {
-    saveDB({ syncPostgres: false });
-    backupJsonToGcs(serializeDbState(db));
+    saveDB({ syncPostgres: false, gcsBackup: true });
     return;
   }
 
@@ -1639,8 +1652,7 @@ export async function saveOrganizationData(
     if ((prisma as any).organizationState?.findUnique) {
       await getOrganizationStateMeta(orgId);
     }
-    saveDB({ syncPostgres: false });
-    backupJsonToGcs(serializeDbState(db));
+    saveDB({ syncPostgres: false, gcsBackup: true });
   } catch (dbErr) {
     lastPostgresSaveError = dbErr instanceof Error ? dbErr.message : String(dbErr);
     lastPostgresSyncError = lastPostgresSaveError;

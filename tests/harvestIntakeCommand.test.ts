@@ -191,6 +191,36 @@ describe('cellar.harvest-intake domain command', () => {
     expect(applied.result.auditLog.chainHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('uses the configured own-grape rate when no explicit fruit cost is entered', () => {
+    const { costPerKg: _costPerKg, totalCost: _totalCost, grapePrice: _grapePrice, ...intake } = payload.intake;
+    const applied = applyHarvestIntakeCommand(state(), {
+      ...payload,
+      intakeId: 'intake-auto-grape-1',
+      lotId: 'lot-auto-grape-1',
+      auditId: 'audit-auto-grape-1',
+      intake,
+    }, {
+      ...context,
+      commandId: 'cmd-intake-auto-grape-1',
+      costAutomation: {
+        enabled: true,
+        ownGrapeCostPerKg: 0.8,
+      },
+    });
+
+    expect(applied.result.intake).toMatchObject({
+      costPerKg: 0.8,
+      grapePrice: 0.8,
+    });
+    expect(applied.result.costEntry).toMatchObject({
+      category: 'grape',
+      quantity: 1_000,
+      unitCost: 0.8,
+      amount: 800,
+    });
+    expect(applied.result.receipt.costPosted).toBe(800);
+  });
+
   it('supports a supplier intake without optional harvest, vessel, or cost effects', () => {
     const applied = applyHarvestIntakeCommand(state(), {
       ...payload,

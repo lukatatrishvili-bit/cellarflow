@@ -5,6 +5,11 @@ import type {
   Vessel,
   WineLot,
 } from '../wineryState';
+import {
+  computeBlendTransfers,
+  summarizeLot,
+  type CostEntry,
+} from '../costing';
 
 export const TRANSFER_COMMAND_TYPE = 'cellar.transfer' as const;
 export const TRANSFER_CATEGORIES = ['racking', 'blend', 'filtration', 'bottling'] as const;
@@ -27,11 +32,13 @@ export interface TransferCommandState {
   vessels: Vessel[];
   lots: WineLot[];
   transfers: CellarTransferRecord[];
+  costEntries: CostEntry[];
 }
 
 export interface TransferCommandContext {
   commandId: string;
   actorUsername: string;
+  currency?: string;
   performedAt: Date;
 }
 
@@ -40,6 +47,7 @@ export interface TransferCommandResult {
   sourceVessel: Vessel;
   destinationVessel: Vessel;
   changedLots: WineLot[];
+  costEntries: CostEntry[];
   blendLotId?: string;
   stateVersion?: number;
   receipt: {
@@ -71,7 +79,8 @@ export type TransferCommandErrorCode =
   | 'destination_not_clean'
   | 'lot_volume_inconsistent'
   | 'transfer_id_conflict'
-  | 'blend_lot_id_conflict';
+  | 'blend_lot_id_conflict'
+  | 'transfer_cost_id_conflict';
 
 export class TransferCommandError extends Error {
   constructor(
@@ -201,7 +210,7 @@ export function applyTransferCommand(
 ): AppliedTransferCommand {
   const payload = parseTransferCommandPayload(rawPayload);
   if (!currentState || !Array.isArray(currentState.vessels) || !Array.isArray(currentState.lots)
-    || !Array.isArray(currentState.transfers)) {
+    || !Array.isArray(currentState.transfers) || !Array.isArray(currentState.costEntries)) {
     throw new TransferCommandError('invalid_transfer_payload', 'Organization transfer state is unavailable.', 400);
   }
   if (payload.sourceVesselId === payload.destinationVesselId) {
@@ -276,6 +285,7 @@ export function applyTransferCommand(
   const finalSourceVolume = roundedLiters(sourceVolume - payload.volumeLiters);
   const finalDestinationVolume = roundedLiters(destinationVolume + arrivalLiters);
   const changedLots: WineLot[] = [];
+  let generatedBlendCosts: CostEntry[] = [];
   let finalDestinationLotId = sourceLot.id;
   let details: string;
 
@@ -342,6 +352,42 @@ export function applyTransferCommand(
         sourceRef: payload.transferId,
       }],
     }, timestamp);
+
+    generatedBlendCosts = computeBlendTransfers({
+      destLotId: blendedLot.id,
+      date: operationDate,
+      currency: context.currency || 'GEL',
+      createdBy: payload.operator || context.actorUsername,
+      sourceRef: payload.transferId,
+      components: [
+        {
+          lotId: sourceLot.id,
+          volumeMoved: payload.volumeLiters,
+          lotTotalCost: summarizeLot(sourceLot.id, currentState.costEntries).total,
+          lotVolume: sourceLotVolume,
+        },
+        {
+          lotId: destinationLot.id,
+          volumeMoved: destinationVolume,
+          lotTotalCost: summarizeLot(destinationLot.id, currentState.costEntries).total,
+          lotVolume: destinationLotVolume,
+        },
+      ],
+    }).map(entry => stamped<CostEntry>({
+      ...entry,
+      commandId: context.commandId,
+      recordKind: 'cost',
+    }, timestamp));
+    const conflictingCost = generatedBlendCosts.find(entry => (
+      currentState.costEntries.some(existing => existing.id === entry.id)
+    ));
+    if (conflictingCost) {
+      throw new TransferCommandError(
+        'transfer_cost_id_conflict',
+        `Blend cost entry ${conflictingCost.id} already exists.`,
+        409,
+      );
+    }
 
     changedLots.push(updatedSourceLot, updatedDestinationLot, blendedLot);
     finalDestinationLotId = blendedLot.id;
@@ -432,12 +478,14 @@ export function applyTransferCommand(
       }),
       lots: nextLots,
       transfers: [transfer, ...currentState.transfers],
+      costEntries: [...generatedBlendCosts, ...currentState.costEntries],
     },
     result: {
       transfer,
       sourceVessel: updatedSource,
       destinationVessel: updatedDestination,
       changedLots,
+      costEntries: generatedBlendCosts,
       ...(isBlend ? { blendLotId: finalDestinationLotId } : {}),
       receipt: {
         kind: isBlend ? 'blend' : 'transfer',

@@ -12,7 +12,7 @@ export async function renderCostReportXlsx(
 ): Promise<Blob> {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'MaraniOS';
+  wb.creator = 'VinOS';
   const ws = wb.addWorksheet('Cost & Margin', {
     pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });

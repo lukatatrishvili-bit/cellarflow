@@ -1,12 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Coins, Plus, Trash2, Wine, FlaskConical, FileDown, FileSpreadsheet } from 'lucide-react';
+import {
+  Coins, Plus, Trash2, Wine, FlaskConical, FileDown, FileSpreadsheet, Settings2, Save,
+} from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type { WineLot, InventoryItem, CompanyProfile, BottlingRunRecord } from '../lib/wineryState';
-import { rollupLots, type CostEntry, type CostCategory } from '../lib/costing';
+import {
+  resolveCostAutomationSettings,
+  rollupLots,
+  type CostEntry,
+  type CostCategory,
+} from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
 import { buildCostReportRows, sumCostReport, costRowsToCSV } from '../lib/costing/report';
 import { CountUp } from './motion';
 import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
+import DateInput from './ui/DateInput';
 
 interface Props {
   lang: Language;
@@ -16,6 +24,7 @@ interface Props {
   bottlingRuns: BottlingRunRecord[];
   costEntries: CostEntry[];
   onUpdateCostEntries: (entries: CostEntry[]) => void;
+  onUpdateCompany?: (profile: CompanyProfile) => void;
   pricing: WinePricing;
   onUpdatePricing: (pricing: WinePricing) => void;
   onNavigate?: (target: { module: string; tab?: string }) => void;
@@ -23,6 +32,7 @@ interface Props {
   canDeleteCost?: boolean;
   canUpdatePricing?: boolean;
   canExportCosts?: boolean;
+  canManageAutomation?: boolean;
 }
 
 const CATEGORIES: Array<{ id: CostCategory; ka: string; en: string }> = [
@@ -58,6 +68,7 @@ export default function CostsTab({
   bottlingRuns,
   costEntries,
   onUpdateCostEntries,
+  onUpdateCompany,
   pricing,
   onUpdatePricing,
   onNavigate,
@@ -65,6 +76,7 @@ export default function CostsTab({
   canDeleteCost = true,
   canUpdatePricing = true,
   canExportCosts = true,
+  canManageAutomation = true,
 }: Props) {
   const ka = lang === 'ka';
   const currency = company.currency || 'GEL';
@@ -86,10 +98,71 @@ export default function CostsTab({
 
   const totalCost = useMemo(() => costEntries.reduce((a, e) => a + e.amount, 0), [costEntries]);
   const [draftPricing, setDraftPricing] = useState<Record<string, string>>(() => pricingToDraft(pricing));
+  const resolvedAutomation = useMemo(
+    () => resolveCostAutomationSettings(company.costAutomation),
+    [company.costAutomation],
+  );
+  const [automationDraft, setAutomationDraft] = useState(() => ({
+    enabled: resolvedAutomation.enabled,
+    laborRatePerHour: String(resolvedAutomation.laborRatePerHour),
+    energyRatePerKwh: String(resolvedAutomation.energyRatePerKwh),
+    overheadPercent: String(resolvedAutomation.overheadPercent),
+    ownGrapeCostPerKg: String(resolvedAutomation.ownGrapeCostPerKg),
+    labAnalysisCost: String(resolvedAutomation.labAnalysisCost),
+  }));
+  const [automationSaved, setAutomationSaved] = useState(false);
 
   useEffect(() => {
     setDraftPricing(pricingToDraft(pricing));
   }, [pricing]);
+  useEffect(() => {
+    setAutomationDraft({
+      enabled: resolvedAutomation.enabled,
+      laborRatePerHour: String(resolvedAutomation.laborRatePerHour),
+      energyRatePerKwh: String(resolvedAutomation.energyRatePerKwh),
+      overheadPercent: String(resolvedAutomation.overheadPercent),
+      ownGrapeCostPerKg: String(resolvedAutomation.ownGrapeCostPerKg),
+      labAnalysisCost: String(resolvedAutomation.labAnalysisCost),
+    });
+  }, [resolvedAutomation]);
+
+  const saveAutomation = () => {
+    if (!canManageAutomation || !onUpdateCompany) return;
+    const numberFromDraft = (value: string, fallback: number, maximum = 1_000_000) => {
+      const parsed = Number.parseFloat(value.replace(',', '.'));
+      return Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum ? parsed : fallback;
+    };
+    onUpdateCompany({
+      ...company,
+      costAutomation: {
+        ...resolvedAutomation,
+        enabled: automationDraft.enabled,
+        laborRatePerHour: numberFromDraft(
+          automationDraft.laborRatePerHour,
+          resolvedAutomation.laborRatePerHour,
+        ),
+        energyRatePerKwh: numberFromDraft(
+          automationDraft.energyRatePerKwh,
+          resolvedAutomation.energyRatePerKwh,
+        ),
+        overheadPercent: numberFromDraft(
+          automationDraft.overheadPercent,
+          resolvedAutomation.overheadPercent,
+          100,
+        ),
+        ownGrapeCostPerKg: numberFromDraft(
+          automationDraft.ownGrapeCostPerKg,
+          resolvedAutomation.ownGrapeCostPerKg,
+        ),
+        labAnalysisCost: numberFromDraft(
+          automationDraft.labAnalysisCost,
+          resolvedAutomation.labAnalysisCost,
+        ),
+      },
+    });
+    setAutomationSaved(true);
+    window.setTimeout(() => setAutomationSaved(false), 2200);
+  };
 
   // ── pricing + margin/valuation report ────────────────────────
   const reportRows = useMemo(() => buildCostReportRows(
@@ -139,7 +212,7 @@ export default function CostsTab({
     try {
       const { renderCostReportXlsx } = await import('../lib/costing/reportXlsx');
       const blob = await renderCostReportXlsx(reportRows, {
-        company: company.companyName || 'MaraniOS',
+        company: company.companyName || 'VinOS',
         currency,
         generatedAt: new Date().toLocaleString(),
       });
@@ -220,6 +293,86 @@ export default function CostsTab({
         </div>
       )}
 
+      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 shadow-sm dark:border-emerald-900/60 dark:bg-emerald-950/20">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h4 className="flex items-center gap-2 text-sm font-black text-emerald-950 dark:text-emerald-100">
+              <Settings2 className="h-4 w-4" />
+              {ka ? 'ავტომატური ხარჯთაღრიცხვა' : 'Automatic costing'}
+            </h4>
+            <p className="mt-1 max-w-3xl text-[11px] font-semibold leading-relaxed text-emerald-800/80 dark:text-emerald-200/70">
+              {ka
+                ? 'ჩართვის შემდეგ ყურძნის მიღება, მარნის ოპერაციები და ლაბორატორიული ანალიზები ავტომატურად შექმნის პარტიაზე მიბმულ ხარჯებს. ოპერაციის დროს შრომისა და ენერგიის ფაქტობრივი რაოდენობა კვლავ შესწორებადია.'
+                : 'When enabled, grape intake, cellar operations, and lab analyses automatically post lot-linked costs. Actual labor and energy remain editable when an operation is logged.'}
+            </p>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-950 dark:border-emerald-800 dark:bg-stone-900 dark:text-emerald-100">
+            <input
+              type="checkbox"
+              checked={automationDraft.enabled}
+              disabled={!canManageAutomation || !onUpdateCompany}
+              onChange={event => setAutomationDraft(previous => ({
+                ...previous,
+                enabled: event.target.checked,
+              }))}
+              className="h-4 w-4 accent-emerald-700"
+            />
+            {automationDraft.enabled
+              ? (ka ? 'ჩართულია' : 'Enabled')
+              : (ka ? 'გამორთულია' : 'Disabled')}
+          </label>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+          {[
+            ['laborRatePerHour', ka ? 'შრომა / საათი' : 'Labor / hour'],
+            ['energyRatePerKwh', ka ? 'ენერგია / კვტ⋅სთ' : 'Energy / kWh'],
+            ['overheadPercent', ka ? 'ზედნადები (%)' : 'Overhead (%)'],
+            ['ownGrapeCostPerKg', ka ? 'საკუთარი ყურძენი / კგ' : 'Own grapes / kg'],
+            ['labAnalysisCost', ka ? 'ლაბ. ანალიზი' : 'Lab analysis'],
+          ].map(([key, label]) => (
+            <div key={key}>
+              <label className={labelCls}>{label}</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  min={0}
+                  max={key === 'overheadPercent' ? 100 : undefined}
+                  step={key === 'overheadPercent' ? 0.1 : 0.01}
+                  value={automationDraft[key as keyof typeof automationDraft] as string}
+                  disabled={!canManageAutomation || !onUpdateCompany}
+                  onChange={event => setAutomationDraft(previous => ({
+                    ...previous,
+                    [key]: event.target.value,
+                  }))}
+                  className={inputCls}
+                />
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-stone-400">
+                  {key === 'overheadPercent' ? '%' : currency}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <p className="text-[10px] font-semibold text-emerald-800/75 dark:text-emerald-200/70">
+            {ka
+              ? 'ნაგულისხმევი შრომისა და ენერგიის ნორმა ოპერაციის ტიპის მიხედვით შეირჩევა.'
+              : 'Default labor and energy usage is selected by operation type.'}
+          </p>
+          <button
+            type="button"
+            onClick={saveAutomation}
+            disabled={!canManageAutomation || !onUpdateCompany}
+            className="flex items-center gap-1.5 rounded-xl bg-emerald-800 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Save className="h-3.5 w-3.5" />
+            {automationSaved
+              ? (ka ? 'შენახულია' : 'Saved')
+              : (ka ? 'პარამეტრების შენახვა' : 'Save settings')}
+          </button>
+        </div>
+      </section>
+
       {/* Summary */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white border border-[#e8dfd5] rounded-2xl p-4 dark:bg-stone-900 dark:border-stone-800">
@@ -268,7 +421,7 @@ export default function CostsTab({
           ) : (
             <>
               <div className="grid grid-cols-2 gap-2">
-                <div><label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label><input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} /></div>
+                <div><label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label><DateInput lang={lang} value={date} onValueChange={setDate} className={inputCls} required /></div>
                 <div><label className={labelCls}>{ka ? 'კატეგორია' : 'Category'}</label>
                   <select value={category} onChange={e => setCategory(e.target.value as CostCategory)} className={inputCls}>
                     {CATEGORIES.map(c => <option key={c.id} value={c.id}>{ka ? c.ka : c.en}</option>)}

@@ -26,7 +26,7 @@ const CATEGORY_COMPONENT_ALIASES: Record<PackagingComponent, string[]> = {
   ],
   capsule: [
     'capsule', 'capsules', 'foil', 'foils',
-    'კაფსულა', 'კაფსულები',
+    'კაფსულა', 'კაფსულები', 'ჩაჩი', 'ჩაჩები',
   ],
   label: [
     'label', 'labels',
@@ -41,7 +41,7 @@ const CATEGORY_COMPONENT_ALIASES: Record<PackagingComponent, string[]> = {
 const NAME_COMPONENT_PATTERNS: Record<PackagingComponent, RegExp[]> = {
   bottle: [/\bbottles?\b/i, /\bglass\b/i, /\bceramic\b/i, /ბოთლ/u, /კერამიკ/u],
   closure: [/\bclosures?\b/i, /\bcorks?\b/i, /\bstoppers?\b/i, /საცობ/u],
-  capsule: [/\bcapsules?\b/i, /\bfoils?\b/i, /კაფსულ/u],
+  capsule: [/\bcapsules?\b/i, /\bfoils?\b/i, /კაფსულ/u, /ჩაჩ/u],
   label: [/\blabels?\b/i, /ეტიკეტ/u],
   box: [/\bbox(?:es)?\b/i, /\bcases?\b/i, /\bcartons?\b/i, /ყუთ/u, /კოლოფ/u],
 };

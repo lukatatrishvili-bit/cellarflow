@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGGREGATE_WINERY_TAB_IDS,
   WINERY_TAB_IDS,
   canViewAppDestination,
   firstVisibleWineryTab,
@@ -100,10 +101,19 @@ describe('regression: cellar roles must reach the Cellar module', () => {
 
   it('every operational cellar tab maps to a real permission module (no reports fallthrough)', () => {
     for (const tab of WINERY_TAB_IDS) {
-      if (tab === 'dashboard') continue; // aggregate surface, special-cased
+      if (AGGREGATE_WINERY_TAB_IDS.includes(tab)) continue; // cross-module surfaces, special-cased
       expect(permissionModuleFor('gvino', tab), `tab "${tab}" fell through to 'reports'`).not.toBe('reports');
     }
   });
+
+  it.each(['Winemaker', 'Cellar Worker', 'Lab Technician', 'Viticulturist'])(
+    '%s can open the intelligence centre',
+    (role) => {
+      // The aggregate surfaces must never require the 'reports' permission the
+      // operational roles do not hold — that was the original module-gate bug.
+      expect(canViewAppDestination(role, 'gvino', 'intelligence')).toBe(true);
+    },
+  );
 });
 
 describe('degradation: unknown or malformed roles', () => {

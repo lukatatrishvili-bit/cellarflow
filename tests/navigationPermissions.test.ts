@@ -27,6 +27,9 @@ describe('permission-aware app navigation', () => {
 
     expect(tabs).toEqual([
       'dashboard',
+      // Cross-module surface: reachable, but it only ever renders findings from
+      // areas this role can read (lab, in this case).
+      'intelligence',
       'lots',
       'lineage',
       'labs',
