@@ -555,7 +555,6 @@ jobs:
               --uri "$uri"
               --http-method POST
               --message-body "{}"
-              --headers "Content-Type=application/json"
               --oauth-service-account-email "$RUNTIME_SERVICE_ACCOUNT"
               --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform"
               --attempt-deadline "180s"
@@ -583,10 +582,12 @@ jobs:
               --location "$REGION" >/dev/null 2>&1; then
               gcloud scheduler jobs update http "$scheduler_name" \
                 --project "$PROJECT_ID" \
+                --update-headers "Content-Type=application/json" \
                 "${args[@]}"
             else
               gcloud scheduler jobs create http "$scheduler_name" \
                 --project "$PROJECT_ID" \
+                --headers "Content-Type=application/json" \
                 "${args[@]}"
             fi
           }

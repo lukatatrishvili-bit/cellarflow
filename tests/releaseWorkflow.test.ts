@@ -83,6 +83,8 @@ describe('release workflow contracts', () => {
       'gcloud run jobs add-iam-policy-binding "$run_job"',
     ]);
     expect(workflow).toContain('roles/run.invoker');
+    expect(workflow).toContain('--update-headers "Content-Type=application/json"');
+    expect(workflow).toContain('--headers "Content-Type=application/json"');
     expect(workflow).toContain('--oauth-service-account-email "$RUNTIME_SERVICE_ACCOUNT"');
     expect(workflow).toContain('--retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS"');
     expect(workflow).toContain('--retain-backups-on-delete');
