@@ -62,14 +62,14 @@ test('unfinished task draft survives a browser refresh', async ({ page }) => {
 
   await page.getByRole('textbox', { name: 'Task Title *' }).fill('Rack the release-gate lot');
   await page.getByRole('textbox', { name: 'Description / Details' }).fill('Retain this draft through refresh.');
-  await page.locator('input[name="dueDate"]').fill('2026-07-30');
+  await page.locator('input[name="dueDate"]').fill('30/07/2026');
   await page.waitForTimeout(650);
   await page.reload();
 
   await expect(page.getByRole('status').filter({ hasText: 'Your saved task draft was restored.' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Task Title *' })).toHaveValue('Rack the release-gate lot');
   await expect(page.getByRole('textbox', { name: 'Description / Details' })).toHaveValue('Retain this draft through refresh.');
-  await expect(page.locator('input[name="dueDate"]')).toHaveValue('2026-07-30');
+  await expect(page.locator('input[name="dueDate"]')).toHaveValue('30/07/2026');
 });
 
 test('read-only role can inspect a task without mutation controls', async ({ page }) => {
