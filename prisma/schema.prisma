@@ -207,9 +207,9 @@ model AiNotificationOutbox {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
-  @@unique([organizationId, eventKey, recipientUsername, channel])
+  @@unique([organizationId, eventKey, recipientUsername, channel], map: "AiNotificationOutbox_organizationId_eventKey_recipientUsern_key")
   @@index([status, availableAt])
-  @@index([organizationId, recipientUsername, createdAt])
+  @@index([organizationId, recipientUsername, createdAt], map: "AiNotificationOutbox_organizationId_recipientUsername_creat_idx")
 }
 
 /// Explicit, winery-scoped user consent for proactive AI delivery. Email is
