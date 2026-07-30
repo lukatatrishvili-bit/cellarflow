@@ -28,6 +28,11 @@ import type { Language } from '../lib/i18n';
 import { isActiveReservation, isActiveSalesDispatch } from '../lib/sales';
 import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
 import { stageLabel as sharedStageLabel, vesselTypeLabel } from '../lib/enumLabels';
+import {
+  nextStageForWineClass,
+  stagesForCurrentLot,
+  winemakingWorkflowLabel,
+} from '../lib/winemakingWorkflow';
 import { StatusBadge } from './ui/primitives';
 
 interface Props {
@@ -48,18 +53,6 @@ interface Props {
   setSelectedTankId?: (tankId: string | null) => void;
   setCalculatorLotId?: (lotId: string) => void;
 }
-
-const stageOrder: WinemakingStage[] = [
-  'crushing',
-  'fermenting',
-  'maceration',
-  'pressing',
-  'aging',
-  'stabilization',
-  'filtration',
-  'bottled',
-  'sold',
-];
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -144,7 +137,10 @@ export default function WineLotCommandCenter({
     .filter(entry => entry.lotId === lot.id)
     .reduce((acc, entry) => acc + (entry.amount || 0), 0);
   const costPerBottle = bottled > 0 ? round2(totalCost / bottled) : null;
+  const stageOrder = stagesForCurrentLot(lot.wineClass, lot.stage);
   const currentStageIndex = Math.max(0, stageOrder.indexOf(lot.stage));
+  const nextStage = nextStageForWineClass(lot.wineClass, lot.stage);
+  const hasNextStage = nextStage !== lot.stage;
   const progressPct = Math.round(((currentStageIndex + 1) / stageOrder.length) * 100);
 
   return (
@@ -170,8 +166,29 @@ export default function WineLotCommandCenter({
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {onChangeStage && <ActionChip icon={Activity} onClick={onChangeStage}>{ka ? 'ეტაპის შეცვლა' : 'Change stage'}</ActionChip>}
+          <div className="flex flex-wrap items-stretch gap-2">
+            {onChangeStage && (
+              <button
+                type="button"
+                onClick={onChangeStage}
+                aria-label={ka
+                  ? hasNextStage
+                    ? `ეტაპის შეცვლა: ${stageLabel(lot.stage)}-დან ${stageLabel(nextStage)}-ზე`
+                    : `მიმდინარე ეტაპის შეცვლა: ${stageLabel(lot.stage)}`
+                  : hasNextStage
+                    ? `Change stage from ${stageLabel(lot.stage)} to ${stageLabel(nextStage)}`
+                    : `Change current stage: ${stageLabel(lot.stage)}`}
+                className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-[#4e0e15] px-4 py-2 text-left text-amber-50 shadow-sm transition-colors hover:bg-[#6b151e] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c5a059] focus-visible:ring-offset-2"
+              >
+                <Activity className="h-4 w-4 shrink-0" />
+                <span>
+                  <strong className="block text-[11px] font-black">{ka ? 'ეტაპის შეცვლა' : 'Change stage'}</strong>
+                  <span className="block text-[9px] font-medium text-amber-100/80">
+                    {stageLabel(lot.stage)}{hasNextStage ? ` → ${stageLabel(nextStage)}` : ''}
+                  </span>
+                </span>
+              </button>
+            )}
             {onEdit && <ActionChip icon={Pencil} onClick={onEdit}>{ka ? 'რედაქტირება' : 'Edit'}</ActionChip>}
             <ActionChip icon={GitMerge} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'გენეალოგია' : 'Lineage'}</ActionChip>
             <ActionChip icon={FileText} onClick={onOpenPassport ? () => onOpenPassport(lot.id) : undefined}>{ka ? 'პასპორტი' : 'Passport'}</ActionChip>
@@ -190,7 +207,9 @@ export default function WineLotCommandCenter({
 
         <div className="mt-5 rounded-2xl border border-stone-200 bg-white/55 p-3 dark:border-stone-800 dark:bg-stone-950/30">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-[9px] font-mono font-black uppercase tracking-widest text-stone-400">{ka ? 'წარმოების პროგრესი' : 'Winemaking progress'}</span>
+            <span className="text-[9px] font-mono font-black uppercase tracking-widest text-stone-400">
+              {winemakingWorkflowLabel(lot.wineClass, lang)}
+            </span>
             <span className="text-[10px] font-mono font-bold text-stone-500">{progressPct}%</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">

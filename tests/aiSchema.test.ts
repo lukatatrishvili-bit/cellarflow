@@ -1,8 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { parseModelFindings, tagModelLanguage } from '../lib/ai/schema';
-import { buildContext, collectContextEvidence, serializeContext } from '../lib/ai/context';
+import {
+  buildContext,
+  collectContextEvidence,
+  extractNumericClaims,
+  extractNumericValues,
+  serializeContext,
+} from '../lib/ai/context';
 import { buildAgentPrompt } from '../lib/ai/agents';
 import { computeWineryBaselines } from '../lib/ai/baselines';
+import { canRoleSeeFinding } from '../lib/ai/roles';
 import { normalizeSnapshot } from '../lib/ai/snapshot';
 
 const ALLOWED = [
@@ -101,6 +108,84 @@ describe('parseModelFindings — hallucination guards', () => {
     expect(parsed.rejected[0].detail).toContain('999');
   });
 
+  it('accepts a correct rounding of a cited value', () => {
+    // The context carries -18.33; any readable write-up says "18% slower".
+    // Demanding the exact stored decimal would discard good analysis silently.
+    const parsed = parseModelFindings({
+      findings: [validEntry({
+        observation: 'Pace is 18% slower than the winery median.',
+        source_refs: ['fermlogs:pace'],
+      })],
+    }, {
+      ...options,
+      allowedEvidence: [{
+        sourceRef: 'fermlogs:pace',
+        label: 'fermentation.paceDeviationPct',
+        value: '{"paceDeviationPct":-18.33}',
+        numericValues: [-18.33],
+      }],
+    });
+    expect(parsed.rejected).toHaveLength(0);
+    expect(parsed.findings).toHaveLength(1);
+  });
+
+  it('accepts a magnitude where the stored value carries the sign', () => {
+    const parsed = parseModelFindings({
+      findings: [validEntry({
+        observation: 'The deviation is 18.33 percentage points below the norm.',
+        source_refs: ['fermlogs:pace'],
+      })],
+    }, {
+      ...options,
+      allowedEvidence: [{
+        sourceRef: 'fermlogs:pace',
+        label: 'fermentation.paceDeviationPct',
+        value: '{"paceDeviationPct":-18.33}',
+        numericValues: [-18.33],
+      }],
+    });
+    expect(parsed.rejected).toHaveLength(0);
+  });
+
+  it('still rejects a unit-shifted number that rounding cannot excuse', () => {
+    // 13 is not a rounding of 0.13 — that is exactly the mg/L vs % slip worth catching.
+    const parsed = parseModelFindings({
+      findings: [validEntry({
+        observation: 'Molecular SO2 is 13 mg/L.',
+        source_refs: ['lablogs:so2'],
+      })],
+    }, {
+      ...options,
+      allowedEvidence: [{
+        sourceRef: 'lablogs:so2',
+        label: 'laboratory.analyses[0]',
+        value: '{"molecularSo2MgL":0.13}',
+        numericValues: [0.13],
+      }],
+    });
+    expect(parsed.findings).toHaveLength(0);
+    expect(parsed.rejected[0].reason).toBe('ungrounded_numeric_claim');
+  });
+
+  it('grounds a count stated in prose against the size of the cited collection', () => {
+    const parsed = parseModelFindings({
+      findings: [validEntry({
+        observation: 'VA rose across the last 3 analyses.',
+        source_refs: ['lablogs:series'],
+      })],
+    }, {
+      ...options,
+      allowedEvidence: [{
+        sourceRef: 'lablogs:series',
+        label: 'laboratory.analyses',
+        value: '[{"va":0.42},{"va":0.55},{"va":0.68}]',
+        numericValues: extractNumericValues([{ va: 0.42 }, { va: 0.55 }, { va: 0.68 }]),
+      }],
+    });
+    expect(parsed.rejected).toHaveLength(0);
+    expect(parsed.findings).toHaveLength(1);
+  });
+
   it('ignores digits embedded in chemical formulas and entity ids', () => {
     const parsed = parseModelFindings({
       findings: [validEntry({
@@ -135,6 +220,21 @@ describe('parseModelFindings — hallucination guards', () => {
   it('carries missing information through instead of dropping it', () => {
     const { findings } = parseModelFindings({ findings: [validEntry()] }, options);
     expect(findings[0].missingInformation[0].en).toContain('YAN');
+  });
+
+  it('requires the specialist\'s own module, not just the trigger\'s area', () => {
+    // A laboratory agent invited onto a fermentation trigger writes chemistry
+    // into a finding filed under `fermentation`. Gating on the area alone would
+    // hand that to a cellar worker.
+    const { findings } = parseModelFindings({ findings: [validEntry()] }, {
+      ...options,
+      agent: 'laboratory',
+      area: 'fermentation',
+    });
+    expect(findings[0].area).toBe('fermentation');
+    expect(findings[0].requiredModules).toEqual(['lab']);
+    expect(canRoleSeeFinding('Cellar Worker', findings[0])).toBe(false);
+    expect(canRoleSeeFinding('Winemaker', findings[0])).toBe(true);
   });
 
   it('records which language the model wrote in', () => {
@@ -180,6 +280,22 @@ const snapshotInput = {
   }],
   labLogs: [],
 } as any;
+
+describe('extractNumericClaims', () => {
+  it('records the precision each quantity was written at', () => {
+    expect(extractNumericClaims(['Pace is 18% slower.'])).toEqual([{ value: 18, decimals: 0 }]);
+    expect(extractNumericClaims(['Molecular SO2 is 0.13 mg/L.']))
+      .toEqual([{ value: 0.13, decimals: 2 }]);
+  });
+
+  it('ignores digits that are part of an identifier or a formula', () => {
+    expect(extractNumericClaims(['Lot L1 in vessel T2 needs SO2 attention.'])).toEqual([]);
+  });
+
+  it('deduplicates repeated quantities', () => {
+    expect(extractNumericClaims(['22 °C', 'still 22 °C'])).toEqual([{ value: 22, decimals: 0 }]);
+  });
+});
 
 describe('buildContext — grounding', () => {
   const snapshot = normalizeSnapshot(snapshotInput);

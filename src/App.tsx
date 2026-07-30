@@ -5,6 +5,11 @@ import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
 import type { AiFinding } from '../lib/ai/types';
+import {
+  buildNotificationFeed,
+  type AiNotificationFinding,
+  type NotificationItem,
+} from '../lib/notificationFeed';
 import { useWineryState } from '../hooks/useWineryState';
 import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
@@ -167,6 +172,8 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
+  const [focusedAiFindingId, setFocusedAiFindingId] = useState<string | null>(null);
+  const locallyReadAiNotificationEvents = useRef<Set<string>>(new Set());
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [isEndingImpersonation, setIsEndingImpersonation] = useState(false);
   const [billingEntitlements, setBillingEntitlements] = useState<Partial<Record<BillingFeature, boolean>> | null>(null);
@@ -185,6 +192,18 @@ export default function App() {
       ? 'Terroir Pulse — VinOS'
       : (state.lang === 'ka' ? 'VinOS — მარნის მართვა' : 'VinOS — Winery Management');
   }, [isMarketingPage, isTerroirPulsePage, state.lang]);
+
+  useEffect(() => {
+    if (!state.isLoggedIn || typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const findingId = (url.searchParams.get('aiFinding') || '').trim().slice(0, 160);
+    if (!findingId) return;
+    state.setActiveModule('gvino');
+    state.setActiveTab('intelligence');
+    setFocusedAiFindingId(findingId);
+    url.searchParams.delete('aiFinding');
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  }, [state]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !initialAuthLinkContext.flow) return;
@@ -513,6 +532,8 @@ export default function App() {
           message: isKa
             ? `სენსორმა დააფიქსირა სიმკვრივის ვარდნა ${t.dailySlope.toFixed(4)} SG/დღეში (< 0.002 SG/დღე ზღვარი). მიმდინარე SG: ${t.density}. ტემპერატურა: ${t.temperature}°C.`
             : `Sensor detected gravity drop rate of ${t.dailySlope.toFixed(4)} SG/day (< 0.002 SG/day threshold). Current SG: ${t.density}. Temperature: ${t.temperature}°C.`,
+          relatedEntityType: 'lot',
+          relatedEntityId: t.lotId,
           relatedLotId: t.lotId,
           relatedTankId: t.tankId
         });
@@ -575,7 +596,158 @@ export default function App() {
     return () => { active = false; };
   }, [intelligenceData, state.lang, state.companyProfile.aiConfig, state.isLoggedIn]);
 
-  const handleSelectAlert = (a: Alert) => {
+  const [aiNotificationFindings, setAiNotificationFindings] = useState<AiNotificationFinding[]>([]);
+  const [aiNotificationStatus, setAiNotificationStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  useEffect(() => {
+    if (!state.isLoggedIn || state.currentUser.isMasterAdmin) {
+      locallyReadAiNotificationEvents.current.clear();
+      setAiNotificationFindings([]);
+      setAiNotificationStatus('ready');
+      return;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight || document.visibilityState === 'hidden') return;
+      inFlight = true;
+      try {
+        const response = await fetch(`/api/ai/notifications?lang=${state.lang}&limit=50`, {
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error(String(response.status));
+        const payload = await response.json();
+        if (cancelled) return;
+        const received = Array.isArray(payload.findings) ? payload.findings : [];
+        setAiNotificationFindings(received.map((finding: AiNotificationFinding) => (
+          locallyReadAiNotificationEvents.current.has(
+            `${finding.id}:${finding.notificationEventKey || ''}`,
+          )
+            ? { ...finding, unread: false }
+            : finding
+        )));
+        setAiNotificationStatus('ready');
+      } catch {
+        if (!cancelled) setAiNotificationStatus('unavailable');
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    locallyReadAiNotificationEvents.current.clear();
+    setAiNotificationFindings([]);
+    setAiNotificationStatus('loading');
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 60_000);
+    const onFocus = () => void refresh();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    const onFindingsChanged = () => void refresh();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('vinos:ai-findings-changed', onFindingsChanged);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('vinos:ai-findings-changed', onFindingsChanged);
+    };
+  }, [
+    state.isLoggedIn,
+    state.currentUser.isMasterAdmin,
+    state.currentUser.username,
+    activeBillingOrganizationId,
+    state.lang,
+  ]);
+
+  const notificationItems = useMemo(
+    () => buildNotificationFeed(alerts, aiNotificationFindings),
+    [alerts, aiNotificationFindings],
+  );
+
+  const markAiNotificationRead = async (item: NotificationItem) => {
+    if (item.source !== 'ai' || !item.findingId || !item.unread) return;
+    const eventKey = item.notificationEventKey;
+    const localEventKey = `${item.findingId}:${eventKey || ''}`;
+    locallyReadAiNotificationEvents.current.add(localEventKey);
+    setAiNotificationFindings((current) => current.map((finding) => (
+      finding.id === item.findingId && finding.notificationEventKey === eventKey
+        ? { ...finding, unread: false, readAt: new Date().toISOString() }
+        : finding
+    )));
+    try {
+      const response = await fetch(`/api/ai/notifications/${encodeURIComponent(item.findingId)}/read`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lang: state.lang }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+    } catch {
+      locallyReadAiNotificationEvents.current.delete(localEventKey);
+      setAiNotificationFindings((current) => current.map((finding) => (
+        finding.id === item.findingId && finding.notificationEventKey === eventKey
+          ? { ...finding, unread: true, readAt: undefined }
+          : finding
+      )));
+      state.setToastMessage(state.lang === 'ka'
+        ? 'შეტყობინების წაკითხულად მონიშვნა ვერ შეინახა.'
+        : 'Could not save the notification as read.');
+    }
+  };
+
+  const markAllAiNotificationsRead = async () => {
+    const unreadEventKeys = new Map(
+      aiNotificationFindings
+        .filter((finding) => finding.unread !== false)
+        .map((finding) => [finding.id, finding.notificationEventKey]),
+    );
+    if (unreadEventKeys.size === 0) return;
+    for (const [findingId, eventKey] of unreadEventKeys) {
+      locallyReadAiNotificationEvents.current.add(`${findingId}:${eventKey || ''}`);
+    }
+    const readAt = new Date().toISOString();
+    setAiNotificationFindings((current) => current.map((finding) => (
+      unreadEventKeys.has(finding.id)
+        && unreadEventKeys.get(finding.id) === finding.notificationEventKey
+        ? { ...finding, unread: false, readAt }
+        : finding
+    )));
+    try {
+      const response = await fetch('/api/ai/notifications/read-all', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lang: state.lang }),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+    } catch {
+      for (const [findingId, eventKey] of unreadEventKeys) {
+        locallyReadAiNotificationEvents.current.delete(`${findingId}:${eventKey || ''}`);
+      }
+      setAiNotificationFindings((current) => current.map((finding) => (
+        unreadEventKeys.has(finding.id)
+          && unreadEventKeys.get(finding.id) === finding.notificationEventKey
+          ? { ...finding, unread: true, readAt: undefined }
+          : finding
+      )));
+      state.setToastMessage(state.lang === 'ka'
+        ? 'შეტყობინებების წაკითხულად მონიშვნა ვერ შეინახა.'
+        : 'Could not mark AI notifications as read.');
+      throw new Error('Could not mark AI notifications as read.');
+    }
+  };
+
+  const handleSelectNotification = (item: NotificationItem) => {
+    if (item.source === 'ai' && item.findingId) {
+      void markAiNotificationRead(item);
+      state.setActiveModule('gvino');
+      setFocusedAiFindingId(item.findingId);
+      state.setActiveTab('intelligence');
+      return;
+    }
     const tabByCategory: Record<Alert['category'], string> = {
       so2: 'labs',
       va: 'labs',
@@ -586,7 +758,7 @@ export default function App() {
       inventory: 'inventory',
     };
     state.setActiveModule('gvino');
-    state.setActiveTab(tabByCategory[a.category]);
+    state.setActiveTab(item.category === 'intelligence' ? 'intelligence' : tabByCategory[item.category]);
   };
 
   // Close selected modal drawer on Escape key down for intuitive usability
@@ -1227,7 +1399,13 @@ export default function App() {
 
           {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
             <Suspense fallback={null}>
-              <NotificationCenter alerts={alerts} onSelect={handleSelectAlert} lang={state.lang} />
+              <NotificationCenter
+                items={notificationItems}
+                aiStatus={aiNotificationStatus}
+                onMarkAllAiRead={markAllAiNotificationsRead}
+                onSelect={handleSelectNotification}
+                lang={state.lang}
+              />
             </Suspense>
           )}
 
@@ -1988,10 +2166,15 @@ export default function App() {
                   }}
                   data={intelligenceData}
                   findings={intelligenceFindings}
+                  focusFindingId={focusedAiFindingId}
+                  onFocusConsumed={() => setFocusedAiFindingId(null)}
                   onCreateTask={canAccess(state.currentUser.role, 'tasks', 'create')
                     ? (title, priority, dueDate, description) => {
                       state.handleAddNewTask(title, priority, dueDate, description);
                     }
+                    : undefined}
+                  onSaveDraftActions={canAccess(state.currentUser.role, 'tasks', 'create')
+                    ? state.handleSaveAiDraftActions
                     : undefined}
                   onNavigate={(targetModule) => {
                     // Findings name the module they belong to; map it onto the

@@ -195,6 +195,26 @@ describe('mergeFindings', () => {
     expect(merged.notify).toHaveLength(0);
   });
 
+  it('preserves every reviewer verdict across re-detection', () => {
+    const existing = [record(finding(), {
+      feedbackEntries: [
+        {
+          verdict: 'helpful',
+          submittedBy: 'alice',
+          submittedAt: '2026-09-20T07:00:00.000Z',
+        },
+        {
+          verdict: 'incorrect',
+          submittedBy: 'bob',
+          submittedAt: '2026-09-20T08:00:00.000Z',
+        },
+      ],
+    })];
+    const merged = mergeFindings(existing, [finding()], { config, now });
+    expect(merged.records[0].feedbackEntries).toEqual(existing[0].feedbackEntries);
+    expect(merged.records[0].feedback).toBeUndefined();
+  });
+
   it('reopens and notifies when severity escalates', () => {
     const existing = [record(finding({ severity: 'warning' }), { status: 'reviewed' })];
     const merged = mergeFindings(existing, [finding({ severity: 'critical' })], { config, now });

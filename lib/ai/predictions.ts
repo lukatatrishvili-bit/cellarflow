@@ -32,7 +32,7 @@ export interface FermentationForecast {
 const DRY_DENSITY = 0.996;
 
 /** Newest-first physical readings with a usable density. */
-export function usableFermentationReadings(logs: DailyFermLog[]): DailyFermLog[] {
+export function usableFermentationReadings(logs: readonly DailyFermLog[]): DailyFermLog[] {
   return logs
     .filter((log) => isPhysicalFermentationReading(log) && Number.isFinite(log.density) && log.density > 0)
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -44,7 +44,9 @@ export function usableFermentationReadings(logs: DailyFermLog[]): DailyFermLog[]
  * short to extrapolate from.
  */
 export function forecastFermentation(
-  logs: DailyFermLog[],
+  // Readonly: callers pass a shared per-evaluation index, so this must copy
+  // before sorting rather than reorder someone else's array.
+  logs: readonly DailyFermLog[],
   baseline: FermentationRateBaseline | null,
   today: string,
 ): FermentationForecast {
@@ -196,7 +198,7 @@ export interface HarvestForecast {
  * historical timing for the variety.
  */
 export function forecastHarvestDate(
-  samplings: GrapeSamplingRecord[],
+  samplings: readonly GrapeSamplingRecord[],
   options: {
     today: string;
     targetBrix: number;

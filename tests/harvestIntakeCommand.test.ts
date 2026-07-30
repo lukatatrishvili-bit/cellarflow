@@ -304,4 +304,13 @@ describe('cellar.harvest-intake domain command', () => {
     expect(() => parseHarvestIntakeCommandPayload({ ...payload, lotId: '../bad' }))
       .toThrowError(expect.objectContaining({ code: 'invalid_harvest_intake_payload' }));
   });
+
+  it('accepts qvevri as a dedicated wine class', () => {
+    const parsed = parseHarvestIntakeCommandPayload({
+      ...payload,
+      intake: { ...payload.intake, wineClass: 'qvevri' },
+    });
+
+    expect(parsed.intake.wineClass).toBe('qvevri');
+  });
 });

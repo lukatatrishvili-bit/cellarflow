@@ -17,6 +17,7 @@ import {
   type FermentationCompletionCommandPayload,
 } from '../lib/commands/fermentationCompletion';
 import type { FermentationCompletionReversalCommandPayload } from '../lib/commands/fermentationCompletionReversal';
+import { wineClassLabel } from '../lib/enumLabels';
 import {
   isCompletableFermentationReading,
   isFermentationCompletionReversal,
@@ -886,9 +887,7 @@ export default function FermentationTab({
 
                     <div className="flex flex-col items-end gap-1.5 shrink-0">
                       <span className="text-[9px] font-mono px-1.5 py-0.5 font-bold bg-[#FAF8F5] text-[#801323] border border-red-105 rounded uppercase">
-                        🔬 {lang === 'ka'
-                          ? ({red_dry: 'წითელი მშრალი', white_dry: 'თეთრი მშრალი', amber_dry: 'ქარვისფერი მშრალი', rose: 'ვარდისფერი', red_semi_sweet: 'წითელი ნახევრადტკბილი', white_semi_sweet: 'თეთრი ნახევრადტკბილი'} as Record<string, string>)[lot.wineClass] || lot.wineClass
-                          : `${lot.wineClass} Wine`}
+                        🔬 {wineClassLabel(lot.wineClass, lang)} {lang === 'ka' ? 'ღვინო' : 'wine'}
                       </span>
                       {isSluggish(lot.id) && (
                         <span className="text-[9px] font-mono px-1.5 py-0.5 font-black bg-rose-50 text-rose-700 border border-rose-200 rounded uppercase flex items-center gap-1 animate-pulse">

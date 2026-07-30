@@ -97,7 +97,8 @@ export function restrictOptionalIntakeWrites(
 const WINE_CLASSES: Array<{ key: WineClass; en: string; ka: string }> = [
   { key: 'red', en: 'Red', ka: 'წითელი' },
   { key: 'white', en: 'White', ka: 'თეთრი' },
-  { key: 'amber', en: 'Amber (Qvevri)', ka: 'ქარვისფერი (ქვევრი)' },
+  { key: 'amber', en: 'Amber', ka: 'ქარვისფერი' },
+  { key: 'qvevri', en: 'Qvevri', ka: 'ქვევრის' },
   { key: 'rose', en: 'Rosé', ka: 'ვარდისფერი' },
   { key: 'sparkling', en: 'Sparkling base', ka: 'ცქრიალა' },
   { key: 'fortified', en: 'Fortified', ka: 'შემაგრებული' },

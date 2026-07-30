@@ -16,6 +16,7 @@ import {
   getAiModelBudget,
   reserveAiModelCalls,
 } from '../aiModelBudget';
+import { withAiModelCallTelemetry } from '../aiModelTelemetry';
 import {
   AI_FINDING_RESPONSE_SCHEMA,
   QUERY_PLAN_SCHEMA,
@@ -28,7 +29,11 @@ import {
   describeQueryResult,
   evaluateRules,
   executeQuery,
+  feedbackForViewer,
   filterFindingsForRole,
+  filterFindingsRoutedToRole,
+  isAiFeedbackVerdict,
+  isAreaEnabled,
   localize,
   mergeFindings,
   parseModelFindings,
@@ -37,7 +42,9 @@ import {
   resolveAiConfig,
   serializeContext,
   serializeQueryResult,
+  severityRank,
   tagModelLanguage,
+  upsertFindingFeedback,
   validateQueryPlan,
   wineryStatus,
   type AiAgentKey,
@@ -50,10 +57,27 @@ import {
 } from '../../lib/ai';
 import type { Language } from '../../lib/i18n';
 import {
-  getAiEmailAccountStatus,
+  getAiNotificationAccountStatus,
   getAiNotificationPreference,
   setAiNotificationPreference,
 } from '../aiNotificationPreferences';
+import {
+  aiNotificationEventKey,
+  getAiNotificationReadStates,
+  markAiNotificationsRead,
+} from '../aiInAppNotificationState';
+import {
+  archiveAiKnowledgeDocument,
+  createAiKnowledgeDocument,
+  embedAiKnowledgeDocument,
+  hasActiveAiKnowledge,
+  listAiKnowledgeDocuments,
+  retrieveAiKnowledge,
+} from '../aiKnowledge';
+import {
+  registerAiPushSubscription,
+  removeAiPushSubscription,
+} from '../aiPushSubscriptions';
 
 const router = express.Router();
 
@@ -225,7 +249,11 @@ function normalizeLang(value: unknown): Language {
 }
 
 /** Serializes a finding for the wire in the caller's language. */
-function presentFinding(finding: AiFinding | AiFindingRecord, lang: Language) {
+function presentFinding(
+  finding: AiFinding | AiFindingRecord,
+  lang: Language,
+  viewerUsername: string,
+) {
   const record = finding as AiFindingRecord;
   return {
     id: finding.id,
@@ -273,30 +301,53 @@ function presentFinding(finding: AiFinding | AiFindingRecord, lang: Language) {
     occurrences: record.occurrences,
     lastSeenAt: record.lastSeenAt,
     lastAnalyzedAt: record.lastAnalyzedAt,
-    feedback: record.feedback,
+    feedback: feedbackForViewer(record, viewerUsername),
     linkedTaskId: record.linkedTaskId,
     resolutionNote: record.resolutionNote,
     lastModified: record.lastModified,
   };
 }
 
-async function generateStructured(prompt: string, schema: unknown): Promise<unknown> {
-  const client = getAiClient();
-  const response = await client.models.generateContent({
+async function generateStructured(
+  prompt: string,
+  schema: unknown,
+  telemetry: {
+    organizationId: string;
+    purpose: 'analysis' | 'ask_planner';
+    agent?: AiAgentKey;
+  },
+  options: {
+    /**
+     * Decides whether a syntactically valid response was actually usable.
+     * Without this, a response whose every finding fails the grounding guards
+     * is recorded as a success and systematic over-rejection stays invisible.
+     */
+    validate?: (payload: unknown) => boolean;
+  } = {},
+): Promise<unknown> {
+  return withAiModelCallTelemetry({
+    ...telemetry,
     model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: schema as never,
-    },
+  }, async () => {
+    const client = getAiClient();
+    const response = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: schema as never,
+      },
+    });
+    const raw = response.text;
+    if (!raw) return { value: null, valid: false };
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return { value: null, valid: false };
+    }
+    return { value: payload, valid: options.validate ? options.validate(payload) : true };
   });
-  const raw = response.text;
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
 }
 
 function findingTriggerFingerprint(finding: AiFinding): string {
@@ -389,8 +440,136 @@ router.get('/findings', async (req, res) => {
   const visible = filterFindingsForRole(stored, workspace.role);
   return res.json({
     status: wineryStatus(visible),
-    findings: visible.map((record) => presentFinding(record, lang)),
+    findings: visible.map((record) => presentFinding(record, lang, workspace.username)),
   });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/ai/notifications — open findings routed to this user's role
+// ---------------------------------------------------------------------------
+
+const OPEN_NOTIFICATION_STATUSES = new Set(['new', 'reviewed', 'accepted']);
+
+async function currentNotificationFindings(workspace: Workspace, lang: Language): Promise<{
+  generatedAt: string;
+  minimumSeverity: AiSeverity;
+  personalMinimumSeverity: AiSeverity;
+  effectiveMinimumSeverity: AiSeverity;
+  findings: AiFindingRecord[];
+}> {
+  const { snapshot, findings } = evaluateRules(snapshotFor(workspace, lang));
+  const preference = await getAiNotificationPreference(workspace.orgId, workspace.username);
+  const effectiveMinimumSeverity = severityRank(preference.inAppMinimumSeverity)
+    > severityRank(snapshot.config.minimumSeverity)
+    ? preference.inAppMinimumSeverity
+    : snapshot.config.minimumSeverity;
+
+  // Notification projection re-evaluates pure rules against the latest
+  // snapshot, but never persists finding lifecycle state or spends a model call.
+  const merged = mergeFindings(storedFindings(workspace), findings, { config: snapshot.config });
+  const routed = snapshot.config.monitoringEnabled
+    ? filterFindingsRoutedToRole(merged.records, workspace.role)
+      .filter((finding) => OPEN_NOTIFICATION_STATUSES.has(finding.status))
+      .filter((finding) => isAreaEnabled(finding.area, snapshot.config))
+      .filter((finding) => (
+        severityRank(finding.severity) >= severityRank(effectiveMinimumSeverity)
+      ))
+      .sort((a, b) => {
+        const bySeverity = severityRank(b.severity) - severityRank(a.severity);
+        if (bySeverity !== 0) return bySeverity;
+        return b.lastSeenAt.localeCompare(a.lastSeenAt);
+      })
+    : [];
+  return {
+    generatedAt: snapshot.evaluatedAt,
+    minimumSeverity: snapshot.config.minimumSeverity,
+    personalMinimumSeverity: preference.inAppMinimumSeverity,
+    effectiveMinimumSeverity,
+    findings: routed,
+  };
+}
+
+router.get('/notifications', async (req, res) => {
+  const auth = await requireCapability(req, res, 'read');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+
+  const lang = normalizeLang(req.query.lang);
+  const requestedLimit = Number(req.query.limit);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(100, Math.trunc(requestedLimit)))
+    : 50;
+  const current = await currentNotificationFindings(workspace, lang);
+  const readStates = await getAiNotificationReadStates(
+    workspace.orgId,
+    workspace.username,
+    current.findings.map((finding) => finding.id),
+  );
+  const presented = current.findings.map((finding) => {
+    const eventKey = aiNotificationEventKey(finding);
+    const readState = readStates.get(finding.id);
+    const isRead = readState?.eventKey === eventKey;
+    return {
+      ...presentFinding(finding, lang, workspace.username),
+      notificationEventKey: eventKey,
+      unread: !isRead,
+      readAt: isRead ? readState.readAt : undefined,
+    };
+  });
+
+  return res.json({
+    generatedAt: current.generatedAt,
+    minimumSeverity: current.minimumSeverity,
+    personalMinimumSeverity: current.personalMinimumSeverity,
+    effectiveMinimumSeverity: current.effectiveMinimumSeverity,
+    total: presented.length,
+    unread: presented.filter((finding) => finding.unread).length,
+    overflow: Math.max(0, presented.length - limit),
+    findings: presented.slice(0, limit),
+  });
+});
+
+router.put('/notifications/:id/read', async (req, res) => {
+  const auth = await requireCapability(req, res, 'read');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+
+  const current = await currentNotificationFindings(workspace, normalizeLang(req.body?.lang));
+  const finding = current.findings.find((candidate) => candidate.id === req.params.id);
+  if (!finding) return res.status(404).json({ error: 'Active notification not found.' });
+
+  const eventKey = aiNotificationEventKey(finding);
+  const [state] = await markAiNotificationsRead({
+    organizationId: workspace.orgId,
+    username: workspace.username,
+    notifications: [{ findingId: finding.id, eventKey }],
+  });
+  return res.json({
+    findingId: finding.id,
+    notificationEventKey: eventKey,
+    unread: false,
+    readAt: state.readAt,
+  });
+});
+
+router.post('/notifications/read-all', async (req, res) => {
+  const auth = await requireCapability(req, res, 'read');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+
+  const current = await currentNotificationFindings(workspace, normalizeLang(req.body?.lang));
+  await markAiNotificationsRead({
+    organizationId: workspace.orgId,
+    username: workspace.username,
+    notifications: current.findings.map((finding) => ({
+      findingId: finding.id,
+      eventKey: aiNotificationEventKey(finding),
+    })),
+  });
+  return res.json({ marked: current.findings.length });
 });
 
 // ---------------------------------------------------------------------------
@@ -415,7 +594,7 @@ router.post('/evaluate', async (req, res) => {
     evaluated: findings.length,
     notify: merge.notify.length,
     autoResolved: merge.autoResolved.length,
-    findings: visible.map((record) => presentFinding(record, lang)),
+    findings: visible.map((record) => presentFinding(record, lang, workspace.username)),
   });
 });
 
@@ -424,7 +603,6 @@ router.post('/evaluate', async (req, res) => {
 // ---------------------------------------------------------------------------
 
 const STATUSES = ['new', 'reviewed', 'accepted', 'rejected', 'resolved', 'dismissed'];
-const VERDICTS = ['helpful', 'not_helpful', 'incorrect', 'already_handled'];
 
 router.patch('/findings/:id', async (req, res) => {
   const auth = await requireCapability(req, res, 'write');
@@ -439,7 +617,9 @@ router.patch('/findings/:id', async (req, res) => {
 
   const verdict = req.body?.feedback?.verdict;
   if (verdict !== undefined) {
-    if (!VERDICTS.includes(verdict)) return res.status(400).json({ error: 'Invalid feedback verdict.' });
+    if (!isAiFeedbackVerdict(verdict)) {
+      return res.status(400).json({ error: 'Invalid feedback verdict.' });
+    }
   }
   try {
     const next = await mutateWorkspace(
@@ -456,22 +636,19 @@ router.patch('/findings/:id', async (req, res) => {
         }
 
         const now = new Date().toISOString();
-        const updatedRecord: AiFindingRecord = { ...record, lastModified: now };
+        let updatedRecord: AiFindingRecord = { ...record, lastModified: now };
         if (status !== undefined) {
           updatedRecord.status = status;
           updatedRecord.statusChangedAt = now;
           updatedRecord.statusChangedBy = auth.username;
         }
         if (verdict !== undefined) {
-          const comment = typeof req.body.feedback.comment === 'string'
-            ? req.body.feedback.comment.slice(0, 1000)
-            : undefined;
-          updatedRecord.feedback = {
+          updatedRecord = upsertFindingFeedback(updatedRecord, {
             verdict,
-            comment,
-            submittedBy: auth.username,
-            submittedAt: now,
-          };
+            comment: req.body.feedback.comment,
+            username: auth.username,
+            now,
+          });
         }
         if (typeof req.body?.resolutionNote === 'string') {
           updatedRecord.resolutionNote = req.body.resolutionNote.slice(0, 1000);
@@ -486,7 +663,9 @@ router.patch('/findings/:id', async (req, res) => {
         return updatedRecord;
       },
     );
-    return res.json({ finding: presentFinding(next, normalizeLang(req.body?.lang)) });
+    return res.json({
+      finding: presentFinding(next, normalizeLang(req.body?.lang), workspace.username),
+    });
   } catch (error) {
     if (error instanceof AiRouteMutationError) {
       return res.status(error.statusCode).json({ error: error.message });
@@ -528,10 +707,140 @@ router.get('/briefing', async (req, res) => {
       key: section.key,
       title: localize(section.title, lang),
       overflow: section.overflow,
-      findings: section.findings.map((finding) => presentFinding(finding, lang)),
+      findings: section.findings.map((finding) => presentFinding(finding, lang, workspace.username)),
     })),
     text: renderBriefingText(briefing, lang),
   });
+});
+
+// ---------------------------------------------------------------------------
+// /api/ai/knowledge — tenant-owned retrieval knowledge
+// ---------------------------------------------------------------------------
+
+function canManageAiKnowledge(workspace: Workspace): boolean {
+  return canAccess(workspace.role, 'company_profile', 'update');
+}
+
+router.get('/knowledge', async (req, res) => {
+  const auth = await requireCapability(req, res, 'read');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  if (!canManageAiKnowledge(workspace)) {
+    return res.status(403).json({ error: 'Only winery administrators can manage AI knowledge.' });
+  }
+  const documents = await listAiKnowledgeDocuments(
+    workspace.orgId,
+    req.query.includeArchived === 'true',
+  );
+  return res.json({ documents });
+});
+
+router.post('/knowledge', async (req, res) => {
+  const auth = await requireCapability(req, res, 'write');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  if (!canManageAiKnowledge(workspace)) {
+    return res.status(403).json({ error: 'Only winery administrators can manage AI knowledge.' });
+  }
+
+  const snapshot = evaluateRules(snapshotFor(workspace, normalizeLang(req.body?.language))).snapshot;
+  let generateEmbedding = false;
+  let embeddingStatus: 'generated' | 'lexical_only' | 'budget_exhausted' | 'failed' = 'lexical_only';
+  if ((process.env.GEMINI_API_KEY || '').trim()) {
+    const reservation = await reserveAiModelCalls(
+      workspace.orgId,
+      snapshot.config.maxModelCallsPerDay,
+      1,
+    );
+    generateEmbedding = reservation.granted;
+    embeddingStatus = reservation.granted ? 'generated' : 'budget_exhausted';
+  }
+
+  try {
+    let document;
+    try {
+      document = await createAiKnowledgeDocument({
+        organizationId: workspace.orgId,
+        username: workspace.username,
+        title: req.body?.title,
+        content: req.body?.content,
+        sourceLabel: req.body?.sourceLabel,
+        sourceUrl: req.body?.sourceUrl,
+        language: req.body?.language,
+        agents: req.body?.agents,
+        generateEmbedding,
+      });
+      if (generateEmbedding && document.embeddedChunkCount === 0) embeddingStatus = 'failed';
+    } catch (error) {
+      if (!generateEmbedding) throw error;
+      embeddingStatus = 'failed';
+      document = await createAiKnowledgeDocument({
+        organizationId: workspace.orgId,
+        username: workspace.username,
+        title: req.body?.title,
+        content: req.body?.content,
+        sourceLabel: req.body?.sourceLabel,
+        sourceUrl: req.body?.sourceUrl,
+        language: req.body?.language,
+        agents: req.body?.agents,
+        generateEmbedding: false,
+      });
+    }
+    return res.status(201).json({ document, embeddingStatus });
+  } catch (error: any) {
+    if (error?.code === 'P2002') {
+      return res.status(409).json({ error: 'This knowledge content already exists in the winery.' });
+    }
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : 'Knowledge document could not be created.',
+    });
+  }
+});
+
+router.delete('/knowledge/:id', async (req, res) => {
+  const auth = await requireCapability(req, res, 'write');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  if (!canManageAiKnowledge(workspace)) {
+    return res.status(403).json({ error: 'Only winery administrators can manage AI knowledge.' });
+  }
+  const archived = await archiveAiKnowledgeDocument(workspace.orgId, req.params.id);
+  if (!archived) return res.status(404).json({ error: 'Active knowledge document not found.' });
+  return res.json({ archived: true, id: req.params.id });
+});
+
+router.post('/knowledge/:id/embed', async (req, res) => {
+  const auth = await requireCapability(req, res, 'write');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  if (!canManageAiKnowledge(workspace)) {
+    return res.status(403).json({ error: 'Only winery administrators can manage AI knowledge.' });
+  }
+  if (!(process.env.GEMINI_API_KEY || '').trim()) {
+    return res.status(409).json({ error: 'Knowledge embeddings are not configured.' });
+  }
+  const snapshot = evaluateRules(snapshotFor(workspace, 'en')).snapshot;
+  const reservation = await reserveAiModelCalls(
+    workspace.orgId,
+    snapshot.config.maxModelCallsPerDay,
+    1,
+  );
+  if (!reservation.granted) {
+    return res.status(429).json({ error: 'The winery model-call budget is exhausted.' });
+  }
+  try {
+    const document = await embedAiKnowledgeDocument(workspace.orgId, req.params.id);
+    if (!document) return res.status(404).json({ error: 'Active knowledge document not found.' });
+    return res.json({ document, embeddingStatus: 'generated' });
+  } catch (error) {
+    return res.status(502).json({
+      error: error instanceof Error ? error.message : 'Knowledge embeddings could not be generated.',
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -591,6 +900,7 @@ router.post('/analyze', async (req, res) => {
 
   const produced: AiFinding[] = [];
   const rejections: string[] = [];
+  const rejectionsByReason: Record<string, number> = {};
   const roleSnapshot = snapshotVisibleToRole(snapshot, workspace.role);
   const roleBaselines = computeWineryBaselines(roleSnapshot);
   const analyzedTriggerFingerprints = new Map(
@@ -599,11 +909,44 @@ router.post('/analyze', async (req, res) => {
       findingTriggerFingerprint(item.finding),
     ]),
   );
+  const knowledgeAvailable = await hasActiveAiKnowledge(workspace.orgId);
+  let knowledgeEmbeddingCalls = 0;
+  let knowledgeSourcesUsed = 0;
 
   for (const item of plan.items) {
-    const context = buildContext(roleSnapshot, roleBaselines, item.scope);
-    const serializedContext = serializeContext(context);
-    const allowedEvidence = collectContextEvidence(JSON.parse(serializedContext));
+    const baseContext = buildContext(roleSnapshot, roleBaselines, item.scope);
+    const knowledgeQuery = [
+      localize(item.finding.title, lang),
+      localize(item.finding.observation, lang),
+      item.finding.entityLabel,
+    ].join(' ');
+    let knowledge: Awaited<ReturnType<typeof retrieveAiKnowledge>> = [];
+    if (knowledgeAvailable) {
+      const knowledgeReservation = await reserveAiModelCalls(
+        workspace.orgId,
+        snapshot.config.maxModelCallsPerDay,
+        1,
+      );
+      if (knowledgeReservation.granted) knowledgeEmbeddingCalls += 1;
+      try {
+        knowledge = await retrieveAiKnowledge({
+          organizationId: workspace.orgId,
+          agent: item.agents as AiAgentKey[],
+          query: knowledgeQuery,
+          limit: 8,
+          generateQueryEmbedding: knowledgeReservation.granted,
+        });
+      } catch {
+        knowledge = await retrieveAiKnowledge({
+          organizationId: workspace.orgId,
+          agent: item.agents as AiAgentKey[],
+          query: knowledgeQuery,
+          limit: 8,
+          generateQueryEmbedding: false,
+        });
+      }
+    }
+    knowledgeSourcesUsed += knowledge.length;
     // The complete set of ids the model may attach a finding to. Anything else
     // it returns is a hallucination and is discarded by the parser.
     const allowedEntities = [
@@ -616,6 +959,27 @@ router.post('/analyze', async (req, res) => {
     ].filter((entity) => entityExistsInSnapshot(roleSnapshot, entity.type, entity.id));
 
     for (const agentKey of item.agents as AiAgentKey[]) {
+      const agentKnowledge = knowledge
+        .filter((source) => source.agents.includes(agentKey))
+        .slice(0, 4);
+      const context = {
+        ...baseContext,
+        ...(agentKnowledge.length > 0
+          ? {
+            knowledge: agentKnowledge.map((source) => ({
+              sourceRef: source.sourceRef,
+              title: source.title,
+              sourceLabel: source.sourceLabel,
+              sourceUrl: source.sourceUrl,
+              language: source.language,
+              content: source.content,
+              retrieval: source.retrieval,
+            })),
+          }
+          : {}),
+      };
+      const serializedContext = serializeContext(context);
+      const allowedEvidence = collectContextEvidence(JSON.parse(serializedContext));
       const prompt = buildAgentPrompt({
         agent: agentKey,
         context,
@@ -629,20 +993,39 @@ router.post('/analyze', async (req, res) => {
         },
       });
       try {
-        const raw = await generateStructured(prompt, AI_FINDING_RESPONSE_SCHEMA);
-        const parsed = parseModelFindings(raw, {
+        // Validation runs inside the telemetry span so the operations console
+        // distinguishes "the model had nothing to add" from "everything it said
+        // failed the grounding guards".
+        let parsed: ReturnType<typeof parseModelFindings> | null = null;
+        await generateStructured(prompt, AI_FINDING_RESPONSE_SCHEMA, {
+          organizationId: workspace.orgId,
+          purpose: 'analysis',
           agent: agentKey,
-          area: item.finding.area,
-          language: lang,
-          allowedEntities,
-          allowedEvidence,
-          sourceDedupeKey: `${item.finding.dedupeKey}:${agentKey}`,
-          triggerDedupeKey: item.finding.dedupeKey,
+        }, {
+          validate: (payload) => {
+            parsed = parseModelFindings(payload, {
+              agent: agentKey,
+              area: item.finding.area,
+              language: lang,
+              allowedEntities,
+              allowedEvidence,
+              sourceDedupeKey: `${item.finding.dedupeKey}:${agentKey}`,
+              triggerDedupeKey: item.finding.dedupeKey,
+            });
+            return parsed.findings.length > 0 || parsed.rejected.length === 0;
+          },
         });
-        produced.push(...tagModelLanguage(parsed.findings, lang));
-        rejections.push(...parsed.rejected.map((rejection) => `${rejection.reason}: ${rejection.detail}`));
+        const result = parsed as ReturnType<typeof parseModelFindings> | null;
+        if (result) {
+          produced.push(...tagModelLanguage(result.findings, lang));
+          for (const rejection of result.rejected) {
+            rejections.push(`${rejection.reason}: ${rejection.detail}`);
+            rejectionsByReason[rejection.reason] = (rejectionsByReason[rejection.reason] || 0) + 1;
+          }
+        }
       } catch (error: any) {
         rejections.push(`agent ${agentKey} failed: ${error?.message || 'unknown error'}`);
+        rejectionsByReason.agent_failed = (rejectionsByReason.agent_failed || 0) + 1;
       }
     }
   }
@@ -658,16 +1041,28 @@ router.post('/analyze', async (req, res) => {
     rejections.push(
       `${persisted.discardedModelFindings} model finding(s) discarded because the source data changed during analysis`,
     );
+    rejectionsByReason.stale_source_data =
+      (rejectionsByReason.stale_source_data || 0) + persisted.discardedModelFindings;
   }
 
   return res.json({
     analyzed: plan.items.length,
     deferred: plan.deferred,
     modelCalls: plan.plannedModelCalls,
+    knowledgeEmbeddingCalls,
+    knowledgeSourcesUsed,
     modelFindings: persisted.acceptedModelFindings.length,
+    // The count and the reason tally exist so a caller can tell "nothing to add"
+    // apart from "everything was discarded" and report that honestly.
+    rejectedCount: Object.values(rejectionsByReason).reduce((sum, count) => sum + count, 0),
+    rejectionsByReason,
     rejected: rejections,
-    findings: persisted.acceptedModelFindings.map((finding) => presentFinding(finding, lang)),
-    budget: { used: reservation.used, remaining: reservation.remaining },
+    findings: persisted.acceptedModelFindings
+      .map((finding) => presentFinding(finding, lang, workspace.username)),
+    budget: await getAiModelBudget(
+      workspace.orgId,
+      snapshot.config.maxModelCallsPerDay,
+    ),
   });
 });
 
@@ -704,7 +1099,13 @@ router.post('/ask', async (req, res) => {
   if (!question) return res.status(400).json({ error: 'A question is required.' });
   const lang = normalizeLang(req.body?.lang);
 
-  const { snapshot, baselines } = evaluateRules(snapshotFor(workspace, lang));
+  const { snapshot } = evaluateRules(snapshotFor(workspace, lang));
+  // `canRoleRunQuery` only gates a query by its *own* module, but several query
+  // kinds join across modules — `lots_filter` is gated on `lots` yet returns pH,
+  // free SO₂ and VA from the laboratory. Execute against the role's read-model
+  // so a query can never return a column the asker cannot open in the app.
+  const roleSnapshot = snapshotVisibleToRole(snapshot, workspace.role);
+  const roleBaselines = computeWineryBaselines(roleSnapshot);
   const hasModel = Boolean(process.env.GEMINI_API_KEY) && snapshot.config.modelAnalysisEnabled;
   let budget = hasModel
     ? await getAiModelBudget(workspace.orgId, snapshot.config.maxModelCallsPerDay)
@@ -725,6 +1126,10 @@ router.post('/ask', async (req, res) => {
         planRaw = await generateStructured(
           `${PLANNER_INSTRUCTIONS}\n\nQuestion: ${question}\n\nRespond only with JSON matching the schema.`,
           QUERY_PLAN_SCHEMA,
+          {
+            organizationId: workspace.orgId,
+            purpose: 'ask_planner',
+          },
         );
       } catch {
         planRaw = { kind: 'winery_summary' };
@@ -747,7 +1152,7 @@ router.post('/ask', async (req, res) => {
   }
 
   // 2. Execute in ordinary application code against the winery's own records.
-  const result = executeQuery(validation.plan, snapshot, baselines);
+  const result = executeQuery(validation.plan, roleSnapshot, roleBaselines);
 
   // 3. Explain. The model sees only the rows the query returned.
   let answer = localize(describeQueryResult(result), lang);
@@ -775,9 +1180,22 @@ router.post('/ask', async (req, res) => {
         `Query result (JSON): ${serializeQueryResult(result)}`,
       ].join('\n\n');
       try {
-        const client = getAiClient();
-        const response = await client.models.generateContent({ model: GEMINI_MODEL, contents: prompt });
-        if (response.text) answer = response.text;
+        const generated = await withAiModelCallTelemetry({
+          organizationId: workspace.orgId,
+          purpose: 'ask_explanation',
+          model: GEMINI_MODEL,
+        }, async () => {
+          const client = getAiClient();
+          const response = await client.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: prompt,
+          });
+          return {
+            value: response.text || null,
+            valid: Boolean(response.text),
+          };
+        });
+        if (generated) answer = generated;
       } catch {
         // Keep the deterministic summary; the rows below are still the real answer.
       }
@@ -867,7 +1285,7 @@ router.get('/notification-preferences', async (req, res) => {
 
   const [preference, account] = await Promise.all([
     getAiNotificationPreference(workspace.orgId, workspace.username),
-    getAiEmailAccountStatus(workspace.username),
+    getAiNotificationAccountStatus(workspace.orgId, workspace.username),
   ]);
   return res.json({ preference, account });
 });
@@ -882,24 +1300,100 @@ router.put('/notification-preferences', async (req, res) => {
   const emailEnabled = typeof req.body?.emailEnabled === 'boolean'
     ? req.body.emailEnabled
     : current.emailEnabled;
+  const pushEnabled = typeof req.body?.pushEnabled === 'boolean'
+    ? req.body.pushEnabled
+    : current.pushEnabled;
+  const whatsappEnabled = typeof req.body?.whatsappEnabled === 'boolean'
+    ? req.body.whatsappEnabled
+    : current.whatsappEnabled;
   const minimumSeverity = req.body?.minimumSeverity === undefined
     ? current.minimumSeverity
     : req.body.minimumSeverity as AiSeverity;
   if (!NOTIFICATION_SEVERITIES.includes(minimumSeverity)) {
     return res.status(400).json({ error: 'Invalid notification severity.' });
   }
-  const account = await getAiEmailAccountStatus(workspace.username);
+  const inAppMinimumSeverity = req.body?.inAppMinimumSeverity === undefined
+    ? current.inAppMinimumSeverity
+    : req.body.inAppMinimumSeverity as AiSeverity;
+  if (!NOTIFICATION_SEVERITIES.includes(inAppMinimumSeverity)) {
+    return res.status(400).json({ error: 'Invalid in-app notification severity.' });
+  }
+  const account = await getAiNotificationAccountStatus(
+    workspace.orgId,
+    workspace.username,
+  );
   if (emailEnabled && (!account.emailVerified || !account.hasEmail)) {
     return res.status(409).json({ error: 'Verify your email address before enabling AI email alerts.' });
+  }
+  if (pushEnabled && (!account.pushConfigured || account.pushSubscriptionCount === 0)) {
+    return res.status(409).json({
+      error: 'Register this browser for push notifications before enabling AI push alerts.',
+    });
+  }
+  if (whatsappEnabled && (!account.whatsappConfigured || !account.whatsappReady)) {
+    return res.status(409).json({
+      error: 'Configure AI WhatsApp delivery and opt in with a valid phone before enabling alerts.',
+    });
   }
 
   const preference = await setAiNotificationPreference({
     organizationId: workspace.orgId,
     username: workspace.username,
     emailEnabled,
+    pushEnabled,
+    whatsappEnabled,
     minimumSeverity,
+    inAppMinimumSeverity,
   });
   return res.json({ preference, account });
+});
+
+router.post('/push-subscriptions', async (req, res) => {
+  const auth = await requireCapability(req, res, 'read');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  const account = await getAiNotificationAccountStatus(
+    workspace.orgId,
+    workspace.username,
+  );
+  if (!account.pushConfigured) {
+    return res.status(409).json({ error: 'Web push is not configured for this deployment.' });
+  }
+  try {
+    const subscription = await registerAiPushSubscription({
+      organizationId: workspace.orgId,
+      username: workspace.username,
+      subscription: req.body?.subscription,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.status(201).json({
+      subscription: {
+        id: subscription.id,
+        expirationTime: subscription.expirationTime,
+        createdAt: subscription.createdAt,
+      },
+    });
+  } catch (error) {
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : 'Push subscription is invalid.',
+    });
+  }
+});
+
+router.delete('/push-subscriptions', async (req, res) => {
+  const auth = await requireCapability(req, res, 'read');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : '';
+  if (!endpoint) return res.status(400).json({ error: 'Push subscription endpoint is required.' });
+  const removed = await removeAiPushSubscription({
+    organizationId: workspace.orgId,
+    username: workspace.username,
+    endpoint,
+  });
+  return res.json({ removed });
 });
 
 export default router;

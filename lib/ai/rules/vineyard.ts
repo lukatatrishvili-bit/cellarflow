@@ -3,6 +3,7 @@ import type { WineryBaselines } from '../baselines';
 import { action, buildFinding, confidence, evidence } from '../finding';
 import { forecastHarvestDate } from '../predictions';
 import { blockLabel, daysBetween, type WineryIntelligenceSnapshot } from '../snapshot';
+import { blockRecords } from '../indexes';
 import { num, plain, text, type LocalizedText } from '../text';
 import type { AiFinding, AiSeverity } from '../types';
 
@@ -72,13 +73,11 @@ export function detectVineyardRisk(snapshot: WineryIntelligenceSnapshot): AiFind
 
   for (const block of snapshot.blocks) {
     const weather = snapshot.weatherByBlock[block.id];
+    const records = blockRecords(snapshot, block.id);
     const summary = calculateVaziRisk({
       block,
       weather,
-      sprays: snapshot.sprays.filter((s) => s.blockId === block.id),
-      scoutings: snapshot.scoutings.filter((s) => s.blockId === block.id),
-      samplings: snapshot.samplings.filter((s) => s.blockId === block.id),
-      harvests: snapshot.harvests.filter((h) => h.blockId === block.id),
+      ...records,
       today,
     });
 
@@ -91,12 +90,9 @@ export function detectVineyardRisk(snapshot: WineryIntelligenceSnapshot): AiFind
 
       const label = blockLabel(snapshot, block.id);
       const categoryLabel = CATEGORY_LABELS[item.category];
-      const lastSpray = snapshot.sprays
-        .filter((s) => s.blockId === block.id)
-        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
-      const lastScouting = snapshot.scoutings
-        .filter((s) => s.blockId === block.id)
-        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+      // The index is already newest first, so no per-block scan or sort here.
+      const lastSpray = records.sprays[0];
+      const lastScouting = records.scoutings[0];
 
       findings.push(buildFinding({
         findingType: `vineyard_risk_${item.category}`,
@@ -166,7 +162,7 @@ export function detectHarvestWindow(
   const targetBrix = snapshot.config.targets.harvestTargetBrix;
 
   for (const block of snapshot.blocks) {
-    const samplings = snapshot.samplings.filter((s) => s.blockId === block.id);
+    const samplings = blockRecords(snapshot, block.id).samplings;
     const historical = baselines.harvestTimingByVariety[(block.grapeVariety || '').trim().toLowerCase()];
     const forecast = forecastHarvestDate(samplings, {
       today: snapshot.today,
@@ -182,12 +178,17 @@ export function detectHarvestWindow(
 
     const label = blockLabel(snapshot, block.id);
     const severity: AiSeverity = daysAway <= 7 ? 'warning' : 'attention';
-    const readyVessels = snapshot.vessels.filter((v) => v.currentVolume <= 0).length;
 
     findings.push(buildFinding({
       findingType: 'harvest_window_approaching',
       agent: 'vineyard',
       area: 'vineyard',
+      // The historical timing baseline is derived from past fruit receipts.
+      // Deliberately nothing from the cellar: this finding is routed to the
+      // viticulturist, who holds no vessel permission, so quoting free tank
+      // capacity here would either leak it or hide the finding from its
+      // own audience. The recommended check points a winemaker at it instead.
+      requiredModules: ['grape_intake'],
       severity,
       entityType: 'block',
       entityId: block.id,
@@ -220,7 +221,6 @@ export function detectHarvestWindow(
             `ჩვეულებრივ მიიღება წლის დაახლოებით ${Math.round(historical.medianDayOfYear)}-ე დღეს (${historical.sampleSize} მიღება)`,
           ))]
           : []),
-        evidence('fact', text('Empty vessels available', 'ხელმისაწვდომი ცარიელი ჭურჭლები'), plain(String(readyVessels))),
       ],
       confidence: confidence(
         forecast.method === 'sugar_accumulation' ? 'medium' : 'low',

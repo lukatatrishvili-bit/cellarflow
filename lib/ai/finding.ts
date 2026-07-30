@@ -1,3 +1,4 @@
+import type { PermissionModule } from '../../server/permissions';
 import { text, type LocalizedText } from './text';
 import {
   severityRank,
@@ -31,6 +32,12 @@ export interface FindingDraft {
   confidence: AiConfidence;
   missingInformation?: LocalizedText[];
   relatedEntities?: AiEntityRef[];
+  /**
+   * Modules beyond this finding's own area whose data it quotes. Declare these
+   * whenever a detector reads across module boundaries, or the finding will be
+   * shown to roles that cannot open the underlying records.
+   */
+  requiredModules?: PermissionModule[];
   roles?: UserRole[];
   cooldownHours?: number;
   requiresHumanConfirmation?: boolean;
@@ -83,6 +90,7 @@ export function buildFinding(draft: FindingDraft): AiFinding {
     confidence: draft.confidence,
     missingInformation: draft.missingInformation || [],
     requiresHumanConfirmation: draft.requiresHumanConfirmation ?? true,
+    requiredModules: draft.requiredModules || [],
     roles: draft.roles || [],
     cooldownHours: draft.cooldownHours ?? DEFAULT_COOLDOWN_HOURS[draft.severity],
     dedupeKey,

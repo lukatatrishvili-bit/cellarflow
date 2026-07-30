@@ -16,6 +16,7 @@ export * from './anomaly';
 export * from './baselines';
 export * from './predictions';
 export * from './finding';
+export * from './feedback';
 export * from './roles';
 export * from './events';
 export * from './context';

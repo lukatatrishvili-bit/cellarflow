@@ -14,6 +14,7 @@ import DateInput from './ui/DateInput';
 const WINE_COLORS: Record<string, { liquid: string; surface: string }> = {
   red: { liquid: '#5a1020', surface: '#7c1c30' },
   amber: { liquid: '#b06a16', surface: '#d18e2b' },
+  qvevri: { liquid: '#9a5b23', surface: '#c17a35' },
   white: { liquid: '#c2a448', surface: '#dabf6a' },
   rose: { liquid: '#c05a6e', surface: '#d8808f' },
   sparkling: { liquid: '#cdb06a', surface: '#e6d089' },

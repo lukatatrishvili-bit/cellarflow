@@ -18,6 +18,9 @@ export interface Alert {
   category: AlertCategory;
   title: string;
   message: string;
+  /** Stable identity used when this alert overlaps a richer AI finding. */
+  relatedEntityType?: 'lot' | 'vessel' | 'task' | 'inventory_item';
+  relatedEntityId?: string;
   relatedLotId?: string;
   relatedTankId?: string;
 }
@@ -81,6 +84,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         message: ka
           ? `${mol.toFixed(2)} მგ/ლ მოლეკულური (თავისუფალი ${lab.freeSo2} მგ/ლ, pH ${lab.ph}). სამიზნე ≥ 0.5 მგ/ლ; ჟანგვის / მიკრობული რისკი.`
           : `${mol.toFixed(2)} mg/L molecular (free ${lab.freeSo2} mg/L @ pH ${lab.ph}). Target ≥ 0.5 mg/L; oxidation / microbial risk.`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lab.lotId,
         relatedLotId: lab.lotId,
         relatedTankId: lab.tankId,
       });
@@ -96,6 +101,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         message: ka
           ? `VA ${lab.volatileAcid.toFixed(2)} გ/ლ აღემატება 0.8 გ/ლ ზღვარს. შეამოწმეთ ძმარმჟავა გაფუჭებაზე.`
           : `VA ${lab.volatileAcid.toFixed(2)} g/L exceeds the 0.8 g/L threshold. Investigate acetic spoilage.`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lab.lotId,
         relatedLotId: lab.lotId,
         relatedTankId: lab.tankId,
       });
@@ -122,6 +129,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         message: ka
           ? `სიმკვრივე გაჩერდა ${latest.density.toFixed(3)}-ზე (Δ ${drop.toFixed(3)} ${prev.date}-დან); დარჩენილია ${latest.sugar} გ/ლ შაქარი. შეამოწმეთ ტემპერატურა და საკვები ნივთიერებები (YAN).`
           : `Density holding at ${latest.density.toFixed(3)} (Δ ${drop.toFixed(3)} since ${prev.date}); ${latest.sugar} g/L sugar remaining. Check temperature & nutrient (YAN).`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lot.id,
         relatedLotId: lot.id,
         relatedTankId: latest.tankId,
       });
@@ -141,6 +150,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         message: ka
           ? `${v.temperature.toFixed(1)}°C სამიზნე ${v.targetTemperature.toFixed(1)}°C-ის ნაცვლად${v.coolingJacketActive ? '' : ' — გამაგრილებელი პერანგი გამორთულია'}.`
           : `${v.temperature.toFixed(1)}°C vs target ${v.targetTemperature.toFixed(1)}°C${v.coolingJacketActive ? '' : ' — cooling jacket is off'}.`,
+        relatedEntityType: 'vessel',
+        relatedEntityId: v.id,
         relatedTankId: v.id,
       });
     }
@@ -160,6 +171,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
           v.cleaningStatus === 'cleaning_needed'
             ? (ka ? `მონიშნულია CIP პროტოკოლისთვის. ბოლო წმენდა: ${v.lastCleaned}.` : `Flagged for CIP protocol. Last cleaned ${v.lastCleaned}.`)
             : (ka ? `მონიშნულია ჭუჭყიანად. ბოლო წმენდა: ${v.lastCleaned}.` : `Marked dirty. Last cleaned ${v.lastCleaned}.`),
+        relatedEntityType: 'vessel',
+        relatedEntityId: v.id,
         relatedTankId: v.id,
       });
     }
@@ -177,6 +190,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         message: ka
           ? `ვადა იყო ${tk.dueDate} (შემსრულებელი: ${tk.assignedTo}).`
           : `Was due ${tk.dueDate} (assigned to ${tk.assignedTo}).`,
+        relatedEntityType: 'task',
+        relatedEntityId: tk.id,
       });
     } else if (tk.dueDate === today) {
       alerts.push({
@@ -185,6 +200,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         category: 'task',
         title: ka ? `დღეს ვადა: ${tk.title}` : `Due today: ${tk.title}`,
         message: ka ? `შემსრულებელი: ${tk.assignedTo}.` : `Assigned to ${tk.assignedTo}.`,
+        relatedEntityType: 'task',
+        relatedEntityId: tk.id,
       });
     }
   }
@@ -200,6 +217,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         message: ka
           ? `დარჩენილია 0 ${item.unit} (მინ. ${item.minThreshold}). შეუკვეთეთ: ${item.supplierName}.`
           : `0 ${item.unit} on hand (min ${item.minThreshold}). Reorder from ${item.supplierName}.`,
+        relatedEntityType: 'inventory_item',
+        relatedEntityId: item.id,
       });
     } else if (item.stock <= item.minThreshold) {
       alerts.push({
@@ -210,6 +229,8 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         message: ka
           ? `დარჩენილია ${item.stock} ${item.unit} (მინ. ${item.minThreshold}). შეუკვეთეთ: ${item.supplierName}.`
           : `${item.stock} ${item.unit} left (min ${item.minThreshold}). Reorder from ${item.supplierName}.`,
+        relatedEntityType: 'inventory_item',
+        relatedEntityId: item.id,
       });
     }
   }

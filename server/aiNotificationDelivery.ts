@@ -5,8 +5,17 @@ import {
   completeAiNotification,
   failAiNotification,
 } from './aiNotificationOutbox';
-import { aiEmailDeliveryEligibility } from './aiNotificationPreferences';
+import {
+  aiEmailDeliveryEligibility,
+  aiPushDeliveryEligibility,
+  aiWhatsAppDeliveryEligibility,
+} from './aiNotificationPreferences';
 import { buildAiFindingEmail } from './aiNotificationEmail';
+import {
+  AiPushNoSubscriptionsError,
+  sendAiWebPushNotification,
+} from './aiNotificationPush';
+import { sendAiWhatsAppNotification } from './aiNotificationWhatsApp';
 
 export interface AiNotificationDeliveryResult {
   claimed: number;
@@ -21,6 +30,8 @@ export async function deliverAiNotificationBatch(options: {
   now?: Date;
   appUrl?: string;
   mailer?: (message: ReturnType<typeof buildAiFindingEmail>) => Promise<MailResult>;
+  pushSender?: typeof sendAiWebPushNotification;
+  whatsappSender?: typeof sendAiWhatsAppNotification;
 } = {}): Promise<AiNotificationDeliveryResult> {
   const now = options.now || new Date();
   const rows = await claimAiNotificationBatch(options.limit || 25, now);
@@ -32,15 +43,22 @@ export async function deliverAiNotificationBatch(options: {
     failed: 0,
   };
   const mailer = options.mailer || sendMail;
+  const pushSender = options.pushSender || sendAiWebPushNotification;
+  const whatsappSender = options.whatsappSender || sendAiWhatsAppNotification;
 
   for (const row of rows) {
-    const eligibility = await aiEmailDeliveryEligibility({
+    const eligibilityInput = {
       organizationId: row.organizationId,
       username: row.recipientUsername,
       recipientRole: row.recipientRole,
       severity: row.severity,
       eventOccurredAt: row.payload.lastSeenAt,
-    });
+    };
+    const eligibility = row.channel === 'push'
+      ? await aiPushDeliveryEligibility(eligibilityInput)
+      : row.channel === 'whatsapp'
+        ? await aiWhatsAppDeliveryEligibility(eligibilityInput)
+        : await aiEmailDeliveryEligibility(eligibilityInput);
     if (!eligibility.eligible) {
       const cancelled = await cancelAiNotification(
         row.id,
@@ -54,17 +72,53 @@ export async function deliverAiNotificationBatch(options: {
     }
 
     try {
-      const delivery = await mailer(buildAiFindingEmail({
-        to: eligibility.email,
-        language: eligibility.language,
-        wineryName: eligibility.wineryName,
-        payload: row.payload,
-        appUrl: options.appUrl ?? process.env.APP_URL,
-      }));
-      if (!delivery.delivered) throw new Error('Email transport did not confirm delivery.');
+      if (row.channel === 'push') {
+        await pushSender({
+          organizationId: row.organizationId,
+          username: row.recipientUsername,
+          language: eligibility.language,
+          wineryName: eligibility.wineryName,
+          payload: row.payload,
+          appUrl: options.appUrl ?? process.env.APP_URL,
+        });
+      } else if (row.channel === 'whatsapp') {
+        if (!('phone' in eligibility)) {
+          throw new Error('WhatsApp recipient eligibility did not include a phone number.');
+        }
+        await whatsappSender({
+          phone: eligibility.phone,
+          language: eligibility.language,
+          wineryName: eligibility.wineryName,
+          payload: row.payload,
+          appUrl: options.appUrl ?? process.env.APP_URL,
+        });
+      } else {
+        if (!('email' in eligibility)) {
+          throw new Error('Email recipient eligibility did not include an address.');
+        }
+        const delivery = await mailer(buildAiFindingEmail({
+          to: eligibility.email,
+          language: eligibility.language,
+          wineryName: eligibility.wineryName,
+          payload: row.payload,
+          appUrl: options.appUrl ?? process.env.APP_URL,
+        }));
+        if (!delivery.delivered) throw new Error('Email transport did not confirm delivery.');
+      }
       if (await completeAiNotification(row.id, row.claimToken!, now)) result.delivered += 1;
       else result.failed += 1;
     } catch (error) {
+      if (error instanceof AiPushNoSubscriptionsError) {
+        const cancelled = await cancelAiNotification(
+          row.id,
+          row.claimToken!,
+          error.message,
+          now,
+        );
+        if (cancelled) result.cancelled += 1;
+        else result.failed += 1;
+        continue;
+      }
       const recorded = await failAiNotification(row.id, row.claimToken!, error, now);
       if (!recorded || row.attemptCount >= 5) result.failed += 1;
       else result.retried += 1;

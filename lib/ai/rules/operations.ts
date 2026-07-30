@@ -2,7 +2,8 @@ import { stageLabel } from '../../enumLabels';
 import type { WineryBaselines } from '../baselines';
 import { action, buildFinding, confidence, evidence } from '../finding';
 import { forecastInventoryDepletion } from '../predictions';
-import { daysBetween, isLiveRecord, lotLabel, type WineryIntelligenceSnapshot } from '../snapshot';
+import { daysBetween, lotLabel, type WineryIntelligenceSnapshot } from '../snapshot';
+import { labsForLot, snapshotIndexes } from '../indexes';
 import { num, plain, text } from '../text';
 import type { AiFinding } from '../types';
 
@@ -125,6 +126,8 @@ export function detectCapacityRisk(snapshot: WineryIntelligenceSnapshot): AiFind
     findingType: 'cellar_capacity_tight',
     agent: 'management',
     area: 'operations',
+    // Quotes aggregate vessel capacity and occupancy.
+    requiredModules: ['vessels'],
     severity: fillPct >= 98 ? 'warning' : 'attention',
     entityType: 'winery',
     entityId: 'cellar',
@@ -183,6 +186,8 @@ export function detectOverdueWork(snapshot: WineryIntelligenceSnapshot): AiFindi
     findingType: 'work_overdue',
     agent: 'management',
     area: 'operations',
+    // Quotes task titles, due dates and assignees.
+    requiredModules: ['tasks'],
     severity,
     entityType: 'winery',
     entityId: 'tasks',
@@ -243,9 +248,7 @@ export function detectBottlingReadiness(snapshot: WineryIntelligenceSnapshot): A
     // A 750 mL fill is the planning assumption; the finding says so explicitly.
     const requiredBottles = Math.ceil(lot.currentVolume / 0.75);
     const shortages = packaging.filter((item) => item.stock < requiredBottles);
-    const latestLab = snapshot.labLogs
-      .filter((lab) => lab.lotId === lot.id)
-      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+    const latestLab = labsForLot(snapshot, lot.id)[0];
     const labAge = latestLab ? daysBetween(latestLab.date, snapshot.today) : null;
     const labStale = labAge === null || labAge > 30;
 
@@ -255,7 +258,13 @@ export function detectBottlingReadiness(snapshot: WineryIntelligenceSnapshot): A
       findingType: 'bottling_preparation_gap',
       agent: 'inventory',
       area: 'operations',
-      severity: shortages.length > 0 ? 'attention' : 'attention',
+      // States the age of a laboratory analysis and names packaging stock, so it
+      // is only visible to a role that can open both of those records.
+      requiredModules: ['lab', 'inventory'],
+      // Both a packaging shortfall and stale release chemistry are lead-time
+      // problems rather than today's problems, so they share one severity. If the
+      // winery wants a shortfall to shout louder, that is a policy change here.
+      severity: 'attention',
       entityType: 'lot',
       entityId: lot.id,
       entityLabel: label,
@@ -318,7 +327,7 @@ export function detectComplianceGaps(snapshot: WineryIntelligenceSnapshot): AiFi
         ka: `წარმოშობის დადასტურება — "${lot.originProofStatus || 'არ არის'}"`,
       });
     }
-    const certification = snapshot.certifications.find((record) => record.lotId === lot.id);
+    const certification = snapshotIndexes(snapshot).certificationByLot.get(lot.id);
     if (!certification) {
       gaps.push({ en: 'no certification record exists', ka: 'სერტიფიკაციის ჩანაწერი არ არსებობს' });
     } else {
@@ -332,7 +341,7 @@ export function detectComplianceGaps(snapshot: WineryIntelligenceSnapshot): AiFi
         gaps.push({ en: `certificate expired on ${certification.expiryDate}`, ka: `სერტიფიკატს ვადა გაუვიდა ${certification.expiryDate}` });
       }
     }
-    const intake = snapshot.grapeIntakes.find((record) => record.createdLotId === lot.id && isLiveRecord(record));
+    const intake = snapshotIndexes(snapshot).intakeByCreatedLot.get(lot.id);
     if (intake && !intake.cadastralCode && intake.source === 'own') {
       gaps.push({ en: 'the originating intake has no cadastral code', ka: 'საწყის მიღებას საკადასტრო კოდი არ აქვს' });
     }
@@ -345,6 +354,8 @@ export function detectComplianceGaps(snapshot: WineryIntelligenceSnapshot): AiFi
       findingType: 'compliance_documentation_gap',
       agent: 'compliance',
       area: 'compliance',
+      // Reads the originating intake to check for a cadastral code.
+      requiredModules: ['grape_intake'],
       severity,
       entityType: 'lot',
       entityId: lot.id,

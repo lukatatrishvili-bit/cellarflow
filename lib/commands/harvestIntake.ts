@@ -286,7 +286,7 @@ function parseIntake(value: unknown): HarvestIntakeInput {
     wineClass: enumValue<WineClass>(
       input.wineClass,
       'intake.wineClass',
-      ['white', 'red', 'rose', 'amber', 'sparkling', 'fortified', 'base_wine'],
+      ['white', 'red', 'rose', 'amber', 'qvevri', 'sparkling', 'fortified', 'base_wine'],
     ),
     juiceYieldPct: finiteNumber(input.juiceYieldPct, 'intake.juiceYieldPct', EPSILON, 100) as number,
     ...(costPerKg !== undefined && costPerKg > 0 ? { costPerKg } : {}),

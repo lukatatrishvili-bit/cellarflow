@@ -114,6 +114,31 @@ describe('release workflow contracts', () => {
     ))).toBe(true);
   });
 
+  it('ships an active-LTS runtime without development tooling', () => {
+    const dockerfile = readRootFile('Dockerfile');
+    const ciWorkflow = readWorkflow('ci.yml');
+    const operationsWorkflow = readWorkflow('scheduled-operations.yml');
+    const packageJson = JSON.parse(readRootFile('package.json')) as {
+      engines?: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(dockerfile.match(/^FROM node:24-slim/gm)).toHaveLength(2);
+    expect(dockerfile).toContain('FROM node:24-slim AS build');
+    expect(dockerfile).toContain('FROM node:24-slim AS runtime');
+    expect(dockerfile).toContain('npm ci --omit=dev --no-audit');
+    expect(dockerfile).toContain('npm audit --omit=dev --audit-level=high');
+    expect(dockerfile).not.toContain('COPY --from=build /app/node_modules');
+    expect(packageJson.engines?.node).toBe('>=24 <25');
+    expect(packageJson.dependencies).toHaveProperty('prisma');
+    expect(packageJson.dependencies).toHaveProperty('tsx');
+    expect(packageJson.dependencies).not.toHaveProperty('vite');
+    expect(packageJson.devDependencies).toHaveProperty('vite');
+    expect(ciWorkflow.match(/node-version: 24/g)).toHaveLength(2);
+    expect(operationsWorkflow).toContain('node-version: 24');
+  });
+
   it('audits dependencies and checks production schema drift on a weekly schedule', () => {
     const workflow = readWorkflow('scheduled-operations.yml');
 

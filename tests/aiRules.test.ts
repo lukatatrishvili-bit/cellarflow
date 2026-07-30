@@ -3,6 +3,8 @@ import { evaluateRules } from '../lib/ai/rules';
 import { computeWineryBaselines, fermentationBaselineFor } from '../lib/ai/baselines';
 import { normalizeSnapshot } from '../lib/ai/snapshot';
 import { DEFAULT_AI_CONFIG } from '../lib/ai/config';
+import { canRoleSeeFinding } from '../lib/ai/roles';
+import type { UserRole } from '../lib/ai/types';
 
 const TODAY = '2026-09-20';
 
@@ -317,6 +319,68 @@ describe('evaluateRules — compliance and configuration', () => {
     expect(evaluateRules(input).findings.length).toBeGreaterThan(0);
     expect(evaluateRules({ ...input, config: { areas: { laboratory: false } } })
       .findings.filter((f) => f.area === 'laboratory')).toHaveLength(0);
+  });
+
+  it('declares the laboratory module on a bottling finding that quotes analysis age', () => {
+    const { findings } = evaluateRules(base({
+      lots: [lot({ stage: 'filtration', currentVolume: 750 })],
+      inventory: [{
+        id: 'INV-CORK', name: 'Corks', category: 'closures',
+        stock: 100, minThreshold: 50, unit: 'pcs', costPerUnit: 0.2, supplierName: 'Amorim',
+      }],
+    }));
+    const finding = findings.find((f) => f.findingType === 'bottling_preparation_gap');
+    expect(finding).toBeDefined();
+    expect(finding!.observation.en).toContain('Release chemistry');
+    // Gating on `operations` alone would show that lab fact to a cellar worker.
+    expect(finding!.requiredModules).toEqual(expect.arrayContaining(['lab']));
+    expect(canRoleSeeFinding('Cellar Worker', finding!)).toBe(false);
+    expect(canRoleSeeFinding('Winemaker', finding!)).toBe(true);
+  });
+
+  it('never declares a module set that hides a finding from every workspace role', () => {
+    // Guards against over-declaration: a finding only the owner can see is a
+    // routing failure dressed up as security.
+    const { findings } = evaluateRules(base({
+      lots: [
+        lot(),
+        lot({ id: 'L2', stage: 'aging' }),
+        lot({ id: 'L3', stage: 'filtration', currentVolume: 600 }),
+        lot({ id: 'L4', stage: 'bottled', classification: 'PDO', marketStatus: 'export', originProofStatus: 'partial' }),
+      ],
+      vessels: [{
+        id: 'T1', type: 'steel', shape: 'vertical', capacity: 1000, currentVolume: 950,
+        assignedLotId: 'L1', cleaningStatus: 'clean', lastCleaned: '2026-09-01',
+        temperature: 34, coolingJacketActive: false, targetTemperature: 24, lastOperation: 'fill',
+      }],
+      fermLogs: [
+        ferm({ date: '2026-09-18', density: 1.0205 }),
+        ferm({ date: '2026-09-20', density: 1.020 }),
+      ],
+      labLogs: [lab({ lotId: 'L2', freeSo2: 5, ph: 3.7, volatileAcid: 1.4 })],
+      inventory: [{
+        id: 'INV-NUT', name: 'Yeast nutrient', category: 'nutritions',
+        stock: 0, minThreshold: 2, unit: 'kg', costPerUnit: 20, supplierName: 'Enartis',
+      }],
+      tasks: [{
+        id: 't1', title: 'Racking', priority: 'high', dueDate: '2026-09-01',
+        assignedTo: 'Nino', status: 'pending', description: '',
+      }],
+      transfers: [{
+        id: 'tr1', sourceId: 'T1', destId: 'T2', volume: 500, loss: 60, operator: 'QA',
+        category: 'racking', date: '2026-09-19', pump: 'p1', details: '', sourceLotId: 'L1',
+      }],
+    }));
+
+    expect(findings.length).toBeGreaterThan(4);
+    const workspaceRoles: UserRole[] = ['Winemaker', 'Cellar Worker', 'Lab Technician', 'Viticulturist'];
+    for (const finding of findings) {
+      const visibleTo = workspaceRoles.filter((role) => canRoleSeeFinding(role, finding));
+      expect(
+        visibleTo.length,
+        `${finding.findingType} is visible to no workspace role (requires ${finding.requiredModules.join(', ') || 'area only'})`,
+      ).toBeGreaterThan(0);
+    }
   });
 
   it('is deterministic: the same state produces byte-equivalent findings', () => {

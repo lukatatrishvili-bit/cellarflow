@@ -47,7 +47,10 @@ export interface OrganizationMonitoringResult {
   autoResolved: number;
   outboxQueued: number;
   status: 'normal' | 'attention' | 'critical';
-  /** Rendered briefing text, produced only on the daily pass. */
+  /**
+   * Owner/Admin briefing text, produced only on the daily pass. Never deliver
+   * this to another role — build that recipient's own briefing instead.
+   */
   briefing?: string;
 }
 
@@ -90,6 +93,36 @@ function snapshotInput(
     salesOrders: raw.salesOrders,
     companyProfile: raw.companyProfile,
   };
+}
+
+/**
+ * Identity of a finding set, ignoring the fields that move on every pass by
+ * design: `lastSeenAt`, `lastModified` and `occurrences` change each cadence
+ * window whether or not the winery did.
+ *
+ * Persisting those alone costs a full organization-blob write per winery per
+ * pass and bumps the org state version, which makes a winemaker's own sync
+ * retry against a monitoring job that had nothing to say. `createdAt` already
+ * records how long a condition has persisted, which is the number anyone
+ * actually reads.
+ */
+const FINGERPRINT_CHURN_FIELDS = ['lastSeenAt', 'lastModified', 'occurrences'] as const;
+
+/**
+ * Key order needs no normalizing: both sides descend from the same parsed
+ * records — a merged record is `{...stored, ...fresh}`, which preserves the
+ * stored key order — so a plain stringify compares like with like.
+ */
+function findingsFingerprint(records: readonly AiFindingRecord[]): string {
+  return JSON.stringify(
+    [...records]
+      .sort((left, right) => left.dedupeKey.localeCompare(right.dedupeKey))
+      .map((record) => {
+        const stable: Record<string, unknown> = { ...record };
+        for (const field of FINGERPRINT_CHURN_FIELDS) delete stable[field];
+        return stable;
+      }),
+  );
 }
 
 /**
@@ -192,18 +225,25 @@ export async function runMonitoringPass(cadence: MonitoringCadence = 'daily'): P
           && record.statusChangedBy === 'system'
           && record.statusChangedAt === windowStart
         )).length;
-        raw.aiFindings = [...outOfScope, ...merge.records];
+        const nextFindings = [...outOfScope, ...merge.records];
+        // A pass that observed no change must not write. Leaving the in-memory
+        // blob untouched matters too: `data` can be the shared getDB() object,
+        // and mutating it without persisting would diverge memory from Postgres.
+        const changed = findingsFingerprint(existing) !== findingsFingerprint(nextFindings);
 
-        try {
-          await saveOrganizationData(organizationId, data, {
-            expectedVersion: refreshed?.meta.version ?? null,
-            updatedBy: `ai-monitor:${cadence}`,
-          });
-        } catch (error) {
-          if (error instanceof OrganizationStateVersionConflictError && attempt < 3) {
-            continue;
+        if (changed) {
+          raw.aiFindings = nextFindings;
+          try {
+            await saveOrganizationData(organizationId, data, {
+              expectedVersion: refreshed?.meta.version ?? null,
+              updatedBy: `ai-monitor:${cadence}`,
+            });
+          } catch (error) {
+            if (error instanceof OrganizationStateVersionConflictError && attempt < 3) {
+              continue;
+            }
+            throw error;
           }
-          throw error;
         }
 
         const outboxQueued = await enqueueAiFindingNotifications(
@@ -222,7 +262,12 @@ export async function runMonitoringPass(cadence: MonitoringCadence = 'daily'): P
         };
 
         if (cadence === 'daily' && snapshot.config.dailyBriefingEnabled) {
+          // Scoped to Owner/Admin on purpose. An unscoped briefing is an
+          // org-wide digest, and handing that to a specialist would route around
+          // the per-finding module gate. A per-recipient briefing has to be built
+          // at delivery time from that recipient's own role.
           const briefing = buildDailyBriefing(raw.aiFindings as AiFindingRecord[], {
+            role: 'Owner/Admin',
             minimumSeverity: snapshot.config.minimumSeverity,
           });
           result.briefing = renderBriefingText(briefing, lang);

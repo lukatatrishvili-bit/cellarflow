@@ -2,7 +2,7 @@
 // state/DB; must never be shown raw in Georgian mode). Unknown values fall
 // back to the raw string so new enum members degrade gracefully.
 import { translations, type Language } from './i18n';
-import type { WinemakingStage } from './wineryState';
+import type { WineClass, WinemakingStage } from './wineryState';
 
 const STAGE_LABELS: Record<WinemakingStage, { en: string; ka: string }> = {
   crushing: { en: 'Crushing', ka: 'დაწურვა' },
@@ -14,6 +14,17 @@ const STAGE_LABELS: Record<WinemakingStage, { en: string; ka: string }> = {
   filtration: { en: 'Filtration', ka: 'ფილტრაცია' },
   bottled: { en: 'Bottled', ka: 'ჩამოსხმული' },
   sold: { en: 'Sold', ka: 'გაყიდული' },
+};
+
+const WINE_CLASS_LABELS: Record<WineClass, { en: string; ka: string }> = {
+  white: { en: 'White', ka: 'თეთრი' },
+  red: { en: 'Red', ka: 'წითელი' },
+  rose: { en: 'Rosé', ka: 'ვარდისფერი' },
+  amber: { en: 'Amber', ka: 'ქარვისფერი' },
+  qvevri: { en: 'Qvevri', ka: 'ქვევრის' },
+  sparkling: { en: 'Sparkling', ka: 'ცქრიალა' },
+  fortified: { en: 'Fortified', ka: 'შემაგრებული' },
+  base_wine: { en: 'Base wine', ka: 'საბაზო ღვინო' },
 };
 
 const TASK_PRIORITY_LABELS: Record<'high' | 'medium' | 'low', { en: string; ka: string }> = {
@@ -46,6 +57,10 @@ function pick(labels: { en: string; ka: string } | undefined, raw: string, lang:
 
 export function stageLabel(stage: string, lang: Language): string {
   return pick(STAGE_LABELS[stage as WinemakingStage], stage, lang);
+}
+
+export function wineClassLabel(wineClass: string, lang: Language): string {
+  return pick(WINE_CLASS_LABELS[wineClass as WineClass], wineClass, lang);
 }
 
 export function taskPriorityLabel(priority: string, lang: Language): string {

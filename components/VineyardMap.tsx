@@ -21,9 +21,10 @@ import {
   vineyardMapBounds,
   type VineyardMapPoint,
 } from '../lib/vineyardMap';
-
-const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
+import {
+  VINEYARD_SATELLITE_BASEMAP,
+  VINEYARD_SATELLITE_LABELS,
+} from '../lib/vineyardBasemap';
 
 interface VineyardMapProps {
   lang: Language;
@@ -163,12 +164,18 @@ export default function VineyardMap({
         className="h-full w-full"
       >
         <TileLayer
-          attribution={TILE_ATTRIBUTION}
-          url={TILE_URL}
+          attribution={VINEYARD_SATELLITE_BASEMAP.attribution}
+          url={VINEYARD_SATELLITE_BASEMAP.url}
+          maxZoom={VINEYARD_SATELLITE_BASEMAP.maxZoom}
           eventHandlers={{
             tileerror: () => setTileError(true),
             tileload: () => setTileError(false),
           }}
+        />
+        <TileLayer
+          url={VINEYARD_SATELLITE_LABELS.url}
+          maxZoom={VINEYARD_SATELLITE_LABELS.maxZoom}
+          zIndex={2}
         />
 
         <MapViewportController

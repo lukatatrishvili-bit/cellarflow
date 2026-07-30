@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Alert, AlertCategory, AlertSeverity } from '../lib/alerts';
+import type { AlertSeverity } from '../lib/alerts';
+import type { NotificationCategory, NotificationItem } from '../lib/notificationFeed';
 import type { Language } from '../lib/i18n';
 import {
   Bell,
+  BrainCircuit,
   Droplet,
   TestTube,
   Sparkles,
@@ -14,13 +16,16 @@ import {
 } from 'lucide-react';
 
 interface Props {
-  alerts: Alert[];
-  /** Optional: jump to the area an alert relates to. */
-  onSelect?: (alert: Alert) => void;
+  items: NotificationItem[];
+  /** AI availability never hides operational alerts. */
+  aiStatus?: 'loading' | 'ready' | 'unavailable';
+  onMarkAllAiRead?: () => Promise<void>;
+  /** Optional: jump to the area a notification relates to. */
+  onSelect?: (item: NotificationItem) => void;
   lang?: Language;
 }
 
-const CATEGORY_ICON: Record<AlertCategory, React.ComponentType<{ className?: string }>> = {
+const CATEGORY_ICON: Record<NotificationCategory, React.ComponentType<{ className?: string }>> = {
   so2: Droplet,
   va: TestTube,
   fermentation: Sparkles,
@@ -28,13 +33,22 @@ const CATEGORY_ICON: Record<AlertCategory, React.ComponentType<{ className?: str
   cleaning: Droplet,
   task: CheckSquare,
   inventory: Boxes,
+  intelligence: BrainCircuit,
 };
 
-const FILTERS: Array<'all' | AlertSeverity> = ['all', 'critical', 'warning', 'info'];
+type NotificationFilter = 'all' | AlertSeverity | 'ai';
+const FILTERS: NotificationFilter[] = ['all', 'critical', 'warning', 'info', 'ai'];
 
-export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Props) {
+export default function NotificationCenter({
+  items,
+  aiStatus = 'ready',
+  onMarkAllAiRead,
+  onSelect,
+  lang = 'en',
+}: Props) {
   const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState<'all' | AlertSeverity>('all');
+  const [filter, setFilter] = useState<NotificationFilter>('all');
+  const [markingAllRead, setMarkingAllRead] = useState(false);
   const [panelBox, setPanelBox] = useState({ top: 0, left: 0, width: 360, maxHeight: 360 });
   const ref = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -48,7 +62,7 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
     info: { dot: 'bg-sky-500', chip: 'bg-sky-50 text-sky-700 border-sky-200', label: isKa ? 'ინფორმაცია' : 'Info' },
   };
 
-  const CATEGORY_LABEL: Record<AlertCategory, string> = {
+  const CATEGORY_LABEL: Record<NotificationCategory, string> = {
     so2: 'SO2',
     va: 'VA',
     fermentation: isKa ? 'დუღილი' : 'Fermentation',
@@ -56,22 +70,34 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
     cleaning: isKa ? 'რეცხვა' : 'Cleaning',
     task: isKa ? 'დავალება' : 'Task',
     inventory: isKa ? 'მარაგები' : 'Inventory',
+    intelligence: isKa ? 'ინტელექტი' : 'Intelligence',
   };
 
-  const criticalCount = alerts.filter((a) => a.severity === 'critical').length;
-  const warningCount = alerts.filter((a) => a.severity === 'warning').length;
-  const infoCount = alerts.filter((a) => a.severity === 'info').length;
-  const count = alerts.length;
-  const badgeColor = criticalCount > 0 ? 'bg-rose-600' : 'bg-amber-500';
-  const filteredAlerts = useMemo(
-    () => filter === 'all' ? alerts : alerts.filter((alert) => alert.severity === filter),
-    [alerts, filter],
+  const criticalCount = items.filter((item) => item.severity === 'critical').length;
+  const warningCount = items.filter((item) => item.severity === 'warning').length;
+  const infoCount = items.filter((item) => item.severity === 'info').length;
+  const aiCount = items.filter((item) => item.source === 'ai').length;
+  const aiUnreadCount = items.filter((item) => item.source === 'ai' && item.unread).length;
+  const unreadCount = items.filter((item) => item.unread).length;
+  const count = items.length;
+  const unreadCriticalCount = items.filter(
+    (item) => item.unread && item.severity === 'critical',
+  ).length;
+  const badgeColor = unreadCriticalCount > 0 ? 'bg-rose-600' : 'bg-amber-500';
+  const filteredItems = useMemo(
+    () => filter === 'all'
+      ? items
+      : filter === 'ai'
+        ? items.filter((item) => item.source === 'ai')
+        : items.filter((item) => item.severity === filter),
+    [items, filter],
   );
-  const filterCounts: Record<'all' | AlertSeverity, number> = {
+  const filterCounts: Record<NotificationFilter, number> = {
     all: count,
     critical: criticalCount,
     warning: warningCount,
     info: infoCount,
+    ai: aiCount,
   };
 
   const updatePanelBox = useCallback(() => {
@@ -126,7 +152,7 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
       ref={panelRef}
       id="cellar-alerts-popover"
       role="dialog"
-      aria-label={isKa ? 'მარნის ალერტები' : 'Cellar alerts'}
+      aria-label={isKa ? 'შეტყობინებების ცენტრი' : 'Notification center'}
       className="fixed bg-white border border-stone-200 rounded-2xl shadow-2xl z-[45] overflow-hidden dark:bg-stone-950 dark:border-stone-800"
       style={{
         top: panelBox.top,
@@ -137,7 +163,7 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
       <div className="px-4 py-3 bg-[#4e0e15] text-amber-50">
         <div className="flex items-center justify-between gap-3">
           <span className="text-[11px] font-serif font-black uppercase tracking-widest flex items-center gap-1.5">
-            <Bell className="w-3.5 h-3.5 text-amber-300" /> {isKa ? 'მარნის ალერტები' : 'Cellar Alerts'}
+            <Bell className="w-3.5 h-3.5 text-amber-300" /> {isKa ? 'შეტყობინებების ცენტრი' : 'Notification Center'}
           </span>
           <span className="text-[9px] font-mono font-bold">
             {criticalCount > 0
@@ -152,13 +178,40 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
             <span className="rounded-lg bg-white/10 px-2 py-1 text-sky-100">{infoCount} {isKa ? 'ინფო' : 'info'}</span>
           </div>
         )}
+        {aiUnreadCount > 0 && onMarkAllAiRead && (
+          <button
+            type="button"
+            disabled={markingAllRead}
+            onClick={async () => {
+              setMarkingAllRead(true);
+              try {
+                await onMarkAllAiRead();
+              } catch {
+                // The shell restores unread state and surfaces the error.
+              } finally {
+                setMarkingAllRead(false);
+              }
+            }}
+            className="mt-2 w-full rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[9px] font-bold text-amber-50 transition-colors hover:bg-white/15 disabled:cursor-wait disabled:opacity-60"
+          >
+            {markingAllRead
+              ? (isKa ? 'ინიშნება…' : 'Marking…')
+              : (isKa
+                ? `ყველა AI შეტყობინების წაკითხვა (${aiUnreadCount})`
+                : `Mark all AI as read (${aiUnreadCount})`)}
+          </button>
+        )}
       </div>
 
       {count > 0 && (
-        <div className="grid grid-cols-4 gap-1 border-b border-stone-200 bg-stone-50 p-2 dark:border-stone-800 dark:bg-stone-900/70">
+        <div className="grid grid-cols-5 gap-1 border-b border-stone-200 bg-stone-50 p-2 dark:border-stone-800 dark:bg-stone-900/70">
           {FILTERS.map((item) => {
             const active = filter === item;
-            const label = item === 'all' ? (isKa ? 'ყველა' : 'All') : SEVERITY_STYLES[item].label;
+            const label = item === 'all'
+              ? (isKa ? 'ყველა' : 'All')
+              : item === 'ai'
+                ? 'AI'
+                : SEVERITY_STYLES[item].label;
             return (
               <button
                 key={item}
@@ -179,6 +232,20 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
         </div>
       )}
 
+      {aiStatus !== 'ready' && (
+        <div className={`border-b px-3 py-2 text-[9px] font-semibold ${
+          aiStatus === 'loading'
+            ? 'border-violet-100 bg-violet-50 text-violet-700 dark:border-violet-950 dark:bg-violet-950/30 dark:text-violet-300'
+            : 'border-amber-100 bg-amber-50 text-amber-800 dark:border-amber-950 dark:bg-amber-950/30 dark:text-amber-300'
+        }`}>
+          {aiStatus === 'loading'
+            ? (isKa ? 'AI შეტყობინებები იტვირთება…' : 'Loading AI notifications…')
+            : (isKa
+              ? 'AI შეტყობინებები დროებით მიუწვდომელია. საოპერაციო ალერტები კვლავ აქტიურია.'
+              : 'AI notifications are temporarily unavailable. Operational alerts remain active.')}
+        </div>
+      )}
+
       <div
         className="overflow-y-auto divide-y divide-stone-100 dark:divide-stone-850"
         style={{ maxHeight: panelBox.maxHeight }}
@@ -186,30 +253,43 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
         {count === 0 ? (
           <div className="px-4 py-8 text-center text-stone-400 flex flex-col items-center gap-2">
             <ShieldCheck className="w-7 h-7 text-emerald-500" />
-            <span className="text-[11px] font-semibold">{isKa ? 'ყველა სისტემა წესრიგშია - ალერტები არ არის.' : 'All clear - no active alerts.'}</span>
+            <span className="text-[11px] font-semibold">
+              {aiStatus === 'loading'
+                ? (isKa ? 'საოპერაციო ალერტები არ არის. AI შემოწმება იტვირთება.' : 'No operational alerts. AI checks are loading.')
+                : (isKa ? 'ყველა სისტემა წესრიგშია — აქტიური შეტყობინებები არ არის.' : 'All clear — no active notifications.')}
+            </span>
           </div>
-        ) : filteredAlerts.length === 0 ? (
+        ) : filteredItems.length === 0 ? (
           <div className="px-4 py-8 text-center text-stone-400 flex flex-col items-center gap-2">
             <ShieldCheck className="w-7 h-7 text-emerald-500" />
             <span className="text-[11px] font-semibold">
               {isKa
-                ? `აქტიური ${filter === 'critical' ? 'კრიტიკული' : filter === 'warning' ? 'გაფრთხილების' : 'ინფორმაციული'} ალერტები არ არის.`
-                : `No ${filter} alerts.`}
+                ? (filter === 'ai'
+                  ? 'აქტიური AI შეტყობინებები არ არის.'
+                  : `აქტიური ${filter === 'critical' ? 'კრიტიკული' : filter === 'warning' ? 'გაფრთხილების' : 'ინფორმაციული'} შეტყობინებები არ არის.`)
+                : `No ${filter} notifications.`}
             </span>
           </div>
         ) : (
-          filteredAlerts.map((a) => {
-            const Icon = CATEGORY_ICON[a.category];
-            const sv = SEVERITY_STYLES[a.severity];
+          filteredItems.map((item) => {
+            const Icon = CATEGORY_ICON[item.category];
+            const sv = SEVERITY_STYLES[item.severity];
+            const severityLabel = item.aiSeverity === 'attention'
+              ? (isKa ? 'საყურადღებო' : 'Attention')
+              : sv.label;
             return (
               <button
-                key={a.id}
+                key={item.id}
                 type="button"
                 onClick={() => {
-                  onSelect?.(a);
+                  onSelect?.(item);
                   setOpen(false);
                 }}
-                className="w-full text-left px-4 py-3 hover:bg-stone-50 transition-colors flex gap-3 cursor-pointer dark:hover:bg-stone-900"
+                className={`w-full text-left px-4 py-3 transition-colors flex gap-3 cursor-pointer ${
+                  item.source === 'ai' && item.unread
+                    ? 'bg-violet-50/50 hover:bg-violet-50 dark:bg-violet-950/15 dark:hover:bg-violet-950/25'
+                    : 'hover:bg-stone-50 dark:hover:bg-stone-900'
+                }`}
               >
                 <span className="mt-0.5 shrink-0 relative">
                   <Icon className="w-4 h-4 text-stone-500 dark:text-stone-400" />
@@ -217,16 +297,32 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
                 </span>
                 <span className="min-w-0">
                   <span className="flex min-w-0 items-center gap-2">
-                    <strong className="min-w-0 flex-1 truncate text-[11px] font-bold text-stone-850 dark:text-stone-100">{a.title}</strong>
+                    {item.source === 'ai' && item.unread && (
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500"
+                        aria-label={isKa ? 'წაუკითხავი' : 'Unread'}
+                      />
+                    )}
+                    <strong className="min-w-0 flex-1 truncate text-[11px] font-bold text-stone-850 dark:text-stone-100">{item.title}</strong>
                     <span className={`text-[7px] uppercase font-black px-1.5 py-0.5 rounded border ${sv.chip} shrink-0`}>
-                      {sv.label}
+                      {severityLabel}
                     </span>
                   </span>
-                  <span className="block text-[10px] text-stone-500 leading-snug mt-0.5 dark:text-stone-400">{a.message}</span>
+                  <span className="block text-[10px] text-stone-500 leading-snug mt-0.5 dark:text-stone-400">{item.message}</span>
                   <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[8px] font-mono font-bold uppercase tracking-wide text-stone-400">
-                    <span className="rounded-md bg-stone-100 px-1.5 py-0.5 dark:bg-stone-900">{CATEGORY_LABEL[a.category]}</span>
-                    {a.relatedLotId && <span className="rounded-md bg-stone-100 px-1.5 py-0.5 dark:bg-stone-900">{isKa ? 'ლოტი' : 'Lot'} {a.relatedLotId}</span>}
-                    {a.relatedTankId && <span className="rounded-md bg-stone-100 px-1.5 py-0.5 dark:bg-stone-900">{isKa ? 'ჭურჭელი' : 'Vessel'} {a.relatedTankId}</span>}
+                    {item.source === 'ai' && (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300">
+                        <BrainCircuit className="h-2.5 w-2.5" /> AI
+                      </span>
+                    )}
+                    <span className="rounded-md bg-stone-100 px-1.5 py-0.5 dark:bg-stone-900">{CATEGORY_LABEL[item.category]}</span>
+                    {item.relatedLotId && <span className="rounded-md bg-stone-100 px-1.5 py-0.5 dark:bg-stone-900">{isKa ? 'ლოტი' : 'Lot'} {item.relatedLotId}</span>}
+                    {item.relatedTankId && <span className="rounded-md bg-stone-100 px-1.5 py-0.5 dark:bg-stone-900">{isKa ? 'ჭურჭელი' : 'Vessel'} {item.relatedTankId}</span>}
+                    {item.source === 'ai' && (item.occurrences || 0) > 1 && (
+                      <span className="rounded-md bg-stone-100 px-1.5 py-0.5 dark:bg-stone-900">
+                        {isKa ? `${item.occurrences} დაფიქსირება` : `${item.occurrences} observations`}
+                      </span>
+                    )}
                   </span>
                 </span>
               </button>
@@ -249,15 +345,17 @@ export default function NotificationCenter({ alerts, onSelect, lang = 'en' }: Pr
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="cellar-alerts-popover"
-        aria-label={isKa ? `ალერტები (${count})` : `Alerts (${count})`}
+        aria-label={isKa
+          ? `შეტყობინებები: ${unreadCount} წაუკითხავი, ${count} აქტიური`
+          : `Notifications: ${unreadCount} unread, ${count} active`}
         className="relative p-2 rounded-xl border border-stone-200 bg-gradient-to-r from-stone-50 to-stone-100 hover:border-[#4e0e15]/40 transition-colors cursor-pointer shadow-2xs"
       >
         <Bell className="w-4 h-4 text-[#4e0e15]" />
-        {count > 0 && (
+        {unreadCount > 0 && (
           <span
             className={`absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full ${badgeColor} text-white text-[9px] font-black flex items-center justify-center ring-2 ring-white`}
           >
-            {count > 99 ? '99+' : count}
+            {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>

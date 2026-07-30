@@ -1,14 +1,20 @@
 import type { Language } from '../i18n';
-import { extractNumericValues, type AiContextEvidenceRef } from './context';
+import {
+  extractNumericClaims,
+  type AiContextEvidenceRef,
+  type AiNumericClaim,
+} from './context';
 import { buildFinding } from './finding';
+import { AREA_MODULE } from './roles';
 import { fromModel, plain, text, type LocalizedText } from './text';
-import type {
-  AiAgentKey,
-  AiEntityType,
-  AiFinding,
-  AiMonitoringArea,
-  AiRecommendedActionKind,
-  AiSeverity,
+import {
+  AGENT_AREA,
+  type AiAgentKey,
+  type AiEntityType,
+  type AiFinding,
+  type AiMonitoringArea,
+  type AiRecommendedActionKind,
+  type AiSeverity,
 } from './types';
 
 /**
@@ -132,6 +138,33 @@ function sameNumber(left: number, right: number): boolean {
     <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 8;
 }
 
+function roundTo(value: number, decimals: number): number {
+  const factor = 10 ** Math.max(0, Math.min(12, decimals));
+  return Math.round(value * factor) / factor;
+}
+
+/**
+ * Whether a stated quantity is supported by the cited server data.
+ *
+ * Exact equality alone is too strict to be useful: the context carries
+ * `paceDeviationPct: -18.33` and any competent write-up says "18% slower".
+ * Rejecting that would discard good analysis and — worse — do it invisibly.
+ *
+ * So a claim is grounded when it is a *correct rounding* of a cited value, or of
+ * that value's magnitude (prose states direction in words, the data in a sign).
+ * This stays sound because rounding only ever admits claims that are true of a
+ * real number: 999 against 22, or a unit-shifted 13 against 0.13, still fail.
+ */
+function claimIsGrounded(claim: AiNumericClaim, grounded: readonly number[]): boolean {
+  return grounded.some((known) => {
+    if (sameNumber(claim.value, known)) return true;
+    if (sameNumber(claim.value, roundTo(known, claim.decimals))) return true;
+    const magnitude = Math.abs(known);
+    return sameNumber(claim.value, magnitude)
+      || sameNumber(claim.value, roundTo(magnitude, claim.decimals));
+  });
+}
+
 /**
  * Validates raw model output and converts surviving entries into findings.
  * Two guards matter most: an entity the context never mentioned is rejected
@@ -236,7 +269,7 @@ export function parseModelFindings(
     const confidenceReasons = strList(row.confidence_reasons, 3, MAX_ITEM_TEXT);
     const missingInformation = strList(row.missing_information, MAX_LIST_ITEMS, MAX_ITEM_TEXT);
 
-    const claimNumbers = extractNumericValues([
+    const claimNumbers = extractNumericClaims([
       title,
       observation,
       reasoning,
@@ -246,13 +279,11 @@ export function parseModelFindings(
       ...missingInformation,
     ]);
     const groundedNumbers = citedEvidence.flatMap((item) => item.numericValues);
-    const unsupportedNumber = claimNumbers.find(
-      (claim) => !groundedNumbers.some((known) => sameNumber(claim, known)),
-    );
+    const unsupportedNumber = claimNumbers.find((claim) => !claimIsGrounded(claim, groundedNumbers));
     if (unsupportedNumber !== undefined) {
       rejected.push({
         reason: 'ungrounded_numeric_claim',
-        detail: `finding "${title}" stated ${unsupportedNumber}, which does not occur in its cited sources`,
+        detail: `finding "${title}" stated ${unsupportedNumber.value}, which does not occur in its cited sources`,
       });
       continue;
     }
@@ -267,7 +298,12 @@ export function parseModelFindings(
     findings.push(buildFinding({
       findingType,
       agent: options.agent,
+      // A model finding inherits the *trigger's* area, which is not necessarily
+      // the specialist's own. A laboratory agent invited onto a stuck-fermentation
+      // trigger writes chemistry into a finding filed under `fermentation`, so the
+      // agent's own module has to be required on top of the area's.
       area: options.area,
+      requiredModules: [AREA_MODULE[AGENT_AREA[options.agent]]],
       severity,
       entityType,
       entityId,

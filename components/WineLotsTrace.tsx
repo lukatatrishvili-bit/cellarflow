@@ -6,7 +6,12 @@ import type { Language } from '../lib/i18n';
 import type { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord, InventoryItem } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
-import { stageLabel, vesselTypeLabel } from '../lib/enumLabels';
+import { stageLabel, vesselTypeLabel, wineClassLabel } from '../lib/enumLabels';
+import {
+  nextStageForWineClass,
+  stagesForCurrentLot,
+  winemakingWorkflowLabel,
+} from '../lib/winemakingWorkflow';
 import WineLotCommandCenter from './WineLotCommandCenter';
 import OperationMaterialsEditor, {
   materialDraftIssue,
@@ -37,18 +42,6 @@ interface Props {
   inventory?: InventoryItem[];
   onUpdateInventory?: (inventory: InventoryItem[]) => void;
 }
-
-const STAGES_ORDERED: WinemakingStage[] = [
-  'crushing',
-  'fermenting',
-  'maceration',
-  'pressing',
-  'aging',
-  'stabilization',
-  'filtration',
-  'bottled',
-  'sold',
-];
 
 export function commitWineLotMutationIfAllowed(
   allowed: boolean,
@@ -97,6 +90,9 @@ export default function WineLotsTrace({
   const [editRegion, setEditRegion] = useState('');
 
   const selectedLot = lots.find(l => l.id === selectedLotId);
+  const stagesOrdered = selectedLot
+    ? stagesForCurrentLot(selectedLot.wineClass, selectedLot.stage)
+    : [];
 
   useEffect(() => {
     if (selectedLot) {
@@ -118,11 +114,14 @@ export default function WineLotsTrace({
   const [transitionMaterialDrafts, setTransitionMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
   const stageWorkflowRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    setShowTransitionForm(false);
+    setTransitionMaterialDrafts([]);
+  }, [selectedLotId]);
+
   const openTransitionForm = () => {
     if (!canUpdateLot || !selectedLot) return;
-    const currentIndex = STAGES_ORDERED.indexOf(selectedLot.stage);
-    const nextIndex = Math.min(STAGES_ORDERED.length - 1, currentIndex + 1);
-    setTransitionTarget(STAGES_ORDERED[nextIndex]);
+    setTransitionTarget(nextStageForWineClass(selectedLot.wineClass, selectedLot.stage));
     setTransitionOperator('Luka Tatrishvili');
     setTransitionNotes('');
     setTransitionMaterialDrafts([]);
@@ -245,8 +244,8 @@ export default function WineLotsTrace({
                 de: 'Weinstil / -klasse'
               }[lang] || 'Wine Style / Class'}
             </span>
-            <div className="grid grid-cols-4 gap-1">
-              {['all', 'red', 'white', 'amber'].map(cls => (
+            <div className="grid grid-cols-2 gap-1 sm:grid-cols-5 xl:grid-cols-2 2xl:grid-cols-5">
+              {['all', 'red', 'white', 'amber', 'qvevri'].map(cls => (
                 <button
                   key={cls}
                   type="button"
@@ -258,8 +257,8 @@ export default function WineLotsTrace({
                   }`}
                 >
                   {lang === 'ka'
-                    ? ({all: 'ყველა', red: 'წითელი', white: 'თეთრი', amber: 'ქარვისფერი'} as Record<string, string>)[cls] || cls
-                    : cls}
+                    ? ({all: 'ყველა', red: 'წითელი', white: 'თეთრი', amber: 'ქარვისფერი', qvevri: 'ქვევრის'} as Record<string, string>)[cls] || cls
+                    : cls === 'all' ? 'All' : wineClassLabel(cls, lang)}
                 </button>
               ))}
             </div>
@@ -364,7 +363,8 @@ export default function WineLotsTrace({
                   <option value="red">{lang === 'ka' ? 'წითელი' : 'Red'}</option>
                   <option value="white">{lang === 'ka' ? 'თეთრი' : 'White'}</option>
                   <option value="rose">{lang === 'ka' ? 'ვარდისფერი (როზე)' : 'Rosé'}</option>
-                  <option value="amber">{lang === 'ka' ? 'ქვევრის ქარვისფერი' : 'Amber/Georgian qvevri'}</option>
+                  <option value="amber">{lang === 'ka' ? 'ქარვისფერი' : 'Amber'}</option>
+                  <option value="qvevri">{lang === 'ka' ? 'ქვევრის' : 'Qvevri'}</option>
                 </select>
               </div>
             </div>
@@ -444,9 +444,9 @@ export default function WineLotsTrace({
                     {l.voidedAt && <span className="text-[8px] uppercase font-bold rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">Voided</span>}
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[10px] text-slate-400 capitalize">{lang === 'ka'
-                      ? ({red_dry: 'წითელი მშრალი', white_dry: 'თეთრი მშრალი', amber_dry: 'ქარვისფერი მშრალი', rose: 'ვარდისფერი', red_semi_sweet: 'წითელი ნახევრადტკბილი', white_semi_sweet: 'თეთრი ნახევრადტკბილი'} as Record<string, string>)[l.wineClass] || l.wineClass
-                      : `${l.wineClass} Wine`}</span>
+                    <span className="text-[10px] text-slate-400 capitalize">
+                      {wineClassLabel(l.wineClass, lang)} {lang === 'ka' ? 'ღვინო' : 'wine'}
+                    </span>
                     <span className="text-[10px] text-slate-400 font-medium">{lang === 'ka' ? 'მოც.' : 'Vol'}: {l.currentVolume}L</span>
                   </div>
                 </div>
@@ -776,14 +776,19 @@ export default function WineLotsTrace({
 
             {/* Stage Progress Stepper */}
             {(() => {
-              const stagesOrdered = STAGES_ORDERED;
-
               return (
                 <div ref={stageWorkflowRef} className="scroll-mt-4 space-y-4 border border-stone-200/80 bg-stone-50/50 p-4 rounded-xl dark:bg-stone-900/50 dark:border-stone-800">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
-                      🍇 Winemaking Stage Workflow
-                    </h4>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
+                        🍇 {winemakingWorkflowLabel(selectedLot.wineClass, lang)}
+                      </h4>
+                      <p className="mt-1 text-[10px] text-stone-400">
+                        {lang === 'ka'
+                          ? 'თანმიმდევრობა შერჩეულია ამ პარტიის ღვინის ტიპისთვის.'
+                          : 'This sequence is tailored to the lot’s wine type.'}
+                      </p>
+                    </div>
                     {canUpdateLot && <button
                       onClick={openTransitionForm}
                       className="px-2 py-1 text-[10px] font-bold text-white bg-[#801323] hover:bg-[#4e0e15] rounded transition-all cursor-pointer shadow-2xs"

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
+  BarChart3,
   BellRing,
   BrainCircuit,
   CheckCircle2,
@@ -33,6 +35,7 @@ interface DeliveryRecord {
   id: string;
   organizationId: string;
   recipientUsername: string;
+  channel: 'email' | 'push' | 'whatsapp';
   severity: string;
   status: DeliveryStatus;
   attemptCount: number;
@@ -44,6 +47,8 @@ interface OperationsSnapshot {
   checkedAt: string;
   health: 'healthy' | 'attention' | 'critical';
   emailTransportConfigured: boolean;
+  pushTransportConfigured: boolean;
+  whatsappTransportConfigured: boolean;
   organizations: Record<string, string>;
   monitoring: {
     backend: 'postgresql' | 'memory';
@@ -60,6 +65,70 @@ interface OperationsSnapshot {
     oldestPendingAt?: string;
     latestDeliveredAt?: string;
     recentFailures: DeliveryRecord[];
+  };
+  modelCalls: {
+    backend: 'postgresql' | 'memory';
+    today: {
+      total: number;
+      succeeded: number;
+      invalidResponse: number;
+      failed: number;
+      successRate: number;
+      averageLatencyMs: number;
+    };
+    byPurpose: Record<'analysis' | 'ask_planner' | 'ask_explanation' | 'knowledge_embedding', {
+      total: number;
+      succeeded: number;
+      invalidResponse: number;
+      failed: number;
+    }>;
+    staleRunning: number;
+    latestCompletedAt?: string;
+    recentFailures: Array<{
+      id: string;
+      organizationId: string;
+      purpose: 'analysis' | 'ask_planner' | 'ask_explanation' | 'knowledge_embedding';
+      agent?: string;
+      model: string;
+      status: 'invalid_response' | 'failed';
+      errorCategory?: string;
+      startedAt: string;
+      completedAt?: string;
+      latencyMs?: number;
+    }>;
+  };
+  quality: {
+    totalResponses: number;
+    qualityResponses: number;
+    findingsWithFeedback: number;
+    counts: Record<'helpful' | 'not_helpful' | 'incorrect' | 'already_handled', number>;
+    helpfulRate: number;
+    incorrectRate: number;
+    alreadyHandledRate: number;
+    bySource: Record<'rule' | 'model' | 'hybrid', {
+      totalResponses: number;
+      counts: Record<'helpful' | 'not_helpful' | 'incorrect' | 'already_handled', number>;
+    }>;
+    calibration: {
+      minimumQualityResponses: number;
+      minimumFindings: number;
+      detectorsWithFeedback: number;
+      assessedDetectors: number;
+      needsReview: number;
+      candidates: Array<{
+        findingType: string;
+        source: 'rule' | 'model' | 'hybrid';
+        area: 'fermentation' | 'laboratory' | 'inventory' | 'vineyard' | 'compliance' | 'operations';
+        findingsReviewed: number;
+        totalResponses: number;
+        qualityResponses: number;
+        counts: Record<'helpful' | 'not_helpful' | 'incorrect' | 'already_handled', number>;
+        helpfulRate: number;
+        incorrectRate: number;
+        negativeRate: number;
+        alreadyHandledRate: number;
+      }>;
+    };
   };
 }
 
@@ -203,6 +272,18 @@ export default function AiOperationsAdmin({ isKa, onMessage }: Props) {
   const HealthIcon = healthCopy.Icon;
   const orgName = (id: string) => snapshot.organizations[id] || id;
   const recentFailures = snapshot.notifications.recentFailures.slice(0, 12);
+  const formatRate = (value: number) => new Intl.NumberFormat(isKa ? 'ka-GE' : 'en-GB', {
+    style: 'percent',
+    maximumFractionDigits: 0,
+  }).format(value);
+  const formatLatency = (value: number) => value >= 1_000
+    ? `${(value / 1_000).toFixed(1)} s`
+    : `${value} ms`;
+  const formatFindingType = (value: string) => value
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 
   return (
     <div className="space-y-6 text-left">
@@ -248,12 +329,276 @@ export default function AiOperationsAdmin({ isKa, onMessage }: Props) {
         <section className="rounded-2xl border border-cyan-900/30 bg-[#0c090a] p-5">
           <MailCheck className="mb-4 h-5 w-5 text-emerald-400" />
           <p className="text-[9px] font-bold uppercase tracking-widest text-stone-500">{isKa ? 'მიწოდების მდგომარეობა' : 'Delivery state'}</p>
-          <p className="mt-2 text-sm font-black text-stone-200">
-            {snapshot.emailTransportConfigured ? (isKa ? 'SMTP მზადაა' : 'SMTP configured') : (isKa ? 'SMTP არ არის' : 'SMTP not configured')}
-          </p>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {[
+              ['SMTP', snapshot.emailTransportConfigured],
+              ['Push', snapshot.pushTransportConfigured],
+              ['WhatsApp', snapshot.whatsappTransportConfigured],
+            ].map(([label, configured]) => (
+              <span
+                key={String(label)}
+                className={`rounded border px-1.5 py-0.5 text-[9px] font-bold ${
+                  configured
+                    ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300'
+                    : 'border-amber-800 bg-amber-950/40 text-amber-300'
+                }`}
+              >
+                {label} {configured
+                  ? (isKa ? 'მზადაა' : 'ready')
+                  : (isKa ? 'არ არის' : 'off')}
+              </span>
+            ))}
+          </div>
           <p className="mt-2 text-[10px] text-stone-600">{snapshot.notifications.counts.delivered} {isKa ? 'მიწოდებული' : 'delivered'} · {snapshot.notifications.counts.failed} {isKa ? 'შეცდომა' : 'failed'}</p>
         </section>
       </div>
+
+      <section className="rounded-2xl border border-cyan-900/25 bg-[#0c090a] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-stone-300">
+              <Activity className="h-4 w-4 text-cyan-400" />
+              {isKa ? 'მოდელის გამოძახებები დღეს' : 'Model calls today'}
+            </h3>
+            <p className="mt-2 text-[10px] text-stone-600">
+              {isKa
+                ? 'ინახება მხოლოდ დანიშნულება, სტატუსი და დრო — მოთხოვნები, პასუხები და მარნის მონაცემები არ ინახება.'
+                : 'Purpose, status, and timing only—prompts, responses, and winery data are never retained.'}
+            </p>
+          </div>
+          <span className="rounded-full border border-stone-800 px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-stone-500">
+            {snapshot.modelCalls.backend}
+          </span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-xl border border-cyan-500/15 bg-cyan-950/10 p-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'სულ' : 'Total'}
+            </p>
+            <p className="mt-2 text-xl font-black text-cyan-300">{snapshot.modelCalls.today.total}</p>
+          </div>
+          <div className="rounded-xl border border-emerald-500/15 bg-emerald-950/10 p-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'წარმატება' : 'Success rate'}
+            </p>
+            <p className="mt-2 text-xl font-black text-emerald-300">
+              {formatRate(snapshot.modelCalls.today.successRate)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-amber-500/15 bg-amber-950/10 p-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'არასწორი პასუხი / შეცდომა' : 'Invalid / failed'}
+            </p>
+            <p className="mt-2 text-xl font-black text-amber-300">
+              {snapshot.modelCalls.today.invalidResponse} / {snapshot.modelCalls.today.failed}
+            </p>
+          </div>
+          <div className="rounded-xl border border-violet-500/15 bg-violet-950/10 p-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'საშუალო დრო' : 'Average latency'}
+            </p>
+            <p className="mt-2 text-xl font-black text-violet-300">
+              {formatLatency(snapshot.modelCalls.today.averageLatencyMs)}
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          {(['analysis', 'ask_planner', 'ask_explanation', 'knowledge_embedding'] as const).map((purpose) => {
+            const purposeSummary = snapshot.modelCalls.byPurpose[purpose];
+            const labels = {
+              analysis: { en: 'Finding analysis', ka: 'მიგნების ანალიზი' },
+              ask_planner: { en: 'Question planner', ka: 'კითხვის დამგეგმავი' },
+              ask_explanation: { en: 'Answer explanation', ka: 'პასუხის განმარტება' },
+              knowledge_embedding: { en: 'Knowledge retrieval', ka: 'ცოდნის მოძიება' },
+            };
+            return (
+              <div key={purpose} className="flex items-center justify-between rounded-xl border border-stone-900 px-3 py-2 text-[10px]">
+                <span className="font-bold text-stone-400">
+                  {isKa ? labels[purpose].ka : labels[purpose].en}
+                </span>
+                <span className="text-stone-600">
+                  {purposeSummary.succeeded}/{purposeSummary.total} {isKa ? 'წარმატებული' : 'succeeded'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {snapshot.modelCalls.recentFailures.length > 0 && (
+          <div className="mt-4 border-t border-stone-900 pt-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'ბოლო პრობლემები — შიგთავსის გარეშე' : 'Recent problems—content free'}
+            </p>
+            <div className="mt-2 grid gap-2 lg:grid-cols-2">
+              {snapshot.modelCalls.recentFailures.slice(0, 6).map((record) => (
+                <div key={record.id} className="flex items-center justify-between gap-3 rounded-xl border border-stone-900 px-3 py-2 text-[10px]">
+                  <span className="min-w-0">
+                    <strong className="block truncate text-stone-400">{orgName(record.organizationId)}</strong>
+                    <span className="text-stone-600">{record.purpose} · {record.agent || record.model}</span>
+                  </span>
+                  <span className="shrink-0 text-amber-400">
+                    {record.status === 'invalid_response'
+                      ? (isKa ? 'არასწორი ფორმატი' : 'invalid format')
+                      : (record.errorCategory || (isKa ? 'შეცდომა' : 'failed'))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-cyan-900/25 bg-[#0c090a] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-stone-300">
+              <BarChart3 className="h-4 w-4 text-violet-400" />
+              {isKa ? 'მიგნებების ხარისხის სიგნალები' : 'Finding quality signals'}
+            </h3>
+            <p className="mt-2 text-[10px] text-stone-600">
+              {isKa
+                ? 'მხოლოდ გაერთიანებული შეფასებები — მიმომხილველის ვინაობა და კომენტარები არ ჩანს.'
+                : 'Aggregate verdicts only—reviewer identities and comments are never shown here.'}
+            </p>
+          </div>
+          <span className="rounded-full border border-stone-800 px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-stone-500">
+            {snapshot.quality.totalResponses} {isKa ? 'შეფასება' : 'responses'}
+          </span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-emerald-500/15 bg-emerald-950/10 p-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'სასარგებლო' : 'Helpful'}
+            </p>
+            <p className="mt-2 text-xl font-black text-emerald-300">
+              {formatRate(snapshot.quality.helpfulRate)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-red-500/15 bg-red-950/10 p-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'არასწორი' : 'Incorrect'}
+            </p>
+            <p className="mt-2 text-xl font-black text-red-300">
+              {formatRate(snapshot.quality.incorrectRate)}
+            </p>
+          </div>
+          <div className="rounded-xl border border-stone-800 bg-stone-950/40 p-4">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-stone-600">
+              {isKa ? 'შეფასებული მიგნებები' : 'Findings reviewed'}
+            </p>
+            <p className="mt-2 text-xl font-black text-stone-200">
+              {snapshot.quality.findingsWithFeedback}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[9px] text-stone-500">
+          <span className="rounded-full border border-stone-800 px-2.5 py-1">
+            {isKa ? 'სასარგებლო' : 'Helpful'}: {snapshot.quality.counts.helpful}
+          </span>
+          <span className="rounded-full border border-stone-800 px-2.5 py-1">
+            {isKa ? 'არასასარგებლო' : 'Not helpful'}: {snapshot.quality.counts.not_helpful}
+          </span>
+          <span className="rounded-full border border-stone-800 px-2.5 py-1">
+            {isKa ? 'არასწორი' : 'Incorrect'}: {snapshot.quality.counts.incorrect}
+          </span>
+          <span className="rounded-full border border-stone-800 px-2.5 py-1">
+            {isKa ? 'უკვე მოგვარებული' : 'Already handled'}: {snapshot.quality.counts.already_handled}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          {(['rule', 'model', 'hybrid'] as const).map((source) => {
+            const sourceQuality = snapshot.quality.bySource[source];
+            const sourceQualityResponses = sourceQuality.totalResponses
+              - sourceQuality.counts.already_handled;
+            const sourceHelpfulRate = sourceQualityResponses > 0
+              ? sourceQuality.counts.helpful / sourceQualityResponses
+              : 0;
+            const labels = {
+              rule: { en: 'Rule', ka: 'წესი' },
+              model: { en: 'Model', ka: 'მოდელი' },
+              hybrid: { en: 'Hybrid', ka: 'ჰიბრიდული' },
+            };
+            return (
+              <div key={source} className="flex items-center justify-between rounded-xl border border-stone-900 px-3 py-2 text-[10px]">
+                <span className="font-bold text-stone-400">
+                  {isKa ? labels[source].ka : labels[source].en}
+                </span>
+                <span className="text-stone-600">
+                  {sourceQuality.totalResponses} · {formatRate(sourceHelpfulRate)} {isKa ? 'სასარგებლო' : 'helpful'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-5 border-t border-stone-900 pt-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h4 className="text-[10px] font-bold uppercase tracking-widest text-stone-400">
+                {isKa ? 'დეტექტორების კალიბრაცია' : 'Detector calibration'}
+              </h4>
+              <p className="mt-1 max-w-3xl text-[10px] leading-relaxed text-stone-600">
+                {isKa
+                  ? `მხოლოდ სარეკომენდაციო სიგნალი. შეფასება იწყება მინიმუმ ${snapshot.quality.calibration.minimumQualityResponses} ხარისხის პასუხისა და ${snapshot.quality.calibration.minimumFindings} ცალკეული მიგნების შემდეგ; გაფრთხილებები ავტომატურად არასოდეს ითიშება.`
+                  : `Advisory only. Assessment starts after at least ${snapshot.quality.calibration.minimumQualityResponses} quality verdicts across ${snapshot.quality.calibration.minimumFindings} distinct findings; alerts are never suppressed automatically.`}
+              </p>
+            </div>
+            <span className={`rounded-full border px-3 py-1 text-[9px] font-bold uppercase tracking-wider ${
+              snapshot.quality.calibration.needsReview > 0
+                ? 'border-amber-500/25 bg-amber-950/20 text-amber-300'
+                : 'border-emerald-500/20 bg-emerald-950/10 text-emerald-400'
+            }`}>
+              {snapshot.quality.calibration.needsReview} {isKa ? 'გადასახედი' : 'to review'}
+            </span>
+          </div>
+          {snapshot.quality.calibration.candidates.length === 0 ? (
+            <div className="mt-3 rounded-xl border border-stone-900 bg-stone-950/30 px-4 py-3 text-[10px] text-stone-600">
+              {snapshot.quality.calibration.assessedDetectors === 0
+                ? (isKa
+                  ? 'ჯერ არც ერთ დეტექტორს არ აქვს საკმარისი შეფასება საიმედო კალიბრაციისთვის.'
+                  : 'No detector has enough feedback for reliable calibration yet.')
+                : (isKa
+                  ? `${snapshot.quality.calibration.assessedDetectors} შეფასებული დეტექტორიდან არც ერთი არ საჭიროებს გადახედვას.`
+                  : `None of ${snapshot.quality.calibration.assessedDetectors} assessed detectors currently needs review.`)}
+            </div>
+          ) : (
+            <div className="mt-3 grid gap-2 lg:grid-cols-2">
+              {snapshot.quality.calibration.candidates.map((candidate) => (
+                <div
+                  key={`${candidate.source}:${candidate.area}:${candidate.findingType}`}
+                  className="rounded-xl border border-amber-500/15 bg-amber-950/10 p-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[11px] font-bold text-stone-300">
+                        {formatFindingType(candidate.findingType)}
+                      </p>
+                      <p className="mt-1 text-[9px] uppercase tracking-wider text-stone-600">
+                        {candidate.source} · {candidate.area}
+                      </p>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-amber-500/20 px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-amber-300">
+                      {isKa ? 'გადასახედი' : 'Review'}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[9px] text-stone-500">
+                    <span>
+                      {candidate.qualityResponses} {isKa ? 'ხარისხის პასუხი' : 'quality verdicts'}
+                    </span>
+                    <span>
+                      {candidate.findingsReviewed} {isKa ? 'მიგნება' : 'findings'}
+                    </span>
+                    <span className="text-red-300/80">
+                      {formatRate(candidate.incorrectRate)} {isKa ? 'არასწორი' : 'incorrect'}
+                    </span>
+                    <span className="text-amber-300/80">
+                      {formatRate(candidate.negativeRate)} {isKa ? 'უარყოფითი' : 'negative'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="overflow-hidden rounded-2xl border border-cyan-900/25 bg-[#0c090a]">
@@ -296,7 +641,7 @@ export default function AiOperationsAdmin({ isKa, onMessage }: Props) {
                 <tbody className="divide-y divide-stone-900/70">
                   {recentFailures.map((record) => (
                     <tr key={record.id} className="align-top hover:bg-stone-900/30">
-                      <td className="px-4 py-3"><p className="font-bold text-stone-300">{record.recipientUsername}</p><p className="mt-1 text-[9px] text-stone-600">{orgName(record.organizationId)} · {record.severity}</p></td>
+                      <td className="px-4 py-3"><p className="font-bold text-stone-300">{record.recipientUsername}</p><p className="mt-1 text-[9px] text-stone-600">{orgName(record.organizationId)} · {record.channel} · {record.severity}</p></td>
                       <td className="px-4 py-3"><p className="max-w-56 break-words text-[10px] text-red-300/80">{record.lastError || (isKa ? 'მიზეზი არ დაფიქსირებულა.' : 'No reason recorded.')}</p><p className="mt-1 text-[9px] text-stone-600">{record.attemptCount} {isKa ? 'ცდა' : 'attempts'} · {formatTime(record.failedAt)}</p></td>
                       <td className="px-4 py-3 text-right">
                         <button type="button" onClick={() => void retry(record)} disabled={retryingId !== null} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/25 bg-amber-950/20 px-3 py-2 text-[10px] font-bold text-amber-300 hover:bg-amber-950/40 disabled:opacity-40">

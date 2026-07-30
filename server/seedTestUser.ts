@@ -1,6 +1,6 @@
 import type { UserDataState } from './db';
 
-type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'sparkling' | 'fortified' | 'base_wine';
+type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'qvevri' | 'sparkling' | 'fortified' | 'base_wine';
 type WinemakingStage = 'crushing' | 'fermenting' | 'maceration' | 'pressing' | 'aging' | 'stabilization' | 'filtration' | 'bottled' | 'sold';
 
 interface LotSpec {

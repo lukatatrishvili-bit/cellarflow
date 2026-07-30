@@ -1,8 +1,8 @@
 import { molecularSO2 } from '../alerts';
-import { isPhysicalFermentationReading } from '../fermentationIntegrity';
 import { canAccess, type PermissionModule } from '../../server/permissions';
 import { fermentationBaselineFor, stockCoverDays, type WineryBaselines } from './baselines';
 import { forecastFermentation } from './predictions';
+import { fermReadingsForLot, labsForLot } from './indexes';
 import { daysBetween, isLiveRecord, type WineryIntelligenceSnapshot } from './snapshot';
 import { text, type LocalizedText } from './text';
 import type { UserRole } from './types';
@@ -218,10 +218,13 @@ export interface QueryResult {
   empty: boolean;
 }
 
+/**
+ * Uses the per-evaluation index rather than scanning. `matchesFilter` calls this
+ * once per lot *per filter*, so a three-filter query over a large cellar would
+ * otherwise walk the whole analysis collection nine hundred times.
+ */
 function latestLab(snapshot: WineryIntelligenceSnapshot, lotId: string) {
-  return snapshot.labLogs
-    .filter((lab) => lab.lotId === lotId)
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+  return labsForLot(snapshot, lotId)[0];
 }
 
 function matchesFilter(
@@ -351,7 +354,7 @@ export function executeQuery(
           if (lab.volatileAcid > targets.maxVolatileAcidityGL) reasons.push(`VA ${lab.volatileAcid.toFixed(2)} g/L`);
         }
         if (lot.stage === 'fermenting') {
-          const logs = snapshot.fermLogs.filter((log) => log.lotId === lot.id && isPhysicalFermentationReading(log));
+          const logs = fermReadingsForLot(snapshot, lot.id);
           const forecast = forecastFermentation(logs, fermentationBaselineFor(baselines, lot.variety), snapshot.today);
           if (forecast.stuckRisk >= 0.5) reasons.push(`stuck risk ${Math.round(forecast.stuckRisk * 100)}%`);
         }
@@ -379,7 +382,7 @@ export function executeQuery(
       const rows: QueryRow[] = [];
       const refs: string[] = [];
       for (const lot of liveLots.filter((l) => l.stage === 'fermenting')) {
-        const logs = snapshot.fermLogs.filter((log) => log.lotId === lot.id && isPhysicalFermentationReading(log));
+        const logs = fermReadingsForLot(snapshot, lot.id);
         const latest = [...logs].sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
         const forecast = forecastFermentation(logs, fermentationBaselineFor(baselines, lot.variety), snapshot.today);
         rows.push({
@@ -453,7 +456,7 @@ export function executeQuery(
       }
       const rows: QueryRow[] = ids.map((id) => {
         const lot = snapshot.lots.find((l) => l.id === id);
-        const logs = snapshot.fermLogs.filter((log) => log.lotId === id && isPhysicalFermentationReading(log));
+        const logs = fermReadingsForLot(snapshot, id);
         const forecast = forecastFermentation(logs, fermentationBaselineFor(baselines, lot?.variety), snapshot.today);
         const lab = latestLab(snapshot, id);
         const temps = logs.map((log) => log.temperature).filter((v) => Number.isFinite(v));

@@ -3,7 +3,10 @@ import { getDB, getPrismaClientForAdmin } from './db';
 import { type AiFindingRecord, type UserRole } from '../lib/ai';
 import {
   aiEmailDeliveryEligibility,
-  eligibleAiEmailRecipients,
+  aiPushDeliveryEligibility,
+  aiWhatsAppDeliveryEligibility,
+  eligibleAiNotificationRecipients,
+  type AiExternalNotificationChannel,
 } from './aiNotificationPreferences';
 
 export type AiOutboxStatus = 'pending' | 'processing' | 'delivered' | 'failed' | 'cancelled';
@@ -33,7 +36,7 @@ export interface AiNotificationOutboxRecord {
   id: string;
   organizationId: string;
   eventKey: string;
-  channel: 'email';
+  channel: AiExternalNotificationChannel;
   findingId: string;
   findingDedupeKey: string;
   recipientUsername: string;
@@ -90,7 +93,9 @@ function normalizeOutbox(value: any): AiNotificationOutboxRecord {
     id: String(value.id),
     organizationId: String(value.organizationId),
     eventKey: String(value.eventKey),
-    channel: 'email',
+    channel: ['email', 'push', 'whatsapp'].includes(String(value.channel))
+      ? value.channel as AiExternalNotificationChannel
+      : 'email',
     findingId: String(value.findingId),
     findingDedupeKey: String(value.findingDedupeKey),
     recipientUsername: String(value.recipientUsername),
@@ -193,11 +198,11 @@ export async function enqueueAiFindingNotifications(
   for (const finding of findings) {
     const key = finding.lastNotificationEventKey || aiFindingNotificationEventKey(finding);
     const findingPayload = payload(finding);
-    const recipients = await eligibleAiEmailRecipients(organizationId, finding);
+    const recipients = await eligibleAiNotificationRecipients(organizationId, finding);
     rows.push(...recipients.map((recipient) => ({
       organizationId,
       eventKey: key,
-      channel: 'email',
+      channel: recipient.channel,
       findingId: finding.id,
       findingDedupeKey: finding.dedupeKey,
       recipientUsername: recipient.username,
@@ -239,7 +244,7 @@ export async function enqueueAiFindingNotifications(
 }
 
 /**
- * Claims pending work for a future email/push/WhatsApp adapter. This module
+ * Claims pending work for email/push/WhatsApp adapters. This module
  * deliberately does not choose or call a provider.
  */
 export async function claimAiNotificationBatch(
@@ -569,13 +574,7 @@ export async function retryFailedAiNotification(
     if (record.status !== 'failed') {
       return { outcome: 'not_retryable', status: record.status };
     }
-    const eligibility = await aiEmailDeliveryEligibility({
-      organizationId: record.organizationId,
-      username: record.recipientUsername,
-      recipientRole: record.recipientRole,
-      severity: record.severity,
-      eventOccurredAt: record.payload.lastSeenAt,
-    });
+    const eligibility = await channelDeliveryEligibility(record);
     if (!eligibility.eligible) {
       return { outcome: 'ineligible', reason: eligibility.reason };
     }
@@ -604,13 +603,7 @@ export async function retryFailedAiNotification(
   if (record.status !== 'failed') {
     return { outcome: 'not_retryable', status: record.status };
   }
-  const eligibility = await aiEmailDeliveryEligibility({
-    organizationId: record.organizationId,
-    username: record.recipientUsername,
-    recipientRole: record.recipientRole,
-    severity: record.severity,
-    eventOccurredAt: record.payload.lastSeenAt,
-  });
+  const eligibility = await channelDeliveryEligibility(record);
   if (!eligibility.eligible) {
     return { outcome: 'ineligible', reason: eligibility.reason };
   }
@@ -625,6 +618,19 @@ export async function retryFailedAiNotification(
     updatedAt: now.toISOString(),
   });
   return { outcome: 'queued', record: operationalRecord({ ...record }) };
+}
+
+function channelDeliveryEligibility(record: AiNotificationOutboxRecord) {
+  const input = {
+    organizationId: record.organizationId,
+    username: record.recipientUsername,
+    recipientRole: record.recipientRole,
+    severity: record.severity,
+    eventOccurredAt: record.payload.lastSeenAt,
+  };
+  if (record.channel === 'push') return aiPushDeliveryEligibility(input);
+  if (record.channel === 'whatsapp') return aiWhatsAppDeliveryEligibility(input);
+  return aiEmailDeliveryEligibility(input);
 }
 
 export function __resetInMemoryAiNotificationOutbox(): void {

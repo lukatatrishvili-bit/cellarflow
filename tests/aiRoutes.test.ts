@@ -1,7 +1,14 @@
 import express from 'express';
 import type { Server } from 'node:http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AiFindingRecord } from '../lib/ai';
 import { __resetInMemoryAiNotificationPreferences } from '../server/aiNotificationPreferences';
+import {
+  __resetInMemoryAiModelTelemetry,
+  getAiModelCallOperations,
+} from '../server/aiModelTelemetry';
+import { __resetInMemoryAiNotificationReadStates } from '../server/aiInAppNotificationState';
+import { __resetInMemoryAiKnowledge } from '../server/aiKnowledge';
 
 const mocks = vi.hoisted(() => ({
   role: 'Lab Technician',
@@ -10,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   reserve: vi.fn(),
   emailVerified: true,
+  username: 'ai-user',
 }));
 
 vi.mock('@google/genai', () => ({
@@ -24,21 +32,25 @@ vi.mock('../server/middleware/auth', () => ({
       res.status(403).json({ error: 'Forbidden: write access required.' });
       return null;
     }
-    return { username: 'ai-user', role: mocks.role };
+    return { username: mocks.username, role: mocks.role };
   },
 }));
 
 vi.mock('../server/db', () => ({
   getDB: () => ({
-    users: [{
-      username: 'ai-user',
+    users: ['ai-user', 'ai-colleague'].map((username) => ({
+      username,
       activeOrganizationId: 'org-ai',
-      email: 'ai-user@example.com',
+      email: `${username}@example.com`,
       emailVerified: mocks.emailVerified,
       accountEnabled: true,
-    }],
+    })),
     organizations: [{ id: 'org-ai', name: 'AI Winery' }],
-    memberships: [{ organizationId: 'org-ai', userId: 'ai-user', role: mocks.role }],
+    memberships: ['ai-user', 'ai-colleague'].map((username) => ({
+      organizationId: 'org-ai',
+      userId: username,
+      role: mocks.role,
+    })),
   }),
   getPrismaClientForAdmin: vi.fn(async () => null),
   getUserData: vi.fn(async () => mocks.data),
@@ -141,6 +153,38 @@ function wineryData(): any {
   };
 }
 
+function storedFinding(): AiFindingRecord {
+  return {
+    id: 'feedback-route-finding',
+    createdAt: '2026-07-29T10:00:00.000Z',
+    source: 'rule',
+    agent: 'laboratory',
+    area: 'laboratory',
+    findingType: 'lab_gap',
+    severity: 'warning',
+    entityType: 'lot',
+    entityId: 'L1',
+    entityLabel: 'Saperavi (L1)',
+    relatedEntities: [],
+    title: { en: 'Analysis overdue', ka: 'ანალიზი დაგვიანებულია' },
+    observation: { en: 'No recent analysis.', ka: 'ბოლო ანალიზი არ არის.' },
+    whyItMatters: { en: 'Review is needed.', ka: 'საჭიროა გადახედვა.' },
+    possibleCauses: [],
+    recommendedActions: [],
+    evidence: [],
+    confidence: { level: 'high', score: 1, reasons: [] },
+    missingInformation: [],
+    requiresHumanConfirmation: true,
+    roles: ['Lab Technician'],
+    cooldownHours: 24,
+    dedupeKey: 'lab_gap:L1',
+    status: 'new',
+    lastSeenAt: '2026-07-29T10:00:00.000Z',
+    occurrences: 1,
+    lastModified: '2026-07-29T10:00:00.000Z',
+  };
+}
+
 let server: Server;
 let baseUrl = '';
 
@@ -160,6 +204,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   mocks.role = 'Lab Technician';
+  mocks.username = 'ai-user';
   mocks.emailVerified = true;
   mocks.data = wineryData();
   mocks.save.mockReset().mockImplementation(async (_username: string, data: any) => {
@@ -196,6 +241,9 @@ beforeEach(() => {
     }),
   });
   __resetInMemoryAiNotificationPreferences();
+  __resetInMemoryAiNotificationReadStates();
+  __resetInMemoryAiModelTelemetry();
+  __resetInMemoryAiKnowledge();
 });
 
 afterAll(async () => {
@@ -206,6 +254,211 @@ afterAll(async () => {
 });
 
 describe.sequential('AI route boundaries', () => {
+  it('lets winery administrators manage tenant knowledge without exposing it to specialists', async () => {
+    mocks.role = 'Owner/Admin';
+    const created = await fetch(`${baseUrl}/api/ai/knowledge`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Winery laboratory protocol',
+        content: 'This reviewed winery protocol requires a fresh pH and free SO2 measurement before any sulfur addition. It also requires a documented bench review and human approval before the cellar operation is scheduled.',
+        sourceLabel: 'SOP 12',
+        agents: ['winemaking', 'laboratory'],
+        language: 'en',
+      }),
+    });
+    const createdBody = await created.json();
+    expect(created.status).toBe(201);
+    expect(createdBody.document).toMatchObject({
+      title: 'Winery laboratory protocol',
+      sourceLabel: 'SOP 12',
+      chunkCount: 1,
+    });
+
+    const listed = await fetch(`${baseUrl}/api/ai/knowledge`);
+    expect(listed.status).toBe(200);
+    expect((await listed.json()).documents).toHaveLength(1);
+
+    mocks.role = 'Lab Technician';
+    expect((await fetch(`${baseUrl}/api/ai/knowledge`)).status).toBe(403);
+
+    mocks.role = 'Owner/Admin';
+    const archived = await fetch(
+      `${baseUrl}/api/ai/knowledge/${encodeURIComponent(createdBody.document.id)}`,
+      { method: 'DELETE' },
+    );
+    expect(archived.status).toBe(200);
+    expect(await archived.json()).toMatchObject({ archived: true });
+  });
+
+  it('projects open routed findings into a read-only notification feed', async () => {
+    const response = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.generatedAt).toEqual(expect.any(String));
+    expect(body.minimumSeverity).toBe('attention');
+    expect(body.total).toBeGreaterThan(0);
+    expect(body.findings[0]).toEqual(expect.objectContaining({
+      title: expect.any(String),
+      observation: expect.any(String),
+      status: expect.stringMatching(/^(new|reviewed|accepted)$/),
+    }));
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it('routes notification responsibility separately from activity-log visibility', async () => {
+    mocks.role = 'Read-Only';
+    const response = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.total).toBe(0);
+    expect(body.findings).toEqual([]);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('persists read state per user and supports marking the current feed read', async () => {
+    const initial = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const initialBody = await initial.json();
+    const first = initialBody.findings[0];
+    expect(initialBody.unread).toBe(initialBody.total);
+    expect(first).toEqual(expect.objectContaining({
+      unread: true,
+      notificationEventKey: expect.any(String),
+    }));
+
+    const markOne = await fetch(
+      `${baseUrl}/api/ai/notifications/${encodeURIComponent(first.id)}/read`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ lang: 'en' }),
+      },
+    );
+    const markedBody = await markOne.json();
+    expect(markOne.status).toBe(200);
+    expect(markedBody).toEqual(expect.objectContaining({
+      findingId: first.id,
+      unread: false,
+      readAt: expect.any(String),
+    }));
+
+    const refreshed = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const refreshedBody = await refreshed.json();
+    expect(refreshedBody.unread).toBe(initialBody.unread - 1);
+    expect(refreshedBody.findings.find((finding: any) => finding.id === first.id))
+      .toEqual(expect.objectContaining({ unread: false, readAt: expect.any(String) }));
+
+    // A colleague's acknowledgement state is independent.
+    mocks.username = 'ai-colleague';
+    const colleague = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const colleagueBody = await colleague.json();
+    expect(colleagueBody.findings.find((finding: any) => finding.id === first.id)?.unread).toBe(true);
+
+    const markAll = await fetch(`${baseUrl}/api/ai/notifications/read-all`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lang: 'en' }),
+    });
+    const markAllBody = await markAll.json();
+    expect(markAll.status).toBe(200);
+    expect(markAllBody.marked).toBe(colleagueBody.total);
+
+    const afterAll = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const afterAllBody = await afterAll.json();
+    expect(afterAllBody.unread).toBe(0);
+    expect(afterAllBody.findings.every((finding: any) => finding.unread === false)).toBe(true);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('applies the winery threshold, bounds the feed, and honors monitoring disablement', async () => {
+    mocks.role = 'Owner/Admin';
+    mocks.data.inventory = [{
+      id: 'INV-NUTRIENT',
+      name: 'Yeast nutrient',
+      category: 'nutritions',
+      stock: 0,
+      minThreshold: 2,
+      unit: 'kg',
+      costPerUnit: 20,
+      supplierName: 'Supplier',
+    }];
+    mocks.data.tasks = [{
+      id: 'TASK-OVERDUE',
+      title: 'Rack lot',
+      priority: 'high',
+      dueDate: '2020-01-01',
+      assignedTo: 'Nino',
+      status: 'pending',
+      description: '',
+    }];
+    mocks.data.companyProfile.aiConfig = {
+      maxModelCallsPerDay: 120,
+      minimumSeverity: 'critical',
+    };
+
+    const bounded = await fetch(`${baseUrl}/api/ai/notifications?lang=en&limit=1`);
+    const boundedBody = await bounded.json();
+    expect(bounded.status).toBe(200);
+    expect(boundedBody.minimumSeverity).toBe('critical');
+    expect(boundedBody.total).toBeGreaterThan(1);
+    expect(boundedBody.findings).toHaveLength(1);
+    expect(boundedBody.findings[0].severity).toBe('critical');
+    expect(boundedBody.overflow).toBe(boundedBody.total - 1);
+
+    mocks.data.companyProfile.aiConfig.monitoringEnabled = false;
+    const disabled = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const disabledBody = await disabled.json();
+    expect(disabled.status).toBe(200);
+    expect(disabledBody.total).toBe(0);
+    expect(disabledBody.findings).toEqual([]);
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('lets each user raise their in-app severity floor without weakening winery policy', async () => {
+    mocks.role = 'Owner/Admin';
+    mocks.data.tasks = [{
+      id: 'TASK-RECENTLY-OVERDUE',
+      title: 'Check cellar plan',
+      priority: 'low',
+      dueDate: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10),
+      assignedTo: 'Nino',
+      status: 'pending',
+      description: '',
+    }];
+
+    const baseline = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const baselineBody = await baseline.json();
+    expect(baselineBody.findings.some((finding: any) => finding.severity === 'attention')).toBe(true);
+    expect(baselineBody.personalMinimumSeverity).toBe('info');
+    expect(baselineBody.effectiveMinimumSeverity).toBe('attention');
+
+    const preference = await fetch(`${baseUrl}/api/ai/notification-preferences`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ inAppMinimumSeverity: 'critical' }),
+    });
+    const preferenceBody = await preference.json();
+    expect(preference.status).toBe(200);
+    expect(preferenceBody.preference.inAppMinimumSeverity).toBe('critical');
+
+    const quieter = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const quieterBody = await quieter.json();
+    expect(quieterBody.personalMinimumSeverity).toBe('critical');
+    expect(quieterBody.effectiveMinimumSeverity).toBe('critical');
+    expect(quieterBody.findings.length).toBeGreaterThan(0);
+    expect(quieterBody.findings.every((finding: any) => finding.severity === 'critical')).toBe(true);
+
+    const invalid = await fetch(`${baseUrl}/api/ai/notification-preferences`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ inAppMinimumSeverity: 'urgent' }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
   it('does not let a read-only auditor trigger a persisted evaluation', async () => {
     mocks.role = 'Read-Only';
     const response = await fetch(`${baseUrl}/api/ai/evaluate`, {
@@ -245,6 +498,11 @@ describe.sequential('AI route boundaries', () => {
         value: expect.stringContaining('"ph":3.6'),
       }),
     ]);
+    const telemetry = await getAiModelCallOperations(20);
+    expect(telemetry.byPurpose.analysis).toEqual(expect.objectContaining({
+      total: 1,
+      succeeded: 1,
+    }));
   });
 
   it('does not persist a model finding with an invented citation', async () => {
@@ -281,7 +539,119 @@ describe.sequential('AI route boundaries', () => {
     expect(body.rejected).toEqual([
       expect.stringContaining('unknown_source_ref'),
     ]);
+    // A caller must be able to tell "nothing to add" from "everything discarded",
+    // otherwise the UI reports silence as a clean bill of health.
+    expect(body.rejectedCount).toBe(1);
+    expect(body.rejectionsByReason).toEqual({ unknown_source_ref: 1 });
     expect((mocks.data.aiFindings || []).some((finding: any) => finding.source === 'model')).toBe(false);
+
+    // The same distinction has to reach operations: a response that parsed but
+    // produced nothing usable is an invalid response, not a success.
+    const telemetry = await getAiModelCallOperations(20);
+    expect(telemetry.byPurpose.analysis).toEqual(expect.objectContaining({
+      total: 1,
+      succeeded: 0,
+      invalidResponse: 1,
+    }));
+  });
+
+  it('never answers with columns the asker cannot open in the app', async () => {
+    // A cellar worker may view lots but has no laboratory permission. The
+    // `lots_filter` query is gated on `lots` yet joins pH, free SO2 and VA from
+    // the lab, so gating the query kind alone is not sufficient protection.
+    mocks.role = 'Cellar Worker';
+    mocks.generate
+      // 1. planner
+      .mockResolvedValueOnce({ text: JSON.stringify({ kind: 'lots_filter', filters: [] }) })
+      // 2. explanation
+      .mockResolvedValueOnce({ text: 'Here are the lots.' });
+
+    const response = await fetch(`${baseUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'List every lot with its chemistry', lang: 'en' }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.query.kind).toBe('lots_filter');
+    expect(body.rows).toHaveLength(1);
+    // The lot itself is permitted; its laboratory chemistry is not.
+    expect(body.rows[0]).toEqual(expect.objectContaining({ lotId: 'L1' }));
+    expect(body.rows[0].ph).toBeNull();
+    expect(body.rows[0].freeSo2).toBeNull();
+    expect(body.rows[0].volatileAcid).toBeNull();
+    expect(body.rows[0].lastAnalysis).toBeNull();
+
+    // Nor may the lab values reach the model that writes the answer.
+    const explanationPrompt = String(mocks.generate.mock.calls[1][0]?.contents || '');
+    expect(explanationPrompt).not.toContain('3.6');
+    expect(explanationPrompt).not.toContain('lablogs:lab-1');
+  });
+
+  it('still answers laboratory chemistry to a role that owns it', async () => {
+    mocks.role = 'Lab Technician';
+    mocks.generate
+      .mockResolvedValueOnce({ text: JSON.stringify({ kind: 'lots_filter', filters: [] }) })
+      .mockResolvedValueOnce({ text: 'Here are the lots.' });
+
+    const response = await fetch(`${baseUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'List every lot with its chemistry', lang: 'en' }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rows[0]).toEqual(expect.objectContaining({ lotId: 'L1', ph: 3.6, freeSo2: 10 }));
+  });
+
+  it('keeps reviewer feedback independent and never projects another reviewer', async () => {
+    mocks.data.aiFindings = [storedFinding()];
+
+    const firstReview = await fetch(`${baseUrl}/api/ai/findings/feedback-route-finding`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        feedback: { verdict: 'helpful', comment: 'private first review' },
+      }),
+    });
+    const firstBody = await firstReview.json();
+    expect(firstReview.status).toBe(200);
+    expect(firstBody.finding.feedback).toEqual(expect.objectContaining({
+      verdict: 'helpful',
+      comment: 'private first review',
+    }));
+    expect(firstBody.finding.feedback).not.toHaveProperty('submittedBy');
+    expect(firstBody.finding).not.toHaveProperty('feedbackEntries');
+
+    mocks.username = 'ai-colleague';
+    const secondReview = await fetch(`${baseUrl}/api/ai/findings/feedback-route-finding`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        feedback: { verdict: 'incorrect', comment: 'private second review' },
+      }),
+    });
+    const secondBody = await secondReview.json();
+    expect(secondReview.status).toBe(200);
+    expect(secondBody.finding.feedback).toEqual(expect.objectContaining({
+      verdict: 'incorrect',
+      comment: 'private second review',
+    }));
+    expect(JSON.stringify(secondBody)).not.toContain('private first review');
+    expect(mocks.data.aiFindings[0].feedbackEntries).toHaveLength(2);
+
+    mocks.username = 'ai-user';
+    const feed = await fetch(`${baseUrl}/api/ai/findings?lang=en`);
+    const body = await feed.json();
+    expect(feed.status).toBe(200);
+    expect(body.findings[0].feedback).toEqual(expect.objectContaining({
+      verdict: 'helpful',
+      comment: 'private first review',
+    }));
+    expect(JSON.stringify(body)).not.toContain('ai-colleague');
+    expect(JSON.stringify(body)).not.toContain('private second review');
   });
 
   it('keeps email alerts opt-in and winery-scoped for the current user', async () => {

@@ -35,6 +35,9 @@ model User {
   memberships               Membership[]
   aiNotificationOutbox      AiNotificationOutbox[]
   aiNotificationPreferences AiNotificationPreference[]
+  aiNotificationReadStates  AiNotificationReadState[]
+  aiKnowledgeDocuments      AiKnowledgeDocument[]
+  aiPushSubscriptions       AiPushSubscription[]
 }
 
 model Organization {
@@ -82,9 +85,14 @@ model Organization {
   subscriptionAudits        SubscriptionAudit[]
   productionUsage           AnnualProductionUsage[]
   aiModelCallUsage          AiModelCallUsage[]
+  aiModelCallTelemetry      AiModelCallTelemetry[]
   aiMonitoringRuns          AiMonitoringRun[]
   aiNotificationOutbox      AiNotificationOutbox[]
   aiNotificationPreferences AiNotificationPreference[]
+  aiNotificationReadStates  AiNotificationReadState[]
+  aiKnowledgeDocuments      AiKnowledgeDocument[]
+  aiKnowledgeChunks         AiKnowledgeChunk[]
+  aiPushSubscriptions       AiPushSubscription[]
 
   /// Authoritative JSONB snapshot of the full winery/vineyard ERP state.
   /// The detailed collection tables below are retained for compatibility but
@@ -115,6 +123,28 @@ model AiModelCallUsage {
 
   @@id([organizationId, usageDate])
   @@index([usageDate])
+}
+
+/// Metadata-only operational telemetry for winery-intelligence provider calls.
+/// Prompts, responses, questions, entity ids, and winery values are never stored.
+model AiModelCallTelemetry {
+  id             String       @id
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  purpose        String
+  agent          String?
+  model          String
+  status         String       @default("running")
+  errorCategory  String?
+  startedAt      DateTime     @default(now())
+  completedAt    DateTime?
+  latencyMs      Int?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, startedAt])
+  @@index([status, startedAt])
+  @@index([startedAt])
 }
 
 /// One lease-protected deterministic monitoring pass for one winery and
@@ -148,7 +178,7 @@ model AiMonitoringRun {
   @@index([organizationId, createdAt])
 }
 
-/// Transactional hand-off between finding detection and future delivery
+/// Transactional hand-off between finding detection and channel delivery
 /// workers. Payloads contain only the validated finding projection; provider
 /// credentials and contact details never enter this table.
 model AiNotificationOutbox {
@@ -185,18 +215,109 @@ model AiNotificationOutbox {
 /// Explicit, winery-scoped user consent for proactive AI delivery. Email is
 /// disabled by default and `emailEnabledAt` prevents retroactive backlog sends.
 model AiNotificationPreference {
-  organizationId  String
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  username        String
-  user            User         @relation(fields: [username], references: [username], onDelete: Cascade)
-  emailEnabled    Boolean      @default(false)
-  emailEnabledAt  DateTime?
-  minimumSeverity String       @default("warning")
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  organizationId      String
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  username            String
+  user                User         @relation(fields: [username], references: [username], onDelete: Cascade)
+  emailEnabled        Boolean      @default(false)
+  emailEnabledAt      DateTime?
+  pushEnabled         Boolean      @default(false)
+  pushEnabledAt       DateTime?
+  whatsappEnabled     Boolean      @default(false)
+  whatsappEnabledAt   DateTime?
+  minimumSeverity     String       @default("warning")
+  inAppMinimumSeverity String  @default("info")
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 
   @@id([organizationId, username])
   @@index([organizationId, emailEnabled])
+  @@index([organizationId, pushEnabled])
+  @@index([organizationId, whatsappEnabled])
+}
+
+/// One browser endpoint registered by a user for one winery. The endpoint and
+/// encryption keys never enter synchronized client state or notification rows.
+model AiPushSubscription {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  username       String
+  user           User         @relation(fields: [username], references: [username], onDelete: Cascade)
+  endpointHash   String
+  endpoint       String       @db.Text
+  p256dh         String
+  auth           String
+  userAgent      String?
+  expirationTime BigInt?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, username, endpointHash])
+  @@index([organizationId, username, updatedAt])
+}
+
+/// Per-user acknowledgement of the latest in-app transition for a finding.
+/// A changed event key (severity escalation or lifecycle reopen) makes the
+/// finding unread again without changing the server-owned finding itself.
+model AiNotificationReadState {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  username       String
+  user           User         @relation(fields: [username], references: [username], onDelete: Cascade)
+  findingId      String
+  eventKey       String
+  readAt         DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@id([organizationId, username, findingId])
+  @@index([organizationId, username, updatedAt])
+}
+
+/// Tenant-owned reference material used only after retrieval. Content is kept
+/// outside the client-synced winery snapshot so older clients cannot overwrite
+/// or fabricate the knowledge supplied to a model call.
+model AiKnowledgeDocument {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  sourceLabel    String?
+  sourceUrl      String?
+  language       String       @default("en")
+  agents         Json
+  content        String       @db.Text
+  contentHash    String
+  status         String       @default("active")
+  createdBy      String
+  creator        User         @relation(fields: [createdBy], references: [username], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  chunks         AiKnowledgeChunk[]
+
+  @@unique([organizationId, contentHash])
+  @@index([organizationId, status, updatedAt])
+}
+
+/// Deterministic chunks plus optional provider embeddings. Vectors are JSON so
+/// the feature works on ordinary Cloud SQL PostgreSQL without requiring pgvector.
+model AiKnowledgeChunk {
+  id             String              @id @default(cuid())
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  ordinal        Int
+  content        String              @db.Text
+  searchText     String              @db.Text
+  embedding      Json?
+  embeddingModel String?
+  tokenCount     Int                 @default(0)
+  createdAt      DateTime            @default(now())
+
+  @@unique([documentId, ordinal])
+  @@index([organizationId, documentId])
 }
 
 /// Durable, organization-scoped idempotency claim and replayable command result.

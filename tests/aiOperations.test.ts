@@ -33,6 +33,10 @@ import {
   __resetInMemoryAiNotificationPreferences,
   setAiNotificationPreference,
 } from '../server/aiNotificationPreferences';
+import {
+  __resetInMemoryAiModelTelemetry,
+  withAiModelCallTelemetry,
+} from '../server/aiModelTelemetry';
 
 function finding(): AiFindingRecord {
   return {
@@ -91,6 +95,7 @@ describe('AI operations health and recovery', () => {
     __resetInMemoryAiMonitoringRuns();
     __resetInMemoryAiNotificationOutbox();
     __resetInMemoryAiNotificationPreferences();
+    __resetInMemoryAiModelTelemetry();
     mocks.db.users = [{
       username: 'owner',
       email: 'owner@example.com',
@@ -99,6 +104,7 @@ describe('AI operations health and recovery', () => {
       language: 'en',
     }];
     mocks.db.organizations = [{ id: 'org-1', name: 'Operations Winery' }];
+    mocks.db.orgData = {};
     mocks.db.memberships = [{
       organizationId: 'org-1',
       userId: 'owner',
@@ -129,6 +135,59 @@ describe('AI operations health and recovery', () => {
     expect(snapshot.health).toBe('critical');
     expect(snapshot.monitoring.staleRunning).toBe(1);
     expect(snapshot.organizations['org-1']).toBe('Operations Winery');
+  });
+
+  it('reports aggregate finding quality without reviewer details', async () => {
+    mocks.db.orgData['org-1'] = {
+      aiFindings: [{
+        ...finding(),
+        feedbackEntries: [{
+          verdict: 'helpful',
+          comment: 'private quality note',
+          submittedBy: 'owner',
+          submittedAt: '2026-07-29T10:05:00.000Z',
+        }],
+      }],
+    };
+
+    const snapshot = await getAiOperationsSnapshot(
+      20,
+      new Date('2026-07-29T10:20:00.000Z'),
+    );
+    expect(snapshot.quality).toEqual(expect.objectContaining({
+      totalResponses: 1,
+      findingsWithFeedback: 1,
+      helpfulRate: 1,
+      incorrectRate: 0,
+    }));
+    expect(snapshot.quality.bySource.rule.counts.helpful).toBe(1);
+    expect(JSON.stringify(snapshot.quality)).not.toContain('owner');
+    expect(JSON.stringify(snapshot.quality)).not.toContain('private quality note');
+  });
+
+  it('surfaces invalid model output as metadata-only operational attention', async () => {
+    const times = [
+      new Date('2026-07-29T10:00:00.000Z'),
+      new Date('2026-07-29T10:00:00.150Z'),
+    ];
+    await withAiModelCallTelemetry({
+      organizationId: 'org-1',
+      purpose: 'ask_planner',
+      model: 'test-model',
+      now: () => times.shift() || new Date('2026-07-29T10:00:00.150Z'),
+    }, async () => ({ value: 'private output', valid: false }));
+
+    const snapshot = await getAiOperationsSnapshot(
+      20,
+      new Date('2026-07-29T10:20:00.000Z'),
+    );
+    expect(snapshot.health).toBe('attention');
+    expect(snapshot.modelCalls.today).toEqual(expect.objectContaining({
+      total: 1,
+      invalidResponse: 1,
+      averageLatencyMs: 150,
+    }));
+    expect(JSON.stringify(snapshot.modelCalls)).not.toContain('private output');
   });
 
   it('requeues a terminal failure only while the recipient remains eligible', async () => {

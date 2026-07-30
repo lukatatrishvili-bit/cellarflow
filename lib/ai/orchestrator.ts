@@ -1,4 +1,5 @@
 import { isAreaEnabled, meetsSeverityThreshold } from './config';
+import { findingFeedbackEntries } from './feedback';
 import { severityRank } from './types';
 import { text } from './text';
 import type {
@@ -291,6 +292,7 @@ export function mergeFindings(
     const recurredAfterClearing = record.status === 'resolved' && record.statusChangedBy === 'system';
     const shouldReopen = recurredAfterClearing || (escalated && record.status !== 'dismissed');
     const alreadySeenThisPass = record.lastSeenAt === now;
+    const reviewerFeedback = findingFeedbackEntries(record);
     const merged: AiFindingRecord = {
       ...record,
       ...fresh,
@@ -302,7 +304,12 @@ export function mergeFindings(
       lastSeenAt: now,
       occurrences: record.occurrences + (alreadySeenThisPass ? 0 : 1),
       lastAnalyzedAt: shouldReopen ? undefined : record.lastAnalyzedAt,
-      feedback: record.feedback,
+      feedback: undefined,
+      // Left absent rather than set to `[]` when there is no feedback. A newly
+      // created record has no such key, so materialising an empty array on the
+      // first re-detection would change the stored shape and force one pointless
+      // durable write per finding, for every finding, forever.
+      feedbackEntries: reviewerFeedback.length > 0 ? reviewerFeedback : undefined,
       linkedTaskId: record.linkedTaskId,
       resolutionNote: shouldReopen ? undefined : record.resolutionNote,
       lastModified: now,

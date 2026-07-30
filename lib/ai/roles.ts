@@ -1,5 +1,5 @@
 import { canAccess, type PermissionModule } from '../../server/permissions';
-import type { AiFinding, AiMonitoringArea, UserRole } from './types';
+import { AGENT_AREA, type AiFinding, type AiMonitoringArea, type UserRole } from './types';
 
 /**
  * Two different questions, deliberately kept apart:
@@ -24,7 +24,7 @@ export const AREA_ROLES: Record<AiMonitoringArea, UserRole[]> = {
 };
 
 /** Permission module that gates read access to each monitoring area's data. */
-const AREA_MODULE: Record<AiMonitoringArea, PermissionModule> = {
+export const AREA_MODULE: Record<AiMonitoringArea, PermissionModule> = {
   fermentation: 'fermentation',
   laboratory: 'lab',
   inventory: 'inventory',
@@ -33,9 +33,40 @@ const AREA_MODULE: Record<AiMonitoringArea, PermissionModule> = {
   operations: 'operations',
 };
 
-/** Authorization gate. Never bypass this — routing is a preference, this is not. */
+/**
+ * Every module a finding's content depends on.
+ *
+ * `requiredModules` is absent on records written before the field existed. For a
+ * model finding that fallback matters: it is filed under its *trigger's* area,
+ * so a laboratory agent's chemistry can sit in a `fermentation` record. Deriving
+ * the agent's own module closes that on read, rather than leaving it open until
+ * some future pass happens to rewrite the record.
+ */
+function requiredModulesFor(finding: AiFinding): PermissionModule[] {
+  if (finding.requiredModules) return finding.requiredModules;
+  if (finding.source === 'model') {
+    const agentArea = AGENT_AREA[finding.agent];
+    if (agentArea) return [AREA_MODULE[agentArea]];
+  }
+  return [];
+}
+
+/**
+ * Authorization gate. Never bypass this — routing is a preference, this is not.
+ *
+ * The area module is necessary but not sufficient: a cross-module finding quotes
+ * records from elsewhere, and showing it to a role that cannot open those records
+ * turns the intelligence layer into a way around the module boundary.
+ */
 export function canRoleSeeFinding(role: UserRole, finding: AiFinding): boolean {
-  return canAccess(role, AREA_MODULE[finding.area], 'view');
+  const modules = new Set<PermissionModule>([
+    AREA_MODULE[finding.area],
+    ...requiredModulesFor(finding),
+  ]);
+  for (const module of modules) {
+    if (!canAccess(role, module, 'view')) return false;
+  }
+  return true;
 }
 
 /** Whether this finding should reach the role's briefing and notifications. */

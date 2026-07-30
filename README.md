@@ -75,6 +75,7 @@ Start with the [documentation index](docs/README.md). The active references incl
 - [Cloud SQL recovery runbook](docs/cloud-sql-recovery-runbook.md)
 - [Billing operations runbook](docs/billing-operations-runbook.md)
 - [WhatsApp task notifications](docs/whatsapp-task-notifications.md)
+- [Winery Intelligence knowledge, delivery, and scheduled operations](docs/ai-intelligence-operations.md)
 - [Relational projection runbook](docs/relational-projection-runbook.md)
 - [Deployment guide](deployment_guide.md)
 

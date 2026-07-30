@@ -1,5 +1,5 @@
 // Bump the version to invalidate all caches on deploy of a new SW.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const SHELL_CACHE = `vinea-shell-${VERSION}`;
 const ASSET_CACHE = `vinea-assets-${VERSION}`;
 const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
@@ -125,6 +125,53 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => cached);
       return cached || refresh;
+    })
+  );
+});
+
+// Server-routed AI findings arrive only after the signed-in user explicitly
+// opts this browser in. Payloads contain a validated finding projection, never
+// provider credentials, phone numbers, or raw winery snapshots.
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = {};
+  }
+  const title = typeof payload.title === 'string' && payload.title
+    ? payload.title
+    : 'VinOS';
+  const options = {
+    body: typeof payload.body === 'string' ? payload.body : '',
+    icon: typeof payload.icon === 'string' ? payload.icon : '/icon.svg',
+    badge: typeof payload.badge === 'string' ? payload.badge : '/icon.svg',
+    tag: typeof payload.tag === 'string' ? payload.tag : undefined,
+    renotify: payload.renotify === true,
+    requireInteraction: payload.requireInteraction === true,
+    lang: payload.lang === 'ka' ? 'ka' : 'en',
+    data: payload.data && typeof payload.data === 'object' ? payload.data : {},
+    actions: Array.isArray(payload.actions) ? payload.actions.slice(0, 2) : [],
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const requested = typeof event.notification?.data?.url === 'string'
+    ? event.notification.data.url
+    : '/';
+  const target = new URL(requested, self.location.origin);
+  if (target.origin !== self.location.origin) target.href = `${self.location.origin}/`;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+      for (const client of clients) {
+        if ('focus' in client) {
+          if ('navigate' in client) await client.navigate(target.href);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow ? self.clients.openWindow(target.href) : undefined;
     })
   );
 });

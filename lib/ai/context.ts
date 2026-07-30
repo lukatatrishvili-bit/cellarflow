@@ -42,6 +42,19 @@ export interface AiContextPackage {
   inventory?: Array<Record<string, unknown>>;
   compliance?: Record<string, unknown>;
   winery?: Record<string, unknown>;
+  /**
+   * Retrieved tenant-owned reference passages. These are evidence sources, not
+   * instructions and not proof of a current winery measurement.
+   */
+  knowledge?: Array<{
+    sourceRef: string;
+    title: string;
+    sourceLabel?: string;
+    sourceUrl?: string;
+    language: 'en' | 'ka';
+    content: string;
+    retrieval: 'hybrid' | 'semantic' | 'lexical';
+  }>;
   /** Data that exists but was excluded to keep the package small. */
   omitted: string[];
   /** Data that does not exist at all. The model must not fill these in. */
@@ -72,6 +85,36 @@ function numericCandidates(token: string): number[] {
   return [...candidates];
 }
 
+/**
+ * A quantity stated in model prose, with the precision it was written at.
+ * The precision matters: a model that writes "18%" against a stored −18.33 is
+ * rounding correctly, not inventing, and must not be rejected for it.
+ */
+export interface AiNumericClaim {
+  value: number;
+  /** Decimal places the claim was written with. */
+  decimals: number;
+}
+
+/** Extracts stated quantities from prose, preserving each one's written precision. */
+export function extractNumericClaims(texts: readonly string[]): AiNumericClaim[] {
+  const claims = new Map<string, AiNumericClaim>();
+  for (const text of texts) {
+    if (typeof text !== 'string') continue;
+    for (const match of text.matchAll(NUMBER_TOKEN)) {
+      const token = match[0];
+      const separator = token.lastIndexOf('.') >= 0 ? '.' : ',';
+      const fraction = /[.,]\d+$/.test(token) ? token.slice(token.lastIndexOf(separator) + 1) : '';
+      for (const value of numericCandidates(token)) {
+        // Thousands-separated candidates share the token but carry no fraction.
+        const decimals = Number.isInteger(value) && !fraction ? 0 : fraction.length;
+        claims.set(`${value}:${decimals}`, { value, decimals });
+      }
+    }
+  }
+  return [...claims.values()];
+}
+
 /** Extracts standalone quantities while ignoring digits embedded in ids/formulas such as L1 or SO2. */
 export function extractNumericValues(value: unknown): number[] {
   const numbers = new Set<number>();
@@ -87,6 +130,9 @@ export function extractNumericValues(value: unknown): number[] {
       return;
     }
     if (Array.isArray(current)) {
+      // A count stated in prose ("across the last three analyses") is a real
+      // fact about the cited data, so the collection's own size is grounded.
+      if (current.length > 0) numbers.add(current.length);
       current.forEach(visit);
       return;
     }
@@ -614,6 +660,7 @@ export function serializeContext(pkg: AiContextPackage, maxChars = 12_000): stri
     laboratory: pkg.laboratory
       ? { ...pkg.laboratory, analyses: (pkg.laboratory.analyses as unknown[] | undefined)?.slice(0, 3) }
       : undefined,
+    knowledge: pkg.knowledge?.slice(0, 4),
     omitted: [...pkg.omitted, 'context was truncated to fit the model budget'],
   };
   const compact = fit(trimmed);
@@ -639,6 +686,7 @@ export function serializeContext(pkg: AiContextPackage, maxChars = 12_000): stri
       }
       : undefined,
     inventory: trimmed.inventory?.slice(0, 3),
+    knowledge: trimmed.knowledge?.slice(0, 3),
     unavailable: trimmed.unavailable.slice(0, 4),
   };
   const focusedJson = fit(focused);
@@ -653,6 +701,7 @@ export function serializeContext(pkg: AiContextPackage, maxChars = 12_000): stri
     vessel: pkg.vessel,
     inventory: pkg.inventory?.slice(0, 1),
     winery: pkg.winery,
+    knowledge: pkg.knowledge?.slice(0, 1),
     omitted: ['context truncated'],
     unavailable: pkg.unavailable.slice(0, 1),
   });

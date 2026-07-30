@@ -1,3 +1,5 @@
+import type { AiFinding, AiRecommendedAction } from './ai/types';
+
 export type AiDraftActionType =
   | 'task'
   | 'lab_check'
@@ -549,4 +551,122 @@ export function upsertAiDraftQueueItems(queue: AiDraftQueueItem[], incoming: AiD
     ...incoming.filter(item => !queue.some(existing => existing.id === item.id)),
     ...updated.filter(item => !incomingIds.has(item.id) || incoming.some(candidate => candidate.id === item.id)),
   ];
+}
+
+const VALID_TARGET_MODULES = new Set<AiDraftAction['targetModule']>([
+  'tasks',
+  'labs',
+  'operations',
+  'transfers',
+  'bottling',
+  'inventory',
+  'fermentation',
+  'calculators',
+  'vazi',
+  'documents',
+  'lots',
+]);
+
+function findingDraftType(
+  action: AiRecommendedAction,
+): AiDraftActionType {
+  const target = action.targetModule;
+  if (action.kind === 'purchase' || target === 'inventory') return 'inventory_restock';
+  if (action.kind === 'document' || target === 'documents' || target === 'certification') {
+    return 'compliance_warning';
+  }
+  if (target === 'transfers') return 'transfer_plan';
+  if (target === 'bottling') return 'bottling_readiness';
+  if (target === 'calculators') return 'so2_calculation';
+  if (target === 'vazi') return 'spray_recommendation';
+  if (target === 'labs' || action.kind === 'measure') return 'lab_check';
+  if (target === 'fermentation') return 'fermentation_nutrition';
+  if (target === 'operations' || action.kind === 'inspect' || action.kind === 'schedule') {
+    return 'cellar_operation';
+  }
+  return 'task';
+}
+
+function findingDraftWarnings(
+  type: AiDraftActionType,
+  lang?: string,
+): string[] {
+  const isKa = lang === 'ka';
+  if (type === 'so2_calculation' || type === 'acid_adjustment') {
+    return [isKa ? CHEMISTRY_WARNING_KA : CHEMISTRY_WARNING];
+  }
+  if (type === 'spray_recommendation') {
+    return [isKa ? SPRAY_WARNING_KA : SPRAY_WARNING];
+  }
+  if (
+    type === 'compliance_warning'
+    || type === 'official_document_explanation'
+    || type === 'lot_passport_summary'
+  ) {
+    return [isKa ? COMPLIANCE_WARNING_KA : COMPLIANCE_WARNING];
+  }
+  if (type === 'inventory_restock') {
+    return [isKa
+      ? 'შეკვეთა ავტომატურად არ იგზავნება; რაოდენობა და მომწოდებელი ადამიანმა უნდა დაადასტუროს.'
+      : 'No order is sent automatically; a person must confirm quantity and supplier.'];
+  }
+  return [];
+}
+
+/**
+ * Converts one validated finding recommendation into a typed, review-only
+ * queue item. It never executes the recommendation or mutates its target
+ * module; the existing human approval flow remains the only conversion path.
+ */
+export function draftActionFromFindingRecommendation(
+  finding: AiFinding,
+  action: AiRecommendedAction,
+  options: { lang?: string; actionIndex?: number } = {},
+): AiDraftAction {
+  const isKa = options.lang === 'ka';
+  const type = findingDraftType(action);
+  const localizedLabel = isKa ? action.label.ka : action.label.en;
+  const localizedFinding = isKa ? finding.title.ka : finding.title.en;
+  const localizedObservation = isKa ? finding.observation.ka : finding.observation.en;
+  const requestedTarget = action.targetModule as AiDraftAction['targetModule'] | undefined;
+  const targetModule = requestedTarget && VALID_TARGET_MODULES.has(requestedTarget)
+    ? requestedTarget
+    : type === 'lab_check'
+      ? 'labs'
+      : type === 'inventory_restock'
+        ? 'inventory'
+        : type === 'compliance_warning'
+          ? 'documents'
+          : type === 'spray_recommendation'
+            ? 'vazi'
+            : type === 'cellar_operation'
+              ? 'operations'
+              : 'tasks';
+  const priority: AiDraftPriority = finding.severity === 'critical'
+    ? 'high'
+    : finding.severity === 'warning'
+      ? 'medium'
+      : 'low';
+  const source = `${finding.id}:${options.actionIndex ?? 0}:${localizedLabel}`;
+
+  return makeDraft(type, source, {
+    title: localizedLabel || localizedFinding,
+    priority,
+    targetModule,
+    description: isKa
+      ? `${localizedFinding}: ${localizedLabel}\n\nდაკვირვება: ${localizedObservation}`
+      : `${localizedFinding}: ${localizedLabel}\n\nObservation: ${localizedObservation}`,
+    warnings: findingDraftWarnings(type, options.lang),
+    payload: {
+      source: 'ai_finding',
+      findingId: finding.id,
+      findingType: finding.findingType,
+      findingSeverity: finding.severity,
+      entityType: finding.entityType,
+      entityId: finding.entityId,
+      recommendedActionKind: action.kind,
+      recommendedActionIndex: options.actionIndex ?? 0,
+      requiresConfirmation: true,
+    },
+  }, options.lang);
 }

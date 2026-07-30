@@ -1,12 +1,14 @@
 import { molecularSO2 } from '../../alerts';
 import { stageLabel } from '../../enumLabels';
-import { isPhysicalFermentationReading } from '../../fermentationIntegrity';
-import type { DailyFermLog, LabAnalysis } from '../../wineryState';
 import { detectAnomaly, detectTrend } from '../anomaly';
 import { fermentationBaselineFor, type WineryBaselines } from '../baselines';
 import { action, buildFinding, confidence, evidence, neverMeasured } from '../finding';
 import { forecastFermentation } from '../predictions';
 import { daysBetween, isLiveRecord, lotLabel, type WineryIntelligenceSnapshot } from '../snapshot';
+import {
+  fermReadingsForLot as indexedFermReadingsForLot,
+  labsForLot as indexedLabsForLot,
+} from '../indexes';
 import { enumText, num, plain, text } from '../text';
 import type { AiFinding } from '../types';
 
@@ -16,15 +18,11 @@ import type { AiFinding } from '../types';
  * a situation needs interpretation across several of them.
  */
 
-function labsForLot(snapshot: WineryIntelligenceSnapshot, lotId: string): LabAnalysis[] {
-  return snapshot.labLogs
-    .filter((lab) => lab.lotId === lotId)
-    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-}
-
-function fermLogsForLot(snapshot: WineryIntelligenceSnapshot, lotId: string): DailyFermLog[] {
-  return snapshot.fermLogs.filter((log) => log.lotId === lotId && isPhysicalFermentationReading(log));
-}
+// Lot-scoped lookups come from the per-evaluation index in ./indexes: filtering
+// the whole collection inside each lot loop is what made a large cellar slow.
+// The arrays it returns are shared, so never sort or mutate them in place.
+const labsForLot = indexedLabsForLot;
+const fermLogsForLot = indexedFermReadingsForLot;
 
 // ---------------------------------------------------------------------------
 // Fermentation pace, measured against the winery's own history
@@ -168,6 +166,8 @@ export function detectFermentationTemperature(snapshot: WineryIntelligenceSnapsh
       findingType: tooHot ? 'fermentation_temperature_high' : 'fermentation_temperature_low',
       agent: 'winemaking',
       area: 'fermentation',
+      // Quotes the vessel's own temperature, target band and jacket state.
+      requiredModules: ['vessels'],
       severity,
       entityType: 'vessel',
       entityId: vessel.id,
@@ -489,6 +489,8 @@ export function detectAbnormalLoss(
       findingType: 'abnormal_process_loss',
       agent: 'winemaking',
       area: 'operations',
+      // Quotes a movement record: source, destination, volume and loss.
+      requiredModules: ['transfers'],
       severity: lossPct > ceiling * 2 ? 'warning' : 'attention',
       entityType: 'transfer',
       entityId: transfer.id,

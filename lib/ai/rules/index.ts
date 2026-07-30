@@ -57,6 +57,8 @@ export function correlateFindings(
     findingType: 'cross_module_nutrient_risk',
     agent: 'management',
     area: 'fermentation',
+    // Names the short nutrient materials alongside the batches behind pace.
+    requiredModules: ['inventory'],
     // Never louder than the loudest input: correlation adds context, not alarm.
     severity: slowFermentations.some((f) => f.severity === 'critical') ? 'critical' : 'warning',
     entityType: 'winery',

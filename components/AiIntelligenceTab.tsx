@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BookOpen,
   BrainCircuit,
+  CheckCheck,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleX,
   ClipboardList,
   Loader2,
   MessageSquare,
+  Plus,
   RefreshCw,
   Search,
   Settings2,
@@ -15,8 +19,13 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
+import {
+  draftActionFromFindingRecommendation,
+  type AiDraftAction,
+} from '../lib/aiDraftActions';
 import {
   AGENT_LABELS,
   AREA_LABELS,
@@ -34,6 +43,7 @@ import {
   type AiFindingRecord,
   type AiFindingStatus,
   type AiFeedbackVerdict,
+  type AiAgentKey,
   type AiMonitoringArea,
   type AiSeverity,
   type UserRole,
@@ -56,7 +66,23 @@ interface AskResult {
 
 interface AiNotificationPreferenceWire {
   emailEnabled: boolean;
+  pushEnabled: boolean;
+  whatsappEnabled: boolean;
   minimumSeverity: AiSeverity;
+  inAppMinimumSeverity: AiSeverity;
+}
+
+interface AiKnowledgeDocumentWire {
+  id: string;
+  title: string;
+  sourceLabel?: string;
+  sourceUrl?: string;
+  language: Language;
+  agents: AiAgentKey[];
+  chunkCount: number;
+  embeddedChunkCount: number;
+  preview: string;
+  updatedAt: string;
 }
 
 export interface AiIntelligenceTabProps {
@@ -72,7 +98,11 @@ export interface AiIntelligenceTabProps {
   /** Lifecycle changes and deep analysis persist server-owned findings. */
   canReview?: boolean;
   onConfigSaved?: (config: ReturnType<typeof resolveAiConfig>) => void;
+  /** Opens and scrolls to a finding selected in the global notification panel. */
+  focusFindingId?: string | null;
+  onFocusConsumed?: () => void;
   onCreateTask?: (title: string, priority: 'high' | 'medium' | 'low', dueDate: string, description: string) => void;
+  onSaveDraftActions?: (actions: AiDraftAction[], dueDate?: string) => number | void;
   onNavigate?: (targetModule: string) => void;
   setToastMessage?: (message: string | null) => void;
 }
@@ -83,6 +113,12 @@ const SEVERITY_STYLES: Record<AiSeverity, { chip: string; bar: string; dot: stri
   attention: { chip: 'bg-sky-50 text-sky-700 border-sky-200', bar: 'bg-sky-500', dot: 'bg-sky-500' },
   info: { chip: 'bg-stone-100 text-stone-600 border-stone-200', bar: 'bg-stone-400', dot: 'bg-stone-400' },
 };
+
+/** A finding's urgency carries through to the work it generates. */
+function taskPriorityFor(severity: AiSeverity): 'high' | 'medium' | 'low' {
+  if (severity === 'critical') return 'high';
+  return severity === 'warning' ? 'medium' : 'low';
+}
 
 const AREAS: AiMonitoringArea[] = ['fermentation', 'laboratory', 'inventory', 'vineyard', 'compliance', 'operations'];
 const SEVERITIES: AiSeverity[] = ['critical', 'warning', 'attention', 'info'];
@@ -96,6 +132,47 @@ function localizedWireText(value: unknown): { en: string; ka: string } {
   }
   const rendered = typeof value === 'string' ? value : '';
   return { en: rendered, ka: rendered };
+}
+
+function vapidApplicationServerKey(value: string): Uint8Array<ArrayBuffer> {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = window.atob(base64);
+  const bytes = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
+  return bytes;
+}
+
+async function registerBrowserForAiPush(publicKey: string): Promise<void> {
+  if (
+    typeof window === 'undefined'
+    || !('Notification' in window)
+    || !('serviceWorker' in navigator)
+  ) {
+    throw new Error('This browser does not support push notifications.');
+  }
+  const permission = Notification.permission === 'granted'
+    ? 'granted'
+    : await Notification.requestPermission();
+  if (permission !== 'granted') {
+    throw new Error('Browser notification permission was not granted.');
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const existing = await registration.pushManager.getSubscription();
+  const subscription = existing || await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: vapidApplicationServerKey(publicKey),
+  });
+  const response = await fetch('/api/ai/push-subscriptions', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscription: subscription.toJSON() }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || 'Browser push registration failed.');
+  }
 }
 
 /** Convert the language-specific API representation back into the UI shape. */
@@ -149,7 +226,10 @@ export default function AiIntelligenceTab({
   canConfigure = false,
   canReview = false,
   onConfigSaved,
+  focusFindingId,
+  onFocusConsumed,
   onCreateTask,
+  onSaveDraftActions,
   onNavigate,
   setToastMessage,
 }: AiIntelligenceTabProps) {
@@ -164,12 +244,16 @@ export default function AiIntelligenceTab({
   const [showResolved, setShowResolved] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [storedRecords, setStoredRecords] = useState<AiFindingRecord[]>([]);
+  /** `findingId#index` for checks already turned into tasks, so none is created twice. */
+  const [createdActions, setCreatedActions] = useState<string[]>([]);
+  const [stagedActions, setStagedActions] = useState<string[]>([]);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [highlightedFindingId, setHighlightedFindingId] = useState<string | null>(null);
 
   const config = useMemo(() => resolveAiConfig(aiConfig), [aiConfig]);
 
@@ -190,6 +274,15 @@ export default function AiIntelligenceTab({
       return {
         ...stored,
         ...finding,
+        // Local prose wins because it reflects state the server has not
+        // evaluated yet — but severity must not. This pass runs on client state
+        // that is already redacted for the role, so it can be *less* informed
+        // than the server's (a role without bottling cannot see the packaging
+        // draw-down behind a depletion forecast). Showing a calmer severity than
+        // the one the user was notified about would contradict their own inbox.
+        severity: stored && severityRank(stored.severity) > severityRank(finding.severity)
+          ? stored.severity
+          : finding.severity,
         status: statuses[finding.id] || stored?.status || 'new',
         statusChangedAt: stored?.statusChangedAt,
         statusChangedBy: stored?.statusChangedBy,
@@ -245,8 +338,12 @@ export default function AiIntelligenceTab({
         setStatuses(nextStatuses);
         setFeedback(nextFeedback);
       } catch {
-        // A findings feed that is unreachable must not blank the page: the
-        // locally computed findings above are still correct and complete.
+        // A findings feed that is unreachable must not blank the page. The
+        // locally computed findings still stand on their own, but they are not
+        // necessarily complete: this role's client state is redacted, so a
+        // detector that reads across modules may be working with less than the
+        // server had. Review lifecycle and severity escalations are unavailable
+        // until the feed returns.
       }
     })();
     return () => { cancelled = true; };
@@ -279,6 +376,7 @@ export default function AiIntelligenceTab({
           updated,
         ]);
       }
+      window.dispatchEvent(new Event('vinos:ai-findings-changed'));
       setSyncError(null);
     } catch {
       setSyncError(isKa
@@ -290,6 +388,75 @@ export default function AiIntelligenceTab({
   const updateStatus = (finding: AiFinding, status: AiFindingStatus) => {
     setStatuses((current) => ({ ...current, [finding.id]: status }));
     void persistReview(finding, { status });
+  };
+
+  /**
+   * Turns one recommended check into its own task.
+   *
+   * The description carries the provenance a person needs to act safely: what
+   * was observed, how confident the layer is, and — critically — what it could
+   * not confirm. A task that says "re-analyse SO₂" without "YAN was never
+   * measured" invites someone to treat an inference as a measurement.
+   */
+  const createTaskForAction = (
+    record: AiFindingRecord,
+    item: AiFinding['recommendedActions'][number],
+    actionKey: string,
+  ) => {
+    if (!onCreateTask) return;
+    const lines = [
+      localize(record.observation, lang),
+      '',
+      `${T('From AI finding', 'AI დასკვნიდან')}: ${localize(record.title, lang)}`,
+      `${localize(SECTION_LABELS.confidence, lang)}: `
+      + `${localize(CONFIDENCE_LABELS[record.confidence.level], lang)}`
+      + ` · ${Math.round(record.confidence.score * 100)}%`,
+    ];
+    if (record.missingInformation.length > 0) {
+      lines.push(
+        '',
+        `${localize(SECTION_LABELS.missingInformation, lang)}:`,
+        ...record.missingInformation.map((entry) => `- ${localize(entry, lang)}`),
+      );
+    }
+
+    onCreateTask(
+      localize(item.label, lang),
+      taskPriorityFor(record.severity),
+      new Date().toISOString().slice(0, 10),
+      lines.join('\n'),
+    );
+    setCreatedActions((current) => [...current, actionKey]);
+    // Acting on a recommendation is acceptance. Only patch when it is a change,
+    // so turning three checks into three tasks is not three identical writes.
+    if ((statuses[record.id] || record.status) !== 'accepted') {
+      updateStatus(record, 'accepted');
+    }
+    setToastMessage?.(T('Task created from this check.', 'ამ შემოწმებიდან დავალება შეიქმნა.'));
+  };
+
+  const stageDraftForAction = (
+    record: AiFindingRecord,
+    item: AiFinding['recommendedActions'][number],
+    actionIndex: number,
+    actionKey: string,
+  ) => {
+    if (!onSaveDraftActions) return;
+    const draft = draftActionFromFindingRecommendation(record, item, {
+      lang,
+      actionIndex,
+    });
+    onSaveDraftActions([draft], new Date().toISOString().slice(0, 10));
+    setStagedActions((current) => (
+      current.includes(actionKey) ? current : [...current, actionKey]
+    ));
+    if ((statuses[record.id] || record.status) !== 'accepted') {
+      updateStatus(record, 'accepted');
+    }
+    setToastMessage?.(T(
+      'Review-only draft added to the AI action queue.',
+      'AI ქმედებების რიგში განსახილველი სამუშაო ვერსია დაემატა.',
+    ));
   };
 
   const submitFeedback = (finding: AiFinding, verdict: AiFeedbackVerdict) => {
@@ -317,9 +484,26 @@ export default function AiIntelligenceTab({
         const producedIds = new Set(hydrated.map((record) => record.id));
         return [...current.filter((record) => !producedIds.has(record.id)), ...hydrated];
       });
-      setToastMessage?.(payload.modelFindings > 0
-        ? T(`AI analysis added ${payload.modelFindings} interpretation(s).`, `AI ანალიზმა დაამატა ${payload.modelFindings} ინტერპრეტაცია.`)
-        : T('No situation currently needs deeper analysis.', 'ამჟამად არცერთი სიტუაცია არ საჭიროებს ღრმა ანალიზს.'));
+      window.dispatchEvent(new Event('vinos:ai-findings-changed'));
+      // Reporting "nothing needs analysis" when the layer actually discarded
+      // findings would be the exact dishonesty these guards exist to prevent.
+      const discarded = Number(payload.rejectedCount) || 0;
+      setToastMessage?.(
+        payload.modelFindings > 0
+          ? T(
+            `AI analysis added ${payload.modelFindings} interpretation(s).`,
+            `AI ანალიზმა დაამატა ${payload.modelFindings} ინტერპრეტაცია.`,
+          )
+          : discarded > 0
+            ? T(
+              `AI analysis produced ${discarded} interpretation(s) that failed grounding checks and were discarded.`,
+              `AI ანალიზმა შექმნა ${discarded} ინტერპრეტაცია, რომლებმაც დასაბუთების შემოწმება ვერ გაიარა და გაუქმდა.`,
+            )
+            : T(
+              'No situation currently needs deeper analysis.',
+              'ამჟამად არცერთი სიტუაცია არ საჭიროებს ღრმა ანალიზს.',
+            ),
+      );
     } catch (error: any) {
       setSyncError(error?.message || T('Analysis failed.', 'ანალიზი ვერ შესრულდა.'));
     } finally {
@@ -363,6 +547,30 @@ export default function AiIntelligenceTab({
     .filter((record) => areaFilter === 'all' || record.area === areaFilter)
     .filter((record) => severityFilter === 'all' || record.severity === severityFilter)
     .sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+
+  useEffect(() => {
+    if (!focusFindingId || !records.some((record) => record.id === focusFindingId)) return;
+    setShowResolved(false);
+    setAreaFilter('all');
+    setSeverityFilter('all');
+    setExpanded((current) => ({ ...current, [focusFindingId]: true }));
+    setHighlightedFindingId(focusFindingId);
+
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`ai-finding-${focusFindingId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+      onFocusConsumed?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusFindingId, records, onFocusConsumed]);
+
+  useEffect(() => {
+    if (!highlightedFindingId) return;
+    const timeout = window.setTimeout(() => setHighlightedFindingId(null), 2_500);
+    return () => window.clearTimeout(timeout);
+  }, [highlightedFindingId]);
 
   const predicted = openRecords.filter((record) =>
     record.evidence.some((item) => item.kind === 'prediction'));
@@ -627,7 +835,15 @@ export default function AiIntelligenceTab({
             const isOpen = expanded[record.id] ?? false;
             const style = SEVERITY_STYLES[record.severity];
             return (
-              <article key={record.id} className="overflow-hidden rounded-xl border border-[#e8dfd5] bg-white">
+              <article
+                id={`ai-finding-${record.id}`}
+                key={record.id}
+                className={`overflow-hidden rounded-xl border bg-white transition-shadow ${
+                  highlightedFindingId === record.id
+                    ? 'border-violet-400 shadow-[0_0_0_3px_rgba(139,92,246,0.18)]'
+                    : 'border-[#e8dfd5]'
+                }`}
+              >
                 <div className={`h-1 w-full ${style.bar}`} />
                 <div className="p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -689,24 +905,66 @@ export default function AiIntelligenceTab({
                       {record.recommendedActions.length > 0 && (
                         <Section title={localize(SECTION_LABELS.recommendedActions, lang)}>
                           <ol className="list-decimal space-y-1 pl-4">
-                            {record.recommendedActions.map((item, index) => (
-                              // Keep the <li> a list-item so the ordinal marker
-                              // survives; the flex row lives one level in.
-                              <li key={index}>
-                                <span className="flex flex-wrap items-baseline gap-2">
-                                  <span>{localize(item.label, lang)}</span>
-                                  {item.targetModule && onNavigate && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onNavigate(item.targetModule!)}
-                                      className="rounded border border-[#e8dfd5] px-1.5 py-0.5 text-[9px] font-semibold text-[#801323]"
-                                    >
-                                      {T('Open', 'გახსნა')}
-                                    </button>
-                                  )}
-                                </span>
-                              </li>
-                            ))}
+                            {record.recommendedActions.map((item, index) => {
+                              const actionKey = `${record.id}#${index}`;
+                              const alreadyCreated = createdActions.includes(actionKey);
+                              const alreadyStaged = stagedActions.includes(actionKey);
+                              return (
+                                // Keep the <li> a list-item so the ordinal marker
+                                // survives; the flex row lives one level in.
+                                <li key={index}>
+                                  <span className="flex flex-wrap items-baseline gap-2">
+                                    <span>{localize(item.label, lang)}</span>
+                                    {/* Each check becomes its own task. Collapsing
+                                        them into one would force a single assignee
+                                        on work that belongs to different people. */}
+                                    {onCreateTask && (
+                                      alreadyCreated ? (
+                                        <span className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                                          <CheckCircle2 className="h-2.5 w-2.5" />
+                                          {T('Task created', 'დავალება შექმნილია')}
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => createTaskForAction(record, item, actionKey)}
+                                          className="inline-flex items-center gap-1 rounded border border-[#801323] px-1.5 py-0.5 text-[9px] font-semibold text-[#801323]"
+                                        >
+                                          <ClipboardList className="h-2.5 w-2.5" />
+                                          {T('Add task', 'დავალების დამატება')}
+                                        </button>
+                                      )
+                                    )}
+                                    {onSaveDraftActions && item.kind !== 'create_task' && (
+                                      alreadyStaged ? (
+                                        <span className="inline-flex items-center gap-1 rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">
+                                          <CheckCircle2 className="h-2.5 w-2.5" />
+                                          {T('Draft staged', 'ვერსია მომზადებულია')}
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => stageDraftForAction(record, item, index, actionKey)}
+                                          className="inline-flex items-center gap-1 rounded border border-violet-300 bg-violet-50 px-1.5 py-0.5 text-[9px] font-semibold text-violet-800"
+                                        >
+                                          <ClipboardList className="h-2.5 w-2.5" />
+                                          {T('Stage typed draft', 'სამუშაო ვერსიის მომზადება')}
+                                        </button>
+                                      )
+                                    )}
+                                    {item.targetModule && onNavigate && (
+                                      <button
+                                        type="button"
+                                        onClick={() => onNavigate(item.targetModule!)}
+                                        className="rounded border border-[#e8dfd5] px-1.5 py-0.5 text-[9px] font-semibold text-[#801323]"
+                                      >
+                                        {T('Open', 'გახსნა')}
+                                      </button>
+                                    )}
+                                  </span>
+                                </li>
+                              );
+                            })}
                           </ol>
                         </Section>
                       )}
@@ -762,9 +1020,12 @@ export default function AiIntelligenceTab({
                       <button
                         type="button"
                         onClick={() => {
+                          // The whole-finding path stays for "just track this".
+                          // Per-check tasks live in the expanded view, where the
+                          // user can see what each one actually asks for.
                           onCreateTask(
                             localize(record.title, lang),
-                            record.severity === 'critical' ? 'high' : record.severity === 'warning' ? 'medium' : 'low',
+                            taskPriorityFor(record.severity),
                             new Date().toISOString().slice(0, 10),
                             `${localize(record.observation, lang)}\n\n${record.recommendedActions.map((item) => `- ${localize(item.label, lang)}`).join('\n')}`,
                           );
@@ -793,24 +1054,47 @@ export default function AiIntelligenceTab({
                       {T('Dismiss', 'დახურვა')}
                     </button>
 
-                    <span className="ml-auto flex items-center gap-1">
+                    <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+                      <span className="mr-1 text-[9px] font-semibold text-stone-400">
+                        {T('Was this useful?', 'რამდენად გამოგადგათ?')}
+                      </span>
                       <button
                         type="button"
-                        aria-label={T('Helpful', 'სასარგებლო')}
+                        aria-pressed={feedback[record.id] === 'helpful'}
                         onClick={() => submitFeedback(record, 'helpful')}
-                        className={`rounded p-1 ${feedback[record.id] === 'helpful' ? 'bg-emerald-100 text-emerald-700' : 'text-stone-400'}`}
+                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[9px] font-semibold ${feedback[record.id] === 'helpful' ? 'bg-emerald-100 text-emerald-700' : 'text-stone-400 hover:bg-stone-100'}`}
                       >
                         <ThumbsUp className="h-3.5 w-3.5" />
+                        {T('Helpful', 'სასარგებლო')}
                       </button>
                       <button
                         type="button"
-                        aria-label={T('Not helpful', 'უსარგებლო')}
+                        aria-pressed={feedback[record.id] === 'not_helpful'}
                         onClick={() => submitFeedback(record, 'not_helpful')}
-                        className={`rounded p-1 ${feedback[record.id] === 'not_helpful' ? 'bg-rose-100 text-rose-700' : 'text-stone-400'}`}
+                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[9px] font-semibold ${feedback[record.id] === 'not_helpful' ? 'bg-amber-100 text-amber-800' : 'text-stone-400 hover:bg-stone-100'}`}
                       >
                         <ThumbsDown className="h-3.5 w-3.5" />
+                        {T('Not helpful', 'არასასარგებლო')}
                       </button>
-                    </span>
+                      <button
+                        type="button"
+                        aria-pressed={feedback[record.id] === 'incorrect'}
+                        onClick={() => submitFeedback(record, 'incorrect')}
+                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[9px] font-semibold ${feedback[record.id] === 'incorrect' ? 'bg-rose-100 text-rose-700' : 'text-stone-400 hover:bg-stone-100'}`}
+                      >
+                        <CircleX className="h-3.5 w-3.5" />
+                        {T('Incorrect', 'არასწორია')}
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={feedback[record.id] === 'already_handled'}
+                        onClick={() => submitFeedback(record, 'already_handled')}
+                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[9px] font-semibold ${feedback[record.id] === 'already_handled' ? 'bg-sky-100 text-sky-700' : 'text-stone-400 hover:bg-stone-100'}`}
+                      >
+                        <CheckCheck className="h-3.5 w-3.5" />
+                        {T('Already handled', 'უკვე მოგვარებულია')}
+                      </button>
+                    </div>
                   </div>
                   )}
                 </div>
@@ -863,9 +1147,17 @@ function AiSettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const [notificationDraft, setNotificationDraft] = useState<AiNotificationPreferenceWire>({
     emailEnabled: false,
+    pushEnabled: false,
+    whatsappEnabled: false,
     minimumSeverity: 'warning',
+    inAppMinimumSeverity: 'info',
   });
   const [emailVerified, setEmailVerified] = useState(false);
+  const [pushConfigured, setPushConfigured] = useState(false);
+  const [pushPublicKey, setPushPublicKey] = useState('');
+  const [pushSubscriptionCount, setPushSubscriptionCount] = useState(0);
+  const [whatsappConfigured, setWhatsappConfigured] = useState(false);
+  const [whatsappReady, setWhatsappReady] = useState(false);
   const [loadingPreference, setLoadingPreference] = useState(true);
 
   useEffect(() => {
@@ -880,11 +1172,23 @@ function AiSettingsPanel({
         if (!active) return;
         setNotificationDraft({
           emailEnabled: payload?.preference?.emailEnabled === true,
+          pushEnabled: payload?.preference?.pushEnabled === true,
+          whatsappEnabled: payload?.preference?.whatsappEnabled === true,
           minimumSeverity: SEVERITIES.includes(payload?.preference?.minimumSeverity)
             ? payload.preference.minimumSeverity
             : 'warning',
+          inAppMinimumSeverity: SEVERITIES.includes(payload?.preference?.inAppMinimumSeverity)
+            ? payload.preference.inAppMinimumSeverity
+            : 'info',
         });
         setEmailVerified(payload?.account?.emailVerified === true && payload?.account?.hasEmail === true);
+        setPushConfigured(payload?.account?.pushConfigured === true);
+        setPushPublicKey(typeof payload?.account?.pushPublicKey === 'string'
+          ? payload.account.pushPublicKey
+          : '');
+        setPushSubscriptionCount(Math.max(0, Number(payload?.account?.pushSubscriptionCount) || 0));
+        setWhatsappConfigured(payload?.account?.whatsappConfigured === true);
+        setWhatsappReady(payload?.account?.whatsappReady === true);
       })
       .catch(() => {
         if (active) {
@@ -905,6 +1209,16 @@ function AiSettingsPanel({
     setSaving(true);
     setError(null);
     try {
+      if (notificationDraft.pushEnabled && pushSubscriptionCount === 0) {
+        if (!pushConfigured || !pushPublicKey) {
+          throw new Error(T(
+            'Web push is not configured for this deployment.',
+            'ამ სისტემაში ბრაუზერის შეტყობინებები ჯერ არ არის კონფიგურირებული.',
+          ));
+        }
+        await registerBrowserForAiPush(pushPublicKey);
+        setPushSubscriptionCount(1);
+      }
       const preferenceResponse = await fetch('/api/ai/notification-preferences', {
         method: 'PUT',
         credentials: 'include',
@@ -927,7 +1241,10 @@ function AiSettingsPanel({
         const payload = await response.json();
         savedConfig = resolveAiConfig(payload?.config);
       }
-      if (canConfigure) onConfigSaved(savedConfig);
+      if (canConfigure) {
+        onConfigSaved(savedConfig);
+      }
+      window.dispatchEvent(new Event('vinos:ai-findings-changed'));
       onClose();
     } catch (saveError) {
       setError(saveError instanceof Error
@@ -957,12 +1274,39 @@ function AiSettingsPanel({
       </h4>
       <p className="mt-1 text-[11px] text-stone-500">
         {T(
-          'Email alerts are personal to your account and disabled until you explicitly opt in.',
-          'ელფოსტის შეტყობინებები პირადია და არ ჩაირთვება, სანამ თავად არ დაეთანხმებით.',
+          'In-app and email alert preferences are personal to your account.',
+          'აპისა და ელფოსტის შეტყობინებების პარამეტრები თქვენს ანგარიშზეა მორგებული.',
         )}
       </p>
 
       <div className="mt-4 rounded-lg border border-[#e8dfd5] bg-stone-50 p-3">
+        <div className="max-w-xs">
+          <label htmlFor="ai-in-app-min-severity" className="mb-1 block text-[10px] uppercase font-mono font-semibold text-stone-500">
+            {T('My in-app minimum severity', 'აპის შეტყობინებების მინიმალური დონე')}
+          </label>
+          <select
+            id="ai-in-app-min-severity"
+            value={notificationDraft.inAppMinimumSeverity}
+            disabled={loadingPreference}
+            onChange={(event) => setNotificationDraft({
+              ...notificationDraft,
+              inAppMinimumSeverity: event.target.value as AiSeverity,
+            })}
+            className="w-full rounded-lg border border-[#e8dfd5] bg-white px-2.5 py-1.5 text-[11px] text-stone-700 disabled:opacity-50"
+          >
+            {SEVERITIES.map((severity) => (
+              <option key={severity} value={severity}>{localize(SEVERITY_LABELS[severity], lang)}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-[9px] leading-relaxed text-stone-500">
+            {T(
+              'This can make your bell quieter, but cannot lower the winery-wide notification floor.',
+              'ეს ზარის შეტყობინებებს შეამცირებს, თუმცა მარნის საერთო მინიმალურ დონეს ვერ დაწევს.',
+            )}
+          </p>
+        </div>
+
+        <div className="my-3 border-t border-stone-200" />
         <label className="flex items-start gap-2 text-[11px] font-semibold text-stone-700">
           <input
             type="checkbox"
@@ -989,6 +1333,67 @@ function AiSettingsPanel({
             </span>
           </span>
         </label>
+        <div className="mt-3 grid gap-3 border-t border-stone-200 pt-3 sm:grid-cols-2">
+          <label className="flex items-start gap-2 text-[11px] font-semibold text-stone-700">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={notificationDraft.pushEnabled}
+              disabled={
+                loadingPreference
+                || !pushConfigured
+                || typeof window === 'undefined'
+                || !('Notification' in window)
+                || !('serviceWorker' in navigator)
+              }
+              onChange={(event) => setNotificationDraft({
+                ...notificationDraft,
+                pushEnabled: event.target.checked,
+              })}
+            />
+            <span>
+              {T('Browser push alerts', 'ბრაუზერის შეტყობინებები')}
+              <span className="mt-0.5 block text-[9px] font-normal leading-relaxed text-stone-500">
+                {pushConfigured
+                  ? T(
+                    'Permission is requested only when you save this opt-in. Critical findings can remain visible until opened.',
+                    'ნებართვა მხოლოდ ამ თანხმობის შენახვისას მოითხოვება. კრიტიკული დასკვნა გახსნამდე შეიძლება ეკრანზე დარჩეს.',
+                  )
+                  : T(
+                    'Web push keys are not configured for this deployment.',
+                    'ამ სისტემისთვის Web Push გასაღებები ჯერ არ არის კონფიგურირებული.',
+                  )}
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 text-[11px] font-semibold text-stone-700">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={notificationDraft.whatsappEnabled}
+              disabled={loadingPreference || !whatsappConfigured || !whatsappReady}
+              onChange={(event) => setNotificationDraft({
+                ...notificationDraft,
+                whatsappEnabled: event.target.checked,
+              })}
+            />
+            <span>
+              {T('WhatsApp intelligence alerts', 'ინტელექტის შეტყობინებები WhatsApp-ზე')}
+              <span className="mt-0.5 block text-[9px] font-normal leading-relaxed text-stone-500">
+                {whatsappConfigured && whatsappReady
+                  ? T(
+                    'Uses your existing WhatsApp opt-in and verified international phone. A separately approved AI alert template is required.',
+                    'გამოიყენება თქვენი არსებული WhatsApp თანხმობა და სწორი საერთაშორისო ნომერი. საჭიროა AI შეტყობინების ცალკე დამტკიცებული შაბლონი.',
+                  )
+                  : T(
+                    'Enable WhatsApp in your profile and configure the approved AI alert template first.',
+                    'ჯერ პროფილში ჩართეთ WhatsApp და დააკონფიგურირეთ დამტკიცებული AI შეტყობინების შაბლონი.',
+                  )}
+              </span>
+            </span>
+          </label>
+        </div>
         <div className="mt-3 max-w-xs">
           <label htmlFor="ai-personal-min-severity" className="mb-1 block text-[10px] uppercase font-mono font-semibold text-stone-500">
             {T('My minimum email severity', 'ელფოსტის მინიმალური დონე')}
@@ -1012,6 +1417,8 @@ function AiSettingsPanel({
 
       {canConfigure && (
       <>
+      <AiKnowledgeManager lang={lang} />
+
       <h5 className="mt-5 font-serif text-xs font-bold text-[#4e0e15]">
         {T('Winery-wide monitoring policy', 'მარნის მონიტორინგის საერთო პოლიტიკა')}
       </h5>
@@ -1144,6 +1551,267 @@ function AiSettingsPanel({
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {T('Save settings', 'პარამეტრების შენახვა')}
         </button>
+      </div>
+    </div>
+  );
+}
+
+function AiKnowledgeManager({ lang }: { lang: Language }) {
+  const isKa = lang === 'ka';
+  const T = (en: string, ka: string) => (isKa ? ka : en);
+  const [documents, setDocuments] = useState<AiKnowledgeDocumentWire[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [embeddingId, setEmbeddingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [sourceLabel, setSourceLabel] = useState('');
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [content, setContent] = useState('');
+  const [agent, setAgent] = useState<AiAgentKey | 'all'>('all');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/ai/knowledge', { credentials: 'include' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Knowledge could not be loaded.');
+      setDocuments(Array.isArray(payload?.documents) ? payload.documents : []);
+    } catch (loadError) {
+      setError(loadError instanceof Error
+        ? loadError.message
+        : isKa ? 'ცოდნის ბაზა ვერ ჩაიტვირთა.' : 'Knowledge could not be loaded.');
+    } finally {
+      setLoading(false);
+    }
+  }, [isKa]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const addDocument = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!title.trim() || content.trim().length < 80) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch('/api/ai/knowledge', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          content,
+          sourceLabel,
+          sourceUrl,
+          language: lang,
+          ...(agent === 'all' ? {} : { agents: [agent] }),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Knowledge could not be saved.');
+      setDocuments((current) => [payload.document, ...current]);
+      setTitle('');
+      setSourceLabel('');
+      setSourceUrl('');
+      setContent('');
+      setNotice(payload.embeddingStatus === 'generated'
+        ? T(
+          'Reference added with semantic retrieval.',
+          'საცნობარო მასალა სემანტიკური ძიებით დაემატა.',
+        )
+        : T(
+          'Reference added with lexical retrieval; embeddings can be generated when model budget is available.',
+          'საცნობარო მასალა ტექსტური ძიებით დაემატა; ემბედინგები მოდელის ლიმიტის ხელმისაწვდომობისას შეიქმნება.',
+        ));
+    } catch (saveError) {
+      setError(saveError instanceof Error
+        ? saveError.message
+        : T('Knowledge could not be saved.', 'ცოდნის ჩანაწერი ვერ შეინახა.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const archive = async (documentId: string) => {
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/ai/knowledge/${encodeURIComponent(documentId)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Knowledge could not be archived.');
+      setDocuments((current) => current.filter((document) => document.id !== documentId));
+      setNotice(T(
+        'Reference archived and removed from future retrieval.',
+        'საცნობარო მასალა დაარქივდა და მომავალ ძიებაში აღარ გამოიყენება.',
+      ));
+    } catch (archiveError) {
+      setError(archiveError instanceof Error
+        ? archiveError.message
+        : T('Knowledge could not be archived.', 'ცოდნის ჩანაწერი ვერ დაარქივდა.'));
+    }
+  };
+
+  const generateEmbeddings = async (documentId: string) => {
+    setEmbeddingId(documentId);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/ai/knowledge/${encodeURIComponent(documentId)}/embed`,
+        { method: 'POST', credentials: 'include' },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Embeddings could not be generated.');
+      setDocuments((current) => current.map((document) => (
+        document.id === documentId ? payload.document : document
+      )));
+      setNotice(T(
+        'Semantic retrieval is ready for this reference.',
+        'ამ წყაროსთვის სემანტიკური ძიება მზადაა.',
+      ));
+    } catch (embeddingError) {
+      setError(embeddingError instanceof Error
+        ? embeddingError.message
+        : T('Embeddings could not be generated.', 'ემბედინგები ვერ შეიქმნა.'));
+    } finally {
+      setEmbeddingId(null);
+    }
+  };
+
+  return (
+    <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50/40 p-4">
+      <div className="flex items-start gap-2">
+        <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-violet-700" />
+        <div>
+          <h5 className="font-serif text-xs font-bold text-[#4e0e15]">
+            {T('Grounded knowledge base', 'დასაბუთებული ცოდნის ბაზა')}
+          </h5>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-stone-600">
+            {T(
+              'Add winery protocols, approved technical guidance, or compliance references. Retrieved passages are cited as evidence and are never treated as instructions or current measurements.',
+              'დაამატეთ მარნის პროტოკოლები, დამტკიცებული ტექნიკური მითითებები ან შესაბამისობის წყაროები. მოძიებული ნაწყვეტები მტკიცებულებად მიეთითება და არასოდეს ჩაითვლება ინსტრუქციად ან მიმდინარე გაზომვად.',
+            )}
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={addDocument} className="mt-3 grid gap-2">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={160}
+            placeholder={T('Reference title', 'წყაროს სათაური')}
+            className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-[11px]"
+          />
+          <select
+            value={agent}
+            onChange={(event) => setAgent(event.target.value as AiAgentKey | 'all')}
+            aria-label={T('Relevant agent', 'შესაბამისი აგენტი')}
+            className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-[11px]"
+          >
+            <option value="all">{T('All specialists', 'ყველა სპეციალისტი')}</option>
+            {(Object.keys(AGENT_LABELS) as AiAgentKey[]).map((key) => (
+              <option key={key} value={key}>{localize(AGENT_LABELS[key], lang)}</option>
+            ))}
+          </select>
+          <input
+            value={sourceLabel}
+            onChange={(event) => setSourceLabel(event.target.value)}
+            maxLength={200}
+            placeholder={T('Publisher or source label (optional)', 'გამომცემელი ან წყარო (არასავალდებულო)')}
+            className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-[11px]"
+          />
+          <input
+            type="url"
+            value={sourceUrl}
+            onChange={(event) => setSourceUrl(event.target.value)}
+            placeholder="https://…"
+            className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-[11px]"
+          />
+        </div>
+        <textarea
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          maxLength={100_000}
+          rows={6}
+          placeholder={T(
+            'Paste reviewed reference text (minimum 80 characters)…',
+            'ჩასვით გადამოწმებული საცნობარო ტექსტი (მინიმუმ 80 სიმბოლო)…',
+          )}
+          className="resize-y rounded-lg border border-violet-200 bg-white px-3 py-2 text-[11px] leading-relaxed"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[9px] text-stone-500">
+            {content.trim().length.toLocaleString()} / 100,000
+          </span>
+          <button
+            type="submit"
+            disabled={saving || title.trim().length < 3 || content.trim().length < 80}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-violet-700 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+            {T('Add reference', 'წყაროს დამატება')}
+          </button>
+        </div>
+      </form>
+
+      {error && <p role="alert" className="mt-2 text-[10px] font-semibold text-rose-700">{error}</p>}
+      {notice && <p role="status" className="mt-2 text-[10px] font-semibold text-emerald-700">{notice}</p>}
+
+      <div className="mt-3 space-y-2">
+        {loading ? (
+          <p className="text-[10px] text-stone-500">{T('Loading references…', 'წყაროები იტვირთება…')}</p>
+        ) : documents.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-violet-200 bg-white/70 px-3 py-3 text-[10px] text-stone-500">
+            {T('No knowledge references have been added yet.', 'ცოდნის წყაროები ჯერ დამატებული არ არის.')}
+          </p>
+        ) : documents.map((document) => (
+          <div key={document.id} className="rounded-lg border border-violet-100 bg-white p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-[11px] font-semibold text-stone-800">{document.title}</p>
+                <p className="mt-0.5 text-[9px] text-stone-500">
+                  {document.sourceLabel || T('Winery reference', 'მარნის წყარო')}
+                  {' · '}
+                  {document.embeddedChunkCount}/{document.chunkCount} {T('semantic chunks', 'სემანტიკური ნაწილი')}
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                {document.embeddedChunkCount < document.chunkCount && (
+                  <button
+                    type="button"
+                    onClick={() => void generateEmbeddings(document.id)}
+                    disabled={embeddingId !== null}
+                    className="inline-flex items-center gap-1 rounded border border-violet-200 px-1.5 py-1 text-[9px] font-semibold text-violet-700 disabled:opacity-50"
+                    title={T('Generate semantic index', 'სემანტიკური ინდექსის შექმნა')}
+                  >
+                    <RefreshCw className={`h-3 w-3 ${embeddingId === document.id ? 'animate-spin' : ''}`} />
+                    {T('Index', 'ინდექსი')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void archive(document.id)}
+                  className="rounded border border-stone-200 p-1 text-stone-500 hover:text-rose-700"
+                  aria-label={T(`Archive ${document.title}`, `${document.title}-ის დაარქივება`)}
+                  title={T('Archive reference', 'წყაროს დაარქივება')}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+            <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-stone-600">{document.preview}</p>
+          </div>
+        ))}
       </div>
     </div>
   );

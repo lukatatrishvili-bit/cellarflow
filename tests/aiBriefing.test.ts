@@ -124,6 +124,50 @@ describe('role visibility and routing', () => {
     expect(canRoleSeeFinding('Lab Technician', vineyard)).toBe(false);
   });
 
+  it('hides a finding whose prose quotes a module the role cannot open', () => {
+    // A bottling-readiness finding lives in `operations` but states the age of a
+    // laboratory analysis. A cellar worker holds operations and inventory but no
+    // lab, so gating on the area alone would leak a lab fact to them.
+    const bottling = record('L1', 'attention', 'operations', {
+      requiredModules: ['lab', 'inventory'],
+    });
+    expect(canRoleSeeFinding('Cellar Worker', bottling)).toBe(false);
+    expect(canRoleSeeFinding('Winemaker', bottling)).toBe(true);
+    expect(canRoleSeeFinding('Owner/Admin', bottling)).toBe(true);
+
+    // The same area without the cross-module citation stays visible.
+    expect(canRoleSeeFinding('Cellar Worker', record('L2', 'attention', 'operations'))).toBe(true);
+  });
+
+  it('derives the agent module for a stored finding written before the field existed', () => {
+    // A record persisted by an older release has no requiredModules at all. For a
+    // model finding that is not safe to ignore: it is filed under its trigger's
+    // area, so a laboratory agent's chemistry sits in a `fermentation` record.
+    const legacy = record('L1', 'warning', 'fermentation', { source: 'model', agent: 'laboratory' });
+    delete (legacy as Partial<AiFindingRecord>).requiredModules;
+
+    expect(canRoleSeeFinding('Cellar Worker', legacy)).toBe(false);
+    expect(canRoleSeeFinding('Winemaker', legacy)).toBe(true);
+
+    // A legacy *rule* finding keeps its original area-only gating: nothing about
+    // it can be recovered, and hiding it outright would lose real signal.
+    const legacyRule = record('L2', 'warning', 'fermentation');
+    delete (legacyRule as Partial<AiFindingRecord>).requiredModules;
+    expect(canRoleSeeFinding('Cellar Worker', legacyRule)).toBe(true);
+  });
+
+  it('keeps a vineyard finding visible to the viticulturist it is routed to', () => {
+    // Harvest timing derives from past fruit receipts, which a viticulturist may
+    // read. If this ever starts quoting cellar capacity it must stop being
+    // routed here rather than silently widening the viticulturist's view.
+    const harvest = record('B1', 'warning', 'vineyard', {
+      requiredModules: ['grape_intake'],
+    });
+    expect(canRoleSeeFinding('Viticulturist', harvest)).toBe(true);
+    expect(isFindingRoutedToRole('Viticulturist', harvest)).toBe(true);
+    expect(canRoleSeeFinding('Cellar Worker', harvest)).toBe(false);
+  });
+
   it('gives the owner the cross-module picture', () => {
     const findings = [
       record('L1', 'critical', 'fermentation'),

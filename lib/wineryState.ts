@@ -1,5 +1,5 @@
 export type VesselType = 'stainless_steel' | 'qvevri' | 'barrel' | 'plastic' | 'concrete' | 'other';
-export type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'sparkling' | 'fortified' | 'base_wine';
+export type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'qvevri' | 'sparkling' | 'fortified' | 'base_wine';
 export type WinemakingStage = 'crushing' | 'fermenting' | 'maceration' | 'pressing' | 'aging' | 'stabilization' | 'filtration' | 'bottled' | 'sold';
 export type LotClassification = 'PDO' | 'PGI' | 'table_wine' | 'other';
 export type CertificationStatus = 'not_started' | 'sample_prepared' | 'submitted' | 'approved' | 'rejected' | 'expired';

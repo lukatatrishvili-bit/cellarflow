@@ -44,11 +44,13 @@ export interface VaziRiskSummary {
 export interface VaziRiskInput {
   block: VineyardBlock;
   weather?: VaziWeatherRiskInput | null;
-  sprays?: SprayRecord[];
-  scoutings?: ScoutingRecord[];
-  samplings?: GrapeSamplingRecord[];
-  harvests?: HarvestRecord[];
-  irrigationLogs?: IrrigationRecord[];
+  // Readonly: callers may pass shared, cached arrays. Everything below filters
+  // before it sorts, so nothing here reorders the caller's data.
+  sprays?: readonly SprayRecord[];
+  scoutings?: readonly ScoutingRecord[];
+  samplings?: readonly GrapeSamplingRecord[];
+  harvests?: readonly HarvestRecord[];
+  irrigationLogs?: readonly IrrigationRecord[];
   today?: Date;
 }
 

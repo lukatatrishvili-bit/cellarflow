@@ -1,3 +1,4 @@
+import type { PermissionModule } from '../../server/permissions';
 import type { UserProfile } from '../wineryState';
 import type { Language } from '../i18n';
 import type { LocalizedText } from './text';
@@ -69,6 +70,21 @@ export type AiMonitoringArea =
   | 'vineyard'
   | 'compliance'
   | 'operations';
+
+/**
+ * Each specialist's home area — the single source of truth, shared by the agent
+ * registry and the authorization gate. A specialist invited onto another area's
+ * trigger still writes about its own discipline, so this is what decides which
+ * module its output requires.
+ */
+export const AGENT_AREA: Record<AiAgentKey, AiMonitoringArea> = {
+  winemaking: 'fermentation',
+  vineyard: 'vineyard',
+  laboratory: 'laboratory',
+  inventory: 'inventory',
+  compliance: 'compliance',
+  management: 'operations',
+};
 
 /** Cost tier chosen by the orchestrator; only `deep` may fan out across agents. */
 export type AiAnalysisTier = 'lightweight' | 'standard' | 'deep';
@@ -211,6 +227,16 @@ export interface AiFinding {
   /** Named gaps. Non-empty means the layer explicitly could not confirm something. */
   missingInformation: LocalizedText[];
   requiresHumanConfirmation: boolean;
+  /**
+   * Every permission module whose data this finding actually quotes.
+   *
+   * A finding's `area` says which monitor produced it, not which records it
+   * read — a bottling-readiness finding lives in `operations` but states the age
+   * of a laboratory analysis. Visibility must be gated on all of these, or the
+   * finding becomes a side channel around the module boundary. Empty means the
+   * finding is confined to its own area.
+   */
+  requiredModules: PermissionModule[];
   /** Roles this finding is routed to. Empty means every role that can see the area. */
   roles: UserRole[];
   /** Suppression window for the same `dedupeKey`, in hours. */
@@ -261,7 +287,13 @@ export interface AiFindingRecord extends AiFinding {
   lastNotificationRunKey?: string;
   /** How many evaluations have re-observed it; drives escalation, not noise. */
   occurrences: number;
+  /**
+   * Viewer-specific feedback used on the wire and retained for compatibility
+   * with records written before multi-reviewer feedback was introduced.
+   */
   feedback?: AiFindingFeedback;
+  /** Server-owned feedback history. Never projected directly to clients. */
+  feedbackEntries?: AiFindingFeedback[];
   /** Task created when a user accepted a recommendation. */
   linkedTaskId?: string;
   /** Free text captured when the user resolves the finding. */

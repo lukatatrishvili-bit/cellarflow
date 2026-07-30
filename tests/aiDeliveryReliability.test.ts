@@ -165,16 +165,20 @@ describe('AI notification outbox', () => {
 
   it('defaults to no email consent and records the opt-in time', async () => {
     __resetInMemoryAiNotificationPreferences();
-    expect((await getAiNotificationPreference('org-1', 'owner')).emailEnabled).toBe(false);
+    const defaults = await getAiNotificationPreference('org-1', 'owner');
+    expect(defaults.emailEnabled).toBe(false);
+    expect(defaults.inAppMinimumSeverity).toBe('info');
     const enabled = await setAiNotificationPreference({
       organizationId: 'org-1',
       username: 'owner',
       emailEnabled: true,
       minimumSeverity: 'critical',
+      inAppMinimumSeverity: 'warning',
       now: new Date('2026-07-29T11:00:00.000Z'),
     });
     expect(enabled.emailEnabledAt).toBe('2026-07-29T11:00:00.000Z');
     expect(enabled.minimumSeverity).toBe('critical');
+    expect(enabled.inAppMinimumSeverity).toBe('warning');
     expect(await enqueueAiFindingNotifications('org-1', [finding()])).toBe(0);
   });
 

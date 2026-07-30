@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   createAiDraftQueueItems,
   deriveAiDraftActions,
+  draftActionFromFindingRecommendation,
   formatDraftTaskDescription,
   upsertAiDraftQueueItems,
 } from '../lib/aiDraftActions';
+import type { AiFinding } from '../lib/ai';
 
 const cellarState = {
   tanksCount: 2,
@@ -158,5 +160,44 @@ describe('AI draft actions', () => {
     const converted = { ...queue[0], status: 'converted_to_task' as const };
     const merged = upsertAiDraftQueueItems([converted], queue);
     expect(merged.find(item => item.id === converted.id)?.status).toBe('converted_to_task');
+  });
+
+  it('turns finding recommendations into typed, provenance-carrying drafts', () => {
+    const finding = {
+      id: 'ai-stock-yeast',
+      findingType: 'stock_shortage',
+      severity: 'warning',
+      entityType: 'inventory_item',
+      entityId: 'INV-YEAST',
+      title: { en: 'Yeast stock will run short', ka: 'საფუარის მარაგი არასაკმარისი იქნება' },
+      observation: {
+        en: 'Planned fermentations require more yeast than is on hand.',
+        ka: 'დაგეგმილ დუღილებს არსებულზე მეტი საფუარი სჭირდება.',
+      },
+    } as AiFinding;
+    const action = {
+      kind: 'purchase' as const,
+      label: { en: 'Prepare a yeast restock', ka: 'მოამზადეთ საფუარის მარაგის შევსება' },
+      targetModule: 'inventory',
+      requiresConfirmation: true,
+    };
+
+    const draft = draftActionFromFindingRecommendation(finding, action, { actionIndex: 2 });
+
+    expect(draft).toMatchObject({
+      type: 'inventory_restock',
+      targetModule: 'inventory',
+      priority: 'medium',
+      reviewOnly: true,
+      payload: {
+        source: 'ai_finding',
+        findingId: 'ai-stock-yeast',
+        entityId: 'INV-YEAST',
+        recommendedActionKind: 'purchase',
+        recommendedActionIndex: 2,
+        requiresConfirmation: true,
+      },
+    });
+    expect(draft.warnings.join(' ')).toContain('No order is sent automatically');
   });
 });
