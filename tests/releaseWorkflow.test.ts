@@ -77,6 +77,11 @@ describe('release workflow contracts', () => {
     expect(workflow).toContain('"run,ai:monitor,--,${cadence}"');
     expect(workflow).toContain('"run,ai:deliver,--,100"');
     expect(workflow).toContain('"*/15 * * * *"');
+    expectInOrder(workflow, [
+      'gcloud run jobs get-iam-policy "$run_job"',
+      'grep -Fqx "serviceAccount:$RUNTIME_SERVICE_ACCOUNT"',
+      'gcloud run jobs add-iam-policy-binding "$run_job"',
+    ]);
     expect(workflow).toContain('roles/run.invoker');
     expect(workflow).toContain('--oauth-service-account-email "$RUNTIME_SERVICE_ACCOUNT"');
     expect(workflow).toContain('--retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS"');
