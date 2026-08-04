@@ -110,7 +110,7 @@ jobs:
               --location "$REGION" \
               --repository-format docker \
               --immutable-tags \
-              --description "CI-verified CellarFlow release images"
+              --description "CI-verified VinOS release images"
           fi
 
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
@@ -218,6 +218,21 @@ jobs:
       TBC_RECURRING_ENABLED: ${{ vars.TBC_RECURRING_ENABLED || 'false' }}
       BILLING_VAT_LABEL_EN: ${{ vars.BILLING_VAT_LABEL_EN }}
       BILLING_VAT_LABEL_KA: ${{ vars.BILLING_VAT_LABEL_KA }}
+      # Canonical public origin, e.g. "https://vinos.ge". Set this once a custom
+      # domain is mapped to the Cloud Run service. It becomes APP_URL, which
+      # every generated link is built from: the Google OAuth redirect_uri, email
+      # verification, password reset, invitations, approval review, and AI
+      # notification deep links.
+      #
+      # Leaving it unset pins APP_URL to the generated *.run.app URL. The app
+      # still serves on the custom domain, but those links point back at
+      # run.app — and because the session cookie is host-only, an OAuth sign-in
+      # started on the custom domain completes on run.app and the user appears
+      # signed out on the domain they actually visited.
+      #
+      # No trailing slash. The origin must also be registered as an authorized
+      # redirect URI on the Google OAuth client.
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
     steps:
       - name: Authenticate with Workload Identity
         if: env.HAS_WIF == 'true'
@@ -425,10 +440,31 @@ jobs:
             --region "$REGION" \
             --format='value(status.url)')"
 
+          # Prefer the mapped custom domain. Every generated link is built from
+          # APP_URL, so pinning it to the generated run.app URL sends OAuth
+          # redirects and email links to the wrong origin once a domain exists.
+          PUBLIC_URL="${PUBLIC_APP_URL:-}"
+          PUBLIC_URL="${PUBLIC_URL%/}"
+          if [ -n "$PUBLIC_URL" ]; then
+            case "$PUBLIC_URL" in
+              https://*) ;;
+              *)
+                echo "PUBLIC_APP_URL must be an absolute https origin (got: $PUBLIC_URL)."
+                exit 1
+                ;;
+            esac
+            APP_URL_VALUE="$PUBLIC_URL"
+            echo "APP_URL set to the configured public origin: $APP_URL_VALUE"
+          else
+            APP_URL_VALUE="$SERVICE_URL"
+            echo "PUBLIC_APP_URL is not set; APP_URL falls back to $APP_URL_VALUE."
+            echo "Set the PUBLIC_APP_URL repository variable once a custom domain is mapped."
+          fi
+
           gcloud run services update "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
-            --update-env-vars "APP_URL=$SERVICE_URL"
+            --update-env-vars "APP_URL=$APP_URL_VALUE"
 
           RELEASE_REVISION="$(gcloud run services describe "$SERVICE" \
             --project "$PROJECT_ID" \
@@ -448,6 +484,9 @@ jobs:
 
           echo "url=$SERVICE_URL" >> "$GITHUB_OUTPUT"
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+          # Later steps (the AI delivery job) build deep links too and must use
+          # the same origin as the service, not the raw run.app URL.
+          echo "RESOLVED_APP_URL=$APP_URL_VALUE" >> "$GITHUB_ENV"
           echo "RELEASE_REVISION=$RELEASE_REVISION" >> "$GITHUB_ENV"
 
       - name: Deploy and schedule deterministic AI operations
@@ -510,7 +549,7 @@ jobs:
             --args "run,ai:deliver,--,100"
             --set-secrets "DATABASE_URL=cellarflow-database-url:latest"
             --set-secrets "SMTP_PASS=cellarflow-smtp-pass:latest"
-            --set-env-vars "NODE_ENV=production,APP_URL=$SERVICE_URL"
+            --set-env-vars "NODE_ENV=production,APP_URL=$RESOLVED_APP_URL"
             --labels "managed-by=github-actions,operation=ai-deliver,commit-sha=${GITHUB_SHA}"
             --tasks 1
             --max-retries 0

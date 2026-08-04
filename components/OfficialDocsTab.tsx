@@ -90,7 +90,7 @@ function missingPreview(readiness: ComplianceReadiness, lang: Language): string 
   return list.join(', ');
 }
 
-export default function OfficialDocsTab(props: Props) {
+export function OfficialDocsTab(props: Props) {
   const { lang, company, currentUser } = props;
   const ka = lang === 'ka';
   const forms = useMemo(() => listForms(), []);
@@ -625,3 +625,11 @@ export default function OfficialDocsTab(props: Props) {
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(OfficialDocsTab);

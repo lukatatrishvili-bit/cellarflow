@@ -78,6 +78,11 @@ import {
   registerAiPushSubscription,
   removeAiPushSubscription,
 } from '../aiPushSubscriptions';
+import {
+  analyzeInvoiceDraft,
+  validateInvoiceAnalysisRequest,
+  type InvoiceAnalysisRequest,
+} from '../invoiceAnalyzer';
 
 const router = express.Router();
 
@@ -1064,6 +1069,79 @@ router.post('/analyze', async (req, res) => {
       snapshot.config.maxModelCallsPerDay,
     ),
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/ai/invoices/analyze — review-only inventory receiving draft
+// ---------------------------------------------------------------------------
+
+router.post('/invoices/analyze', async (req, res) => {
+  const auth = await requireCapability(req, res, 'write');
+  if (!auth) return;
+  const workspace = await loadWorkspace(auth);
+  if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  if (
+    !canAccess(workspace.role, 'inventory', 'create')
+    && !canAccess(workspace.role, 'inventory', 'update')
+  ) {
+    return res.status(403).json({ error: 'Your role cannot receive invoice items into inventory.' });
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(400).json({ error: 'AI invoice analysis is not configured. Set GEMINI_API_KEY.' });
+  }
+
+  const request: InvoiceAnalysisRequest = {
+    ...(req.body?.file ? { file: req.body.file } : {}),
+    invoiceText: req.body?.invoiceText,
+    enrichOnline: req.body?.enrichOnline !== false,
+    lang: normalizeLang(req.body?.lang),
+  };
+  try {
+    // Validate before reserving a model call so malformed or oversized uploads
+    // never consume the organization's daily AI allowance.
+    validateInvoiceAnalysisRequest(request);
+  } catch (error) {
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : 'The invoice upload is invalid.',
+    });
+  }
+
+  const { snapshot } = evaluateRules(snapshotFor(workspace, request.lang || 'en'));
+  const reservation = await reserveAiModelCalls(
+    workspace.orgId,
+    snapshot.config.maxModelCallsPerDay,
+    1,
+  );
+  if (!reservation.granted) {
+    return res.status(429).json({
+      error: 'The winery model-call budget is exhausted. Try again after the daily allowance resets.',
+      budget: { used: reservation.used, remaining: reservation.remaining },
+    });
+  }
+
+  try {
+    const draft = await analyzeInvoiceDraft({
+      client: getAiClient(),
+      organizationId: workspace.orgId,
+      maxModelCallsPerDay: snapshot.config.maxModelCallsPerDay,
+      request,
+      inventory: Array.isArray(workspace.data.inventory) ? workspace.data.inventory : [],
+    });
+    return res.json({
+      ...draft,
+      // This endpoint is deliberately draft-only. Ordinary inventory sync is
+      // still the only commit path after the user reviews every line.
+      reviewOnly: true,
+      budget: await getAiModelBudget(workspace.orgId, snapshot.config.maxModelCallsPerDay),
+    });
+  } catch (error) {
+    return res.status(502).json({
+      error: error instanceof Error
+        ? error.message
+        : 'AI invoice analysis could not be completed.',
+      budget: await getAiModelBudget(workspace.orgId, snapshot.config.maxModelCallsPerDay),
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

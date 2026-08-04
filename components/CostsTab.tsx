@@ -60,7 +60,7 @@ const parsePriceDraft = (value: string | undefined) => {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : 0;
 };
 
-export default function CostsTab({
+export function CostsTab({
   lang,
   lots,
   inventory,
@@ -638,3 +638,11 @@ export default function CostsTab({
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(CostsTab);

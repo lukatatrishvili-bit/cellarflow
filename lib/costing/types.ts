@@ -1,5 +1,5 @@
 /**
- * Cost-accounting model for MaraniOS.
+ * Cost-accounting model for VinOS.
  *
  * Everything is a CostEntry posted against a wine lot. Cost-per-lot is the sum
  * of its entries; cost-per-litre and cost-per-bottle are derived; blends move

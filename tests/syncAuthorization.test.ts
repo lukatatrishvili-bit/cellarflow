@@ -118,7 +118,21 @@ describe('sync authorization', () => {
           auditId: 'audit-intake-1',
         },
       }],
-      inventory: [{ id: 'yeast-1', stock: 10, costPerUnit: 22 }],
+      inventory: [{
+        id: 'yeast-1',
+        stock: 10,
+        costPerUnit: 22,
+        lastInvoiceReceipt: {
+          analysisLineId: 'invoice-line-1',
+          receivedAt: '2026-08-04T10:00:00.000Z',
+          supplierName: 'Private Supplier',
+          quantity: 10,
+          unit: 'kg',
+          unitCost: 22,
+          lineTotal: 220,
+          currency: 'GEL',
+        },
+      }],
       bottlingRuns: [{
         id: 'run-1',
         lotId: 'lot-1',
@@ -166,6 +180,7 @@ describe('sync authorization', () => {
     expect(response.companyProfile).toEqual({});
     expect(response.integrationHub).toEqual({});
     expect(response.inventory[0]).not.toHaveProperty('costPerUnit');
+    expect(response.inventory[0]).not.toHaveProperty('lastInvoiceReceipt');
     expect(response.grapeIntakes[0]).not.toHaveProperty('totalCost');
     expect(response.grapeIntakes[0]).not.toHaveProperty('grapePrice');
     expect(response.grapeIntakes[0].reversalSnapshot).not.toHaveProperty('costEntry');

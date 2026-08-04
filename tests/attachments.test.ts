@@ -25,6 +25,7 @@ import {
   SUPPORTED_ATTACHMENT_EXTENSIONS,
   sumInlineAttachmentBytes,
 } from '../lib/attachments';
+import { MAX_SYNC_BODY_BYTES } from '../server/routes/sync';
 
 describe('document attachments', () => {
   it('creates an inline attachment record with safe defaults', () => {
@@ -354,6 +355,27 @@ describe('document attachments', () => {
 
   it('sets a total inline budget above the single-file cap', () => {
     expect(MAX_TOTAL_INLINE_ATTACHMENT_BYTES).toBeGreaterThan(MAX_INLINE_ATTACHMENT_BYTES);
+  });
+
+  // Regression guard. The budget existed to stop inline blobs from breaching the
+  // request body limit, but was set to 25 MB decoded — about 34 MB once base64
+  // inflates it — against a 5 MB body ceiling. The body parser therefore always
+  // rejected first, with a generic error the client could only show as
+  // "Sync rejected (HTTP 413)", so every actionable message here was dead code.
+  // Inline attachments must stay able to reach their own cap on the wire.
+  it('keeps the inline budget reachable under the sync body ceiling', () => {
+    // A data URL carries base64: 3 decoded bytes become 4 transmitted bytes.
+    const budgetOnTheWire = Math.ceil(MAX_TOTAL_INLINE_ATTACHMENT_BYTES / 3) * 4;
+    expect(budgetOnTheWire).toBeLessThan(MAX_SYNC_BODY_BYTES);
+
+    // …and leave usable room for the other 33 collections travelling with it,
+    // so hitting the cap means "too many attachments", not "state got big".
+    const headroomForOtherCollections = MAX_SYNC_BODY_BYTES - budgetOnTheWire;
+    expect(headroomForOtherCollections).toBeGreaterThanOrEqual(750_000);
+
+    // A single maximum-size attachment must still fit, or the per-file cap is
+    // unreachable for the same reason.
+    expect(Math.ceil(MAX_INLINE_ATTACHMENT_BYTES / 3) * 4).toBeLessThan(MAX_SYNC_BODY_BYTES);
   });
 
   it('keeps the browser accept list aligned with the user-facing type label', () => {

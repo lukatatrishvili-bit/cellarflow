@@ -246,7 +246,7 @@ describe.sequential('account security routes', () => {
     }, '198.51.100.18');
     expect(masterResponse.status).toBe(200);
     expect(masterResponse.headers.get('content-disposition')).toMatch(
-      /^attachment; filename="cellarflow_system_export_.*\.json"$/,
+      /^attachment; filename="vinos_system_export_.*\.json"$/,
     );
     const exportSnapshot = await masterResponse.json();
     expect(exportSnapshot).toEqual(expect.objectContaining({

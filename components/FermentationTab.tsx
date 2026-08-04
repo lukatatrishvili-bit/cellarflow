@@ -105,7 +105,7 @@ export function dispatchFermentationReadingUpdates(
   return true;
 }
 
-export default function FermentationTab({
+export function FermentationTab({
   lang,
   vessels,
   lots,
@@ -1247,3 +1247,11 @@ export default function FermentationTab({
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(FermentationTab);

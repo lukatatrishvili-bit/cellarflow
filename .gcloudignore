@@ -1,11 +1,17 @@
 .git
 .github
 .claude
+.agents
 .gemini
 .vscode
 node_modules
 dist
 data
+docs
+e2e
+marketing
+marketing-assets
+tests
 .env
 db.json
 db.json.tmp
@@ -17,3 +23,4 @@ yarn-debug.log*
 preview-server.*.log
 tmp-codex-dev-server*.log
 attachments/
+*.md

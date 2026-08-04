@@ -92,6 +92,18 @@ import {
   type StorageMovementCommandPayload,
   type StorageMovementCommandResult,
 } from './storageMovement';
+import type {
+  InventoryMovementRecord,
+  InvoiceReceiptCommandPayload,
+  InvoiceReceiptCommandResult,
+  InvoiceReceiptLineInput,
+  InvoiceReceiptRecord,
+  InvoiceReceiptReversalCommandPayload,
+  InvoiceReceiptReversalCommandResult,
+} from './invoiceReceipt';
+
+const INVOICE_RECEIPT_COMMAND_TYPE = 'invoice.receipt' as const;
+const INVOICE_RECEIPT_REVERSAL_COMMAND_TYPE = 'invoice.receipt.reverse' as const;
 
 export interface TransferCommandResponse {
   ok: true;
@@ -278,6 +290,32 @@ export interface StorageMovementCommandResponse {
   collections?: {
     bottlingRuns: BottlingRunRecord[];
     stockMovements: StockMovement[];
+  };
+}
+
+export interface InvoiceReceiptCommandResponse {
+  ok: true;
+  disposition: 'executed' | 'replayed';
+  commandId: string;
+  commandType: typeof INVOICE_RECEIPT_COMMAND_TYPE;
+  result: InvoiceReceiptCommandResult;
+  collections?: {
+    inventory: InventoryItem[];
+    invoiceReceipts: InvoiceReceiptRecord[];
+    inventoryMovements: InventoryMovementRecord[];
+  };
+}
+
+export interface InvoiceReceiptReversalCommandResponse {
+  ok: true;
+  disposition: 'executed' | 'replayed';
+  commandId: string;
+  commandType: typeof INVOICE_RECEIPT_REVERSAL_COMMAND_TYPE;
+  result: InvoiceReceiptReversalCommandResult;
+  collections?: {
+    inventory: InventoryItem[];
+    invoiceReceipts: InvoiceReceiptRecord[];
+    inventoryMovements: InventoryMovementRecord[];
   };
 }
 
@@ -619,6 +657,54 @@ export function pendingStorageMovementCommandIntent(): PendingCommandIntent<Stor
   return SyncQueueManager
     .getPendingCommandIntents<StorageMovementCommandPayload>()
     .find(intent => intent.commandType === STORAGE_MOVEMENT_COMMAND_TYPE) || null;
+}
+
+type CreateInvoiceReceiptIntentInput = Omit<InvoiceReceiptCommandPayload, 'receiptId' | 'lines'> & {
+  lines: Array<Omit<InvoiceReceiptLineInput, 'movementId'>>;
+};
+
+export function createInvoiceReceiptCommandIntent(
+  input: CreateInvoiceReceiptIntentInput,
+): PendingCommandIntent<InvoiceReceiptCommandPayload> {
+  const nonce = randomId();
+  return {
+    commandId: `cmd-invoice-receipt-${nonce}`,
+    commandType: INVOICE_RECEIPT_COMMAND_TYPE,
+    capturedAt: new Date().toISOString(),
+    payload: {
+      ...input,
+      receiptId: `invoice-receipt-${nonce}`,
+      lines: input.lines.map((line, index) => ({
+        ...line,
+        movementId: `imov-invoice-${nonce}-${index + 1}`,
+      })),
+    },
+  };
+}
+
+export function pendingInvoiceReceiptCommandIntent(): PendingCommandIntent<InvoiceReceiptCommandPayload> | null {
+  return SyncQueueManager
+    .getPendingCommandIntents<InvoiceReceiptCommandPayload>()
+    .find(intent => intent.commandType === INVOICE_RECEIPT_COMMAND_TYPE) || null;
+}
+
+export function createInvoiceReceiptReversalCommandIntent(
+  payload: InvoiceReceiptReversalCommandPayload,
+): PendingCommandIntent<InvoiceReceiptReversalCommandPayload> {
+  const nonce = randomId();
+  return {
+    commandId: `cmd-invoice-reversal-${nonce}`,
+    commandType: INVOICE_RECEIPT_REVERSAL_COMMAND_TYPE,
+    capturedAt: new Date().toISOString(),
+    payload,
+  };
+}
+
+export function pendingInvoiceReceiptReversalCommandIntent(
+): PendingCommandIntent<InvoiceReceiptReversalCommandPayload> | null {
+  return SyncQueueManager
+    .getPendingCommandIntents<InvoiceReceiptReversalCommandPayload>()
+    .find(intent => intent.commandType === INVOICE_RECEIPT_REVERSAL_COMMAND_TYPE) || null;
 }
 
 export async function submitTransferCommand(
@@ -1164,6 +1250,92 @@ export async function submitStorageMovementCommand(
     throw new CommandRequestError(
       'command_network_error',
       'The server did not acknowledge the storage movement. Retry to recover the original result.',
+      0,
+      true,
+    );
+  }
+}
+
+export async function submitInvoiceReceiptCommand(
+  intent: PendingCommandIntent<InvoiceReceiptCommandPayload>,
+): Promise<InvoiceReceiptCommandResponse> {
+  try {
+    const response = await SyncQueueManager.executeCommandRequest('/api/commands/invoice.receipt', intent);
+    const body = await response.json().catch(() => null) as any;
+    if (!response.ok) {
+      const apiError = body?.error && typeof body.error === 'object' ? body.error : null;
+      const retryable = apiError?.retryable === true || response.status >= 500;
+      if (!retryable) SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+      throw new CommandRequestError(
+        typeof apiError?.code === 'string' ? apiError.code : 'command_rejected',
+        typeof apiError?.message === 'string'
+          ? apiError.message
+          : `Invoice receipt rejected (HTTP ${response.status}).`,
+        response.status,
+        retryable,
+      );
+    }
+    if (!body || body.ok !== true || body.commandId !== intent.commandId
+      || body.commandType !== INVOICE_RECEIPT_COMMAND_TYPE
+      || !body.result?.receipt || !Array.isArray(body.result?.movements)
+      || !Array.isArray(body.result?.updatedInventoryItems)) {
+      throw new CommandRequestError(
+        'invalid_command_response',
+        'The invoice receipt response could not be verified. Retry the same command.',
+        response.status,
+        true,
+      );
+    }
+    SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+    return body as InvoiceReceiptCommandResponse;
+  } catch (error) {
+    if (error instanceof CommandRequestError) throw error;
+    throw new CommandRequestError(
+      'command_network_error',
+      'The server did not acknowledge the invoice receipt. Retry to recover the original result.',
+      0,
+      true,
+    );
+  }
+}
+
+export async function submitInvoiceReceiptReversalCommand(
+  intent: PendingCommandIntent<InvoiceReceiptReversalCommandPayload>,
+): Promise<InvoiceReceiptReversalCommandResponse> {
+  try {
+    const response = await SyncQueueManager.executeCommandRequest('/api/commands/invoice.receipt.reverse', intent);
+    const body = await response.json().catch(() => null) as any;
+    if (!response.ok) {
+      const apiError = body?.error && typeof body.error === 'object' ? body.error : null;
+      const retryable = apiError?.retryable === true || response.status >= 500;
+      if (!retryable) SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+      throw new CommandRequestError(
+        typeof apiError?.code === 'string' ? apiError.code : 'command_rejected',
+        typeof apiError?.message === 'string'
+          ? apiError.message
+          : `Invoice receipt reversal rejected (HTTP ${response.status}).`,
+        response.status,
+        retryable,
+      );
+    }
+    if (!body || body.ok !== true || body.commandId !== intent.commandId
+      || body.commandType !== INVOICE_RECEIPT_REVERSAL_COMMAND_TYPE
+      || !body.result?.receipt || !Array.isArray(body.result?.movements)
+      || !Array.isArray(body.result?.updatedInventoryItems)) {
+      throw new CommandRequestError(
+        'invalid_command_response',
+        'The invoice receipt reversal response could not be verified. Retry the same command.',
+        response.status,
+        true,
+      );
+    }
+    SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+    return body as InvoiceReceiptReversalCommandResponse;
+  } catch (error) {
+    if (error instanceof CommandRequestError) throw error;
+    throw new CommandRequestError(
+      'command_network_error',
+      'The server did not acknowledge the invoice receipt reversal. Retry to recover the original result.',
       0,
       true,
     );

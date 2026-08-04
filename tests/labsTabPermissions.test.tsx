@@ -1,7 +1,10 @@
 import React, { type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import LabsTab from '../components/LabsTab';
+// The default export is wrapped in React.memo (an object, not a function), so
+// the tests below that invoke the component directly use the named render
+// function. Both refer to the same implementation.
+import LabsTab, { LabsTab as LabsTabRender } from '../components/LabsTab';
 import type { LabAnalysis } from '../lib/wineryState';
 
 const labLog: LabAnalysis = {
@@ -93,7 +96,7 @@ describe('LabsTab action permissions', () => {
 
   it('preserves create behavior by default and forwards permitted submissions', () => {
     const onAddLabLog = vi.fn();
-    const tree = LabsTab(labProps({ onAddLabLog }));
+    const tree = LabsTabRender(labProps({ onAddLabLog }));
     const form = flattenElements(tree).find(element => element.type === 'form');
     const event = { preventDefault: vi.fn() } as unknown as React.FormEvent;
 

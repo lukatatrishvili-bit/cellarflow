@@ -512,7 +512,7 @@ const phenologyLabel = (stage: string, lang: string) =>
   (lang === 'ka' && PHENOLOGY_KA[stage]) ? PHENOLOGY_KA[stage] : stage;
 const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flatMap(region => region.mainMicrozones))).sort();
 
-export default function VaziModule({
+export function VaziModule({
   lang,
   currentUser,
   blocks,
@@ -3645,3 +3645,11 @@ export default function VaziModule({
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(VaziModule);

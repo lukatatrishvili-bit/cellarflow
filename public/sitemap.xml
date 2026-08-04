@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Only the public marketing page is listed. Everything else in VinOS is behind
+  authentication and renders the login screen to a crawler, so listing it would
+  advertise a hundred URLs with identical content.
+
+  If the marketing site grows real sub-pages, add them here — the canonical host
+  must match PUBLIC_APP_URL, or search engines will treat the entries as
+  belonging to a different site than the one serving them.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://vinos.ge/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

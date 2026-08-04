@@ -19,6 +19,7 @@ import { HarvestIntakeReversalCommandError } from '../../lib/commands/harvestInt
 import { SalesStockCommandError } from '../../lib/commands/salesStock';
 import { SalesStockReversalCommandError } from '../../lib/commands/salesStockReversal';
 import { StorageMovementCommandError } from '../../lib/commands/storageMovement';
+import { InvoiceReceiptCommandError } from '../../lib/commands/invoiceReceipt';
 import { TransferCommandError } from '../../lib/commands/transfer';
 import { TransferReversalCommandError } from '../../lib/commands/transferReversal';
 import { organizationHasFeature } from '../billing/service';
@@ -51,6 +52,12 @@ import {
   salesStockReversalCommandResult,
 } from '../commands/salesStockReversal';
 import { executeStorageMovementCommand, storageMovementCommandResult } from '../commands/storageMovement';
+import {
+  executeInvoiceReceiptCommand,
+  executeInvoiceReceiptReversalCommand,
+  invoiceReceiptCommandResult,
+  invoiceReceiptReversalCommandResult,
+} from '../commands/invoiceReceipt';
 import { executeCellarTransferCommand, transferCommandResult } from '../commands/transfer';
 import {
   executeCellarTransferReversalCommand,
@@ -60,6 +67,9 @@ import {
   MAX_REPORTED_QUEUE_AGE_MS,
   recordCommandOperationalMetric,
 } from '../operationalTelemetry';
+import { canAccess } from '../permissions';
+import { getOfficialExchangeRate } from '../exchangeRates';
+import { normalizeInvoiceCurrency } from '../../lib/currency';
 
 const router = express.Router();
 
@@ -135,6 +145,9 @@ function handledCommandError(res: express.Response, error: unknown): express.Res
   if (error instanceof StorageMovementCommandError) {
     return commandError(res, error.statusCode, error.code, error.message);
   }
+  if (error instanceof InvoiceReceiptCommandError) {
+    return commandError(res, error.statusCode, error.code, error.message);
+  }
   if (error && typeof error === 'object' && 'code' in error && error.code === 'P2034') {
     return commandError(
       res,
@@ -145,6 +158,20 @@ function handledCommandError(res: express.Response, error: unknown): express.Res
     );
   }
   return null;
+}
+
+async function verifyOfficialExchangeRateClaim(payload: any): Promise<boolean> {
+  const claim = payload?.exchangeRate;
+  if (claim?.source !== 'nbg_official') return true;
+  const from = normalizeInvoiceCurrency(claim.fromCurrency);
+  const to = normalizeInvoiceCurrency(claim.toCurrency);
+  const requestedDate = typeof claim.requestedDate === 'string' ? claim.requestedDate : '';
+  if (!from || !to || !requestedDate) return false;
+  const official = await getOfficialExchangeRate(from, to, requestedDate);
+  const claimedRate = Number(claim.rate);
+  return Number.isFinite(claimedRate)
+    && Math.abs(claimedRate - official.rate) <= Math.max(0.00000001, official.rate * 0.00000001)
+    && claim.rateDate === official.rateDate;
 }
 
 // Grape intake, lot creation, audit signing, and optional harvest, vessel, and
@@ -1085,6 +1112,160 @@ router.post('/sales.stock.reverse', checkWineryScope('write'), async (req, res) 
       500,
       'command_execution_failed',
       'The sales stock reversal could not be completed. Keep the command id before retrying.',
+      true,
+    );
+  }
+});
+
+// A reviewed invoice is posted as one atomic acquisition: inventory quantities,
+// weighted costs, the source-currency receipt, and immutable stock movements.
+router.post('/invoice.receipt', checkWineryScope('write'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  const lines = Array.isArray(req.body?.payload?.lines) ? req.body.payload.lines : [];
+  const needsCreate = lines.some((line: any) => line?.mode === 'create');
+  const needsUpdate = lines.some((line: any) => line?.mode === 'receive');
+  const allowed = canAccess(session.role, 'costs', 'create')
+    && (!needsCreate || canAccess(session.role, 'inventory', 'create'))
+    && (!needsUpdate || canAccess(session.role, 'inventory', 'update'));
+  if (!allowed) {
+    return commandError(
+      res,
+      403,
+      'forbidden_invoice_receipt',
+      'This role cannot post both inventory quantities and acquisition costs.',
+    );
+  }
+
+  const commandId = typeof req.body?.commandId === 'string' ? req.body.commandId : '';
+  const payload = req.body?.payload;
+  const organizationId = String(session.organizationId || '');
+  try {
+    try {
+      if (!await verifyOfficialExchangeRateClaim(payload)) {
+        return commandError(
+          res,
+          400,
+          'invalid_official_exchange_rate',
+          'The claimed official exchange rate does not match the dated NBG rate. Refresh it or use a clearly marked manual rate.',
+        );
+      }
+    } catch (rateError) {
+      console.error('[commands] official exchange-rate verification failed', rateError);
+      return commandError(
+        res,
+        502,
+        'exchange_rate_verification_unavailable',
+        'The official exchange rate could not be verified. Retry or use a clearly marked manual rate.',
+        true,
+      );
+    }
+    const prisma = await getPrismaClientForAdmin();
+    if (!prisma) {
+      return commandError(
+        res,
+        503,
+        'command_store_unavailable',
+        'Durable command storage is unavailable. Keep the command id and retry later.',
+        true,
+      );
+    }
+    const outcome = await executeInvoiceReceiptCommand(prisma, {
+      organizationId,
+      commandId,
+      actorUsername: session.username,
+      payload,
+      performedAt: new Date(),
+    });
+    const refreshed = await reloadOrganizationDataFromPostgres(organizationId);
+    await setOrganizationStateHeaders(res, session.username);
+    const result = invoiceReceiptCommandResult(outcome);
+    return res.status(outcome.disposition === 'executed' ? 201 : 200).json({
+      ok: true,
+      disposition: outcome.disposition,
+      commandId: outcome.commandId,
+      commandType: outcome.commandType,
+      result,
+      ...(refreshed ? {
+        collections: {
+          inventory: refreshed.data.inventory,
+          invoiceReceipts: refreshed.data.invoiceReceipts,
+          inventoryMovements: refreshed.data.inventoryMovements,
+        },
+      } : {}),
+    });
+  } catch (error) {
+    const handled = handledCommandError(res, error);
+    if (handled) return handled;
+    console.error('[commands] invoice receipt execution failed', error);
+    return commandError(
+      res,
+      500,
+      'command_execution_failed',
+      'The invoice receipt could not be posted. Keep the command id before retrying.',
+      true,
+    );
+  }
+});
+
+// Reversal never deletes the original receipt. It appends compensating stock
+// movements and retains both currency valuations for audit and reconciliation.
+router.post('/invoice.receipt.reverse', checkWineryScope('write'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  if (!canAccess(session.role, 'inventory', 'delete') || !canAccess(session.role, 'costs', 'delete')) {
+    return commandError(
+      res,
+      403,
+      'forbidden_invoice_receipt_reversal',
+      'Only a role allowed to reverse both inventory and costs may reverse an invoice receipt.',
+    );
+  }
+  const commandId = typeof req.body?.commandId === 'string' ? req.body.commandId : '';
+  const payload = req.body?.payload;
+  const organizationId = String(session.organizationId || '');
+  try {
+    const prisma = await getPrismaClientForAdmin();
+    if (!prisma) {
+      return commandError(
+        res,
+        503,
+        'command_store_unavailable',
+        'Durable command storage is unavailable. Keep the command id and retry later.',
+        true,
+      );
+    }
+    const outcome = await executeInvoiceReceiptReversalCommand(prisma, {
+      organizationId,
+      commandId,
+      actorUsername: session.username,
+      payload,
+      performedAt: new Date(),
+    });
+    const refreshed = await reloadOrganizationDataFromPostgres(organizationId);
+    await setOrganizationStateHeaders(res, session.username);
+    const result = invoiceReceiptReversalCommandResult(outcome);
+    return res.status(outcome.disposition === 'executed' ? 201 : 200).json({
+      ok: true,
+      disposition: outcome.disposition,
+      commandId: outcome.commandId,
+      commandType: outcome.commandType,
+      result,
+      ...(refreshed ? {
+        collections: {
+          inventory: refreshed.data.inventory,
+          invoiceReceipts: refreshed.data.invoiceReceipts,
+          inventoryMovements: refreshed.data.inventoryMovements,
+        },
+      } : {}),
+    });
+  } catch (error) {
+    const handled = handledCommandError(res, error);
+    if (handled) return handled;
+    console.error('[commands] invoice receipt reversal execution failed', error);
+    return commandError(
+      res,
+      500,
+      'command_execution_failed',
+      'The invoice receipt reversal could not be completed. Keep the command id before retrying.',
       true,
     );
   }

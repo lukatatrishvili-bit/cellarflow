@@ -33,7 +33,9 @@ async function signIn(
 test('owner signs in and reaches the operational overview', async ({ page }) => {
   const fixture = await resetFixture(page);
   await page.goto('/');
+  await expect(page).toHaveURL(/\/login$/);
   await signIn(page, fixture.owner);
+  await expect(page).toHaveURL(/\/dashboard$/);
 
   await expect(page.getByRole('heading', { name: /Today at Release Gate Estate/ })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Module navigation' })).toBeVisible();
@@ -47,12 +49,61 @@ test('owner signs in and reaches the operational overview', async ({ page }) => 
 test('task deep link survives authentication and focuses the exact task', async ({ page }) => {
   const fixture = await resetFixture(page);
   await page.goto(`/tasks?task=${fixture.task.id}`);
+  await expect(page).toHaveURL(/\/login$/);
   await signIn(page, fixture.owner);
+  await expect(page).toHaveURL(new RegExp(`/tasks\\?task=${fixture.task.id}$`));
 
   const task = page.locator(`#task-${fixture.task.id}`);
   await expect(task).toBeVisible();
   await expect(task).toContainText(fixture.task.title);
   await expect(task).toBeFocused();
+});
+
+test('authenticated login and logout replace protected history entries', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/login$/);
+  await page.goto('/welcome');
+  await page.goto('/dashboard');
+  await expect(page).toHaveURL(/\/login$/);
+
+  await signIn(page, fixture.owner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/welcome$/);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/dashboard$/);
+
+  await page.goto('/login');
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole('button', { name: 'Log Out' }).click();
+  await expect(page).toHaveURL(/\/login$/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole('button', { name: 'Log Out' })).toHaveCount(0);
+});
+
+test('dashboard initialization does not lock module navigation', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto('/');
+  await signIn(page, fixture.owner);
+  await expect(page).toHaveURL(/\/dashboard$/);
+
+  const navigation = page.getByRole('navigation', { name: 'Module navigation' });
+  const vineyard = navigation.getByRole('button', { name: 'Vineyard' });
+  const cellar = navigation.getByRole('button', { name: 'Cellar' });
+  const today = navigation.getByRole('button', { name: 'Today' });
+
+  await vineyard.click();
+  await expect(vineyard).toHaveAttribute('aria-current', 'page');
+
+  await cellar.click();
+  await expect(cellar).toHaveAttribute('aria-current', 'page');
+
+  await today.click();
+  await expect(today).toHaveAttribute('aria-current', 'page');
 });
 
 test('unfinished task draft survives a browser refresh', async ({ page }) => {

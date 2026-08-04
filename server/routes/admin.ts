@@ -3,6 +3,7 @@ import { checkWineryScope, requireMasterAdmin, isMasterAdmin , loginLimiter, ses
 import { getDeploymentStatus, applyRuntimeScaleReadinessProbe } from '../deploymentStatus';
 import {
   getDB,
+  getUserData,
   saveCoreMetadata,
   saveUserData,
   resetUserData,
@@ -29,7 +30,13 @@ import {
 import { isValidEmail } from '../emailVerification';
 import { sendMail } from '../mailer';
 import { isKnownRole } from '../permissions';
-import { clientIp } from '../config';
+import {
+  applyApprovalDecision,
+  approvalStatusForUser,
+  describeApprovalRequest,
+  sendApprovalDecisionNotice,
+} from '../registrationApproval';
+import { appBaseUrl, clientIp } from '../config';
 import { auditSecurityEvent } from '../securityAudit';
 import {
   summarizeAiDrafts,
@@ -139,7 +146,7 @@ router.get('/export', async (req, res) => {
     db: scrubSensitiveForExport(db),
   };
   delete snapshot.db.userData;
-  const filename = exportFilename('cellarflow_system_export');
+  const filename = exportFilename('vinos_system_export');
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -219,6 +226,7 @@ router.get('/users', async (req, res) => {
       role: u.role,
       emailVerified: u.emailVerified,
       accountEnabled: u.accountEnabled !== false,
+      approvalStatus: approvalStatusForUser(u),
       isDemo: u.isDemo,
       createdAt: u.createdAt,
       organizations: orgs
@@ -226,6 +234,65 @@ router.get('/users', async (req, res) => {
   });
 
   res.json({ ok: true, users: usersWithOrgs });
+});
+
+// GET /api/admin/registrations/pending — accounts waiting for a human decision.
+router.get('/registrations/pending', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const waiting = db.users.filter(user => approvalStatusForUser(user) === 'pending');
+  const pending = await Promise.all(waiting.map(async user => {
+    const data = await getUserData(user.username);
+    return describeApprovalRequest(user, data?.companyProfile);
+  }));
+  pending.sort((a, b) => String(a.requestedAt || '').localeCompare(String(b.requestedAt || '')));
+
+  res.json({ ok: true, pending });
+});
+
+// POST /api/admin/registrations/decide — approve or reject a requested account.
+router.post('/registrations/decide', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+
+  const { username, decision } = req.body;
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+  if (decision !== 'approve' && decision !== 'reject') {
+    return res.status(400).json({ error: 'Decision must be either approve or reject' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = db.users.find(u => u.username === username) as any;
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const approved = decision === 'approve';
+  applyApprovalDecision(user, decision, auth.username);
+  if (!approved) {
+    // Revoke anything the account already holds.
+    user.sessionVersion = sessionVersionForUser(user) + 1;
+  }
+  await saveCoreMetadata('admin-registration-decision');
+
+  await sendApprovalDecisionNotice(user, approved, appBaseUrl(req));
+  recordAdminAction(auth.username, `registration.${decision}`, username);
+  await auditSecurityEvent({
+    eventType: approved ? 'account.approved' : 'account.rejected',
+    username,
+    actorUsername: auth.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+    metadata: { via: 'master_console' },
+  });
+
+  res.json({ ok: true, approvalStatus: user.approvalStatus });
 });
 
 // POST /api/admin/users/update

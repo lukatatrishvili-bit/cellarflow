@@ -27,9 +27,27 @@ interface UserRecord {
   role: string;
   emailVerified: boolean;
   accountEnabled: boolean;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
   isDemo: boolean;
   createdAt: string;
   organizations: Array<{ id: string; name: string; role: string }>;
+}
+
+/** A self-service signup that no operator has decided on yet. */
+interface PendingRegistration {
+  username: string;
+  fullName: string;
+  email: string;
+  phone?: string;
+  companyName?: string;
+  wineryName?: string;
+  country?: string;
+  region?: string;
+  language?: string;
+  role?: string;
+  provider?: 'password' | 'google';
+  requestedAt?: string;
+  emailVerified?: boolean;
 }
 
 interface OrgRecord {
@@ -193,6 +211,8 @@ export default function MasterAdminPortal({
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
+  const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
+  const [decidingUsername, setDecidingUsername] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<OrgRecord[]>([]);
   const [clientErrors, setClientErrors] = useState<ClientErrorReport[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -245,14 +265,15 @@ export default function MasterAdminPortal({
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [statsRes, usersRes, orgsRes, healthRes, lockoutsRes, actionsRes, clientErrorsRes] = await Promise.all([
+      const [statsRes, usersRes, orgsRes, healthRes, lockoutsRes, actionsRes, clientErrorsRes, pendingRes] = await Promise.all([
         fetch('/api/admin/stats'),
         fetch('/api/admin/users'),
         fetch('/api/admin/orgs'),
         fetch('/api/admin/system-health'),
         fetch('/api/admin/lockouts'),
         fetch('/api/admin/actions'),
-        fetch('/api/admin/client-errors')
+        fetch('/api/admin/client-errors'),
+        fetch('/api/admin/registrations/pending')
       ]);
 
       if (statsRes.ok && usersRes.ok && orgsRes.ok) {
@@ -263,10 +284,12 @@ export default function MasterAdminPortal({
         const lockoutsData = lockoutsRes.ok ? await lockoutsRes.json() : null;
         const actionsData = actionsRes.ok ? await actionsRes.json() : null;
         const clientErrorsData = clientErrorsRes.ok ? await clientErrorsRes.json() : null;
+        const pendingData = pendingRes.ok ? await pendingRes.json() : null;
 
         setStats(statsData);
         setSystemHealth(healthData);
         setUsers(usersData.users);
+        setPendingRegistrations(pendingData?.pending || []);
         setOrgs(orgsData.organizations);
         if (lockoutsData) { setLockouts(lockoutsData.entries || []); setLockoutsBackend(lockoutsData.backend || ''); }
         if (actionsData) setAdminTrail(actionsData.actions || []);
@@ -512,6 +535,31 @@ export default function MasterAdminPortal({
       setToastMessage(isKa ? 'მომხმარებლის განახლება ვერ მოხერხდა' : 'Failed to update user');
     } finally {
       setIsUpdatingUser(false);
+    }
+  };
+
+  const handleRegistrationDecision = async (username: string, decision: 'approve' | 'reject') => {
+    if (decidingUsername) return;
+    setDecidingUsername(username);
+    try {
+      const res = await fetch('/api/admin/registrations/decide', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, decision }),
+      });
+      if (res.ok) {
+        setToastMessage(decision === 'approve'
+          ? (isKa ? `✓ @${username} დამტკიცებულია` : `✓ @${username} approved`)
+          : (isKa ? `@${username} უარყოფილია` : `@${username} rejected`));
+        fetchData();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setToastMessage(`⚠️ ${err.error || (isKa ? 'გადაწყვეტილება ვერ შესრულდა' : 'Decision failed')}`);
+      }
+    } catch {
+      setToastMessage(isKa ? '⚠️ გადაწყვეტილება ვერ შესრულდა' : '⚠️ Decision failed');
+    } finally {
+      setDecidingUsername(null);
     }
   };
 
@@ -1164,6 +1212,73 @@ export default function MasterAdminPortal({
                     />
                   </div>
 
+                  <section className="bg-[#0c090a] border border-amber-900/30 rounded-2xl p-5 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className="w-4 h-4 text-amber-400" />
+                      <h3 className="text-xs uppercase font-bold text-amber-400 tracking-wider">
+                        {isKa ? 'დასამტკიცებელი რეგისტრაციები' : 'Access requests awaiting approval'}
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-950/40 border border-amber-500/30 text-amber-300 text-[10px] font-bold">
+                        {pendingRegistrations.length}
+                      </span>
+                    </div>
+                    {pendingRegistrations.length === 0 ? (
+                      <p className="text-[11px] text-stone-500">
+                        {isKa
+                          ? 'ახალი მოთხოვნები არ არის. ყველა ახალი რეგისტრაცია აქ ჩნდება შესვლამდე.'
+                          : 'No requests waiting. Every new signup lands here before it can sign in.'}
+                      </p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {pendingRegistrations.map(request => (
+                          <li
+                            key={request.username}
+                            className="flex flex-wrap items-start justify-between gap-4 rounded-xl border border-stone-850 bg-stone-950/60 p-4"
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <div className="font-bold text-stone-100">{request.fullName || `@${request.username}`}</div>
+                              <div className="text-[11px] font-mono text-stone-400 break-all">{request.email}</div>
+                              <div className="text-[10px] text-stone-500">
+                                {[
+                                  request.companyName,
+                                  [request.region, request.country].filter(Boolean).join(', '),
+                                  request.phone,
+                                  request.provider === 'google' ? 'Google' : (isKa ? 'პაროლი' : 'Passcode'),
+                                  request.emailVerified
+                                    ? (isKa ? 'ელფოსტა დადასტურებულია' : 'Email confirmed')
+                                    : (isKa ? 'ელფოსტა არ არის დადასტურებული' : 'Email not confirmed'),
+                                  request.requestedAt ? formatDateTime(request.requestedAt) : '',
+                                ].filter(Boolean).join(' • ')}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRegistrationDecision(request.username, 'approve')}
+                                disabled={decidingUsername !== null}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase tracking-wide transition-colors hover:bg-emerald-900/40 disabled:opacity-40 disabled:cursor-wait cursor-pointer"
+                              >
+                                {decidingUsername === request.username
+                                  ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  : <Check className="w-3.5 h-3.5" />}
+                                {isKa ? 'დამტკიცება' : 'Approve'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRegistrationDecision(request.username, 'reject')}
+                                disabled={decidingUsername !== null}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-stone-900 border border-stone-850 text-stone-400 text-[10px] font-bold uppercase tracking-wide transition-colors hover:border-red-500/30 hover:text-red-400 disabled:opacity-40 disabled:cursor-wait cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                {isKa ? 'უარყოფა' : 'Reject'}
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+
                   <div className="bg-[#0c090a] border border-cyan-900/20 rounded-2xl overflow-hidden">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead>
@@ -1208,11 +1323,27 @@ export default function MasterAdminPortal({
                                 </div>
                               </td>
                               <td className="px-5 py-3.5">
-                                <span className={`flex items-center gap-1.5 font-bold ${u.accountEnabled === false ? 'text-red-500' : u.emailVerified ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                <span className={`flex items-center gap-1.5 font-bold ${
+                                  u.accountEnabled === false || u.approvalStatus === 'rejected'
+                                    ? 'text-red-500'
+                                    : u.approvalStatus === 'pending'
+                                      ? 'text-amber-400'
+                                      : u.emailVerified ? 'text-emerald-500' : 'text-amber-500'
+                                }`}>
                                   {u.accountEnabled === false ? (
                                     <>
                                       <ShieldAlert className="w-3.5 h-3.5" />
-                                      <span>{isKa ? 'áƒ’áƒáƒ›áƒáƒ áƒ—áƒ£áƒšáƒ˜' : 'DISABLED'}</span>
+                                      <span>{isKa ? 'გამორთული' : 'DISABLED'}</span>
+                                    </>
+                                  ) : u.approvalStatus === 'rejected' ? (
+                                    <>
+                                      <ShieldAlert className="w-3.5 h-3.5" />
+                                      <span>{isKa ? 'უარყოფილი' : 'REJECTED'}</span>
+                                    </>
+                                  ) : u.approvalStatus === 'pending' ? (
+                                    <>
+                                      <AlertTriangle className="w-3.5 h-3.5 animate-pulse" />
+                                      <span>{isKa ? 'დასამტკიცებელი' : 'AWAITING APPROVAL'}</span>
                                     </>
                                   ) : u.emailVerified ? (
                                     <>

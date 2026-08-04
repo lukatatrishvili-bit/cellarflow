@@ -28,6 +28,13 @@ model User {
   enabledWidgets       Json?
   registrationComplete Boolean  @default(true)
   accountEnabled       Boolean  @default(true)
+  /** pending | approved | rejected — self-service signups start pending. */
+  approvalStatus       String   @default("approved")
+  approvalRequestedAt  DateTime?
+  approvalDecidedAt    DateTime?
+  approvalDecidedBy    String?
+  approvalTokenHash    String?
+  approvalTokenExpires BigInt?
   sessionVersion       Int      @default(1)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -38,6 +45,8 @@ model User {
   aiNotificationReadStates  AiNotificationReadState[]
   aiKnowledgeDocuments      AiKnowledgeDocument[]
   aiPushSubscriptions       AiPushSubscription[]
+
+  @@index([approvalStatus, approvalRequestedAt])
 }
 
 model Organization {

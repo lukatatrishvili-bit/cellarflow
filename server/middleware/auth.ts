@@ -1,5 +1,6 @@
 import express from 'express';
 import { verifySessionToken, sessionMatchesUserVersion, userAccountIsEnabled } from '../auth';
+import { approvalStatusForUser } from '../registrationApproval';
 import { can, type Capability } from '../permissions';
 import { getDB, getUserOrganizationStateMeta, refreshCoreMetadataFromPostgres, getPrismaClientForAdmin } from '../db';
 import { cleanEnv, COOKIE_SECURE } from '../config';
@@ -59,6 +60,8 @@ export async function liveSessionRole(req: express.Request): Promise<{ username:
   const user = getDB().users.find(u => u.username === session.username);
   if (!user) return null;
   if (!userAccountIsEnabled(user)) return null;
+  // Approval can be withdrawn after a session was issued; every request re-checks.
+  if (approvalStatusForUser(user) !== 'approved') return null;
   if (!sessionMatchesUserVersion(session, user)) return null;
   const db = getDB();
   const activeOrganizationId = user.activeOrganizationId;
@@ -142,6 +145,13 @@ export const accountRecoveryLimiter = createSharedLoginLimiter({
 
 export const invitationLimiter = createSharedLoginLimiter({
   maxAttempts: 20,
+  windowMs: 15 * 60 * 1000,
+  lockoutMs: 15 * 60 * 1000,
+}, getPrismaClientForAdmin);
+
+/** Guards the emailed account-review page against token fishing. */
+export const registrationApprovalLimiter = createSharedLoginLimiter({
+  maxAttempts: 30,
   windowMs: 15 * 60 * 1000,
   lockoutMs: 15 * 60 * 1000,
 }, getPrismaClientForAdmin);

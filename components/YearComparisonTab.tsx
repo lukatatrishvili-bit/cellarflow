@@ -103,7 +103,7 @@ function MiniBar({ current, previous }: { current: number; previous: number }) {
   );
 }
 
-export default function YearComparisonTab({
+export function YearComparisonTab({
   lang,
   lots,
   harvests,
@@ -463,3 +463,11 @@ export default function YearComparisonTab({
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(YearComparisonTab);

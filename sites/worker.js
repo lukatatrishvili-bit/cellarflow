@@ -1,7 +1,8 @@
-const DEFAULT_BACKEND_ORIGIN = 'https://cellarflow-app-tzjx5orr7q-ew.a.run.app';
-
 function backendOrigin(env) {
-  const configured = String(env?.BACKEND_ORIGIN || DEFAULT_BACKEND_ORIGIN).trim();
+  const configured = String(env?.BACKEND_ORIGIN || '').trim();
+  if (!configured) {
+    throw new Error('BACKEND_ORIGIN must be configured.');
+  }
   const url = new URL(configured);
   if (url.protocol !== 'https:') {
     throw new Error('BACKEND_ORIGIN must use HTTPS.');

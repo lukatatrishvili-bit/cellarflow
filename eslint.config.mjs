@@ -17,6 +17,8 @@ export default defineConfig([
       'dist/**',
       'node_modules/**',
       'coverage/**',
+      'playwright-report/**',
+      'test-results/**',
       'marketing-assets/**',
       '.git/**',
       '.claude/**',

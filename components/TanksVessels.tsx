@@ -47,7 +47,7 @@ function qvevriSealNeedsAttention(vessel: Vessel, now = Date.now()): boolean {
   return (now - sealedTimestamp) / 86_400_000 > 120;
 }
 
-export default function TanksVessels({
+export function TanksVessels({
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
   setActiveTab,
   canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true,
@@ -1486,3 +1486,11 @@ export default function TanksVessels({
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(TanksVessels);

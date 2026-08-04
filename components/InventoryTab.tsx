@@ -5,6 +5,8 @@ import type { CellarOperation, InventoryItem } from '../lib/wineryState';
 import type { Language } from '../lib/i18n';
 import { inventoryCategoryLabel } from '../lib/enumLabels';
 import { CORE_INVENTORY_CATEGORIES } from '../lib/inventoryCategories';
+import InvoiceInventoryImporter from './InvoiceInventoryImporter';
+import type { InvoiceReceiptCommandResponse } from '../lib/commands/client';
 import {
   Plus,
   Trash2,
@@ -16,7 +18,8 @@ import {
   AlertTriangle,
   FolderPlus,
   CheckCircle,
-  HelpCircle
+  HelpCircle,
+  Sparkles
 } from 'lucide-react';
 
 interface Props {
@@ -27,9 +30,12 @@ interface Props {
   canCreateInventory?: boolean;
   canUpdateInventory?: boolean;
   canDeleteInventory?: boolean;
+  canPostInvoiceCosts?: boolean;
+  accountingCurrency?: string;
+  onApplyInvoiceReceiptCommandResponse?: (response: InvoiceReceiptCommandResponse) => void;
 }
 
-export default function InventoryTab({
+export function InventoryTab({
   lang = 'en',
   inventory,
   cellarOps = [],
@@ -37,6 +43,9 @@ export default function InventoryTab({
   canCreateInventory = true,
   canUpdateInventory = true,
   canDeleteInventory = true,
+  canPostInvoiceCosts = true,
+  accountingCurrency = 'GEL',
+  onApplyInvoiceReceiptCommandResponse,
 }: Props) {
   const ka = lang === 'ka';
   const catLabel = (cat: string) => inventoryCategoryLabel(cat, lang);
@@ -54,6 +63,7 @@ export default function InventoryTab({
   const [itemSupplier, setItemSupplier] = useState('');
   const [itemDetails, setItemDetails] = useState('');
   const [itemInitialStock, setItemInitialStock] = useState(25);
+  const [showInvoiceImporter, setShowInvoiceImporter] = useState(false);
 
   // Editing item state
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -297,17 +307,40 @@ export default function InventoryTab({
               : 'Consumption is recorded automatically from cellar operations. Use this area for receipts, specifications, and stock corrections.'}
           </p>
         </div>
-        {canCreateInventory && (
+        {(canCreateInventory || canUpdateInventory) && (
         <div className="flex gap-2">
+          {canPostInvoiceCosts && <button
+            onClick={() => setShowInvoiceImporter(current => !current)}
+            className="px-3.5 py-1.5 text-xs font-semibold text-[#4e0e15] bg-[#f4ece5] hover:bg-[#eadfd5] rounded-lg border border-[#d9cabb] transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <Sparkles className="w-4 h-4" /> {ka ? 'AI ინვოისი' : 'Analyze Invoice'}
+          </button>}
+          {canCreateInventory && (
           <button
             onClick={() => setShowItemForm(!showItemForm)}
             className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#4e0e15] hover:bg-[#6b151e] rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
           >
             <Plus className="w-4 h-4" /> {ka ? 'პროდუქტის დამატება' : 'Add New Material'}
           </button>
+          )}
         </div>
         )}
       </div>
+
+      {showInvoiceImporter && canPostInvoiceCosts && (canCreateInventory || canUpdateInventory) && (
+        <InvoiceInventoryImporter
+          lang={lang}
+          inventory={inventory}
+          canCreate={canCreateInventory}
+          canUpdate={canUpdateInventory}
+          canPostCosts={canPostInvoiceCosts}
+          accountingCurrency={accountingCurrency}
+          onApplyCommandResponse={onApplyInvoiceReceiptCommandResponse || ((response) => {
+            if (response.collections?.inventory) onUpdateInventory(response.collections.inventory);
+          })}
+          onClose={() => setShowInvoiceImporter(false)}
+        />
+      )}
 
       {!canCreateInventory && !canUpdateInventory && !canDeleteInventory && (
         <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
@@ -806,3 +839,11 @@ export default function InventoryTab({
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(InventoryTab);

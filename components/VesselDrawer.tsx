@@ -336,7 +336,7 @@ interface VesselDrawerProps {
   canUpdateVessel?: boolean;
 }
 
-export default function VesselDrawer({
+export function VesselDrawer({
   lang,
   selectedTankId,
   vessels,
@@ -1009,3 +1009,11 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
     </AnimatePresence>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(VesselDrawer);

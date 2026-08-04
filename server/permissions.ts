@@ -156,6 +156,8 @@ const SYNC_COLLECTION_MODULES: Record<string, PermissionModule> = {
   fermlogs: 'fermentation',
   lablogs: 'lab',
   inventory: 'inventory',
+  invoiceReceipts: 'costs',
+  inventoryMovements: 'costs',
   tasks: 'tasks',
   notes: 'notes',
   blocks: 'vineyard',

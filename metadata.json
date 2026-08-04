@@ -1,6 +1,6 @@
 {
-  "name": "MaraniOS",
-  "description": "Premium vineyard and winery management platform connecting viticulture (Vazi) & winemaking (Gvino) into one unified system.",
+  "name": "VinOS",
+  "description": "VinOS is a unified vineyard and winery operating system connecting viticulture, cellar work, laboratory records, inventory, and intelligence from vine to bottle.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

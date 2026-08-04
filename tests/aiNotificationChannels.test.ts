@@ -171,7 +171,11 @@ describe('AI notification delivery channels', () => {
   });
 
   it('delivers each channel through the durable outbox adapter switch', async () => {
-    expect(await enqueueAiFindingNotifications('org-a', [finding()])).toBe(2);
+    expect(await enqueueAiFindingNotifications(
+      'org-a',
+      [finding()],
+      new Date('2026-07-31T11:00:00.000Z'),
+    )).toBe(2);
     const pushSender = vi.fn(async () => ({ delivered: 1, expired: 0 }));
     const whatsappSender = vi.fn(async () => ({ messageId: 'wamid.ai-test' }));
 

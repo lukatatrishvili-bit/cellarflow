@@ -859,6 +859,8 @@ export function getSeederData(orgId: string): UserDataState {
 
   return {
     syncDeletionLedger: [],
+    invoiceReceipts: [],
+    inventoryMovements: [],
     companyProfile: {
       companyName: 'ყვარლის სადემონსტრაციო მარანი',
       wineryName: WINERY_NAME,

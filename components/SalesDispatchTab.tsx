@@ -113,7 +113,7 @@ interface StockRow {
 
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
-export default function SalesDispatchTab({
+export function SalesDispatchTab({
   lang,
   lots,
   bottlingRuns,
@@ -1255,3 +1255,11 @@ export default function SalesDispatchTab({
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(SalesDispatchTab);

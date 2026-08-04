@@ -6,12 +6,26 @@ import type {
 import { sha256Hex } from './auditHash';
 
 export const MAX_INLINE_ATTACHMENT_BYTES = 2_500_000;
-// Total inline attachment bytes allowed per organization. Inline attachments
-// live in the whole-org JSONB blob that is fully serialized on every sync and
-// written to a single GCS object, so unbounded growth degrades every sync and
-// eventually exceeds the request body limit. Beyond this budget, large files
-// must use `external` (HTTPS link) or `metadata_only` storage instead.
-export const MAX_TOTAL_INLINE_ATTACHMENT_BYTES = 25_000_000;
+/**
+ * Total inline attachment bytes allowed per organization. Inline attachments
+ * live in the whole-org JSONB blob that is fully serialized on every sync and
+ * written to a single GCS object, so unbounded growth degrades every sync and
+ * eventually exceeds the request body limit. Beyond this budget, large files
+ * must use `external` (HTTPS link) or `metadata_only` storage instead.
+ *
+ * This budget MUST stay reachable under `MAX_SYNC_BODY_BYTES` (5 MB), otherwise
+ * the guard never fires and the body parser rejects first with a generic error.
+ * These are DECODED bytes; on the wire base64 inflates them by 4/3, so 3 MB
+ * decoded is ~4 MB of body and leaves ~1 MB for the other 33 collections.
+ * `tests/attachments.test.ts` asserts that relationship — the previous value of
+ * 25 MB was ~6.8x above the wire ceiling, which made every message below
+ * unreachable and surfaced as a bare "Sync rejected (HTTP 413)" instead.
+ *
+ * Lowering this locks nobody out: the server only rejects syncs that GROW the
+ * footprint past the cap, so an organization already above it can still delete
+ * or externalize attachments to recover.
+ */
+export const MAX_TOTAL_INLINE_ATTACHMENT_BYTES = 3_000_000;
 export const MAX_ATTACHMENT_FILENAME_CHARS = 180;
 export const SUPPORTED_ATTACHMENT_EXTENSIONS = [
   'pdf',

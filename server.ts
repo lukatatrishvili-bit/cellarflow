@@ -6,10 +6,11 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initDB, flushPendingGcsBackup } from './server/db';
 import authRouter, { orgRouter } from './server/routes/auth';
-import syncRouter from './server/routes/sync';
+import syncRouter, { MAX_SYNC_BODY_BYTES, syncBodyLimitErrorHandler } from './server/routes/sync';
 import integrationsRouter from './server/routes/integrations';
 import attachmentsRouter from './server/routes/attachments';
 import commandsRouter from './server/routes/commands';
+import exchangeRatesRouter from './server/routes/exchangeRates';
 import telemetryRouter from './server/routes/telemetry';
 import adminRouter, { seedTestUserHandler } from './server/routes/admin';
 import winemakerRouter from './server/routes/winemaker';
@@ -19,6 +20,7 @@ import terroirPulseRouter from './server/routes/terroirPulse';
 import notificationsRouter, { whatsappWebhookRouter } from './server/routes/notifications';
 import aiOperationsAdminRouter from './server/routes/aiOperationsAdmin';
 import { securityHeaders } from './server/middleware/securityHeaders';
+import { warnOnAppUrlMismatch } from './server/appUrlMismatch';
 import { demoAccountConfig } from './server/config';
 import { getServiceReadiness } from './server/readiness';
 
@@ -34,6 +36,10 @@ app.disable('x-powered-by'); // Don't advertise the framework/version.
 // spoofed to forge a fresh identity (which would defeat the login limiter).
 // If the platform adds more proxy hops, raise this to match the hop count.
 app.set('trust proxy', 1);
+// Surfaces a mapped custom domain that APP_URL has not caught up with. That
+// combination breaks OAuth sign-in and every emailed link while looking
+// completely healthy, so the server says so once per host.
+app.use(warnOnAppUrlMismatch({ isProduction: process.env.NODE_ENV === 'production' }));
 app.use(securityHeaders());
 // Meta signs the exact webhook bytes. Mount this narrow raw-body route before
 // the general JSON parser so signature verification cannot be affected by
@@ -43,6 +49,12 @@ app.use(
   express.raw({ type: 'application/json', limit: '256kb' }),
   whatsappWebhookRouter,
 );
+// Whole-state sync is the largest body this service accepts. Mount its parser
+// (and the matching error handler) before the general one so an over-limit
+// payload answers with a structured, actionable 413 instead of the parser's
+// default HTML error page. Body-parser marks the request once parsed, so the
+// general parser below is a no-op for these requests.
+app.use('/api/sync', express.json({ limit: MAX_SYNC_BODY_BYTES }), syncBodyLimitErrorHandler);
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
@@ -60,6 +72,7 @@ app.use('/api', syncRouter);
 app.use('/api/integrations', integrationsRouter);
 app.use('/api/attachments', attachmentsRouter);
 app.use('/api/commands', commandsRouter);
+app.use('/api/finance', exchangeRatesRouter);
 app.use('/api/telemetry', telemetryRouter);
 app.use('/api/admin/ai-operations', aiOperationsAdminRouter);
 app.use('/api/admin', adminRouter);

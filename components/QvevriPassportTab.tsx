@@ -164,7 +164,7 @@ function sortLogs<T extends { date: string }>(items: T[]) {
   return [...items].sort((a, b) => b.date.localeCompare(a.date));
 }
 
-export default function QvevriPassportTab({
+export function QvevriPassportTab({
   lang,
   vessels,
   lots,
@@ -645,3 +645,11 @@ function LogRow({ entry }: { entry: QvevriLogEntry }) {
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(QvevriPassportTab);

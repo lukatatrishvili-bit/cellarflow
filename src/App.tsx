@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { lazyRetry } from './lazyRetry';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Language } from '../lib/i18n';
@@ -74,10 +74,11 @@ const MarketingLanding = lazyRetry(() => import('../components/MarketingLanding'
 const RegistrationPanel = lazyRetry(() => import('../components/RegistrationExperience').then(module => ({ default: module.RegistrationPanel })));
 const SignInPanel = lazyRetry(() => import('../components/RegistrationExperience').then(module => ({ default: module.SignInPanel })));
 const WorkspaceSetupDialog = lazyRetry(() => import('../components/RegistrationExperience').then(module => ({ default: module.WorkspaceSetupDialog })));
+const StatusToastHost = lazyRetry(() => import('../components/StatusToastHost'));
+const SyncStatus = lazyRetry(() => import('../components/SyncStatus'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
-import SyncStatus from '../components/SyncStatus';
 import InstallButton from '../components/InstallButton';
 import type { WorkspaceSetupSubmission } from '../components/RegistrationExperience';
 import type {
@@ -137,6 +138,9 @@ function ModuleLoader() {
 }
 
 const PENDING_INVITATION_TOKEN_KEY = 'vinos_pending_invitation_token';
+const POST_LOGIN_RETURN_TO_KEY = 'vinos_post_login_return_to';
+const LOGIN_ROUTE = '/login';
+const DEFAULT_AUTHENTICATED_ROUTE = '/dashboard';
 
 interface InitialAuthLinkContext {
   flow: AuthAccountFlow | null;
@@ -158,17 +162,116 @@ function readInitialAuthLinkContext(): InitialAuthLinkContext {
   return parseAuthAccessLink(window.location.pathname, window.location.search, storedInvitationToken);
 }
 
+function readBrowserRoute(): string {
+  return typeof window === 'undefined'
+    ? '/'
+    : `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function clearPostLoginReturnTo(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.removeItem(POST_LOGIN_RETURN_TO_KEY);
+  } catch {
+    // Nothing else is required when storage is unavailable.
+  }
+}
+
 export default function App() {
   const state = useWineryState();
-  const isTerroirPulsePage = typeof window !== 'undefined'
-    && window.location.pathname.replace(/\/+$/, '') === '/terroir-pulse';
-  const isMarketingPage = typeof window !== 'undefined' && (
-    window.location.pathname.replace(/\/+$/, '') === '/welcome'
-    || (!state.isLoggedIn && window.location.pathname.replace(/\/+$/, '') === '')
-  );
+  const [routeRevision, setRouteRevision] = useState(0);
+  const [resolvedAuthRouteKey, setResolvedAuthRouteKey] = useState('');
+  const replaceRoute = useCallback((target: string) => {
+    if (typeof window === 'undefined') return;
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (current === target) return;
+    window.history.replaceState(window.history.state, document.title, target);
+    setRouteRevision(revision => revision + 1);
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handlePopState = () => setRouteRevision(revision => revision + 1);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+  const browserRoute = useMemo(readBrowserRoute, [routeRevision, state.isLoggedIn, state.isAuthResolved]);
+  const normalizedPathname = browserRoute.split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/';
+  const isTerroirPulsePage = normalizedPathname === '/terroir-pulse';
+  const isMarketingPage = normalizedPathname === '/welcome';
   const perf = usePerformanceManager();
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
+  // Stable identity, so ToastHost's memo actually holds across App re-renders.
+  const openSyncTroubleshooter = useCallback(() => setShowSyncTroubleshooter(true), []);
+
+  // Pulled out of `state` so the hooks below can depend on the individual
+  // setters. `useStableCallbacks` fixes each function's identity but returns a
+  // fresh container each render, so depending on `state` itself would make every
+  // callback below unstable again — exactly what these exist to prevent.
+  const {
+    setActiveModule,
+    setActiveTab,
+    setCompanyProfile,
+    setSelectedTankId,
+    setPrefilledIntakeHarvestId,
+    setPrefilledOpVesselId,
+    setPrefilledSourceId,
+    setPrefilledDestId,
+    handleAuthLogout,
+  } = state;
+
+  // Handlers passed to memoized module components. Declared inline they were
+  // allocated fresh on every App render, which defeated those components' memo
+  // entirely — the boundary paid for a prop comparison that could never pass.
+  const openOnboarding = useCallback(() => setShowOnboarding(true), []);
+  const clearIntakePrefill = useCallback(() => setPrefilledIntakeHarvestId(null), [setPrefilledIntakeHarvestId]);
+  const clearOperationPrefill = useCallback(() => setPrefilledOpVesselId(''), [setPrefilledOpVesselId]);
+  const clearTransferPrefill = useCallback(() => {
+    setPrefilledSourceId('');
+    setPrefilledDestId('');
+  }, [setPrefilledSourceId, setPrefilledDestId]);
+
+  const qvevriCount = useMemo(
+    () => state.vessels.filter(vessel => vessel.type === 'qvevri').length,
+    [state.vessels],
+  );
+
+  const closeVesselDrawer = useCallback(() => setSelectedTankId(null), [setSelectedTankId]);
+  const consumeAiFindingFocus = useCallback(() => setFocusedAiFindingId(null), []);
+  const saveAiConfig = useCallback(
+    (aiConfig: any) => setCompanyProfile((current: any) => ({ ...current, aiConfig })),
+    [setCompanyProfile],
+  );
+
+  // Findings name the module they belong to; map it onto the winery tab that
+  // actually shows that work.
+  const navigateToAiFindingModule = useCallback((targetModule: string) => {
+    const tabByModule: Record<string, string> = {
+      tasks: 'tasks',
+      labs: 'labs',
+      operations: 'operations',
+      transfers: 'transfers',
+      bottling: 'bottling',
+      inventory: 'inventory',
+      fermentation: 'fermentation',
+      calculators: 'calculators',
+      vessels: 'vessels',
+      lots: 'lots',
+    };
+    if (targetModule === 'vazi') {
+      setActiveModule('vazi');
+      return;
+    }
+    if (targetModule === 'documents' || targetModule === 'certification') {
+      setActiveModule('docs');
+      return;
+    }
+    const tab = tabByModule[targetModule];
+    if (tab) {
+      setActiveModule('gvino');
+      setActiveTab(tab);
+    }
+  }, [setActiveModule, setActiveTab]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
@@ -183,6 +286,72 @@ export default function App() {
   const activeBillingOrganizationId = state.organizations.find(organization => organization.isActive)?.id || '';
   const aiDrawerRef = useRef<HTMLDivElement | null>(null);
   useFocusTrap(aiDrawerRef, { active: isAiDrawerOpen, onClose: () => setIsAiDrawerOpen(false) });
+
+  const isCompletingInvitation = Boolean(
+    state.isLoggedIn
+    && pendingInvitationToken
+    && normalizedPathname === LOGIN_ROUTE,
+  );
+  const authRouteKey = state.isAuthResolved
+    ? `${state.isLoggedIn ? 'in' : 'out'}|${authAccountFlow || ''}|${isCompletingInvitation ? 'invite' : ''}|${browserRoute}`
+    : '';
+  const isAuthRoutePending = state.isAuthResolved && resolvedAuthRouteKey !== authRouteKey;
+
+  useEffect(() => {
+    if (!state.isAuthResolved) return;
+    if (authAccountFlow || isCompletingInvitation) {
+      setResolvedAuthRouteKey(authRouteKey);
+      return;
+    }
+
+    let cancelled = false;
+    void import('../lib/authRouting').then(({ resolveAuthRoute }) => {
+      if (cancelled) return;
+      const target = resolveAuthRoute(browserRoute, state.isLoggedIn);
+      if (!target) {
+        if (
+          state.isLoggedIn
+          && normalizedPathname === DEFAULT_AUTHENTICATED_ROUTE
+          && !state.currentUser.isMasterAdmin
+        ) setActiveModule('portal');
+        setResolvedAuthRouteKey(authRouteKey);
+        return;
+      }
+      if (
+        target.split(/[?#]/, 1)[0] === DEFAULT_AUTHENTICATED_ROUTE
+        && !state.currentUser.isMasterAdmin
+      ) setActiveModule('portal');
+      replaceRoute(target);
+    }).catch(() => {
+      if (cancelled) return;
+      const isPublic = ['/welcome', '/pricing', '/terroir-pulse', '/reset-password', '/accept-invite']
+        .includes(normalizedPathname);
+      const fallbackTarget = state.isLoggedIn
+        ? (normalizedPathname === '/' || normalizedPathname === LOGIN_ROUTE ? DEFAULT_AUTHENTICATED_ROUTE : null)
+        : (normalizedPathname === LOGIN_ROUTE || isPublic ? null : LOGIN_ROUTE);
+      if (fallbackTarget) replaceRoute(fallbackTarget);
+      else {
+        if (
+          state.isLoggedIn
+          && normalizedPathname === DEFAULT_AUTHENTICATED_ROUTE
+          && !state.currentUser.isMasterAdmin
+        ) setActiveModule('portal');
+        setResolvedAuthRouteKey(authRouteKey);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [
+    authAccountFlow,
+    authRouteKey,
+    browserRoute,
+    isCompletingInvitation,
+    normalizedPathname,
+    replaceRoute,
+    state.currentUser.isMasterAdmin,
+    state.isAuthResolved,
+    state.isLoggedIn,
+    setActiveModule,
+  ]);
 
   useEffect(() => {
     document.documentElement.lang = state.lang === 'ka' ? 'ka' : 'en';
@@ -202,8 +371,8 @@ export default function App() {
     state.setActiveTab('intelligence');
     setFocusedAiFindingId(findingId);
     url.searchParams.delete('aiFinding');
-    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
-  }, [state]);
+    replaceRoute(`${url.pathname}${url.search}${url.hash}`);
+  }, [replaceRoute, state]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !initialAuthLinkContext.flow) return;
@@ -214,12 +383,8 @@ export default function App() {
         // Continue without persistence when storage is unavailable.
       }
     }
-    window.history.replaceState(
-      {},
-      '',
-      initialAuthLinkContext.flow === 'reset-password' ? '/reset-password' : '/accept-invite',
-    );
-  }, [initialAuthLinkContext]);
+    replaceRoute(initialAuthLinkContext.flow === 'reset-password' ? '/reset-password' : '/accept-invite');
+  }, [initialAuthLinkContext, replaceRoute]);
 
   useEffect(() => {
     const organizationId = activeBillingOrganizationId;
@@ -288,7 +453,7 @@ export default function App() {
         clearPendingInvitation();
       }
     }
-    if (typeof window !== 'undefined') window.history.replaceState({}, '', '/');
+    replaceRoute(LOGIN_ROUTE);
     setAuthAccountFlow(null);
   };
 
@@ -296,15 +461,22 @@ export default function App() {
     if (notice.reason === 'authentication-required') {
       rememberInvitation(notice.invitationToken);
       setAuthAccountFlow(null);
-      if (typeof window !== 'undefined') window.history.replaceState({}, '', '/');
+      replaceRoute(LOGIN_ROUTE);
       return;
     }
     clearPendingInvitation();
     if (typeof window !== 'undefined') {
-      window.history.replaceState({}, '', '/');
-      window.setTimeout(() => window.location.assign('/'), 650);
+      replaceRoute(DEFAULT_AUTHENTICATED_ROUTE);
+      window.setTimeout(() => window.location.replace(DEFAULT_AUTHENTICATED_ROUTE), 650);
     }
   };
+
+  const handleLogout = useCallback(async () => {
+    clearPostLoginReturnTo();
+    await handleAuthLogout();
+    setActiveModule('portal');
+    replaceRoute(LOGIN_ROUTE);
+  }, [handleAuthLogout, replaceRoute, setActiveModule]);
 
   // Onboarding wizard toggling
   useEffect(() => {
@@ -836,9 +1008,8 @@ export default function App() {
   const canViewModule = (moduleId: string, tabId?: string) => (
     canViewUserDestination(state.currentUser, moduleId, tabId)
   );
-  const taskDeepLinkId = typeof window !== 'undefined'
-    && window.location.pathname.replace(/\/+$/, '') === '/tasks'
-    ? new URLSearchParams(window.location.search).get('task')?.trim() || undefined
+  const taskDeepLinkId = normalizedPathname === '/tasks'
+    ? new URLSearchParams(browserRoute.slice(browserRoute.indexOf('?'))).get('task')?.trim() || undefined
     : undefined;
   const accessibleWineryTabGroups = wineryTabGroups
     .map((group) => ({
@@ -880,6 +1051,37 @@ export default function App() {
     () => salesWorkflowPermissions(state.currentUser.role),
     [state.currentUser.role],
   );
+  // A render prop, so it needs hoisting too: recreated inline it changed identity
+  // on every App render and TanksVessels never got to skip one. Declared here
+  // rather than with the other callbacks because it reads `cellarPermissions`.
+  const renderQvevriRecords = useCallback(
+    (onBackToVessels: () => void, focusedVesselId?: string | null) => (
+      <QvevriPassportTab
+        embedded
+        onBackToVessels={onBackToVessels}
+        activeVesselId={focusedVesselId}
+        lang={state.lang}
+        vessels={state.vessels}
+        lots={state.lots}
+        fermentationLogs={state.fermLogs}
+        cellarOps={state.cellarOps}
+        certificationRecords={state.certificationRecords}
+        onUpdateVessels={state.setVessels}
+        canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
+        setActiveTab={state.setActiveTab}
+        setSelectedTankId={state.setSelectedTankId}
+        setToastMessage={state.setToastMessage}
+        currentUserName={state.currentUser.fullName}
+      />
+    ),
+    [
+      state.lang, state.vessels, state.lots, state.fermLogs, state.cellarOps,
+      state.certificationRecords, state.setVessels, state.setActiveTab,
+      state.setSelectedTankId, state.setToastMessage, state.currentUser.fullName,
+      cellarPermissions.vessels.canUpdateVessel,
+    ],
+  );
+
   const activePermissionModule = permissionModuleFor(state.activeModule, state.activeTab);
   const canManageCurrentArea = canAccess(state.currentUser.role, activePermissionModule, 'create')
     || canAccess(state.currentUser.role, activePermissionModule, 'update');
@@ -1001,7 +1203,7 @@ export default function App() {
   // hook (as this block previously did, ahead of the module-access useEffect)
   // triggers "Rendered more hooks than during the previous render" once
   // isClient flips true and the extra hooks suddenly run.
-  if (!state.isClient) {
+  if (!state.isClient || !state.isAuthResolved || isAuthRoutePending) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#FAF8F5] text-[#2c241e]">
         <Loader2 className="w-10 h-10 animate-spin text-emerald-800 mb-2" />
@@ -1010,7 +1212,7 @@ export default function App() {
     );
   }
 
-  if (typeof window !== 'undefined' && window.location.pathname === '/pricing') {
+  if (normalizedPathname === '/pricing') {
     return (
       <Suspense fallback={<ModuleLoader />}>
         <PricingPage
@@ -1114,38 +1316,12 @@ export default function App() {
       {/* Keep the expressive backdrop for entry screens; the working app stays quiet. */}
       {!state.isLoggedIn && <AuroraBackdrop variant="rich" shouldReduceMotion={perf.shouldReduceMotion} />}
 
-      {/* Dynamic Toast Alerts instead of blocking alerts inside nested components */}
-      {state.toastMessage && (() => {
-        const isSyncIssue = typeof state.toastMessage === 'string' && (
-          state.toastMessage.includes('Sync conflict') ||
-          state.toastMessage.includes('Sync rejected') ||
-          state.toastMessage.includes('rejected') ||
-          state.toastMessage.includes('კონფლიქტი') ||
-          state.toastMessage.includes('უარყოფილია')
-        );
-        return (
-          <motion.div
-            initial={{ opacity: 0, y: -16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -16, scale: 0.96 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 28 }}
-            className="fixed top-20 right-6 z-50 bg-[#4e0e15] border border-[#801323] text-amber-100 rounded-xl px-4 py-2.5 shadow-lg font-bold text-xs flex items-center gap-3 elev-float"
-          >
-            <div className="flex items-center gap-2">
-              <Wine className="h-4 w-4" aria-hidden="true" />
-              <span>{state.toastMessage}</span>
-            </div>
-            {isSyncIssue && (
-              <button
-                onClick={() => setShowSyncTroubleshooter(true)}
-                className="ml-2 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-[#4e0e15] rounded-lg text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-              >
-                ⚡ {state.lang === 'ka' ? 'მოგვარება' : 'Trace & Fix'}
-              </button>
-            )}
-          </motion.div>
-        );
-      })()}
+      {/* Dynamic Toast Alerts instead of blocking alerts inside nested components.
+          Subscribes to the toast context on its own so a raise/dismiss does not
+          re-render this shell or the open module. */}
+      <Suspense fallback={null}>
+        <StatusToastHost lang={state.lang} onTroubleshoot={openSyncTroubleshooter} />
+      </Suspense>
 
       {/* Lot Passport — traceability report modal */}
       {state.passportLotId && (() => {
@@ -1380,7 +1556,9 @@ export default function App() {
 
         {/* RIGHT — status, search, notifications, settings, logout */}
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
-          {!isTerroirPulsePage && !state.currentUser.isMasterAdmin && <SyncStatus lang={state.lang} />}
+          {!isTerroirPulsePage && !state.currentUser.isMasterAdmin && (
+            <Suspense fallback={null}><SyncStatus lang={state.lang} /></Suspense>
+          )}
 
           {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
             <button
@@ -1502,10 +1680,7 @@ export default function App() {
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => {
-                  state.handleAuthLogout();
-                  state.setActiveModule('portal');
-                }}
+                onClick={() => { void handleLogout(); }}
                 aria-label={state.lang === 'ka' ? 'გამოსვლა' : 'Log Out'}
                 className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl border border-stone-200 bg-[#faf8f6] p-0 text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#801323] shadow-2xs transition-all duration-150 hover:bg-rose-50/50 sm:min-h-0 sm:min-w-0 sm:px-3 sm:py-2 dark:bg-stone-900 dark:border-stone-800 dark:text-rose-300"
                 title={state.lang === 'ka' ? 'გამოსვლა' : 'Log Out'}
@@ -1580,23 +1755,36 @@ export default function App() {
                     <MailCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
                     <div className="min-w-0">
                       <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
-                        {state.lang === 'ka' ? 'დაადასტურეთ ელფოსტა' : 'Verify your email'}
+                        {state.verificationPending.approvalOnly
+                          ? (state.lang === 'ka' ? 'ანგარიში დასამტკიცებელია' : 'Waiting for approval')
+                          : (state.lang === 'ka' ? 'დაადასტურეთ ელფოსტა' : 'Verify your email')}
                       </h3>
-                      <p className="text-[12px] text-amber-800/90 mt-0.5 dark:text-amber-200/80">
-                        {state.lang === 'ka'
-                          ? 'გამოგიგზავნეთ დადასტურების ბმული მისამართზე '
-                          : 'We sent a confirmation link to '}
-                        <strong className="break-all">{state.verificationPending.email}</strong>
-                        {state.lang === 'ka' ? '. გახსენით ბმული ანგარიშის გასააქტიურებლად.' : '. Open it to activate your account.'}
-                      </p>
+                      {!state.verificationPending.approvalOnly && (
+                        <p className="text-[12px] text-amber-800/90 mt-0.5 dark:text-amber-200/80">
+                          {state.lang === 'ka'
+                            ? 'გამოგიგზავნეთ დადასტურების ბმული მისამართზე '
+                            : 'We sent a confirmation link to '}
+                          <strong className="break-all">{state.verificationPending.email}</strong>
+                          {state.lang === 'ka' ? '. გახსენით ბმული ანგარიშის გასააქტიურებლად.' : '. Open it to activate your account.'}
+                        </p>
+                      )}
+                      {state.verificationPending.requiresApproval && (
+                        <p className="text-[12px] text-amber-800/90 mt-1.5 dark:text-amber-200/80">
+                          {state.lang === 'ka'
+                            ? 'თქვენი მოთხოვნა გადაეგზავნა ადმინისტრატორს. შესვლა შესაძლებელი იქნება დამტკიცების შემდეგ — შეტყობინებას ელფოსტაზე მიიღებთ.'
+                            : 'Your request was sent to the administrator for approval. Sign-in unlocks once it is approved — we will email you either way.'}
+                        </p>
+                      )}
                       <div className="flex flex-wrap items-center gap-3 mt-2.5">
-                        <button
-                          type="button"
-                          onClick={() => state.handleResendVerification(state.verificationPending!.email)}
-                          className="text-[11px] font-bold uppercase tracking-wide text-amber-900 bg-amber-200/70 hover:bg-amber-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors"
-                        >
-                          {state.lang === 'ka' ? 'ხელახლა გაგზავნა' : 'Resend link'}
-                        </button>
+                        {!state.verificationPending.approvalOnly && (
+                          <button
+                            type="button"
+                            onClick={() => state.handleResendVerification(state.verificationPending!.email)}
+                            className="text-[11px] font-bold uppercase tracking-wide text-amber-900 bg-amber-200/70 hover:bg-amber-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors"
+                          >
+                            {state.lang === 'ka' ? 'ხელახლა გაგზავნა' : 'Resend link'}
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => state.setVerificationPending(null)}
@@ -1611,6 +1799,14 @@ export default function App() {
                           className="block mt-2.5 text-[10px] font-mono text-amber-700 underline break-all"
                         >
                           {state.lang === 'ka' ? 'დეველოპერ ბმული: ' : 'Dev link: '}{state.verificationPending.devVerifyUrl}
+                        </a>
+                      )}
+                      {state.verificationPending.devApprovalUrl && (
+                        <a
+                          href={state.verificationPending.devApprovalUrl}
+                          className="block mt-1.5 text-[10px] font-mono text-amber-700 underline break-all"
+                        >
+                          {state.lang === 'ka' ? 'დეველოპერ დამტკიცება: ' : 'Dev approval link: '}{state.verificationPending.devApprovalUrl}
                         </a>
                       )}
                     </div>
@@ -1690,7 +1886,14 @@ export default function App() {
                       setAuthSubmitting(true);
                       try {
                         const success = await state.handleDemoLogin();
-                        if (success) state.setActiveModule('portal');
+                        if (success) {
+                          if (pendingInvitationToken) {
+                            setAuthAccountFlow('accept-invite');
+                            replaceRoute('/accept-invite');
+                          } else {
+                            state.setActiveModule('portal');
+                          }
+                        }
                       } finally {
                         setAuthSubmitting(false);
                       }
@@ -1707,6 +1910,7 @@ export default function App() {
                         if (success) {
                           if (pendingInvitationToken) {
                             setAuthAccountFlow('accept-invite');
+                            replaceRoute('/accept-invite');
                           } else {
                             state.setActiveModule('portal');
                           }
@@ -1726,7 +1930,7 @@ export default function App() {
           <MasterAdminPortal
             lang={state.lang}
             currentUser={state.currentUser}
-            onClose={() => { void state.handleAuthLogout(); }}
+            onClose={() => { void handleLogout(); }}
             setToastMessage={state.setToastMessage}
           />
         </Suspense>
@@ -1798,7 +2002,7 @@ export default function App() {
             onToggleTaskStatus={state.handleToggleTaskStatus}
             setActiveModule={state.setActiveModule}
             setActiveTab={state.setActiveTab}
-            onOpenOnboarding={() => setShowOnboarding(true)}
+            onOpenOnboarding={openOnboarding}
           />
         </Suspense>
       ) : state.activeModule === 'integrations' ? (
@@ -2161,13 +2365,11 @@ export default function App() {
                   aiConfig={state.companyProfile.aiConfig}
                   canConfigure={canAccess(state.currentUser.role, 'company_profile', 'update')}
                   canReview={canAccess(state.currentUser.role, 'tasks', 'update')}
-                  onConfigSaved={(aiConfig) => {
-                    state.setCompanyProfile((current) => ({ ...current, aiConfig }));
-                  }}
+                  onConfigSaved={saveAiConfig}
                   data={intelligenceData}
                   findings={intelligenceFindings}
                   focusFindingId={focusedAiFindingId}
-                  onFocusConsumed={() => setFocusedAiFindingId(null)}
+                  onFocusConsumed={consumeAiFindingFocus}
                   onCreateTask={canAccess(state.currentUser.role, 'tasks', 'create')
                     ? (title, priority, dueDate, description) => {
                       state.handleAddNewTask(title, priority, dueDate, description);
@@ -2176,35 +2378,7 @@ export default function App() {
                   onSaveDraftActions={canAccess(state.currentUser.role, 'tasks', 'create')
                     ? state.handleSaveAiDraftActions
                     : undefined}
-                  onNavigate={(targetModule) => {
-                    // Findings name the module they belong to; map it onto the
-                    // winery tab that actually shows that work.
-                    const tabByModule: Record<string, string> = {
-                      tasks: 'tasks',
-                      labs: 'labs',
-                      operations: 'operations',
-                      transfers: 'transfers',
-                      bottling: 'bottling',
-                      inventory: 'inventory',
-                      fermentation: 'fermentation',
-                      calculators: 'calculators',
-                      vessels: 'vessels',
-                      lots: 'lots',
-                    };
-                    if (targetModule === 'vazi') {
-                      state.setActiveModule('vazi');
-                      return;
-                    }
-                    if (targetModule === 'documents' || targetModule === 'certification') {
-                      state.setActiveModule('docs');
-                      return;
-                    }
-                    const tab = tabByModule[targetModule];
-                    if (tab) {
-                      state.setActiveModule('gvino');
-                      state.setActiveTab(tab);
-                    }
-                  }}
+                  onNavigate={navigateToAiFindingModule}
                   setToastMessage={state.setToastMessage}
                 />
               </Suspense>
@@ -2223,26 +2397,8 @@ export default function App() {
                   onSelectTank={state.setSelectedTankId}
                   selectedTankId={state.selectedTankId}
                   setActiveTab={state.setActiveTab}
-                  qvevriCount={state.vessels.filter(vessel => vessel.type === 'qvevri').length}
-                  renderQvevriRecords={(onBackToVessels, focusedVesselId) => (
-                    <QvevriPassportTab
-                      embedded
-                      onBackToVessels={onBackToVessels}
-                      activeVesselId={focusedVesselId}
-                      lang={state.lang}
-                      vessels={state.vessels}
-                      lots={state.lots}
-                      fermentationLogs={state.fermLogs}
-                      cellarOps={state.cellarOps}
-                      certificationRecords={state.certificationRecords}
-                      onUpdateVessels={state.setVessels}
-                      canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
-                      setActiveTab={state.setActiveTab}
-                      setSelectedTankId={state.setSelectedTankId}
-                      setToastMessage={state.setToastMessage}
-                      currentUserName={state.currentUser.fullName}
-                    />
-                  )}
+                  qvevriCount={qvevriCount}
+                  renderQvevriRecords={renderQvevriRecords}
                 />
               </div>
             )}
@@ -2271,7 +2427,7 @@ export default function App() {
                 onUpdateAuditLogs={state.setAuditLogs}
                 onApplyHarvestIntakeCommandResponse={state.applyHarvestIntakeCommandResponse}
                 prefilledHarvestRecordId={state.prefilledIntakeHarvestId}
-                onPrefillConsumed={() => state.setPrefilledIntakeHarvestId(null)}
+                onPrefillConsumed={clearIntakePrefill}
                 {...cellarPermissions.intake}
                 setActiveTab={state.setActiveTab}
                 setToastMessage={state.setToastMessage}
@@ -2345,7 +2501,7 @@ export default function App() {
                 onUpdateAuditLogs={state.setAuditLogs}
                 onApplyCellarOperationCommandResponse={state.applyCellarOperationCommandResponse}
                 prefillVesselId={state.prefilledOpVesselId}
-                clearPrefill={() => state.setPrefilledOpVesselId('')}
+                clearPrefill={clearOperationPrefill}
                 {...cellarPermissions.operations}
                 setToastMessage={state.setToastMessage}
               />
@@ -2371,10 +2527,7 @@ export default function App() {
                 onUpdateCostEntries={state.setCostEntries}
                 onApplyTransferCommandResponse={state.applyTransferCommandResponse}
                 onApplyTransferReversalCommandResponse={state.applyTransferReversalCommandResponse}
-                clearPrefilled={() => {
-                  state.setPrefilledSourceId('');
-                  state.setPrefilledDestId('');
-                }}
+                clearPrefilled={clearTransferPrefill}
               />
             )}
 
@@ -2488,6 +2641,9 @@ export default function App() {
                 canCreateInventory={canAccess(state.currentUser.role, 'inventory', 'create')}
                 canUpdateInventory={canAccess(state.currentUser.role, 'inventory', 'update')}
                 canDeleteInventory={canAccess(state.currentUser.role, 'inventory', 'delete')}
+                canPostInvoiceCosts={canAccess(state.currentUser.role, 'costs', 'create')}
+                accountingCurrency={state.companyProfile.currency || 'GEL'}
+                onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
               />
             )}
 
@@ -2588,7 +2744,7 @@ export default function App() {
           lang={state.lang}
           error={state.workspaceHydrationError}
           onReload={() => window.location.reload()}
-          onLogout={state.handleAuthLogout}
+          onLogout={handleLogout}
         />
       )}
 
@@ -2694,7 +2850,7 @@ export default function App() {
             vessels={state.vessels}
             lots={state.lots}
             fermLogs={state.fermLogs}
-            onClose={() => state.setSelectedTankId(null)}
+            onClose={closeVesselDrawer}
             onAdjustTargetTemp={state.handleAdjustTargetTemp}
             onToggleSanitation={state.handleToggleSanitation}
             onToggleCoolingJacket={state.handleToggleCoolingJacket}

@@ -217,7 +217,7 @@ function hydrateWireFinding(row: any): AiFindingRecord | null {
  * consulted only to persist review decisions, run model analysis, and answer
  * questions about the winery's own records.
  */
-export default function AiIntelligenceTab({
+export function AiIntelligenceTab({
   lang,
   role,
   data,
@@ -1816,3 +1816,11 @@ function AiKnowledgeManager({ lang }: { lang: Language }) {
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(AiIntelligenceTab);

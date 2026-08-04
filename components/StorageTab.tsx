@@ -122,7 +122,7 @@ const movementDeletionReason = (blockers: StorageMovementDeletionBlockers, ka: b
     : `Deletion would leave ${blockers.remainingOnHandBottles.toLocaleString()} bottles for ${blockers.reservedBottles.toLocaleString()} reserved. Move or cancel the reservations first.`;
 };
 
-export default function StorageTab({
+export function StorageTab({
   lang,
   lots,
   bottlingRuns,
@@ -861,3 +861,11 @@ export default function StorageTab({
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(StorageTab);

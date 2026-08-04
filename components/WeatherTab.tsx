@@ -272,7 +272,7 @@ function getPowderyDirective(risk: number, lang: string): string {
     : "Low threat. Safe weather windows. No immediate spray required. Continue routine monitoring.";
 }
 
-export default function WeatherTab({
+export function WeatherTab({
   lang,
   blocks,
   setActiveModule,
@@ -2004,3 +2004,11 @@ Avoid preamble or general fluff, respond with scientific precision in a highly-s
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(WeatherTab);

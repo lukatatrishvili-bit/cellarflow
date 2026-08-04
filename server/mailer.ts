@@ -72,6 +72,15 @@ export async function sendMail(msg: MailMessage): Promise<MailResult> {
   return { delivered: false, transport: 'console' };
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function buildVerificationEmail(opts: {
   to: string; link: string; lang?: string; wineryName?: string;
 }): MailMessage {
@@ -174,6 +183,152 @@ export function buildResetPasswordEmail(opts: {
         </div>
         <div style="background-color: #f6f3f0; padding: 24px 32px; text-align: center; font-size: 12px; color: #8c7f7e; border-top: 1px solid #ebdcd0;">
           <strong>${brand} Winery &amp; Vineyard Platform</strong><br />
+          <span style="color: #a39695;">Operational Control Loop • Offline-capable Traceability</span>
+        </div>
+      </div>
+    </div>
+  `;
+  return { to: opts.to, subject, text, html };
+}
+
+/**
+ * Operator-facing notice that somebody asked for an account. Written in English
+ * because it goes to the deployment's own mailbox, not to the applicant, and it
+ * carries every detail needed to decide without opening the console.
+ */
+export function buildRegistrationApprovalRequestEmail(opts: {
+  to: string;
+  applicant: {
+    fullName: string;
+    email: string;
+    username: string;
+    phone?: string;
+    companyName?: string;
+    wineryName?: string;
+    country?: string;
+    region?: string;
+    language?: string;
+    provider?: 'password' | 'google';
+  };
+  reviewLink: string;
+  brand?: string;
+}): MailMessage {
+  const brand = opts.brand || 'VinOS';
+  const applicant = opts.applicant;
+  const location = [applicant.region, applicant.country].filter(Boolean).join(', ');
+  const subject = `${brand} — account request from ${applicant.fullName || applicant.email}`;
+
+  const allRows: Array<[string, string]> = [
+    ['Full name', applicant.fullName || '—'],
+    ['Email', applicant.email],
+    ['Account', `@${applicant.username}`],
+    ['Company / estate', applicant.companyName || '—'],
+    ['Winery', applicant.wineryName || ''],
+    ['Region', location],
+    ['Phone', applicant.phone || ''],
+    ['Sign-in method', applicant.provider === 'google' ? 'Google' : 'Email + passcode'],
+    ['Language', applicant.language === 'ka' ? 'Georgian' : 'English'],
+  ];
+  const rows = allRows.filter(([, value]) => Boolean(value));
+
+  const text = `${applicant.fullName || applicant.email} requested access to ${brand}.\n\n`
+    + rows.map(([label, value]) => `${label}: ${value}`).join('\n')
+    + `\n\nNobody can sign in to this account until you approve it. Open the review page to approve or reject:\n${opts.reviewLink}\n\nThe link is valid for 14 days. You can also decide from the master admin console at any time.`;
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fcfbfa; padding: 40px 20px; color: #2c221e; line-height: 1.6; margin: 0;">
+      <div style="max-width: 540px; margin: 0 auto; background: #ffffff; border: 1px solid #ebdcd0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(78,14,21,0.03);">
+        <div style="background-color: #4e0e15; padding: 32px; text-align: center;">
+          <span style="font-family: Georgia, serif; font-size: 28px; font-weight: bold; color: #ffffff; letter-spacing: 0.15em;">${escapeHtml(brand)}</span>
+        </div>
+        <div style="padding: 40px 32px;">
+          <h2 style="font-family: Georgia, serif; color: #4e0e15; font-size: 20px; margin-top: 0; margin-bottom: 16px; font-weight: 600;">New account request</h2>
+          <p style="font-size: 15px; margin-bottom: 24px; color: #4a3e3d;">
+            <strong>${escapeHtml(applicant.fullName || applicant.email)}</strong> asked for access to ${escapeHtml(brand)}.
+            The account is locked until you approve it.
+          </p>
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 28px;">
+            ${rows.map(([label, value]) => `
+            <tr>
+              <td style="padding: 7px 0; color: #8c7f7e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; vertical-align: top; width: 40%;">${escapeHtml(label)}</td>
+              <td style="padding: 7px 0; color: #2c221e; word-break: break-word;">${escapeHtml(value)}</td>
+            </tr>`).join('')}
+          </table>
+          <div style="text-align: center; margin: 32px 0;">
+            <a href="${escapeHtml(opts.reviewLink)}" style="display: inline-block; background-color: #4e0e15; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 15px; letter-spacing: 0.05em; box-shadow: 0 4px 6px rgba(78,14,21,0.15);">
+              Review this request
+            </a>
+          </div>
+          <p style="font-size: 13px; color: #8c7f7e; margin-bottom: 0;">
+            The review page shows the request and asks you to approve or reject it — opening the link alone changes nothing.
+            It stays valid for 14 days; after that, decide from the master admin console.
+          </p>
+          <hr style="border: none; border-top: 1px solid #ebdcd0; margin: 32px 0;" />
+          <p style="font-size: 12px; color: #a39695; line-height: 1.5; margin: 0;">
+            If the button above doesn't work, copy and paste this URL into your browser:
+            <br />
+            <a href="${escapeHtml(opts.reviewLink)}" style="color: #4e0e15; text-decoration: underline; word-break: break-all;">${escapeHtml(opts.reviewLink)}</a>
+          </p>
+        </div>
+        <div style="background-color: #f6f3f0; padding: 24px 32px; text-align: center; font-size: 12px; color: #8c7f7e; border-top: 1px solid #ebdcd0;">
+          <strong>${escapeHtml(brand)} Winery &amp; Vineyard Platform</strong><br />
+          <span style="color: #a39695;">Access control • Manual account approval</span>
+        </div>
+      </div>
+    </div>
+  `;
+  return { to: opts.to, subject, text, html };
+}
+
+/** Tells the applicant what an operator decided about their account request. */
+export function buildRegistrationDecisionEmail(opts: {
+  to: string;
+  approved: boolean;
+  fullName?: string;
+  link: string;
+  lang?: string;
+  wineryName?: string;
+}): MailMessage {
+  const ka = opts.lang === 'ka';
+  const brand = opts.wineryName || 'VinOS';
+  const greetingName = opts.fullName ? `${opts.fullName}` : '';
+  const subject = opts.approved
+    ? (ka ? `${brand} — თქვენი ანგარიში დამტკიცებულია` : `${brand} — your account is approved`)
+    : (ka ? `${brand} — ანგარიშის მოთხოვნა არ დამტკიცდა` : `${brand} — your account request was not approved`);
+
+  const headline = opts.approved
+    ? (ka ? 'ანგარიში დამტკიცებულია' : 'Your account is approved')
+    : (ka ? 'ანგარიში არ დამტკიცდა' : 'Account request declined');
+
+  const body = opts.approved
+    ? (ka
+      ? `თქვენი ${brand}-ის ანგარიში დამტკიცდა. შესვლამდე დარწმუნდით, რომ დაადასტურეთ ელფოსტა გამოგზავნილი ბმულით.`
+      : `Your ${brand} account has been approved. If you have not confirmed your email address yet, open the verification link we sent you first.`)
+    : (ka
+      ? `სამწუხაროდ, თქვენი ${brand}-ის ანგარიშის მოთხოვნა არ დამტკიცდა. თუ ფიქრობთ, რომ ეს შეცდომაა, უპასუხეთ ამ წერილს.`
+      : `Your request for a ${brand} account was not approved. If you believe this is a mistake, reply to this message and we will take another look.`);
+
+  const text = `${greetingName ? `${greetingName},\n\n` : ''}${body}${opts.approved ? `\n\nSign in: ${opts.link}` : ''}\n`;
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fcfbfa; padding: 40px 20px; color: #2c221e; line-height: 1.6; margin: 0;">
+      <div style="max-width: 540px; margin: 0 auto; background: #ffffff; border: 1px solid #ebdcd0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(78,14,21,0.03);">
+        <div style="background-color: #4e0e15; padding: 32px; text-align: center;">
+          <span style="font-family: Georgia, serif; font-size: 28px; font-weight: bold; color: #ffffff; letter-spacing: 0.15em;">${escapeHtml(brand)}</span>
+        </div>
+        <div style="padding: 40px 32px;">
+          <h2 style="font-family: Georgia, serif; color: #4e0e15; font-size: 20px; margin-top: 0; margin-bottom: 16px; font-weight: 600;">${escapeHtml(headline)}</h2>
+          ${greetingName ? `<p style="font-size: 15px; margin-bottom: 8px; color: #4a3e3d;">${escapeHtml(greetingName)},</p>` : ''}
+          <p style="font-size: 15px; margin-bottom: 24px; color: #4a3e3d;">${escapeHtml(body)}</p>
+          ${opts.approved ? `
+          <div style="text-align: center; margin: 32px 0;">
+            <a href="${escapeHtml(opts.link)}" style="display: inline-block; background-color: #4e0e15; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 15px; letter-spacing: 0.05em; box-shadow: 0 4px 6px rgba(78,14,21,0.15);">
+              ${ka ? 'შესვლა' : 'Sign in'}
+            </a>
+          </div>` : ''}
+        </div>
+        <div style="background-color: #f6f3f0; padding: 24px 32px; text-align: center; font-size: 12px; color: #8c7f7e; border-top: 1px solid #ebdcd0;">
+          <strong>${escapeHtml(brand)} Winery &amp; Vineyard Platform</strong><br />
           <span style="color: #a39695;">Operational Control Loop • Offline-capable Traceability</span>
         </div>
       </div>

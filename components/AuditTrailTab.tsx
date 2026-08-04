@@ -18,7 +18,7 @@ const csvCell = (value: unknown) => {
   return `"${text.replace(/"/g, '""')}"`;
 };
 
-export default function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
+export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
   const t = translations[lang];
   const [searchTerm, setSearchTerm] = useState('');
   const [moduleFilter, setModuleFilter] = useState<ModuleFilter>('all');
@@ -333,3 +333,11 @@ export default function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(AuditTrailTab);

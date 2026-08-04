@@ -41,7 +41,7 @@ const SOURCE_RULES_KA: Record<IntegrationSyncDomain, SourceRuleText> = {
   products: {
     cellarFlowOwns: ['ღვინის პარტიის იდენტობა', 'ჯიში', 'მოსავლის წელი', 'მარნის ეტაპი', 'ინვენტარის პროდუქტების ხარჯვა'],
     externalOwns: ['ოფიციალური ნომენკლატურის კოდი', 'სააღრიცხვო კატეგორია', 'საგადასახადო კლასი'],
-    notes: 'CellarFlow ახდენს ოპერაციული პროდუქტების ექსპორტს. 1C-ს შეუძლია დააბრუნოს ოფიციალური ნომენკლატურის ID-ები და საგადასახადო/სააღრიცხვო ატრიბუტები.',
+    notes: 'VinOS ახდენს ოპერაციული პროდუქტების ექსპორტს. 1C-ს შეუძლია დააბრუნოს ოფიციალური ნომენკლატურის ID-ები და საგადასახადო/სააღრიცხვო ატრიბუტები.',
   },
   customers: {
     cellarFlowOwns: ['გაყიდვების ჩანაწერებში დაფიქსირებული კლიენტის სახელი'],
@@ -61,7 +61,7 @@ const SOURCE_RULES_KA: Record<IntegrationSyncDomain, SourceRuleText> = {
   sales_orders: {
     cellarFlowOwns: ['ჯავშანი', 'შესრულების ბმული', 'პარტია', 'ლოკაცია', 'გატანის მოთხოვნილი თარიღი'],
     externalOwns: ['ოფიციალური შეკვეთის ნომერი', 'სააღრიცხვო სტატუსი', 'საგადასახადო ველები'],
-    notes: 'CellarFlow რჩება შეკვეთების ოპერაციულ წყაროდ; 1C აბრუნებს სააღრიცხვო იდენტიფიკატორებს.',
+    notes: 'VinOS რჩება შეკვეთების ოპერაციულ წყაროდ; 1C აბრუნებს სააღრიცხვო იდენტიფიკატორებს.',
   },
   supplier_payments: {
     cellarFlowOwns: ['გადახდის განზრახვა / ოპერაციული შენიშვნა', 'მომწოდებელთან ანგარიშსწორების კონტექსტი'],
@@ -92,7 +92,7 @@ export function sourceOfTruthDisplay(rule: SourceOfTruthRule, lang: Language): S
 const CONNECTOR_SETTINGS_KA: Record<string, { requiredSettings: string[]; optionalSettings: string[] }> = {
   one_c_accounting: {
     requiredSettings: ['Endpoint URL ან გაცვლის საქაღალდის მისამართი', 'ავთენტიფიკაციის რეჟიმი'],
-    optionalSettings: ['მომხმარებლის სახელი', '1C ბაზის სახელი', 'საიდუმლო, რომელიც CellarFlow-ის გარეთ იმართება'],
+    optionalSettings: ['მომხმარებლის სახელი', '1C ბაზის სახელი', 'საიდუმლო, რომელიც VinOS-ის გარეთ იმართება'],
   },
 };
 

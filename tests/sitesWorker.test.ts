@@ -12,6 +12,7 @@ afterEach(() => {
 describe('Sites deployment worker', () => {
   it('requires an HTTPS backend origin', () => {
     expect(backendOrigin({ BACKEND_ORIGIN: 'https://api.example.com/' })).toBe('https://api.example.com');
+    expect(() => backendOrigin({})).toThrow(/must be configured/i);
     expect(() => backendOrigin({ BACKEND_ORIGIN: 'http://api.example.com' })).toThrow(/HTTPS/);
   });
 

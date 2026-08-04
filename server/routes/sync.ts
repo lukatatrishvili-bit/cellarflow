@@ -45,14 +45,56 @@ import {
   type PermissionAction,
   type PermissionModule,
 } from '../permissions';
+import { assessFootprintPressure, measureStateFootprint } from '../../lib/retention';
 import { recordSyncOperationalMetric } from '../operationalTelemetry';
 import { organizationHasFeature, recordProductionUsage } from '../billing/service';
 
 const router = express.Router();
 
+/**
+ * Byte ceiling for a whole-state sync body.
+ *
+ * This is the FIRST limit a growing workspace meets — it binds long before the
+ * record ceilings below, because the body parser rejects on wire bytes while
+ * those count entities. It is deliberately the same 5 MB the global parser
+ * uses; the point of naming it here is that `/api/sync` mounts its own parser
+ * so an over-limit body produces a structured, actionable 413 instead of the
+ * body parser's raw HTML error (which the client could only surface as a bare
+ * "Sync rejected (HTTP 413)").
+ *
+ * Keep it aligned with the Cloud Run memory allocation: the raw body, its
+ * parsed object graph, and the merged candidate document are all resident at
+ * once during a sync.
+ */
+export const MAX_SYNC_BODY_BYTES = 5_000_000;
+
 export const MAX_SYNC_RECORDS_PER_COLLECTION = 20_000;
 export const MAX_SYNC_TOTAL_RECORDS = 75_000;
 export const MAX_SYNC_TOMBSTONES = 20_000;
+
+/**
+ * Convert the body parser's `entity.too.large` into the same structured shape
+ * the in-route limit errors use, so `lib/syncQueue` can read `code`/`error`
+ * from JSON rather than failing `res.json()` on an HTML error page.
+ *
+ * The offline path is what makes this matter: attachments are added inline and
+ * only offloaded to object storage once a request succeeds, so a tablet that
+ * spends a day offline can accumulate several inline blobs and then breach the
+ * ceiling on its first reconnect — precisely when a silent failure is worst.
+ */
+export function syncBodyLimitErrorHandler(
+  err: any,
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  if (err?.type !== 'entity.too.large') return next(err);
+  const capMb = (MAX_SYNC_BODY_BYTES / 1_000_000).toFixed(0);
+  return res.status(413).json({
+    code: 'sync_payload_too_large',
+    error: `This workspace's pending changes exceed the ${capMb} MB sync limit. Large files attached while offline are the usual cause: stay connected so attachments upload to file storage, or remove them and re-attach as an external link. No changes were lost — they remain on this device for retry.`,
+  });
+}
 
 export class SyncPayloadLimitError extends Error {
   constructor(
@@ -871,6 +913,16 @@ export function validateSyncPayload(
           throw new Error(`Immutable Cost Ledger: command-created entry ${cost.id} cannot be deleted.`);
         }
       }
+
+      for (const receipt of mergedCollection('invoiceReceipts')) {
+        if (!receipt?.id || !isDeleted('invoiceReceipts', receipt.id)) continue;
+        throw new Error(`Immutable Invoice Receipt Ledger: receipt ${receipt.id} cannot be deleted; post a reversal.`);
+      }
+
+      for (const movement of mergedCollection('inventoryMovements')) {
+        if (!movement?.id || !isDeleted('inventoryMovements', movement.id)) continue;
+        throw new Error(`Immutable Inventory Movement Ledger: movement ${movement.id} cannot be deleted.`);
+      }
     }
 
     const effectiveTransfers = effectiveCollection('transfers');
@@ -1153,6 +1205,62 @@ export function validateSyncPayload(
             }
             if (item.costPerUnit !== undefined && (typeof item.costPerUnit !== 'number' || item.costPerUnit < 0)) {
               throw new Error(`Inventory item ${item.id} costPerUnit cannot be negative.`);
+            }
+            if (item.costCurrency !== undefined && !['GEL', 'EUR', 'USD'].includes(item.costCurrency)) {
+              throw new Error(`Inventory item ${item.id} costCurrency must be GEL, EUR, or USD.`);
+            }
+            if (item.activeIngredients !== undefined && (
+              !Array.isArray(item.activeIngredients)
+              || item.activeIngredients.length > 20
+              || item.activeIngredients.some((value: unknown) => typeof value !== 'string' || value.length > 240)
+            )) {
+              throw new Error(`Inventory item ${item.id} activeIngredients is invalid.`);
+            }
+            for (const sourceField of ['productSourceUrls', 'officialSourceUrls']) {
+              const urls = item[sourceField];
+              if (urls === undefined) continue;
+              if (
+                !Array.isArray(urls)
+                || urls.length > 20
+                || urls.some((url: unknown) => typeof url !== 'string' || url.length > 2_000 || !/^https:\/\//i.test(url))
+              ) {
+                throw new Error(`Inventory item ${item.id} ${sourceField} is invalid.`);
+              }
+            }
+            if (item.lastInvoiceReceipt !== undefined) {
+              const receipt = item.lastInvoiceReceipt;
+              if (!receipt || typeof receipt !== 'object') {
+                throw new Error(`Inventory item ${item.id} lastInvoiceReceipt is invalid.`);
+              }
+              for (const field of ['quantity', 'unitCost', 'lineTotal', 'sourceUnitCost', 'sourceLineTotal', 'exchangeRate']) {
+                if (
+                  receipt[field] !== undefined
+                  && (typeof receipt[field] !== 'number' || !Number.isFinite(receipt[field]) || receipt[field] < 0)
+                ) {
+                  throw new Error(`Inventory item ${item.id} invoice receipt ${field} is invalid.`);
+                }
+              }
+              if (receipt.sourceCurrency !== undefined && !['GEL', 'EUR', 'USD'].includes(receipt.sourceCurrency)) {
+                throw new Error(`Inventory item ${item.id} invoice receipt sourceCurrency is invalid.`);
+              }
+            }
+          }
+
+          else if (key === 'invoiceReceipts') {
+            if (!existingItem) {
+              throw new Error(`Immutable Invoice Receipt Ledger: ${item.id} must be created through an invoice command.`);
+            }
+            if (syncRecordFingerprint(item) !== syncRecordFingerprint(existingItem)) {
+              throw new Error(`Immutable Invoice Receipt Ledger: ${item.id} cannot be modified through sync.`);
+            }
+          }
+
+          else if (key === 'inventoryMovements') {
+            if (!existingItem) {
+              throw new Error(`Immutable Inventory Movement Ledger: ${item.id} must be created through an invoice command.`);
+            }
+            if (syncRecordFingerprint(item) !== syncRecordFingerprint(existingItem)) {
+              throw new Error(`Immutable Inventory Movement Ledger: ${item.id} cannot be modified through sync.`);
             }
           }
 
@@ -2290,7 +2398,7 @@ export function redactWineryDatabaseForRole(role: string, userDb: any): any {
     let records = Array.isArray(storedValue) ? storedValue : [];
     if (!canViewCosts) {
       if (collection === 'inventory') {
-        records = records.map((record: any) => omitRecordFields(record, ['costPerUnit']));
+        records = records.map((record: any) => omitRecordFields(record, ['costPerUnit', 'lastInvoiceReceipt']));
       } else if (collection === 'grapeIntakes') {
         records = records.map((record: any) => {
           const redacted = omitRecordFields(record, [
@@ -3048,12 +3156,31 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
 
     await setOrganizationStateHeaders(res, session.username);
     const responseDb = redactWineryDatabaseForRole(session.role, candidateDb);
+
+    // Report how close this workspace is to the sync ceilings. The append-only
+    // collections only grow, and without this the first signal that a winery has
+    // outgrown them is a rejected sync — long past the point where anything can
+    // be done calmly. Reported only once it matters, so the normal response
+    // stays unchanged.
+    const pressure = assessFootprintPressure(
+      measureStateFootprint(candidateDb),
+      { maxRecords: MAX_SYNC_TOTAL_RECORDS, maxBytes: MAX_SYNC_BODY_BYTES },
+    );
+
     return res.json({
       ...responseDb,
       ...(candidate.deletionRejected ? {
         deletionRejected: true,
         deletionError: candidate.deletionError,
       } : {}),
+      ...(pressure.level === 'ok' ? {} : {
+        stateFootprint: {
+          level: pressure.level,
+          recordsPct: Math.round(pressure.recordsPct * 100),
+          bytesPct: Math.round(pressure.bytesPct * 100),
+          topCollections: pressure.topCollections,
+        },
+      }),
     });
   }
 });

@@ -555,6 +555,93 @@ describe.sequential('AI route boundaries', () => {
     }));
   });
 
+  it('returns a review-only invoice draft without mutating inventory', async () => {
+    mocks.role = 'Winemaker';
+    mocks.data.inventory = [{
+      id: 'inv-existing',
+      name: 'Lalvin ICV D254',
+      category: 'yeasts',
+      stock: 10,
+      minThreshold: 2,
+      unit: 'kg',
+      costPerUnit: 20,
+      supplierName: 'Old Supplier',
+      sku: 'D254-1KG',
+    }];
+    mocks.generate.mockResolvedValueOnce({
+      text: JSON.stringify({
+        invoice: {
+          supplier_name: 'Wine Supply Georgia',
+          invoice_number: 'INV-42',
+          invoice_date: '2026-08-04',
+          currency: 'GEL',
+          subtotal: 150,
+          tax_amount: 27,
+          total: 177,
+        },
+        lines: [{
+          line_number: 1,
+          invoice_description: 'Lalvin ICV D254 5 kg',
+          product_name: 'Lalvin ICV D254',
+          manufacturer_name: 'Lallemand',
+          sku: 'D254-1KG',
+          category: 'yeasts',
+          invoice_quantity: 5,
+          invoice_unit: 'kg',
+          stock_quantity: 5,
+          stock_unit: 'kg',
+          cost_per_stock_unit: 30,
+          line_net_amount: 150,
+          line_total: 177,
+          existing_inventory_id: 'inv-existing',
+          match_confidence: 0.99,
+          match_reason: 'Exact SKU',
+          confidence: 0.97,
+          warnings: [],
+        }],
+        warnings: [],
+      }),
+    });
+
+    const response = await fetch(`${baseUrl}/api/ai/invoices/analyze`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        invoiceText: 'Wine Supply Georgia INV-42 Lalvin ICV D254 5 kg 150 GEL',
+        enrichOnline: false,
+        lang: 'en',
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reviewOnly).toBe(true);
+    expect(body.invoice).toMatchObject({ supplierName: 'Wine Supply Georgia', invoiceNumber: 'INV-42' });
+    expect(body.lines[0]).toMatchObject({
+      productName: 'Lalvin ICV D254',
+      stockQuantity: 5,
+      stockUnit: 'kg',
+      unitCost: 30,
+      match: { inventoryItemId: 'inv-existing' },
+    });
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.data.inventory[0].stock).toBe(10);
+    expect(mocks.reserve).toHaveBeenCalledWith('org-ai', expect.any(Number), 1);
+  });
+
+  it('denies invoice analysis to a role without inventory write permission', async () => {
+    mocks.role = 'Lab Technician';
+    const response = await fetch(`${baseUrl}/api/ai/invoices/analyze`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ invoiceText: 'Invoice line', enrichOnline: false }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.reserve).not.toHaveBeenCalled();
+  });
+
   it('never answers with columns the asker cannot open in the app', async () => {
     // A cellar worker may view lots but has no laboratory permission. The
     // `lots_filter` query is gated on `lots` yet joins pH, free SO2 and VA from

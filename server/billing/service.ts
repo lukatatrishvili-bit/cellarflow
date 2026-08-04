@@ -262,7 +262,7 @@ export async function createCheckout(input: {
   const prisma = await billingDb();
   const provider = input.provider || getBillingProvider();
   if (!provider.configured) {
-    throw new BillingProviderError('Online checkout is not configured yet. Contact Cellarflow sales.', 503, 'provider_not_configured');
+    throw new BillingProviderError('Online checkout is not configured yet. Contact VinOS sales.', 503, 'provider_not_configured');
   }
   const merchantId = merchantPaymentId();
   const payment = await prisma.billingPayment.create({
@@ -289,7 +289,7 @@ export async function createCheckout(input: {
       returnUrl: checkoutReturnUrl.toString(),
       callbackUrl: input.callbackUrl,
       language: input.language,
-      description: `Cellarflow ${plan.name.en}`,
+      description: `VinOS ${plan.name.en}`,
       customerIp: input.customerIp,
       saveCard: provider.supportsRecurring,
     });

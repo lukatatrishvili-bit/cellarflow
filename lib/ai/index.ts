@@ -1,5 +1,5 @@
 /**
- * Cellarflow intelligence layer.
+ * VinOS intelligence layer.
  *
  * The pipeline is: state change → event → deterministic rules → (only when
  * interpretation is genuinely needed) a scoped context package → a specialised

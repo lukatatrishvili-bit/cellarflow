@@ -17,13 +17,20 @@ vi.mock('../server/middleware/auth', () => ({
 import syncRouter, {
   MAX_SYNC_RECORDS_PER_COLLECTION,
   MAX_SYNC_TOMBSTONES,
+  syncBodyLimitErrorHandler,
 } from '../server/routes/sync';
 
 let server: Server;
 let baseUrl = '';
 
+// The suite mounts a 1 MB parser rather than the production MAX_SYNC_BODY_BYTES
+// so the oversize case can be provoked without building a 5 MB request. What is
+// under test is the envelope the handler produces, not the specific ceiling.
+const TEST_BODY_LIMIT_BYTES = 1_000_000;
+
 beforeAll(async () => {
   const app = express();
+  app.use('/api/sync', express.json({ limit: TEST_BODY_LIMIT_BYTES }), syncBodyLimitErrorHandler);
   app.use(express.json({ limit: '1mb' }));
   app.use('/api', syncRouter);
   await new Promise<void>((resolve) => {
@@ -63,5 +70,24 @@ describe('sync payload limit HTTP boundary', () => {
         tombstones: MAX_SYNC_TOMBSTONES,
       },
     });
+  });
+
+  // Without the dedicated handler this case answers with the body parser's HTML
+  // error page: `res.json()` then rejects in lib/syncQueue and the user sees a
+  // bare "Sync rejected (HTTP 413)" with nothing to act on. The offline tablet
+  // accumulating inline attachments is the realistic way to reach it.
+  it('returns a readable JSON envelope when the body exceeds the byte ceiling', async () => {
+    const response = await postSync({
+      attachments: [{ id: 'a1', storage: { kind: 'inline', dataUrl: 'x'.repeat(TEST_BODY_LIMIT_BYTES) } }],
+    });
+
+    expect(response.status).toBe(413);
+    expect(response.headers.get('content-type')).toContain('application/json');
+
+    const body = await response.json();
+    expect(body).toMatchObject({ code: 'sync_payload_too_large' });
+    // The message has to name a recovery, not just the failure.
+    expect(body.error).toContain('external link');
+    expect(body.error).toContain('remain on this device');
   });
 });

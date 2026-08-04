@@ -10,6 +10,7 @@ import {
   type TerroirSharingSettings,
 } from '../lib/terroirPulse';
 import { hashToken } from './emailVerification';
+import { approvalStatusForUser } from './registrationApproval';
 import { syncVesselLotProjection } from './relationalProjection';
 
 
@@ -230,6 +231,8 @@ export interface UserDataState {
   fermlogs: any[];
   lablogs: any[];
   inventory: any[];
+  invoiceReceipts: any[];
+  inventoryMovements: any[];
   tasks: any[];
   notes: any[];
   blocks: any[];
@@ -285,6 +288,8 @@ export function createEmptyUserData(): UserDataState {
     fermlogs: [],
     lablogs: [],
     inventory: [],
+    invoiceReceipts: [],
+    inventoryMovements: [],
     tasks: [],
     notes: [],
     blocks: [],
@@ -351,6 +356,8 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     fermlogs: Array.isArray(data.fermlogs) ? data.fermlogs : [],
     lablogs: Array.isArray(data.lablogs) ? data.lablogs : [],
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
+    invoiceReceipts: Array.isArray(data.invoiceReceipts) ? data.invoiceReceipts : [],
+    inventoryMovements: Array.isArray(data.inventoryMovements) ? data.inventoryMovements : [],
     tasks: Array.isArray(data.tasks) ? data.tasks : [],
     notes: Array.isArray(data.notes) ? data.notes : [],
     blocks: Array.isArray(data.blocks) ? data.blocks : [],
@@ -399,6 +406,8 @@ function normalizeDbState(data: Partial<DBState> & { userData?: Record<string, P
         phone: typeof user?.phone === 'string' ? user.phone : '',
         whatsappOptIn: user?.whatsappOptIn === true,
         accountEnabled: user?.accountEnabled !== false,
+        // Accounts stored before manual approval existed stay usable.
+        approvalStatus: approvalStatusForUser(user),
         sessionVersion: Number.isInteger(Number(user?.sessionVersion)) && Number(user.sessionVersion) > 0
           ? Number(user.sessionVersion)
           : 1,
@@ -586,6 +595,12 @@ function dbFromPostgresRows(rows: {
       enabledWidgets: stringArray(u.enabledWidgets, DEFAULT_USER_WIDGETS),
       registrationComplete: u.registrationComplete ?? true,
       accountEnabled: u.accountEnabled !== false,
+      approvalStatus: approvalStatusForUser(u),
+      approvalRequestedAt: u.approvalRequestedAt ? new Date(u.approvalRequestedAt).toISOString() : undefined,
+      approvalDecidedAt: u.approvalDecidedAt ? new Date(u.approvalDecidedAt).toISOString() : undefined,
+      approvalDecidedBy: u.approvalDecidedBy || undefined,
+      approvalTokenHash: u.approvalTokenHash,
+      approvalTokenExpires: u.approvalTokenExpires ? Number(u.approvalTokenExpires) : null,
       sessionVersion: Number.isInteger(u.sessionVersion) && u.sessionVersion > 0 ? u.sessionVersion : 1,
       createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
       updatedAt: u.updatedAt ? new Date(u.updatedAt).toISOString() : undefined,
@@ -818,6 +833,12 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
             accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
             sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
           create: {
@@ -841,6 +862,12 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
             accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
             sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
         });
@@ -1287,6 +1314,12 @@ async function persistFullDbToPostgres(
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
             accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
             sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
           create: {
@@ -1309,6 +1342,12 @@ async function persistFullDbToPostgres(
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
             accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
             sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
         });

@@ -8,7 +8,8 @@ import {
   accountRecoveryLimiter,
   invitationLimiter,
   loginLimiter,
-  oauthCallbackLimiter} from '../middleware/auth';
+  oauthCallbackLimiter,
+  registrationApprovalLimiter} from '../middleware/auth';
 import {
   verifySessionToken,
   createSessionToken,
@@ -33,7 +34,27 @@ import {
   acceptInvitationAtomically,
 } from '../db';
 import { generateVerificationToken, hashToken, isVerificationTokenValid, isValidEmail } from '../emailVerification';
-import { sendMail, buildVerificationEmail, buildResetPasswordEmail, buildInvitationEmail } from '../mailer';
+import {
+  sendMail,
+  buildVerificationEmail,
+  buildResetPasswordEmail,
+  buildInvitationEmail,
+  buildRegistrationApprovalRequestEmail,
+} from '../mailer';
+import {
+  applyApprovalDecision,
+  approvalNotificationRecipient,
+  approvalStatusForUser,
+  approvalTokenMatches,
+  describeApprovalRequest,
+  generateApprovalToken,
+  markAwaitingApproval,
+  registrationApprovalRequired,
+  renderApprovalResultPage,
+  renderApprovalReviewPage,
+  sendApprovalDecisionNotice,
+  type ApprovalToken,
+} from '../registrationApproval';
 import { startOrganizationTrial } from '../billing/service';
 import { createDemoUser } from '../demoAccount';
 import {
@@ -90,7 +111,12 @@ async function consumeRateLimit(
 }
 
 function validSessionForUser(session: any, user: any): boolean {
-  return Boolean(session && userAccountIsEnabled(user) && sessionMatchesUserVersion(session, user));
+  return Boolean(
+    session
+    && userAccountIsEnabled(user)
+    && approvalStatusForUser(user) === 'approved'
+    && sessionMatchesUserVersion(session, user),
+  );
 }
 
 function cleanText(value: unknown): string {
@@ -226,6 +252,62 @@ const getRedirectUri = (req: any) => {
   return `${appBaseUrl(req)}/api/auth/google/callback`;
 };
 
+const APPROVAL_REVIEW_PATH = '/api/auth/registration-approval';
+
+function approvalReviewLink(req: express.Request, token: ApprovalToken): string {
+  return `${appBaseUrl(req)}${APPROVAL_REVIEW_PATH}?token=${token.token}`;
+}
+
+/**
+ * Tell the deployment operator that somebody is waiting for access. Delivery is
+ * best effort on purpose: the account is already locked, and every pending
+ * request is also listed in the master admin console, so a mail outage must not
+ * turn into a failed registration.
+ */
+async function notifyApprovalReviewer(
+  req: express.Request,
+  user: any,
+  companyProfile: any,
+  reviewLink: string,
+): Promise<boolean> {
+  const recipient = approvalNotificationRecipient();
+  if (!recipient) {
+    console.warn('[auth] No REGISTRATION_APPROVAL_EMAIL configured — approve new accounts from the master admin console.');
+    return false;
+  }
+  try {
+    await sendMail(buildRegistrationApprovalRequestEmail({
+      to: recipient,
+      applicant: describeApprovalRequest(user, companyProfile),
+      reviewLink,
+    }));
+    return true;
+  } catch {
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { purpose: 'registration_approval' },
+    });
+    return false;
+  }
+}
+
+/** Sign-in refusal for an account that no operator has cleared yet. */
+function approvalBlockResponse(res: express.Response, status: 'pending' | 'rejected') {
+  if (status === 'rejected') {
+    return res.status(403).json({
+      error: 'This account was not approved for access. Contact the workspace administrator if you think that is a mistake.',
+      code: 'approval_rejected',
+    });
+  }
+  return res.status(403).json({
+    error: 'Your account is waiting for administrator approval. You will get an email as soon as it is reviewed.',
+    code: 'approval_pending',
+  });
+}
+
 // ── Authentication Endpoints ──────────────────────────────────────────
 
 authRouter.post('/register', async (req, res) => {
@@ -269,6 +351,8 @@ authRouter.post('/register', async (req, res) => {
   }
 
   const verification = generateVerificationToken();
+  const approvalRequired = registrationApprovalRequired();
+  const approvalToken = generateApprovalToken();
 
   const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
   const org = { id: orgId, name: normalizedCompanyProfile.companyName };
@@ -297,7 +381,11 @@ authRouter.post('/register', async (req, res) => {
     activeOrganizationId: orgId,
     accountEnabled: true,
     sessionVersion: 1,
+    approvalStatus: 'approved',
   };
+  if (approvalRequired) {
+    markAwaitingApproval(user, approvalToken);
+  }
   db.users.push(user);
 
   db.orgData[orgId] = createEmptyUserData();
@@ -313,6 +401,20 @@ authRouter.post('/register', async (req, res) => {
   const exposeVerifyLink = (transport: 'smtp' | 'console'): boolean => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
   };
+
+  // The operator notice goes out first: the account is already locked, so the
+  // request must reach a reviewer even if the applicant's own mail bounces.
+  const reviewLink = approvalReviewLink(req, approvalToken);
+  if (approvalRequired) {
+    await notifyApprovalReviewer(req, user, db.orgData[orgId].companyProfile, reviewLink);
+    await auditSecurityEvent({
+      eventType: 'account.approval_requested',
+      username: cleanUsername,
+      organizationId: orgId,
+      ip: clientIp(req),
+    });
+  }
+
   const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${verification.token}&u=${encodeURIComponent(cleanUsername)}`;
   let mail;
   try {
@@ -340,9 +442,11 @@ authRouter.post('/register', async (req, res) => {
 
   res.json({
     requiresVerification: true,
+    requiresApproval: approvalRequired,
     username: cleanUsername,
     email: cleanEmail,
     ...(exposeVerifyLink(mail.transport) ? { devVerifyUrl: link } : {}),
+    ...(exposeVerifyLink(mail.transport) && approvalRequired ? { devApprovalUrl: reviewLink } : {}),
   });
 });
 
@@ -369,10 +473,106 @@ authRouter.get('/verify-email', async (req, res) => {
     ip: clientIp(req),
   });
 
+  // A confirmed address is not access. Until an operator clears the account, the
+  // verification link must not mint a session.
+  const approval = approvalStatusForUser(user);
+  if (approval !== 'approved') {
+    return res.redirect(`/?verified=1&approval=${approval}`);
+  }
+
   const sessionToken = createSessionToken(sessionPayloadForUser(user, user.role), true);
   res.setHeader('Set-Cookie', sessionCookie(sessionToken, 2592000)); // 30 days
 
   res.redirect('/?verified=1');
+});
+
+/**
+ * Emailed review page. This GET is deliberately side-effect free so a mailbox
+ * link scanner that prefetches the URL cannot approve an account; the decision
+ * is the POST below.
+ */
+authRouter.get('/registration-approval', async (req, res) => {
+  const token = String(req.query.token || '');
+  if (!await consumeRateLimit(registrationApprovalLimiter, [
+    rateLimitKey('registration-approval-ip', req),
+  ], res)) return;
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = token
+    ? db.users.find((candidate: any) => candidate.approvalTokenHash === hashToken(token)) as any
+    : null;
+
+  if (!user || !approvalTokenMatches(user, token)) {
+    return res.status(404).type('html').send(renderApprovalResultPage({
+      title: 'Review link is no longer valid',
+      message: 'This request has already been decided, or the link has expired. Pending accounts are always listed in the master admin console.',
+      appUrl: appBaseUrl(req),
+    }));
+  }
+
+  const data = await getUserData(user.username);
+  res.type('html').send(renderApprovalReviewPage({
+    details: describeApprovalRequest(user, data?.companyProfile),
+    token,
+    actionPath: APPROVAL_REVIEW_PATH,
+  }));
+});
+
+authRouter.post('/registration-approval', async (req, res) => {
+  const token = String(req.body?.token || '');
+  const decision = String(req.body?.decision || '');
+  if (!await consumeRateLimit(registrationApprovalLimiter, [
+    rateLimitKey('registration-approval-ip', req),
+  ], res)) return;
+
+  if (decision !== 'approve' && decision !== 'reject') {
+    return res.status(400).type('html').send(renderApprovalResultPage({
+      title: 'Decision not recognised',
+      message: 'Open the review link again and choose either approve or reject.',
+      appUrl: appBaseUrl(req),
+    }));
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = token
+    ? db.users.find((candidate: any) => candidate.approvalTokenHash === hashToken(token)) as any
+    : null;
+
+  if (!user || !approvalTokenMatches(user, token)) {
+    return res.status(404).type('html').send(renderApprovalResultPage({
+      title: 'Review link is no longer valid',
+      message: 'This request has already been decided, or the link has expired. Pending accounts are always listed in the master admin console.',
+      appUrl: appBaseUrl(req),
+    }));
+  }
+
+  const approved = decision === 'approve';
+  applyApprovalDecision(user, decision, 'email-review-link');
+  if (!approved) {
+    // Cut any session the account might already hold.
+    user.sessionVersion = sessionVersionForUser(user) + 1;
+  }
+  await saveCoreMetadata('auth-registration-approval');
+
+  const appUrl = appBaseUrl(req);
+  await sendApprovalDecisionNotice(user, approved, appUrl);
+  await auditSecurityEvent({
+    eventType: approved ? 'account.approved' : 'account.rejected',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+    metadata: { via: 'email_review_link' },
+  });
+
+  res.type('html').send(renderApprovalResultPage({
+    title: approved ? 'Account approved' : 'Account rejected',
+    message: approved
+      ? `${user.fullName || user.username} can sign in as soon as their email address is confirmed. We let them know by email.`
+      : `${user.fullName || user.username} stays locked out. We let them know by email.`,
+    appUrl,
+  }));
 });
 
 authRouter.post('/resend-verification', async (req, res) => {
@@ -544,7 +744,12 @@ authRouter.post('/login', async (req, res) => {
   if (envAdminUser && envAdminPass && identifier && passcode) {
     const inputUser = String(identifier).trim().toLowerCase();
     const targetUser = String(envAdminUser).trim().toLowerCase();
-    if (inputUser === targetUser || inputUser === `${targetUser}@vinea.com` || inputUser === `${targetUser}@cellarflow.com`) {
+    if (
+      inputUser === targetUser
+      || inputUser === `${targetUser}@vinos.app`
+      || inputUser === `${targetUser}@vinea.com`
+      || inputUser === `${targetUser}@cellarflow.com`
+    ) {
       if (String(passcode).trim() === String(envAdminPass).trim()) {
         await loginLimiter.clear(limiterKey);
         const token = createSessionToken({ username: envAdminUser, role: 'Owner/Admin' }, rememberMe);
@@ -552,7 +757,7 @@ authRouter.post('/login', async (req, res) => {
         res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
         return res.json({
           username: envAdminUser,
-          email: `${envAdminUser}@cellarflow.com`,
+          email: `${envAdminUser}@vinos.app`,
           fullName: 'Master Administrator',
           role: 'Owner/Admin',
           language: 'en',
@@ -574,12 +779,23 @@ authRouter.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid username or passcode' });
   }
 
+  const approval = approvalStatusForUser(user);
+  if (approval === 'rejected') {
+    await loginLimiter.clear(limiterKey);
+    return approvalBlockResponse(res, 'rejected');
+  }
+
   if ((user as any).emailVerified === false) {
     await loginLimiter.clear(limiterKey);
     return res.status(403).json({
       error: 'Please verify your email before signing in. Check your inbox for the confirmation link.',
       code: 'email_unverified',
     });
+  }
+
+  if (approval === 'pending') {
+    await loginLimiter.clear(limiterKey);
+    return approvalBlockResponse(res, 'pending');
   }
 
   await loginLimiter.clear(limiterKey);
@@ -873,11 +1089,17 @@ authRouter.get('/google/callback', async (req, res) => {
         emailVerified: true,
         accountEnabled: true,
         sessionVersion: 1,
+        approvalStatus: 'approved',
       };
       const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
       const org = { id: orgId, name: `${fullName || username}'s Estate` };
       const membership = { id: 'mem_' + Math.random().toString(36).substr(2, 9), userId: username, organizationId: orgId, role: 'Owner/Admin' };
       user.activeOrganizationId = orgId;
+
+      // A Google identity proves the address, not that this person belongs here.
+      const approvalRequired = registrationApprovalRequired();
+      const approvalToken = generateApprovalToken();
+      if (approvalRequired) markAwaitingApproval(user, approvalToken);
 
       ensureDbCollections(dbData);
       dbData.organizations.push(org);
@@ -889,6 +1111,29 @@ authRouter.get('/google/callback', async (req, res) => {
       await saveCoreMetadata('auth-google-register');
       await saveUserData(username, dbData.orgData[orgId]);
       await startOrganizationTrial(orgId, username);
+
+      if (approvalRequired) {
+        await notifyApprovalReviewer(req, user, dbData.orgData[orgId].companyProfile, approvalReviewLink(req, approvalToken));
+        await auditSecurityEvent({
+          eventType: 'account.approval_requested',
+          username,
+          organizationId: orgId,
+          ip: clientIp(req),
+          metadata: { provider: 'google' },
+        });
+      }
+    }
+
+    const approval = approvalStatusForUser(user);
+    if (approval !== 'approved') {
+      await auditSecurityEvent({
+        eventType: 'oauth.login_rejected',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+        metadata: { reason: `approval_${approval}`, provider: 'google' },
+      });
+      return res.redirect(`/?approval=${approval}`);
     }
 
     const effectiveRole = activeMembershipRole(dbData, user);
@@ -934,7 +1179,7 @@ authRouter.get('/me', async (req, res) => {
   if (envAdmin && String(session.username).trim().toLowerCase() === envAdmin) {
     return res.json({
       username: session.username,
-      email: `${session.username}@cellarflow.com`,
+      email: `${session.username}@vinos.app`,
       fullName: 'Master Administrator',
       role: 'Owner/Admin',
       language: 'en',

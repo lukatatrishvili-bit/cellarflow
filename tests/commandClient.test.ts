@@ -9,6 +9,7 @@ import {
   createFermentationCompletionReversalCommandIntent,
   createHarvestIntakeCommandIntent,
   createHarvestIntakeReversalCommandIntent,
+  createInvoiceReceiptCommandIntent,
   createSalesStockCommandIntent,
   createSalesStockReversalCommandIntent,
   createStorageMovementCommandIntent,
@@ -22,6 +23,7 @@ import {
   pendingFermentationCompletionReversalCommandIntent,
   pendingHarvestIntakeCommandIntent,
   pendingHarvestIntakeReversalCommandIntent,
+  pendingInvoiceReceiptCommandIntent,
   pendingSalesStockCommandIntent,
   pendingSalesStockReversalCommandIntent,
   pendingStorageMovementCommandIntent,
@@ -34,6 +36,7 @@ import {
   submitFermentationCompletionReversalCommand,
   submitHarvestIntakeCommand,
   submitHarvestIntakeReversalCommand,
+  submitInvoiceReceiptCommand,
   submitSalesStockCommand,
   submitSalesStockReversalCommand,
   submitStorageMovementCommand,
@@ -779,5 +782,62 @@ describe('durable command client', () => {
       expect.objectContaining({ method: 'POST' }),
     );
     expect(pendingCellarOperationReversalCommandIntent()).toBeNull();
+  });
+
+  it('keeps stable invoice receipt and movement ids until the atomic post is acknowledged', async () => {
+    const intent = createInvoiceReceiptCommandIntent({
+      analysisId: 'analysis-client-1',
+      invoice: {
+        supplierName: 'Client Supplier', invoiceNumber: 'CLIENT-INV-1', invoiceDate: '2026-08-01',
+        currency: 'EUR', total: 100,
+      },
+      accountingCurrency: 'GEL',
+      exchangeRate: {
+        fromCurrency: 'EUR', toCurrency: 'GEL', rate: 3, requestedDate: '2026-08-01',
+        rateDate: '2026-08-01', source: 'manual', sourceLabel: 'Manual',
+        retrievedAt: '2026-08-04T00:00:00.000Z',
+      },
+      costBasis: 'net',
+      additionalCostsSource: 0,
+      sources: [],
+      lines: [{
+        lineId: 'line-client-1', mode: 'create', productName: 'Client nutrient', category: 'nutritions',
+        supplierName: 'Client Supplier', invoiceDescription: 'Client nutrient', invoiceQuantity: 1,
+        invoiceUnit: 'kg', stockQuantity: 1, stockUnit: 'kg', conversionFactor: 1,
+        conversionConfirmed: true, sourceCostPerStockUnit: 100, activeIngredients: [], sourceIds: [],
+      }],
+    });
+    expect(intent.commandId).toMatch(/^cmd-invoice-receipt-/);
+    expect(intent.payload.receiptId).toMatch(/^invoice-receipt-/);
+    expect(intent.payload.lines[0].movementId).toMatch(/^imov-invoice-/);
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        ok: false,
+        error: { code: 'command_store_unavailable', message: 'Retry.', retryable: true },
+      }, 503))
+      .mockResolvedValueOnce(response({
+        ok: true,
+        disposition: 'executed',
+        commandId: intent.commandId,
+        commandType: 'invoice.receipt',
+        result: {
+          receipt: { id: intent.payload.receiptId },
+          movements: [{ id: intent.payload.lines[0].movementId }],
+          updatedInventoryItems: [{ id: 'item-client-1' }],
+          created: 1,
+          updated: 0,
+        },
+      }, 201));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(submitInvoiceReceiptCommand(intent)).rejects.toMatchObject({ retryable: true });
+    expect(pendingInvoiceReceiptCommandIntent()).toEqual(intent);
+    await expect(submitInvoiceReceiptCommand(intent)).resolves.toMatchObject({ commandId: intent.commandId });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/commands/invoice.receipt',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(pendingInvoiceReceiptCommandIntent()).toBeNull();
   });
 });

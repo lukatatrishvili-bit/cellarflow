@@ -115,7 +115,7 @@ const CONDITIONS: Array<{ key: GrapeIntakeCondition; en: string; ka: string }> =
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flatMap(region => region.mainMicrozones))).sort();
 
-export default function GrapeReceivingTab({
+export function GrapeReceivingTab({
   lang, vessels, blocks, harvests, intakes, currentUserName,
   currency, costAutomation, region = 'Kakheti',
   onReceiveGrapes, setActiveTab, setToastMessage,
@@ -1016,3 +1016,11 @@ export default function GrapeReceivingTab({
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(GrapeReceivingTab);

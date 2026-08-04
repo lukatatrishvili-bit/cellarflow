@@ -39,7 +39,7 @@ interface Props {
   setCalculatorLotIdB?: (val: string) => void;
 }
 
-export default function EnoCalculators({
+export function EnoCalculators({
   lang,
   lots = [],
   vessels = [],
@@ -1853,3 +1853,11 @@ export default function EnoCalculators({
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(EnoCalculators);

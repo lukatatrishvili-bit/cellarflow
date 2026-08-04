@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { MotionConfig } from 'motion/react';
 import App from './App';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { StatusToastProvider } from '../hooks/useStatusToast';
 import './globals.css';
 
 const container = document.getElementById('root');
@@ -14,7 +15,12 @@ if (container) {
           OS "reduce motion" setting globally — accessibility + battery on tablets. */}
       <ErrorBoundary>
         <MotionConfig reducedMotion="user">
-          <App />
+          {/* Must sit ABOVE App: useWineryState reads the toast controls during
+              App's own render, and keeping the message in a provider up here is
+              what stops a toast from re-rendering the whole shell. */}
+          <StatusToastProvider>
+            <App />
+          </StatusToastProvider>
         </MotionConfig>
       </ErrorBoundary>
     </React.StrictMode>

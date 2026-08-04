@@ -301,8 +301,38 @@ export interface InventoryItem {
   minThreshold: number;
   unit: string;
   costPerUnit: number;
+  /** Currency of costPerUnit. Invoice receipts normalize this to the company currency. */
+  costCurrency?: string;
   supplierName: string;
   details?: string; // Additional winemaker remarks/specs
+  sku?: string;
+  brandName?: string;
+  manufacturerName?: string;
+  packageSize?: number;
+  packageUnit?: string;
+  activeIngredients?: string[];
+  recommendedDosage?: string;
+  usageInstructions?: string;
+  safetyNotes?: string;
+  productSourceUrls?: string[];
+  officialSourceUrls?: string[];
+  lastInvoiceReceipt?: {
+    analysisLineId: string;
+    invoiceNumber?: string;
+    invoiceDate?: string;
+    receivedAt: string;
+    supplierName: string;
+    quantity: number;
+    unit: string;
+    unitCost: number;
+    lineTotal?: number;
+    currency: string;
+    sourceUnitCost?: number;
+    sourceLineTotal?: number;
+    sourceCurrency?: string;
+    exchangeRate?: number;
+    invoiceReceiptId?: string;
+  };
 }
 
 export interface Task {

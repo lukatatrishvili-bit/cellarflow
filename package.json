@@ -22,6 +22,7 @@
     "billing:renewals": "tsx scripts/processBillingRenewals.ts",
     "ai:monitor": "tsx scripts/runAiMonitoring.ts",
     "ai:deliver": "tsx scripts/deliverAiNotifications.ts",
+    "demo:seed": "tsx scripts/seedDemoScenario.ts",
     "db:check-drift": "tsx scripts/checkMigrationDrift.ts",
     "db:migrate:deploy": "tsx scripts/deployMigrations.ts",
     "db:projection-check": "tsx scripts/checkRelationalProjection.ts",

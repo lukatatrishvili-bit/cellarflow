@@ -53,6 +53,7 @@ import {
   type StorageLocation,
   type StockMovement,
 } from '../lib/storage';
+import type { InventoryMovementRecord, InvoiceReceiptRecord } from '../lib/commands/invoiceReceipt';
 import { PDO_RULES } from '../lib/pdo';
 import { createDocumentAttachmentRecord, type DocumentAttachmentInput } from '../lib/attachments';
 import { createCrmLeadRecord, upsertCrmLeadRecord, type CrmLeadRecordInput } from '../lib/crm';
@@ -62,6 +63,9 @@ import {
   type DeletionTombstone,
 } from '../lib/deletionTombstones';
 import { createUniqueLotId, createUniqueRecordId } from '../lib/recordIds';
+import { recordContentEquals } from '../lib/recordEquality';
+import { useStatusToastControls } from './useStatusToast';
+import { useStableCallbacks } from './useStableCallbacks';
 import {
   createAiDraftQueueItems,
   upsertAiDraftQueueItems,
@@ -77,6 +81,7 @@ import type {
   FermentationCompletionCommandResponse,
   FermentationCompletionReversalCommandResponse,
   HarvestIntakeCommandResponse,
+  InvoiceReceiptCommandResponse,
   SalesStockCommandResponse,
   StorageMovementCommandResponse,
   TransferCommandResponse,
@@ -162,7 +167,7 @@ export function isWineryDatabaseSnapshot(value: unknown): value is Record<string
     'blocks', 'vineyardProjects', 'phenologyLogs', 'sprays', 'scoutings',
     'soilRecords', 'samplings', 'harvests', 'irrigationLogs', 'fertilizerLogs',
     'auditLogs', 'bottlingRuns', 'transfers', 'grapeIntakes', 'cellarOps',
-    'costEntries', 'storageLocations', 'stockMovements', 'salesDispatches',
+    'costEntries', 'storageLocations', 'stockMovements', 'invoiceReceipts', 'inventoryMovements', 'salesDispatches',
     'salesOrders', 'supplierPayments', 'certificationRecords', 'attachments',
     'crmLeads', 'aiDrafts',
   ];
@@ -259,6 +264,9 @@ const inferOriginProofStatus = (...values: Array<string | undefined>): WineLot['
 
 const initialCellarNotes: CellarNote[] = [];
 
+/** Shared empty baseline, so a missing mirror allocates nothing. */
+const EMPTY_RECORD_MAP: Map<string, any> = new Map();
+
 export function useWineryState() {
   const [lang, setLang] = useState<Language>(() => {
     // Restore the chosen language across reloads (set by the header toggle and
@@ -275,9 +283,24 @@ export function useWineryState() {
   });
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isClient, setIsClient] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isAuthResolved, setIsAuthResolved] = useState(false);
+  // Toast state lives in StatusToastProvider, not here. `setToastMessage` is stable
+  // for the provider's lifetime, so the ~90 call sites below raise toasts
+  // without this hook — or anything rendering from it — re-rendering when one
+  // appears or auto-dismisses. See hooks/useStatusToast.tsx.
+  const { setToastMessage } = useStatusToastControls();
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [verificationPending, setVerificationPending] = useState<{ email: string; devVerifyUrl?: string } | null>(null);
+  // Post-signup waiting room: the address still needs confirming, an operator
+  // still needs to approve the account, or both.
+  const [verificationPending, setVerificationPending] = useState<{
+    email: string;
+    devVerifyUrl?: string;
+    devApprovalUrl?: string;
+    /** The account also waits on a human decision before it can sign in. */
+    requiresApproval?: boolean;
+    /** Email is already confirmed — only the approval is outstanding. */
+    approvalOnly?: boolean;
+  } | null>(null);
   const [demoLoginEnabled, setDemoLoginEnabled] = useState(false);
   const [passportLotId, setPassportLotId] = useState<string | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<any[] | null>(null);
@@ -412,6 +435,8 @@ export function useWineryState() {
   const [winePricing, setWinePricing] = useState<WinePricing>({});
   const [storageLocations, setStorageLocations] = useState<StorageLocation[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [invoiceReceipts, setInvoiceReceipts] = useState<InvoiceReceiptRecord[]>([]);
+  const [inventoryMovements, setInventoryMovements] = useState<InventoryMovementRecord[]>([]);
   const [salesDispatches, setSalesDispatches] = useState<SalesDispatchRecord[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrderRecord[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([]);
@@ -456,6 +481,9 @@ export function useWineryState() {
 
   // Synchronization refs to manage server state & loop prevention
   const isSyncing = useRef(false);
+  // State-pressure is a plan-ahead warning, so it is raised at most once per
+  // session instead of on every sync response that carries it.
+  const footprintWarningShown = useRef(false);
   const hasHydrated = useRef(false);
   const pendingSync = useRef<{ payload: any; epoch: number } | null>(null);
   const pendingConflictSyncIntent = useRef<PendingConflictSyncIntent | null>(null);
@@ -487,15 +515,42 @@ export function useWineryState() {
     return () => window.removeEventListener('storage', handleOrganizationContextChanged);
   }, [lang]);
 
-  // Auto-dismiss toast messages after 5 seconds
-  useEffect(() => {
-    if (toastMessage) {
-      const timer = setTimeout(() => {
-        setToastMessage(null);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [toastMessage]);
+  /**
+   * Cache of `id -> record` maps built from serialized collections.
+   *
+   * Every collection write rebuilds two of these — the previous local list and
+   * the last server-acknowledged list — by parsing a stored JSON string and
+   * walking the result. For a winery holding thousands of audit or fermentation
+   * entries that is the dominant cost of a write, and a single sync response
+   * triggers it across all 33 collections.
+   *
+   * The entry is keyed by the exact source string, so it is self-validating: a
+   * logout, an organization switch, or another tab writing the key all change
+   * (or remove) that string and the cache misses. That matters more than the
+   * speed here — a mirror invalidated by hand would have to be kept in step with
+   * every `removeItem` call site, and going stale would mean serving a previous
+   * tenant's records as the comparison baseline.
+   *
+   * Returned maps are READ-ONLY; callers compare against them and must not
+   * mutate the records they hold.
+   */
+  const recordMapCache = useRef<Map<string, { raw: string; map: Map<string, any> }>>(new Map());
+
+  const cachedRecordMap = (cacheKey: string, raw: string | null | undefined): Map<string, any> => {
+    if (!raw) return EMPTY_RECORD_MAP;
+    const cached = recordMapCache.current.get(cacheKey);
+    if (cached && cached.raw === raw) return cached.map;
+
+    const map = new Map<string, any>();
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) map.set(item?.id, item);
+      }
+    } catch { /* a corrupt mirror simply yields no baseline */ }
+    recordMapCache.current.set(cacheKey, { raw, map });
+    return map;
+  };
 
   const updateAllStates = (data: any) => {
 
@@ -541,6 +596,8 @@ export function useWineryState() {
     setSafe(setWinePricing, data.winePricing, 'winePricing', 'cf_wine_pricing');
     setSafe(setStorageLocations, data.storageLocations, 'storageLocations', 'cf_storage_locations');
     setSafe(setStockMovements, data.stockMovements, 'stockMovements', 'cf_storage_movements');
+    setSafe(setInvoiceReceipts, data.invoiceReceipts, 'invoiceReceipts', 'cf_invoice_receipts');
+    setSafe(setInventoryMovements, data.inventoryMovements, 'inventoryMovements', 'cf_inventory_movements');
     setSafe(setSalesDispatches, data.salesDispatches, 'salesDispatches', 'cf_sales_dispatches');
     setSafe(setSalesOrders, data.salesOrders, 'salesOrders', 'cf_sales_orders');
     setSafe(setSupplierPayments, data.supplierPayments, 'supplierPayments', 'cf_supplier_payments');
@@ -571,7 +628,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
         companyProfile
       };
 
@@ -606,10 +663,26 @@ export function useWineryState() {
             : '⚠️ This winery changed in another session. Your local change was kept and is ready to retry.');
         } else if (response.syncError) {
           // The server rejected the whole sync — keep data dirty for retry,
-          // but tell the user instead of failing silently.
+          // but tell the user instead of failing silently. The server speaks
+          // English; translate by response code so the whole sentence lands in
+          // one language rather than switching halfway.
+          //
+          // The dictionary is fetched on demand rather than imported: it is
+          // error-path-only text, and Georgian is three bytes per character in
+          // UTF-8, so bundling it charged every boot for a message most sessions
+          // never show. It exceeded the critical-path budget when imported.
           if (response.syncError !== lastSyncError) {
             setLastSyncError(response.syncError);
-            setToastMessage(`⚠️ ${lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected'}: ${response.syncError}`);
+            const prefix = lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected';
+            void import('../lib/serverErrorMessages')
+              .then(({ localizeServerError }) => {
+                setToastMessage(`⚠️ ${prefix}: ${localizeServerError(response.code, response.syncError, lang)}`);
+              })
+              .catch(() => {
+                // Offline with the chunk uncached: the server's own text still
+                // beats saying nothing.
+                setToastMessage(`⚠️ ${prefix}: ${response.syncError}`);
+              });
           }
         } else {
           updateAllStates(response);
@@ -632,6 +705,22 @@ export function useWineryState() {
             }
           } else {
             setLastSyncError(null);
+          }
+
+          // The server flags a workspace approaching the sync ceilings. Warn
+          // once per session rather than on every sync: this is a "plan some
+          // archiving" signal, not something to act on mid-task.
+          if (response.stateFootprint && !footprintWarningShown.current) {
+            footprintWarningShown.current = true;
+            const { level, recordsPct, bytesPct } = response.stateFootprint;
+            const biggest = response.stateFootprint.topCollections?.[0]?.collection || '';
+            const used = Math.max(recordsPct, bytesPct);
+            console.warn('[sync] organization state pressure', response.stateFootprint);
+            if (level === 'critical') {
+              setToastMessage(lang === 'ka'
+                ? `⚠️ სამუშაო სივრცე სინქრონიზაციის ზღვრის ${used}%-ს იყენებს (ყველაზე დიდი: ${biggest}). დაგეგმეთ არქივირება.`
+                : `⚠️ This workspace is using ${used}% of the sync limit (largest: ${biggest}). Plan an archive soon.`);
+            }
           }
         }
       }
@@ -781,6 +870,17 @@ export function useWineryState() {
         ...stockMovements,
       ],
     });
+  };
+
+  const applyInvoiceReceiptCommandResponse = (response: InvoiceReceiptCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+    // The commit is already durable. A projection-less acknowledgement is
+    // reconciled by a read-only sync instead of reconstructing ledger state in
+    // the browser.
+    void triggerSync({});
   };
 
   const applyHarvestIntakeCommandResponse = (response: HarvestIntakeCommandResponse): void => {
@@ -951,6 +1051,8 @@ export function useWineryState() {
         const err = await res.json().catch(() => ({}));
         if (err.code === 'email_unverified') {
           setVerificationPending({ email: identifier });
+        } else if (err.code === 'approval_pending') {
+          setVerificationPending({ email: identifier, requiresApproval: true, approvalOnly: true });
         }
         setLoginError(err.error || 'Authentication failed');
         return false;
@@ -1043,6 +1145,8 @@ export function useWineryState() {
     localStorage.removeItem('cf_wine_pricing');
     localStorage.removeItem('cf_storage_locations');
     localStorage.removeItem('cf_storage_movements');
+    localStorage.removeItem('cf_invoice_receipts');
+    localStorage.removeItem('cf_inventory_movements');
     localStorage.removeItem('cf_sales_dispatches');
     localStorage.removeItem('cf_sales_orders');
     localStorage.removeItem('cf_certification_records');
@@ -1079,6 +1183,8 @@ export function useWineryState() {
     setWinePricing({});
     setStorageLocations([]);
     setStockMovements([]);
+    setInvoiceReceipts([]);
+    setInventoryMovements([]);
     setSalesDispatches([]);
     setSalesOrders([]);
     setSupplierPayments([]);
@@ -1102,7 +1208,12 @@ export function useWineryState() {
 
         // New accounts must confirm their email before the session is created.
         if (user && user.requiresVerification) {
-          setVerificationPending({ email: user.email || profileData.email, devVerifyUrl: user.devVerifyUrl });
+          setVerificationPending({
+            email: user.email || profileData.email,
+            devVerifyUrl: user.devVerifyUrl,
+            devApprovalUrl: user.devApprovalUrl,
+            requiresApproval: user.requiresApproval === true,
+          });
           return true;
         }
 
@@ -1115,7 +1226,7 @@ export function useWineryState() {
           vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
           blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
           samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
           companyProfile
         } : {});
         if (initialDB) {
@@ -1226,6 +1337,8 @@ export function useWineryState() {
         localStorage.removeItem('cf_wine_pricing');
         localStorage.removeItem('cf_storage_locations');
         localStorage.removeItem('cf_storage_movements');
+        localStorage.removeItem('cf_invoice_receipts');
+        localStorage.removeItem('cf_inventory_movements');
         localStorage.removeItem('cf_sales_dispatches');
         localStorage.removeItem('cf_sales_orders');
         localStorage.removeItem('cf_certification_records');
@@ -1295,6 +1408,8 @@ export function useWineryState() {
       setWinePricing(parseCached('cf_wine_pricing', {}));
       setStorageLocations(parseCached('cf_storage_locations', []));
       setStockMovements(parseCached('cf_storage_movements', []));
+      setInvoiceReceipts(parseCached('cf_invoice_receipts', []));
+      setInventoryMovements(parseCached('cf_inventory_movements', []));
       setSalesDispatches(parseCached('cf_sales_dispatches', defaults.initialSalesDispatches));
       setSalesOrders(parseCached('cf_sales_orders', defaults.initialSalesOrders));
       setSupplierPayments(parseCached('cf_supplier_payments', defaults.initialSupplierPayments));
@@ -1364,7 +1479,10 @@ export function useWineryState() {
       } catch (err) {
         console.error('Failed to restore session:', err);
       } finally {
-        if (!cancelled) hasHydrated.current = true;
+        if (!cancelled) {
+          hasHydrated.current = true;
+          setIsAuthResolved(true);
+        }
       }
     };
 
@@ -1407,9 +1525,19 @@ export function useWineryState() {
     const params = new URLSearchParams(window.location.search);
     const verified = params.get('verified');
     const verifyError = params.get('verify_error');
-    if (verified || verifyError) {
+    const approval = params.get('approval');
+    if (verified || verifyError || approval) {
       const isKa = (localStorage.getItem('vinea_lang') as Language) === 'ka';
-      if (verified) {
+      if (approval === 'pending') {
+        setVerificationPending({ email: '', requiresApproval: true, approvalOnly: true });
+        setToastMessage(isKa
+          ? '⏳ ანგარიში ელოდება ადმინისტრატორის დადასტურებას.'
+          : '⏳ Your account is waiting for administrator approval.');
+      } else if (approval === 'rejected') {
+        setToastMessage(isKa
+          ? '⚠️ ანგარიშზე წვდომა არ დამტკიცდა.'
+          : '⚠️ This account was not approved for access.');
+      } else if (verified) {
         setToastMessage(isKa ? '✅ ელფოსტა დადასტურდა — ახლა შეგიძლიათ შესვლა.' : '✅ Email verified — you can now sign in.');
       } else {
         setToastMessage(verifyError === 'expired'
@@ -1431,30 +1559,23 @@ export function useWineryState() {
 
     // Auto-inject lastModified timestamps for arrays of objects
     let processedValue = value;
+    // Set whenever the mapping below returns a record that differs from its
+    // input. It replaces a `JSON.stringify(processedValue) !== JSON.stringify(value)`
+    // check further down: that serialized the whole collection twice more just
+    // to answer a question the mapping already knows the answer to.
+    let stampedAnyItem = false;
     const modifiedOrAddedItems: Array<{ item: any; baselineTimestamp?: string }> = [];
 
     if (Array.isArray(value)) {
-      let prevList: any[] = [];
-      try {
-        const stored = localStorage.getItem(localKey);
-        if (stored) prevList = JSON.parse(stored);
-      } catch { /* ignore */ }
+      let storedPrevious: string | null = null;
+      try { storedPrevious = localStorage.getItem(localKey); } catch { /* ignore */ }
+      const prevMap = cachedRecordMap(`local:${localKey}`, storedPrevious);
 
       // Last server-acknowledged versions: the true baseline for conflict
       // detection. Using the local previous timestamp instead would make
       // chained local edits look like conflicts.
-      let serverMap = new Map<string, any>();
-      try {
-        const serverJson = lastServerState.current[key];
-        if (serverJson) {
-          const serverList = JSON.parse(serverJson);
-          if (Array.isArray(serverList)) {
-            serverMap = new Map(serverList.map((item: any) => [item.id, item]));
-          }
-        }
-      } catch { /* ignore */ }
+      const serverMap = cachedRecordMap(`server:${key}`, lastServerState.current[key]);
 
-      const prevMap = new Map(prevList.map(item => [item.id, item]));
       const nowStr = new Date().toISOString();
 
       processedValue = value.map(item => {
@@ -1463,18 +1584,21 @@ export function useWineryState() {
           if (!prevItem) {
             // New item
             const newItem = { ...item, lastModified: nowStr };
+            stampedAnyItem = true;
             modifiedOrAddedItems.push({ item: newItem });
             return newItem;
           } else {
-            // Compare fields ignoring sync metadata
-            const { lastModified: _, baselineTimestamp: _b, ...itemWithoutTs } = item;
-            const { lastModified: __, baselineTimestamp: _pb, ...prevWithoutTs } = prevItem;
-            if (JSON.stringify(itemWithoutTs) !== JSON.stringify(prevWithoutTs)) {
+            // Compare fields ignoring sync metadata. This runs for every record
+            // of every collection on every write, so it walks the two records
+            // and stops at the first difference instead of allocating a stripped
+            // copy and a JSON string for each side.
+            if (!recordContentEquals(item, prevItem)) {
               // Modified item: carry the server baseline on the item so
               // /api/sync can detect concurrent edits from other sessions.
               const serverItem = serverMap.get(item.id);
               const baselineTimestamp = item.baselineTimestamp ?? serverItem?.lastModified;
               const modifiedItem = { ...item, lastModified: nowStr, ...(baselineTimestamp ? { baselineTimestamp } : {}) };
+              stampedAnyItem = true;
               modifiedOrAddedItems.push({
                 item: modifiedItem,
                 baselineTimestamp
@@ -1486,7 +1610,9 @@ export function useWineryState() {
               // timestamp here left local/server timestamps permanently
               // diverged, re-marking collections dirty after every sync —
               // an endless sync/re-render loop.
-              return { ...item, lastModified: item.lastModified || prevItem.lastModified || nowStr };
+              const carried = item.lastModified || prevItem.lastModified || nowStr;
+              if (carried !== item.lastModified) stampedAnyItem = true;
+              return { ...item, lastModified: carried };
             }
           }
         }
@@ -1522,14 +1648,19 @@ export function useWineryState() {
       aiDrafts: setAiDrafts
     };
 
+    // One serialization for this call, reused by every branch below. It was
+    // previously recomputed for the storage write, the dirty check, and the
+    // comparison above — four full passes over the collection per write.
+    const serializedProcessed = JSON.stringify(processedValue);
+
     const setter = setters[key];
-    if (setter && JSON.stringify(processedValue) !== JSON.stringify(value)) {
+    if (setter && stampedAnyItem) {
       // Persist BEFORE updating state: the effect re-runs after the setter,
       // and must find storage already matching, or it re-stamps lastModified
       // with a fresh timestamp on every pass — an infinite update loop that
       // previously only terminated when two passes landed on the same
       // millisecond. The re-run becomes a no-op and handles dirty-marking.
-      localStorage.setItem(localKey, JSON.stringify(processedValue));
+      localStorage.setItem(localKey, serializedProcessed);
       // The re-run sees no modified items, so offline mutations (which carry
       // the conflict baselines) must be queued on this first pass.
       if (hasHydrated.current && !SyncQueueManager.isOnline()) {
@@ -1547,10 +1678,9 @@ export function useWineryState() {
       return;
     }
 
-    localStorage.setItem(localKey, JSON.stringify(processedValue));
+    localStorage.setItem(localKey, serializedProcessed);
 
-    const currentStr = JSON.stringify(processedValue);
-    if (hasHydrated.current && currentStr !== lastServerState.current[key]) {
+    if (hasHydrated.current && serializedProcessed !== lastServerState.current[key]) {
       SyncQueueManager.markDirty(key);
 
       // If offline, queue specific mutations in IndexedDB!
@@ -1570,7 +1700,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
         companyProfile
       };
 
@@ -1596,6 +1726,8 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('winePricing', 'cf_wine_pricing', winePricing); }, [winePricing, isClient]);
   useEffect(() => { handleCollectionUpdate('storageLocations', 'cf_storage_locations', storageLocations); }, [storageLocations, isClient]);
   useEffect(() => { handleCollectionUpdate('stockMovements', 'cf_storage_movements', stockMovements); }, [stockMovements, isClient]);
+  useEffect(() => { handleCollectionUpdate('invoiceReceipts', 'cf_invoice_receipts', invoiceReceipts); }, [invoiceReceipts, isClient]);
+  useEffect(() => { handleCollectionUpdate('inventoryMovements', 'cf_inventory_movements', inventoryMovements); }, [inventoryMovements, isClient]);
   useEffect(() => { handleCollectionUpdate('salesDispatches', 'cf_sales_dispatches', salesDispatches); }, [salesDispatches, isClient]);
   useEffect(() => { handleCollectionUpdate('salesOrders', 'cf_sales_orders', salesOrders); }, [salesOrders, isClient]);
   useEffect(() => { handleCollectionUpdate('supplierPayments', 'cf_supplier_payments', supplierPayments); }, [supplierPayments, isClient]);
@@ -2570,6 +2702,8 @@ export function useWineryState() {
       winePricing: db.winePricing || winePricing,
       storageLocations: db.storageLocations || storageLocations,
       stockMovements: db.stockMovements || stockMovements,
+      invoiceReceipts: db.invoiceReceipts || invoiceReceipts,
+      inventoryMovements: db.inventoryMovements || inventoryMovements,
       salesDispatches: db.salesDispatches || salesDispatches,
       salesOrders: db.salesOrders || salesOrders,
       supplierPayments: db.supplierPayments || supplierPayments,
@@ -2593,11 +2727,18 @@ export function useWineryState() {
     }
   };
 
-  return {
+  // Every handler below is declared fresh on each render. Wrapping the result
+  // gives each one a fixed identity (forwarding to the current implementation),
+  // which is what allows the memoized module components to skip a render when
+  // only unrelated state moved. Data entries pass through by reference.
+  return useStableCallbacks({
     lang, setLang,
     activeTab, setActiveTab,
     isClient,
-    toastMessage, setToastMessage,
+    isAuthResolved,
+    // `toastMessage` is intentionally absent: StatusToastHost subscribes to it
+    // directly so raising one does not re-render every consumer of this hook.
+    setToastMessage,
     loginError, setLoginError,
     verificationPending, setVerificationPending,
     demoLoginEnabled,
@@ -2635,6 +2776,8 @@ export function useWineryState() {
     winePricing, setWinePricing,
     storageLocations, setStorageLocations,
     stockMovements, setStockMovements,
+    invoiceReceipts, setInvoiceReceipts,
+    inventoryMovements, setInventoryMovements,
     salesDispatches, setSalesDispatches,
     salesOrders, setSalesOrders,
     supplierPayments, setSupplierPayments,
@@ -2680,6 +2823,7 @@ export function useWineryState() {
     applyBottlingCommandResponse,
     applySalesStockCommandResponse,
     applyStorageMovementCommandResponse,
+    applyInvoiceReceiptCommandResponse,
     applyHarvestIntakeCommandResponse,
     applyFermentationCompletionCommandResponse,
     applyFermentationCompletionReversalCommandResponse,
@@ -2741,5 +2885,5 @@ export function useWineryState() {
     lastSyncAt,
     discardLocalUnsyncedChanges,
     clearAllData
-  };
+  });
 }

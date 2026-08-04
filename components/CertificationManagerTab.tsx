@@ -160,7 +160,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export default function CertificationManagerTab({
+export function CertificationManagerTab({
   lang,
   lots,
   blocks,
@@ -969,3 +969,11 @@ export default function CertificationManagerTab({
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(CertificationManagerTab);

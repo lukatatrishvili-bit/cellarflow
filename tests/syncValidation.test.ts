@@ -32,6 +32,8 @@ const operationalDb = (fields: Record<string, any> = {}) => ({
   auditLogs: [],
   attachments: [],
   inventory: [],
+  invoiceReceipts: [],
+  inventoryMovements: [],
   vessels: [],
   cellarOps: [],
   storageLocations: [],
@@ -1921,5 +1923,28 @@ describe('sync payload validation', () => {
         placedInStorageBottles: 100,
       }],
     }, undefined)).not.toThrow();
+  });
+
+  it('allows command-ledger echoes but rejects invoice receipt or movement edits through sync', () => {
+    const receipt = {
+      id: 'receipt-1', commandId: 'cmd-1', status: 'posted', analysisId: 'analysis-1',
+      duplicateFingerprint: 'number:supplier:1', invoice: { supplierName: 'Supplier', currency: 'GEL' },
+    };
+    const movement = {
+      id: 'movement-1', commandId: 'cmd-1', kind: 'invoice_receipt', direction: 'in',
+      inventoryItemId: 'item-1', quantity: 1, unit: 'kg', accountingAmount: 10,
+    };
+    const db = operationalDb({ invoiceReceipts: [receipt], inventoryMovements: [movement] });
+
+    expect(() => validateSyncPayload(db, {
+      invoiceReceipts: [{ ...receipt }],
+      inventoryMovements: [{ ...movement }],
+    }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, {
+      invoiceReceipts: [{ ...receipt, status: 'reversed' }],
+    }, undefined)).toThrow(/Immutable Invoice Receipt Ledger/);
+    expect(() => validateSyncPayload(db, {
+      inventoryMovements: [{ ...movement, quantity: 99 }],
+    }, undefined)).toThrow(/Immutable Inventory Movement Ledger/);
   });
 });

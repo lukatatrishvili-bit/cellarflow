@@ -18,5 +18,8 @@ db.json.tmp
 .db.json.*.tmp
 *.tmp
 
+# Ad hoc local audit scripts; keep them out of release commits/build contexts.
+tmp-*.mjs
+
 # Local attachment object store (dev fallback)
 attachments/

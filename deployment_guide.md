@@ -1,6 +1,6 @@
-# Vinea ERP Deployment Guide
+# VinOS Deployment Guide
 
-This guide explains how to build, run, and publish the Vinea ERP application in a production environment.
+This guide explains how to build, run, and publish VinOS in a production environment.
 
 ## Canonical deployment target
 
@@ -191,6 +191,47 @@ Optional non-secret SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`,
 `SMTP_USER`, and `MAIL_FROM`) remain GitHub repository or `production`
 environment secrets.
 
+### Custom domain: `PUBLIC_APP_URL`
+
+Mapping a domain to the Cloud Run service is only half the job. The service will
+answer on the domain immediately, but every link the server *generates* comes
+from `APP_URL`, which the deploy workflow sets — and with no configuration it
+sets it to the generated `*.run.app` URL.
+
+After mapping the domain, set a repository variable:
+
+```text
+PUBLIC_APP_URL = https://vinos.ge
+```
+
+Absolute `https`, no trailing slash; the deploy fails fast on anything else.
+Then redeploy so the new value reaches the service and the AI delivery job.
+
+Until this is set, the app still works, but:
+
+* Google sign-in started on the domain completes on run.app. The session cookie
+  is host-only, so the user lands back on the domain **appearing signed out**,
+  with nothing to indicate why.
+* Email verification, password reset, invitation, and approval-review links all
+  point at run.app.
+* AI notification deep links point at run.app.
+
+Register the same origin as an authorized JavaScript origin and redirect URI on
+the Google OAuth client (section 6). `tests/deployAppUrl.test.ts` guards the
+workflow behaviour.
+
+`APP_URL` also decides which origin search engines may index. The service
+answers on both the custom domain and the generated Cloud Run hostname with
+byte-identical pages, so any request arriving on a host other than `APP_URL`
+is served `X-Robots-Tag: noindex, nofollow`. Without that, the run.app URL
+competes with the real domain in search results and can outrank it. Requests are
+not redirected — reaching the service directly by its Cloud Run hostname stays a
+valid way to check a deployment.
+
+`public/robots.txt` and `public/sitemap.xml` both name `https://vinos.ge`
+explicitly, because those files require absolute URLs. Update them if the
+canonical domain ever changes.
+
 For Google Cloud authentication, use one of these options:
 
 **Recommended: Workload Identity Federation**
@@ -377,16 +418,30 @@ For the "Continue with Google" button to successfully authenticate users using t
 4. Search for and open the **Credentials** page:
    * Click **Create Credentials** > **OAuth Client ID**.
    * Select **Web Application** as the Application Type.
-    * Add **Authorized JavaScript Origins** (if running custom domains or testing):
+    * Add **Authorized JavaScript Origins** — every hostname the service answers
+      on:
       * Local: `http://localhost:3000`
+      * Production (custom domain): `https://vinos.ge`
       * Production: `https://cellarflow-app-445298255193.europe-west1.run.app`
       * Production (alternate Cloud Run hostname): `https://cellarflow-app-tzjx5orr7q-ew.a.run.app`
-    * Add **Authorized Redirect URIs** — the app derives the callback from the
-      host it was reached on (`appBaseUrl`), so **every** hostname the service
-      answers on needs an entry or that host gets `redirect_uri_mismatch`:
+    * Add **Authorized Redirect URIs**:
       * Local: `http://localhost:3000/api/auth/google/callback`
+      * Production (custom domain): `https://vinos.ge/api/auth/google/callback`
       * Production: `https://cellarflow-app-445298255193.europe-west1.run.app/api/auth/google/callback`
       * Production (alternate): `https://cellarflow-app-tzjx5orr7q-ew.a.run.app/api/auth/google/callback`
+
+      > **Which one is actually used.** `appBaseUrl` returns `APP_URL` whenever
+      > it is set, and the deploy workflow always sets it, so in production the
+      > callback is built from `APP_URL` alone — *not* from the host the user
+      > arrived on. Only the `APP_URL` origin's redirect URI is exercised there;
+      > the others are for local work and for reaching the service directly by
+      > its Cloud Run hostname before `APP_URL` is configured.
+      >
+      > This is why `PUBLIC_APP_URL` must point at the custom domain. With
+      > `APP_URL` left on the run.app URL, a user who signs in from `vinos.ge`
+      > is redirected to run.app, and the session cookie — host-only, with no
+      > `Domain=` attribute — is set there. Returning to `vinos.ge` they appear
+      > signed out, with no error to explain it.
     * Click **Create** and copy the generated **Client ID** and **Client Secret**.
  
  ### Step 6.2: Set Environment Variables
