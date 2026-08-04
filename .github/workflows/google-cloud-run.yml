@@ -506,6 +506,7 @@ jobs:
               --command npm
               --args "run,ai:monitor,--,${cadence}"
               --set-secrets "DATABASE_URL=cellarflow-database-url:latest"
+              --set-secrets "SESSION_SECRET=cellarflow-session-secret:latest"
               --set-env-vars "NODE_ENV=production,GCS_BUCKET=$GCS_BUCKET,GCS_DB_OBJECT=$GCS_DB_OBJECT"
               --labels "managed-by=github-actions,operation=ai-monitor-${cadence},commit-sha=${GITHUB_SHA}"
               --tasks 1
@@ -548,6 +549,7 @@ jobs:
             --command npm
             --args "run,ai:deliver,--,100"
             --set-secrets "DATABASE_URL=cellarflow-database-url:latest"
+            --set-secrets "SESSION_SECRET=cellarflow-session-secret:latest"
             --set-secrets "SMTP_PASS=cellarflow-smtp-pass:latest"
             --set-env-vars "NODE_ENV=production,APP_URL=$RESOLVED_APP_URL"
             --labels "managed-by=github-actions,operation=ai-deliver,commit-sha=${GITHUB_SHA}"

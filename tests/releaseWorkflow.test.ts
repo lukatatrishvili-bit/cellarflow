@@ -76,6 +76,12 @@ describe('release workflow contracts', () => {
     expect(workflow).toContain('Deploy and schedule deterministic AI operations');
     expect(workflow).toContain('"run,ai:monitor,--,${cadence}"');
     expect(workflow).toContain('"run,ai:deliver,--,100"');
+    expect(workflow).toMatch(
+      /deploy_monitor_job[\s\S]*?DATABASE_URL=cellarflow-database-url:latest"[\s\S]*?SESSION_SECRET=cellarflow-session-secret:latest"/,
+    );
+    expect(workflow).toMatch(
+      /DELIVERY_ARGS=\([\s\S]*?DATABASE_URL=cellarflow-database-url:latest"[\s\S]*?SESSION_SECRET=cellarflow-session-secret:latest"/,
+    );
     expect(workflow).toContain('"*/15 * * * *"');
     expectInOrder(workflow, [
       'gcloud run jobs get-iam-policy "$run_job"',
