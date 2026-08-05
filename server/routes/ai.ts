@@ -1381,9 +1381,6 @@ router.put('/notification-preferences', async (req, res) => {
   const pushEnabled = typeof req.body?.pushEnabled === 'boolean'
     ? req.body.pushEnabled
     : current.pushEnabled;
-  const whatsappEnabled = typeof req.body?.whatsappEnabled === 'boolean'
-    ? req.body.whatsappEnabled
-    : current.whatsappEnabled;
   const minimumSeverity = req.body?.minimumSeverity === undefined
     ? current.minimumSeverity
     : req.body.minimumSeverity as AiSeverity;
@@ -1408,18 +1405,11 @@ router.put('/notification-preferences', async (req, res) => {
       error: 'Register this browser for push notifications before enabling AI push alerts.',
     });
   }
-  if (whatsappEnabled && (!account.whatsappConfigured || !account.whatsappReady)) {
-    return res.status(409).json({
-      error: 'Configure AI WhatsApp delivery and opt in with a valid phone before enabling alerts.',
-    });
-  }
-
   const preference = await setAiNotificationPreference({
     organizationId: workspace.orgId,
     username: workspace.username,
     emailEnabled,
     pushEnabled,
-    whatsappEnabled,
     minimumSeverity,
     inAppMinimumSeverity,
   });

@@ -17,7 +17,7 @@ import winemakerRouter from './server/routes/winemaker';
 import aiRouter from './server/routes/ai';
 import billingRouter from './server/routes/billing';
 import terroirPulseRouter from './server/routes/terroirPulse';
-import notificationsRouter, { whatsappWebhookRouter } from './server/routes/notifications';
+import notificationsRouter from './server/routes/notifications';
 import aiOperationsAdminRouter from './server/routes/aiOperationsAdmin';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { warnOnAppUrlMismatch } from './server/appUrlMismatch';
@@ -41,14 +41,6 @@ app.set('trust proxy', 1);
 // completely healthy, so the server says so once per host.
 app.use(warnOnAppUrlMismatch({ isProduction: process.env.NODE_ENV === 'production' }));
 app.use(securityHeaders());
-// Meta signs the exact webhook bytes. Mount this narrow raw-body route before
-// the general JSON parser so signature verification cannot be affected by
-// parsing, whitespace, or key-order normalization.
-app.use(
-  '/api/notifications/whatsapp/webhook',
-  express.raw({ type: 'application/json', limit: '256kb' }),
-  whatsappWebhookRouter,
-);
 // Whole-state sync is the largest body this service accepts. Mount its parser
 // (and the matching error handler) before the general one so an over-limit
 // payload answers with a structured, actionable 413 instead of the parser's
@@ -113,8 +105,8 @@ app.get('/api/ready', async (_req, res) => {
         storageBackup: 'degraded',
         aiAssistant: 'degraded',
         email: 'degraded',
+        browserPush: 'degraded',
         googleOAuth: 'degraded',
-        whatsapp: 'degraded',
       },
     });
   }

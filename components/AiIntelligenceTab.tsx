@@ -65,9 +65,6 @@ interface AskResult {
 }
 
 interface AiNotificationPreferenceWire {
-  emailEnabled: boolean;
-  pushEnabled: boolean;
-  whatsappEnabled: boolean;
   minimumSeverity: AiSeverity;
   inAppMinimumSeverity: AiSeverity;
 }
@@ -132,47 +129,6 @@ function localizedWireText(value: unknown): { en: string; ka: string } {
   }
   const rendered = typeof value === 'string' ? value : '';
   return { en: rendered, ka: rendered };
-}
-
-function vapidApplicationServerKey(value: string): Uint8Array<ArrayBuffer> {
-  const padding = '='.repeat((4 - (value.length % 4)) % 4);
-  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = window.atob(base64);
-  const bytes = new Uint8Array(new ArrayBuffer(raw.length));
-  for (let index = 0; index < raw.length; index += 1) bytes[index] = raw.charCodeAt(index);
-  return bytes;
-}
-
-async function registerBrowserForAiPush(publicKey: string): Promise<void> {
-  if (
-    typeof window === 'undefined'
-    || !('Notification' in window)
-    || !('serviceWorker' in navigator)
-  ) {
-    throw new Error('This browser does not support push notifications.');
-  }
-  const permission = Notification.permission === 'granted'
-    ? 'granted'
-    : await Notification.requestPermission();
-  if (permission !== 'granted') {
-    throw new Error('Browser notification permission was not granted.');
-  }
-  const registration = await navigator.serviceWorker.ready;
-  const existing = await registration.pushManager.getSubscription();
-  const subscription = existing || await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: vapidApplicationServerKey(publicKey),
-  });
-  const response = await fetch('/api/ai/push-subscriptions', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subscription: subscription.toJSON() }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error || 'Browser push registration failed.');
-  }
 }
 
 /** Convert the language-specific API representation back into the UI shape. */
@@ -1146,18 +1102,9 @@ function AiSettingsPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notificationDraft, setNotificationDraft] = useState<AiNotificationPreferenceWire>({
-    emailEnabled: false,
-    pushEnabled: false,
-    whatsappEnabled: false,
     minimumSeverity: 'warning',
     inAppMinimumSeverity: 'info',
   });
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [pushConfigured, setPushConfigured] = useState(false);
-  const [pushPublicKey, setPushPublicKey] = useState('');
-  const [pushSubscriptionCount, setPushSubscriptionCount] = useState(0);
-  const [whatsappConfigured, setWhatsappConfigured] = useState(false);
-  const [whatsappReady, setWhatsappReady] = useState(false);
   const [loadingPreference, setLoadingPreference] = useState(true);
 
   useEffect(() => {
@@ -1171,9 +1118,6 @@ function AiSettingsPanel({
       .then((payload) => {
         if (!active) return;
         setNotificationDraft({
-          emailEnabled: payload?.preference?.emailEnabled === true,
-          pushEnabled: payload?.preference?.pushEnabled === true,
-          whatsappEnabled: payload?.preference?.whatsappEnabled === true,
           minimumSeverity: SEVERITIES.includes(payload?.preference?.minimumSeverity)
             ? payload.preference.minimumSeverity
             : 'warning',
@@ -1181,14 +1125,6 @@ function AiSettingsPanel({
             ? payload.preference.inAppMinimumSeverity
             : 'info',
         });
-        setEmailVerified(payload?.account?.emailVerified === true && payload?.account?.hasEmail === true);
-        setPushConfigured(payload?.account?.pushConfigured === true);
-        setPushPublicKey(typeof payload?.account?.pushPublicKey === 'string'
-          ? payload.account.pushPublicKey
-          : '');
-        setPushSubscriptionCount(Math.max(0, Number(payload?.account?.pushSubscriptionCount) || 0));
-        setWhatsappConfigured(payload?.account?.whatsappConfigured === true);
-        setWhatsappReady(payload?.account?.whatsappReady === true);
       })
       .catch(() => {
         if (active) {
@@ -1209,16 +1145,6 @@ function AiSettingsPanel({
     setSaving(true);
     setError(null);
     try {
-      if (notificationDraft.pushEnabled && pushSubscriptionCount === 0) {
-        if (!pushConfigured || !pushPublicKey) {
-          throw new Error(T(
-            'Web push is not configured for this deployment.',
-            'ამ სისტემაში ბრაუზერის შეტყობინებები ჯერ არ არის კონფიგურირებული.',
-          ));
-        }
-        await registerBrowserForAiPush(pushPublicKey);
-        setPushSubscriptionCount(1);
-      }
       const preferenceResponse = await fetch('/api/ai/notification-preferences', {
         method: 'PUT',
         credentials: 'include',
@@ -1274,8 +1200,8 @@ function AiSettingsPanel({
       </h4>
       <p className="mt-1 text-[11px] text-stone-500">
         {T(
-          'In-app and email alert preferences are personal to your account.',
-          'აპისა და ელფოსტის შეტყობინებების პარამეტრები თქვენს ანგარიშზეა მორგებული.',
+          'Intelligence alert thresholds are personal to your account.',
+          'ინტელექტის შეტყობინებების ზღვრები თქვენს ანგარიშზეა მორგებული.',
         )}
       </p>
 
@@ -1307,96 +1233,15 @@ function AiSettingsPanel({
         </div>
 
         <div className="my-3 border-t border-stone-200" />
-        <label className="flex items-start gap-2 text-[11px] font-semibold text-stone-700">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={notificationDraft.emailEnabled}
-            disabled={loadingPreference || !emailVerified}
-            onChange={(event) => setNotificationDraft({
-              ...notificationDraft,
-              emailEnabled: event.target.checked,
-            })}
-          />
-          <span>
-            {T('Email me routed intelligence alerts', 'მომწერეთ ელფოსტაზე ჩემთვის განკუთვნილი ინტელექტის შეტყობინებები')}
-            <span className="mt-0.5 block text-[9px] font-normal leading-relaxed text-stone-500">
-              {emailVerified
-                ? T(
-                  'Only new or escalated findings after opt-in are eligible; old alerts are never sent retroactively.',
-                  'იგზავნება მხოლოდ თანხმობის შემდეგ შექმნილი ან გამწვავებული დასკვნები; ძველი შეტყობინებები უკუქცევით არ გაიგზავნება.',
-                )
-                : T(
-                  'Verify your account email before enabling alerts.',
-                  'შეტყობინებების ჩასართავად ჯერ დაადასტურეთ ანგარიშის ელფოსტა.',
-                )}
-            </span>
-          </span>
-        </label>
-        <div className="mt-3 grid gap-3 border-t border-stone-200 pt-3 sm:grid-cols-2">
-          <label className="flex items-start gap-2 text-[11px] font-semibold text-stone-700">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={notificationDraft.pushEnabled}
-              disabled={
-                loadingPreference
-                || !pushConfigured
-                || typeof window === 'undefined'
-                || !('Notification' in window)
-                || !('serviceWorker' in navigator)
-              }
-              onChange={(event) => setNotificationDraft({
-                ...notificationDraft,
-                pushEnabled: event.target.checked,
-              })}
-            />
-            <span>
-              {T('Browser push alerts', 'ბრაუზერის შეტყობინებები')}
-              <span className="mt-0.5 block text-[9px] font-normal leading-relaxed text-stone-500">
-                {pushConfigured
-                  ? T(
-                    'Permission is requested only when you save this opt-in. Critical findings can remain visible until opened.',
-                    'ნებართვა მხოლოდ ამ თანხმობის შენახვისას მოითხოვება. კრიტიკული დასკვნა გახსნამდე შეიძლება ეკრანზე დარჩეს.',
-                  )
-                  : T(
-                    'Web push keys are not configured for this deployment.',
-                    'ამ სისტემისთვის Web Push გასაღებები ჯერ არ არის კონფიგურირებული.',
-                  )}
-              </span>
-            </span>
-          </label>
-
-          <label className="flex items-start gap-2 text-[11px] font-semibold text-stone-700">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={notificationDraft.whatsappEnabled}
-              disabled={loadingPreference || !whatsappConfigured || !whatsappReady}
-              onChange={(event) => setNotificationDraft({
-                ...notificationDraft,
-                whatsappEnabled: event.target.checked,
-              })}
-            />
-            <span>
-              {T('WhatsApp intelligence alerts', 'ინტელექტის შეტყობინებები WhatsApp-ზე')}
-              <span className="mt-0.5 block text-[9px] font-normal leading-relaxed text-stone-500">
-                {whatsappConfigured && whatsappReady
-                  ? T(
-                    'Uses your existing WhatsApp opt-in and verified international phone. A separately approved AI alert template is required.',
-                    'გამოიყენება თქვენი არსებული WhatsApp თანხმობა და სწორი საერთაშორისო ნომერი. საჭიროა AI შეტყობინების ცალკე დამტკიცებული შაბლონი.',
-                  )
-                  : T(
-                    'Enable WhatsApp in your profile and configure the approved AI alert template first.',
-                    'ჯერ პროფილში ჩართეთ WhatsApp და დააკონფიგურირეთ დამტკიცებული AI შეტყობინების შაბლონი.',
-                  )}
-              </span>
-            </span>
-          </label>
-        </div>
+        <p className="text-[9.5px] leading-relaxed text-stone-500">
+          {T(
+            'Email and browser push are controlled from Profile Settings → Personal notifications.',
+            'ელფოსტა და ბრაუზერის Push შეტყობინებები იმართება პროფილის პარამეტრებში → პირადი შეტყობინებები.',
+          )}
+        </p>
         <div className="mt-3 max-w-xs">
           <label htmlFor="ai-personal-min-severity" className="mb-1 block text-[10px] uppercase font-mono font-semibold text-stone-500">
-            {T('My minimum email severity', 'ელფოსტის მინიმალური დონე')}
+            {T('My minimum external-alert severity', 'გარე შეტყობინებების მინიმალური დონე')}
           </label>
           <select
             id="ai-personal-min-severity"

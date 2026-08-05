@@ -8,6 +8,7 @@ import { localizedRoleLabel } from '../lib/roleLabels';
 import { canViewAppDestination } from '../lib/navigationPermissions';
 import BillingSettingsPanel from './BillingSettingsPanel';
 import TerroirSharingPanel from './TerroirSharingPanel';
+import NotificationPreferencesPanel from './NotificationPreferencesPanel';
 import {
   directoryRecordToCrmLead,
   directoryRecordLabel,
@@ -76,7 +77,8 @@ export function ProfileSettingsTab({
     email: string;
     role: string;
     language: 'en' | 'ka';
-    whatsappReady: boolean;
+    emailNotificationReady: boolean;
+    pushNotificationReady: boolean;
   }[]>([]);
   const [pendingInvites, setPendingInvites] = React.useState<{ id: string; email: string; role: string; expiresAt: string }[]>([]);
   const [loadingMembers, setLoadingMembers] = React.useState(false);
@@ -241,8 +243,6 @@ export function ProfileSettingsTab({
             await onUpdateProfile({
               fullName: currentUser.fullName,
               language: lang === 'ka' ? 'ka' : 'en',
-              phone: currentUser.phone || '',
-              whatsappOptIn: currentUser.whatsappOptIn === true,
               enabledModules: modules,
               enabledWidgets: widgets
             });
@@ -555,39 +555,7 @@ export function ProfileSettingsTab({
             </div>
           </div>
 
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/20">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
-              <div>
-                <label htmlFor="operator-whatsapp-phone" className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500">
-                  {lang === 'ka' ? 'პირადი WhatsApp ნომერი' : 'Personal WhatsApp number'}
-                </label>
-                <input
-                  id="operator-whatsapp-phone"
-                  type="tel"
-                  inputMode="tel"
-                  value={currentUser.phone || ''}
-                  onChange={(e) => setCurrentUser({ ...currentUser, phone: e.target.value })}
-                  placeholder="+995555123456"
-                  autoComplete="tel"
-                  className="w-full bg-white border border-[#d8e5dc] p-2.5 rounded text-stone-900 font-mono outline-none"
-                />
-                <p className="mt-1 text-[9.5px] leading-relaxed text-stone-500">
-                  {lang === 'ka'
-                    ? 'შეიყვანეთ ქვეყნის კოდით. ნომერი გუნდის სხვა წევრებს არ გამოუჩნდებათ.'
-                    : 'Include the country code. Your number is not shown to other team members.'}
-                </p>
-              </div>
-              <label className="flex min-h-[42px] items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 font-bold text-emerald-900 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={currentUser.whatsappOptIn === true}
-                  onChange={(e) => setCurrentUser({ ...currentUser, whatsappOptIn: e.target.checked })}
-                  className="h-4 w-4 accent-emerald-700"
-                />
-                <span>{lang === 'ka' ? 'WhatsApp დავალებების მიღება' : 'Receive WhatsApp tasks'}</span>
-              </label>
-            </div>
-          </div>
+          <NotificationPreferencesPanel lang={lang} onMessage={setToastMessage} />
 
           <hr className="border-stone-100" />
 
@@ -767,7 +735,8 @@ export function ProfileSettingsTab({
                     <th className="p-3">{lang === 'ka' ? 'სახელი' : 'Name'}</th>
                     <th className="p-3">{lang === 'ka' ? 'ელ-ფოსტა' : 'Email'}</th>
                     <th className="p-3">{lang === 'ka' ? 'როლი' : 'Role'}</th>
-                    <th className="p-3">WhatsApp</th>
+                    <th className="p-3">{lang === 'ka' ? 'ელფოსტა' : 'Email'}</th>
+                    <th className="p-3">Push</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-150 text-[10.5px]">
@@ -776,12 +745,15 @@ export function ProfileSettingsTab({
                       <td className="p-3 font-bold text-stone-800">{member.fullName} <span className="text-[9px] font-mono text-stone-400 font-normal">(@{member.username})</span></td>
                       <td className="p-3 text-stone-600 font-mono">{member.email}</td>
                       <td className="p-3 font-semibold text-[#4e0e15]">{member.role}</td>
-                      <td className="p-3 font-semibold">
-                        <span className={member.whatsappReady ? 'text-emerald-700' : 'text-stone-400'}>
-                          {member.whatsappReady
-                            ? (member.language === 'ka' ? 'ქართული · მზადაა' : 'English · ready')
-                            : (lang === 'ka' ? 'არ არის ჩართული' : 'Not enabled')}
-                        </span>
+                      <td className={`p-3 font-semibold ${member.emailNotificationReady ? 'text-emerald-700' : 'text-stone-400'}`}>
+                        {member.emailNotificationReady
+                          ? (lang === 'ka' ? 'ჩართულია' : 'Enabled')
+                          : (lang === 'ka' ? 'გამორთულია' : 'Off')}
+                      </td>
+                      <td className={`p-3 font-semibold ${member.pushNotificationReady ? 'text-emerald-700' : 'text-stone-400'}`}>
+                        {member.pushNotificationReady
+                          ? (lang === 'ka' ? 'ჩართულია' : 'Enabled')
+                          : (lang === 'ka' ? 'გამორთულია' : 'Off')}
                       </td>
                     </tr>
                   ))}

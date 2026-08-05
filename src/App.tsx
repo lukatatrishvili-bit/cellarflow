@@ -2686,7 +2686,7 @@ export default function App() {
                 onToggleTaskStatus={state.handleToggleTaskStatus}
                 onDeleteTask={state.handleDeleteTask}
                 onAddNewTask={state.handleAddNewTask}
-                onUpdateTaskWhatsAppNotification={state.handleUpdateTaskWhatsAppNotification}
+                onUpdateTaskNotification={state.handleUpdateTaskNotification}
                 setToastMessage={state.setToastMessage}
                 canCreateTask={canAccess(state.currentUser.role, 'tasks', 'create')}
                 canUpdateTask={canAccess(state.currentUser.role, 'tasks', 'update')}

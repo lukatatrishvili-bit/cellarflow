@@ -1,5 +1,5 @@
 // Bump the version to invalidate all caches on deploy of a new SW.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SHELL_CACHE = `vinea-shell-${VERSION}`;
 const ASSET_CACHE = `vinea-assets-${VERSION}`;
 const KNOWN_CACHES = [SHELL_CACHE, ASSET_CACHE];
@@ -129,9 +129,10 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Server-routed AI findings arrive only after the signed-in user explicitly
-// opts this browser in. Payloads contain a validated finding projection, never
-// provider credentials, phone numbers, or raw winery snapshots.
+// Server-routed task assignments and intelligence findings arrive only after
+// the signed-in user explicitly opts this browser in. Payloads contain a
+// validated notification projection, never provider credentials or raw winery
+// snapshots.
 self.addEventListener('push', (event) => {
   let payload = {};
   try {

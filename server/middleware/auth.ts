@@ -162,8 +162,8 @@ export const oauthCallbackLimiter = createSharedLoginLimiter({
   lockoutMs: 15 * 60 * 1000,
 }, getPrismaClientForAdmin);
 
-/** Cost/abuse guard for business-initiated WhatsApp template sends per actor. */
-export const whatsappNotificationLimiter = createSharedLoginLimiter({
+/** Cost/abuse guard for proactive task email and browser-push sends per actor. */
+export const taskNotificationLimiter = createSharedLoginLimiter({
   maxAttempts: 60,
   windowMs: 15 * 60 * 1000,
   lockoutMs: 15 * 60 * 1000,

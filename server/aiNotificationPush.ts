@@ -13,6 +13,19 @@ export class AiPushNoSubscriptionsError extends Error {
   }
 }
 
+export interface WebPushPayload {
+  title: string;
+  body?: string;
+  icon?: string;
+  badge?: string;
+  tag?: string;
+  renotify?: boolean;
+  requireInteraction?: boolean;
+  lang?: 'en' | 'ka';
+  data?: Record<string, unknown>;
+  actions?: Array<{ action: string; title: string }>;
+}
+
 function localized(value: { en: string; ka: string }, language: 'en' | 'ka'): string {
   return language === 'ka' ? value.ka : value.en;
 }
@@ -76,18 +89,17 @@ export function buildAiWebPushPayload(input: {
 }
 
 /** Sends one user-level event to every currently registered browser endpoint. */
-export async function sendAiWebPushNotification(input: {
+export async function sendWebPushNotification(input: {
   organizationId: string;
   username: string;
-  language: 'en' | 'ka';
-  wineryName: string;
-  payload: AiNotificationPayload;
-  appUrl?: string;
+  payload: WebPushPayload;
+  ttlSeconds?: number;
+  urgency?: 'very-low' | 'low' | 'normal' | 'high';
 }): Promise<{ delivered: number; expired: number }> {
   configureWebPush();
   const subscriptions = await listAiPushSubscriptions(input.organizationId, input.username);
   if (subscriptions.length === 0) throw new AiPushNoSubscriptionsError();
-  const message = JSON.stringify(buildAiWebPushPayload(input));
+  const message = JSON.stringify(input.payload);
   let delivered = 0;
   let expired = 0;
   let lastError: unknown;
@@ -102,8 +114,8 @@ export async function sendAiWebPushNotification(input: {
           auth: subscription.auth,
         },
       }, message, {
-        TTL: input.payload.severity === 'critical' ? 24 * 60 * 60 : 6 * 60 * 60,
-        urgency: input.payload.severity === 'critical' ? 'high' : 'normal',
+        TTL: input.ttlSeconds ?? 6 * 60 * 60,
+        urgency: input.urgency ?? 'normal',
       });
       delivered += 1;
     } catch (error: any) {
@@ -123,4 +135,21 @@ export async function sendAiWebPushNotification(input: {
   if (delivered > 0) return { delivered, expired };
   if (expired === subscriptions.length) throw new AiPushNoSubscriptionsError();
   throw lastError instanceof Error ? lastError : new Error('Web push delivery failed.');
+}
+
+export async function sendAiWebPushNotification(input: {
+  organizationId: string;
+  username: string;
+  language: 'en' | 'ka';
+  wineryName: string;
+  payload: AiNotificationPayload;
+  appUrl?: string;
+}): Promise<{ delivered: number; expired: number }> {
+  return sendWebPushNotification({
+    organizationId: input.organizationId,
+    username: input.username,
+    payload: buildAiWebPushPayload(input),
+    ttlSeconds: input.payload.severity === 'critical' ? 24 * 60 * 60 : 6 * 60 * 60,
+    urgency: input.payload.severity === 'critical' ? 'high' : 'normal',
+  });
 }

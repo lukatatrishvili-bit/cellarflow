@@ -194,17 +194,17 @@ section.plate{padding:clamp(48px,7vw,84px) 0;border-bottom:1px solid var(--line)
 .tile .bar{height:1.7cqi;background:rgba(255,255,255,.08);margin-top:1.8cqi;overflow:hidden;}
 .tile .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--wine-bright),var(--gold));}
 
-/* tile 8 whatsapp */
-.tile.t-wa .chat{margin-top:auto;background:#0b141a;border:1px solid rgba(184,216,111,.2);border-radius:2cqi;padding:3.6cqi;position:relative;}
-.tile.t-wa .wa-head{display:flex;align-items:center;gap:2.4cqi;padding-bottom:2.8cqi;margin-bottom:3cqi;border-bottom:1px solid rgba(255,255,255,.08);}
-.tile.t-wa .wa-head .wi{width:6.4cqi;height:6.4cqi;border-radius:50%;background:#1f8a5b;display:grid;place-items:center;}
-.tile.t-wa .wa-head svg{width:3.6cqi;height:3.6cqi;color:#eafff4;}
-.tile.t-wa .wa-head b{font-size:3.3cqi;font-weight:600;}
-.tile.t-wa .wa-head span{font-family:var(--mono);font-size:2.3cqi;color:var(--lime);letter-spacing:.06em;}
-.tile.t-wa .bubble{background:#075e4c;border-radius:2cqi 2cqi 2cqi .4cqi;padding:3cqi 3.4cqi;font-size:3.1cqi;line-height:1.5;color:#f2fff9;}
-.tile.t-wa .bubble .l{display:block;}
-.tile.t-wa .bubble b{color:#c9f0a8;}
-.tile.t-wa .bubble .time{display:block;text-align:right;font-family:var(--mono);font-size:2.2cqi;color:rgba(233,255,244,.5);margin-top:1.4cqi;}
+/* tile 8 email + browser push */
+.tile.t-alert .chat{margin-top:auto;background:#0b141a;border:1px solid rgba(184,216,111,.2);border-radius:2cqi;padding:3.6cqi;position:relative;}
+.tile.t-alert .alert-head{display:flex;align-items:center;gap:2.4cqi;padding-bottom:2.8cqi;margin-bottom:3cqi;border-bottom:1px solid rgba(255,255,255,.08);}
+.tile.t-alert .alert-head .wi{width:6.4cqi;height:6.4cqi;border-radius:50%;background:#1f8a5b;display:grid;place-items:center;}
+.tile.t-alert .alert-head svg{width:3.6cqi;height:3.6cqi;color:#eafff4;}
+.tile.t-alert .alert-head b{font-size:3.3cqi;font-weight:600;}
+.tile.t-alert .alert-head span{font-family:var(--mono);font-size:2.3cqi;color:var(--lime);letter-spacing:.06em;}
+.tile.t-alert .bubble{background:#075e4c;border-radius:2cqi 2cqi 2cqi .4cqi;padding:3cqi 3.4cqi;font-size:3.1cqi;line-height:1.5;color:#f2fff9;}
+.tile.t-alert .bubble .l{display:block;}
+.tile.t-alert .bubble b{color:#c9f0a8;}
+.tile.t-alert .bubble .time{display:block;text-align:right;font-family:var(--mono);font-size:2.2cqi;color:rgba(233,255,244,.5);margin-top:1.4cqi;}
 
 /* tile 9 cta */
 .tile.t-cta{background:linear-gradient(150deg,#4e0e15,#20070e 78%);}
@@ -404,12 +404,12 @@ Vineyard · Cellar · Lab — one living system
 
           <div class="field fade">
             <div class="field-h"><span class="lab">Link in bio</span><button class="copy-btn" data-copy="https://vinos.ge">Copy</button></div>
-            <div class="field-b">https://vinos.ge <span class="muted">(or your Cloud Run URL / a linktree with App · WhatsApp · PWA install)</span></div>
+            <div class="field-b">https://vinos.ge <span class="muted">(or your Cloud Run URL / a linktree with App · Email · PWA install)</span></div>
           </div>
 
           <div class="field fade">
             <div class="field-h"><span class="lab">Category &amp; contact</span></div>
-            <div class="field-b">Category: <b>Software company</b> · Buttons: <b>WhatsApp</b> +995 599 304 205 · <b>Email</b> luka.tatrishvili@gmail.com
+            <div class="field-b">Category: <b>Software company</b> · Buttons: <b>Email</b> luka.tatrishvili@gmail.com · <b>Call</b> +995 599 304 205
 <span class="muted">Switch to a Business/Creator account to show these action buttons.</span></div>
           </div>
         </div>
@@ -552,13 +552,13 @@ function tile(n){
           <div class="status" style="color:var(--gold-soft)"><svg style="color:var(--lime)"><use href="#i-shield"/></svg> 5+ wineries · no data leaves your cellar</div>
         </div>
       </div></div>`,
-  8:`<div class="tile t-wa" data-n="8"><span class="badge-new">NEW</span><span class="tgrid"></span><span class="tframe"></span>
-      <span class="corner tl">08 · WHATSAPP</span><span class="corner br">TEAM ALERTS</span>
+  8:`<div class="tile t-alert" data-n="8"><span class="badge-new">NEW</span><span class="tgrid"></span><span class="tframe"></span>
+      <span class="corner tl">08 · ALERTS</span><span class="corner br">TEAM ALERTS</span>
       <div class="body">
         <span class="kick">Task notifications</span>
-        <h3 style="font-size:8cqi;margin-top:1.5cqi">Tasks land on<br>WhatsApp.</h3>
+        <h3 style="font-size:8cqi;margin-top:1.5cqi">Tasks arrive by<br>email &amp; push.</h3>
         <div class="chat">
-          <div class="wa-head"><span class="wi"><svg><use href="#i-msg"/></svg></span><div><b>VinOS</b><br><span>● business account</span></div></div>
+          <div class="alert-head"><span class="wi"><svg><use href="#i-msg"/></svg></span><div><b>VinOS</b><br><span>● browser notification</span></div></div>
           <div class="bubble"><span class="l">Hello Nino, you have a new task in VinOS.</span><span class="l" style="margin-top:1.6cqi"><b>Task:</b> Rack TK-07 off gross lees</span><span class="l"><b>Priority:</b> High · <b>Due:</b> today</span><span class="time">09:24 ✓✓</span></div>
         </div>
       </div></div>`,
@@ -570,7 +570,7 @@ function tile(n){
         <p class="cta-sub"><b>Unlimited team.</b> Works offline. Set up in an afternoon — before harvest.</p>
         <div class="cta-links">
           <div><svg><use href="#i-globe"/></svg> vinos.ge — start free</div>
-          <div><svg><use href="#i-msg"/></svg> WhatsApp +995 599 304 205</div>
+          <div><svg><use href="#i-msg"/></svg> Email luka.tatrishvili@gmail.com</div>
           <div><svg><use href="#i-download"/></svg> Install as an app · works offline</div>
         </div>
       </div></div>`
@@ -608,13 +608,13 @@ const posts=[
   en:`New: Terroir Pulse. 🌍\n\nHow does your vintage compare to your region — without handing your data to anyone? Terroir Pulse publishes privacy-protected benchmarks: median Brix, pH and harvest timing for your terroir, built only when at least five wineries contribute, and always anonymous.\n\nYou see the region. No one sees your cellar. Opt in anytime in Settings.`,
   ka:`სიახლე: Terroir Pulse. 🌍\n\nროგორ ადარებთ თქვენს რთველს რეგიონს — ისე, რომ მონაცემები არავის გადასცეთ? Terroir Pulse აქვეყნებს კონფიდენციალურობით დაცულ ბენჩმარკებს: შაქრიანობის, pH-ისა და რთველის ვადების მედიანას თქვენი ტერუარისთვის — მხოლოდ მაშინ, როცა სულ მცირე ხუთი მეღვინე მონაწილეობს, და ყოველთვის ანონიმურად.\n\nთქვენ ხედავთ რეგიონს. თქვენს მარანს — ვერავინ. ჩართვა ნებისმიერ დროს პარამეტრებში.`,
   tags:`#TerroirPulse #terroir #Georgianwine #ტერუარი #winedata #benchmarking #Kakheti #კახეთი #Saperavi #winecommunity #ღვინო`},
- {n:8,title:'WhatsApp alerts',role:'NEW feature',
-  en:`New: tasks land on WhatsApp. 💬\n\nAssign a job in VinOS and the right person gets it on WhatsApp — task, priority, due date, all in Georgian or English. No app to install, no login for the cellar hand, nothing lost in a group chat.\n\nEveryone opts in themselves, and every message is an operational note — never spam.`,
-  ka:`სიახლე: დავალებები WhatsApp-ზე. 💬\n\nდანიშნეთ საქმე VinOS-ში და შესაბამისი ადამიანი მიიღებს მას WhatsApp-ზე — დავალება, პრიორიტეტი, ვადა, ქართულად ან ინგლისურად. აპლიკაციის დაყენება არ სჭირდება, მარნის თანამშრომელს ავტორიზაცია არ სჭირდება, არაფერი იკარგება ჯგუფურ ჩატში.\n\nყველა თავად ერთვება, და ყოველი შეტყობინება საოპერაციო შენიშვნაა — არასდროს სპამი.`,
-  tags:`#WhatsApp #teamwork #winerylife #მარანი #tasks #winemaking #productivity #ღვინო #cellarteam #winetech`},
+ {n:8,title:'Email + push alerts',role:'NEW feature',
+  en:`New: tasks arrive by email and browser push. 🔔\n\nAssign a job in VinOS and the right person receives the task, priority, and due date in Georgian or English. One tap opens the task directly in VinOS.\n\nEach teammate controls email and push separately in their own notification settings.`,
+  ka:`სიახლე: დავალებები ელფოსტით და ბრაუზერის push-შეტყობინებით. 🔔\n\nდანიშნეთ საქმე VinOS-ში და შესაბამისი ადამიანი მიიღებს დავალებას, პრიორიტეტსა და ვადას ქართულად ან ინგლისურად. ერთი შეხებით დავალება პირდაპირ VinOS-ში იხსნება.\n\nგუნდის თითოეული წევრი ელფოსტასა და push-შეტყობინებას საკუთარ პარამეტრებში ცალ-ცალკე მართავს.`,
+  tags:`#notifications #teamwork #winerylife #მარანი #tasks #winemaking #productivity #ღვინო #cellarteam #winetech`},
  {n:9,title:'Start free',role:'Call to action',
-  en:`Your next vintage deserves one clear system. 🍇\n\nTry VinOS free for one month — unlimited team, works offline, set up in an afternoon. Bring your vineyard, cellar and lab into one place before harvest.\n\n→ Start at vinos.ge\n→ Questions? WhatsApp +995 599 304 205\n→ Install it as an app on any phone or tablet`,
-  ka:`თქვენი შემდეგი რთველი იმსახურებს ერთ მკაფიო სისტემას. 🍇\n\nგამოსცადეთ VinOS უფასოდ ერთი თვის განმავლობაში — შეუზღუდავი გუნდი, მუშაობს ოფლაინში, ეწყობა ერთ დღეში. გააერთიანეთ ვენახი, მარანი და ლაბორატორია რთველამდე.\n\n→ დაიწყეთ vinos.ge-ზე\n→ კითხვები? WhatsApp +995 599 304 205\n→ დააყენეთ როგორც აპლიკაცია ნებისმიერ ტელეფონზე`,
+  en:`Your next vintage deserves one clear system. 🍇\n\nTry VinOS free for one month — unlimited team, works offline, set up in an afternoon. Bring your vineyard, cellar and lab into one place before harvest.\n\n→ Start at vinos.ge\n→ Questions? Email luka.tatrishvili@gmail.com\n→ Install it as an app on any phone or tablet`,
+  ka:`თქვენი შემდეგი რთველი იმსახურებს ერთ მკაფიო სისტემას. 🍇\n\nგამოსცადეთ VinOS უფასოდ ერთი თვის განმავლობაში — შეუზღუდავი გუნდი, მუშაობს ოფლაინში, ეწყობა ერთ დღეში. გააერთიანეთ ვენახი, მარანი და ლაბორატორია რთველამდე.\n\n→ დაიწყეთ vinos.ge-ზე\n→ კითხვები? ელფოსტა: luka.tatrishvili@gmail.com\n→ დააყენეთ როგორც აპლიკაცია ნებისმიერ ტელეფონზე`,
   tags:`#VinOS #freetrial #winerysoftware #ღვინო #Georgianwine #startup #winetech #მეღვინეობა #harvest2026 #რთველი #winery`}
 ];
 
@@ -663,7 +663,7 @@ const plan=[
  ['Day 10','Post 5 — Laboratory','Speaks to the serious, quality-focused winemaker.'],
  ['Day 12','Post 6 — AI winemaker','The “wow”. Consider a short screen-record Reel of asking VinOS a question.'],
  ['Day 15','Post 7 — Terroir Pulse','Lead the two new features; the privacy angle earns shares.'],
- ['Day 17','Post 8 — WhatsApp alerts','Relatable, practical — invites comments (“tag your cellar team”).'],
+ ['Day 17','Post 8 — Email + push alerts','Relatable, practical — invites comments (“tag your cellar team”).'],
  ['Day 19','Post 9 — Start free','Close with the offer while the grid tells the full story above it.']
 ];
 const pw=document.getElementById('plan');

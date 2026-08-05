@@ -135,7 +135,7 @@ export function buildDailyBriefing(
 }
 
 /**
- * Flat text rendering for channels without a UI (email, WhatsApp, a log line).
+ * Flat text rendering for channels without a UI (email, browser push, a log line).
  * Uses the same ranked structure so the message a winemaker gets on their phone
  * matches the dashboard they will open later.
  */

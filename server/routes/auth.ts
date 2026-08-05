@@ -69,7 +69,11 @@ import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from '../oauth
 import { isKnownRole, type Role } from '../permissions';
 import { auditSecurityEvent } from '../securityAudit';
 import type { SharedLoginLimiter } from '../loginLimiter';
-import { normalizeWhatsAppPhone } from '../whatsapp';
+import { normalizeInternationalPhone } from '../phone';
+import {
+  getAiNotificationAccountStatus,
+  getAiNotificationPreference,
+} from '../aiNotificationPreferences';
 
 const authRouter = express.Router();
 const orgRouter = express.Router();
@@ -188,7 +192,6 @@ function publicUser(user: any, extra: Record<string, unknown> = {}) {
     role: normalizeRole(user.role),
     language: normalizeLanguage(user.language),
     phone: cleanText(user.phone),
-    whatsappOptIn: user.whatsappOptIn === true,
     enabledModules: modules,
     enabledWidgets: selectedWidgets(user.enabledWidgets, modules),
     registrationComplete: user.registrationComplete ?? true,
@@ -369,8 +372,7 @@ authRouter.post('/register', async (req, res) => {
     fullName: cleanFullName,
     role: 'Owner/Admin',
     language: normalizeLanguage(language),
-    phone: normalizeWhatsAppPhone(normalizedCompanyProfile.phone) || '',
-    whatsappOptIn: false,
+    phone: normalizeInternationalPhone(normalizedCompanyProfile.phone) || '',
     passwordHash: hashPassword(passcode || 'vinea2026'),
     enabledModules,
     enabledWidgets,
@@ -1081,7 +1083,6 @@ authRouter.get('/google/callback', async (req, res) => {
         role: 'Owner/Admin',
         language: 'en',
         phone: '',
-        whatsappOptIn: false,
         passwordHash: '',
         enabledModules: ['vazi', 'gvino'],
         enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
@@ -1253,9 +1254,8 @@ authRouter.post('/complete_registration', async (req, res) => {
   user.sessionVersion = sessionVersionForUser(user) + 1;
   user.language = normalizeLanguage(req.body?.language || user.language);
   if (!user.phone && companyProfile.phone) {
-    user.phone = normalizeWhatsAppPhone(companyProfile.phone) || '';
+    user.phone = normalizeInternationalPhone(companyProfile.phone) || '';
   }
-  user.whatsappOptIn = user.whatsappOptIn === true;
   user.enabledModules = enabledModules;
   user.enabledWidgets = selectedWidgets(req.body?.enabledWidgets, enabledModules);
   user.registrationComplete = true;
@@ -1296,23 +1296,16 @@ authRouter.post('/update_profile', async (req, res) => {
     return res.status(401).json({ error: 'User not found' });
   }
 
-  const { fullName, language, phone, whatsappOptIn, enabledModules, enabledWidgets } = req.body;
+  const { fullName, language, phone, enabledModules, enabledWidgets } = req.body;
   if (fullName !== undefined) user.fullName = cleanText(fullName) || user.fullName;
   if (language !== undefined) user.language = normalizeLanguage(language);
   if (phone !== undefined) {
     const rawPhone = cleanText(phone);
-    const normalizedPhone = rawPhone ? normalizeWhatsAppPhone(rawPhone) : '';
+    const normalizedPhone = rawPhone ? normalizeInternationalPhone(rawPhone) : '';
     if (rawPhone && !normalizedPhone) {
       return res.status(400).json({ error: 'Use an international phone number with country code, for example +995555123456.' });
     }
     user.phone = normalizedPhone || '';
-  }
-  if (whatsappOptIn !== undefined) {
-    const nextOptIn = whatsappOptIn === true;
-    if (nextOptIn && !normalizeWhatsAppPhone(user.phone)) {
-      return res.status(400).json({ error: 'Save a valid international phone number before enabling WhatsApp notifications.' });
-    }
-    user.whatsappOptIn = nextOptIn;
   }
   if (enabledModules !== undefined) {
     const modules = selectedModules(enabledModules);
@@ -1574,17 +1567,31 @@ orgRouter.get('/members', checkWineryScope('read'), async (req, res) => {
   if (!orgId) return res.status(400).json({ error: 'No active organization' });
 
   const memberships = db.memberships?.filter(m => m.organizationId === orgId) || [];
-  const members = memberships.map(m => {
+  const members = await Promise.all(memberships.map(async m => {
     const u = db.users.find(usr => usr.username === m.userId);
+    const [preference, account] = await Promise.all([
+      getAiNotificationPreference(orgId, m.userId),
+      getAiNotificationAccountStatus(orgId, m.userId),
+    ]);
     return {
       username: m.userId,
       fullName: u?.fullName || m.userId,
       email: u?.email || '',
       role: m.role,
       language: normalizeLanguage(u?.language),
-      whatsappReady: Boolean(u?.whatsappOptIn === true && normalizeWhatsAppPhone(u?.phone)),
+      emailNotificationReady: Boolean(
+        preference.emailEnabled
+        && process.env.SMTP_HOST?.trim()
+        && account.emailVerified
+        && account.hasEmail
+      ),
+      pushNotificationReady: Boolean(
+        preference.pushEnabled
+        && account.pushConfigured
+        && account.pushSubscriptionCount > 0
+      ),
     };
-  });
+  }));
 
   const pendingInvites = (db.invitations?.filter(i => (
     i.organizationId === orgId && !i.acceptedAt && new Date(i.expiresAt) > new Date()

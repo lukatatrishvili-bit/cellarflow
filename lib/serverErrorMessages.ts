@@ -86,25 +86,9 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
   },
 
   // --- Notifications and background services -------------------------------
-  whatsapp_not_configured: {
-    en: 'WhatsApp notifications are not configured for this workspace.',
-    ka: 'ამ სამუშაო სივრცისთვის WhatsApp შეტყობინებები კონფიგურირებული არ არის.',
-  },
-  whatsapp_opt_in_required: {
-    en: 'This person has not agreed to receive WhatsApp notifications.',
-    ka: 'ამ პირს არ დაუდასტურებია WhatsApp შეტყობინებების მიღება.',
-  },
-  whatsapp_phone_required: {
-    en: 'A phone number is required to send a WhatsApp notification.',
-    ka: 'WhatsApp შეტყობინების გასაგზავნად საჭიროა ტელეფონის ნომერი.',
-  },
-  whatsapp_delivery_failed: {
-    en: 'The WhatsApp notification could not be delivered.',
-    ka: 'WhatsApp შეტყობინების ჩაბარება ვერ მოხერხდა.',
-  },
-  whatsapp_delivery_store_unavailable: {
-    en: 'Notification delivery records are temporarily unavailable.',
-    ka: 'შეტყობინებების ჩაბარების ჩანაწერები დროებით მიუწვდომელია.',
+  notification_opt_in_required: {
+    en: 'This person has email and browser push notifications turned off.',
+    ka: 'ამ პირს ელფოსტისა და ბრაუზერის Push შეტყობინებები გამორთული აქვს.',
   },
   ai_operations_unavailable: {
     en: 'Winery Intelligence is temporarily unavailable. Your data is unaffected.',

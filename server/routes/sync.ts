@@ -2149,21 +2149,32 @@ export function validateSyncPayload(
               && (typeof item.assignedUserId !== 'string' || item.assignedUserId.length > 160)) {
               throw new Error(`Task ${item.id} has an invalid assigned user.`);
             }
-            if (item.whatsappNotification !== undefined) {
-              const notification = item.whatsappNotification;
+            if (item.notification !== undefined) {
+              const notification = item.notification;
               if (!notification || typeof notification !== 'object' || Array.isArray(notification)) {
-                throw new Error(`Task ${item.id} has an invalid WhatsApp notification.`);
+                throw new Error(`Task ${item.id} has an invalid notification.`);
               }
-              if (!['sending', 'accepted', 'sent', 'delivered', 'read', 'failed'].includes(notification.status)) {
-                throw new Error(`Task ${item.id} has an invalid WhatsApp delivery status.`);
+              if (!['sending', 'sent', 'partial', 'failed'].includes(notification.status)) {
+                throw new Error(`Task ${item.id} has an invalid notification delivery status.`);
               }
               if (typeof notification.updatedAt !== 'string' || notification.updatedAt.length > 80
-                || (notification.messageId !== undefined
-                  && (typeof notification.messageId !== 'string' || notification.messageId.length > 500))
                 || (notification.error !== undefined
-                  && (typeof notification.error !== 'string' || notification.error.length > 300))
-                || (notification.language !== undefined && !['en', 'ka'].includes(notification.language))) {
-                throw new Error(`Task ${item.id} has invalid WhatsApp delivery metadata.`);
+                  && (typeof notification.error !== 'string' || notification.error.length > 300))) {
+                throw new Error(`Task ${item.id} has invalid notification delivery metadata.`);
+              }
+              if (notification.deliveries !== undefined) {
+                if (!Array.isArray(notification.deliveries) || notification.deliveries.length > 2) {
+                  throw new Error(`Task ${item.id} has invalid notification channels.`);
+                }
+                for (const delivery of notification.deliveries) {
+                  if (!delivery || typeof delivery !== 'object' || Array.isArray(delivery)
+                    || !['email', 'push'].includes(delivery.channel)
+                    || !['sending', 'sent', 'failed'].includes(delivery.status)
+                    || (delivery.error !== undefined
+                      && (typeof delivery.error !== 'string' || delivery.error.length > 300))) {
+                    throw new Error(`Task ${item.id} has invalid notification channel metadata.`);
+                  }
+                }
               }
             }
           }

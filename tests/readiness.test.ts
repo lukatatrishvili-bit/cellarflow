@@ -72,8 +72,8 @@ describe('service readiness contract', () => {
         storageBackup: 'not_configured',
         aiAssistant: 'not_configured',
         email: 'not_configured',
+        browserPush: 'not_configured',
         googleOAuth: 'not_configured',
-        whatsapp: 'not_configured',
       },
     });
   });
@@ -154,35 +154,33 @@ describe('service readiness contract', () => {
       storageBackup: 'degraded',
       aiAssistant: 'ready',
       email: 'ready',
+      browserPush: 'not_configured',
       googleOAuth: 'ready',
-      whatsapp: 'not_configured',
     });
   });
 
-  it('reports complete WhatsApp configuration as ready and partial configuration as degraded', () => {
+  it('reports complete browser-push configuration as ready and partial configuration as degraded', () => {
     const ready = buildServiceReadiness(
       dbStatus(),
       postgresProbe(),
       {
         NODE_ENV: 'production',
-        WHATSAPP_ACCESS_TOKEN: 'token',
-        WHATSAPP_PHONE_NUMBER_ID: '123456789012345',
-        WHATSAPP_GRAPH_API_VERSION: 'v26.0',
-        WHATSAPP_WEBHOOK_VERIFY_TOKEN: 'readiness-webhook-verify-token',
-        WHATSAPP_APP_SECRET: 'readiness-meta-app-secret',
+        WEB_PUSH_VAPID_PUBLIC_KEY: 'public-key',
+        WEB_PUSH_VAPID_PRIVATE_KEY: 'private-key',
+        WEB_PUSH_VAPID_SUBJECT: 'mailto:alerts@example.com',
       },
       checkedAt,
     );
     const partial = buildServiceReadiness(
       dbStatus(),
       postgresProbe(),
-      { NODE_ENV: 'production', WHATSAPP_ACCESS_TOKEN: 'token' },
+      { NODE_ENV: 'production', WEB_PUSH_VAPID_PUBLIC_KEY: 'public-key' },
       checkedAt,
     );
 
-    expect(ready.optionalIntegrations.whatsapp).toBe('ready');
+    expect(ready.optionalIntegrations.browserPush).toBe('ready');
     expect(ready.optionalIntegrations.status).toBe('ready');
-    expect(partial.optionalIntegrations.whatsapp).toBe('degraded');
+    expect(partial.optionalIntegrations.browserPush).toBe('degraded');
     expect(partial.optionalIntegrations.status).toBe('degraded');
     expect(partial.ok).toBe(true);
   });

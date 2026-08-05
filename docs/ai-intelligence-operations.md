@@ -30,8 +30,8 @@ future retrieval without destroying its provenance.
 ## Notification channels
 
 Each user opts in separately per winery. Existing users default to off for every
-external channel. Email, browser push, and WhatsApp share the personal severity
-floor but keep independent enable timestamps, preventing retroactive delivery.
+external channel. Email and browser push share the personal severity floor but
+keep independent enable timestamps, preventing retroactive delivery.
 Membership, role, account state, consent, severity, and provider readiness are
 revalidated immediately before each send.
 
@@ -62,31 +62,6 @@ Create these Secret Manager entries:
 Set the GitHub repository variable `WEB_PUSH_ENABLED=true`. A browser is
 registered only after its user saves the explicit push opt-in. Expired endpoints
 returning HTTP 404/410 are removed automatically.
-
-### AI WhatsApp findings
-
-AI findings use a separate approved Utility template from task assignments.
-Create `cellarflow_ai_finding` in English (US) and Georgian with six body
-variables in this order:
-
-1. winery name;
-2. severity;
-3. finding title;
-4. entity label;
-5. observation; and
-6. application URL.
-
-Set:
-
-- `WHATSAPP_ENABLED=true`
-- `WHATSAPP_AI_FINDING_TEMPLATE_NAME=cellarflow_ai_finding`
-- `WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN=en_US`
-- `WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA=ka`
-
-The existing WhatsApp access-token and phone-number secrets are reused. A user
-must also have a valid international number and the existing profile-level
-WhatsApp opt-in. Outbox delivery means Meta accepted the template request; task
-webhook read-state tracking remains separate.
 
 ## Scheduled execution
 

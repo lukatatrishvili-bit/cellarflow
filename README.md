@@ -2,7 +2,7 @@
 
 VinOS is a bilingual English/Georgian winery operations platform spanning vineyard work, harvest and intake, lots and vessels, cellar commands, fermentation, laboratory records, bottling, storage, sales, documents, team permissions, billing, and offline synchronization.
 
-The application is a React 19 PWA served by an Express API. PostgreSQL is the production authority for accounts, per-organization JSONB state, command idempotency, billing, WhatsApp deliveries, and the first tenant-safe relational vessel/lot projection. A local JSON store remains available for development, while Google Cloud Storage can be configured as a backup/export target.
+The application is a React 19 PWA served by an Express API. PostgreSQL is the production authority for accounts, per-organization JSONB state, command idempotency, billing, task-notification deliveries, and the first tenant-safe relational vessel/lot projection. A local JSON store remains available for development, while Google Cloud Storage can be configured as a backup/export target.
 
 ## Local setup
 
@@ -74,7 +74,7 @@ Start with the [documentation index](docs/README.md). The active references incl
 - [App improvement plan](docs/improvement-plan-2026-07-26.md)
 - [Cloud SQL recovery runbook](docs/cloud-sql-recovery-runbook.md)
 - [Billing operations runbook](docs/billing-operations-runbook.md)
-- [WhatsApp task notifications](docs/whatsapp-task-notifications.md)
+- [Email and browser-push notifications](docs/notification-delivery.md)
 - [Winery Intelligence knowledge, delivery, and scheduled operations](docs/ai-intelligence-operations.md)
 - [Relational projection runbook](docs/relational-projection-runbook.md)
 - [Deployment guide](deployment_guide.md)

@@ -2,32 +2,31 @@ import express from 'express';
 import { appBaseUrl } from '../config';
 import { getDB, refreshCoreMetadataFromPostgres } from '../db';
 import { hashToken } from '../emailVerification';
-import { checkWineryScope, whatsappNotificationLimiter } from '../middleware/auth';
+import { checkWineryScope, taskNotificationLimiter } from '../middleware/auth';
 import { canAccess } from '../permissions';
 import {
-  normalizeWhatsAppPhone,
-  parseWhatsAppWebhookStatusEvents,
-  sendWhatsAppTaskAssignment,
-  verifyWhatsAppWebhookSignature,
-  verifyWhatsAppWebhookToken,
-  whatsappConfigFromEnv,
-  whatsappIsConfigured,
-  whatsappWebhookConfigFromEnv,
-  WhatsAppConfigurationError,
-  WhatsAppDeliveryError,
-  type WhatsAppTaskMessage,
-} from '../whatsapp';
+  getAiNotificationAccountStatus,
+  getAiNotificationPreference,
+  setAiNotificationPreference,
+} from '../aiNotificationPreferences';
 import {
-  acceptWhatsAppDelivery,
-  applyWhatsAppWebhookStatus,
-  failWhatsAppDelivery,
-  listWhatsAppDeliveryStatuses,
-  projectWhatsAppDelivery,
-  reserveWhatsAppDelivery,
-} from '../whatsappDeliveryStore';
+  registerAiPushSubscription,
+  removeAiPushSubscription,
+} from '../aiPushSubscriptions';
+import {
+  sendTaskAssignmentEmail,
+  sendTaskAssignmentPush,
+  type TaskNotificationMessage,
+} from '../taskNotifications';
+import {
+  completeTaskNotificationDelivery,
+  failTaskNotificationDelivery,
+  projectTaskNotificationDelivery,
+  reserveTaskNotificationDelivery,
+  type TaskNotificationChannel,
+} from '../taskNotificationStore';
 
 const router = express.Router();
-export const whatsappWebhookRouter = express.Router();
 const TASK_ID_RE = /^[A-Za-z0-9_.:-]{1,160}$/;
 const USERNAME_RE = /^[A-Za-z0-9_.@-]{1,160}$/;
 
@@ -35,7 +34,7 @@ function cleanText(value: unknown, maxLength: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
-function parseTask(value: unknown): WhatsAppTaskMessage | null {
+function parseTask(value: unknown): TaskNotificationMessage | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const id = cleanText(raw.id, 160);
@@ -46,55 +45,131 @@ function parseTask(value: unknown): WhatsAppTaskMessage | null {
   return {
     id,
     title,
-    priority: priority as WhatsAppTaskMessage['priority'],
+    priority: priority as TaskNotificationMessage['priority'],
     dueDate,
     description: cleanText(raw.description, 2_000),
     assignedUserId: cleanText(raw.assignedUserId, 160),
   };
 }
 
-router.get('/whatsapp/status', checkWineryScope('read'), (_req, res) => {
+async function preferencePayload(organizationId: string, username: string) {
+  const [preference, account] = await Promise.all([
+    getAiNotificationPreference(organizationId, username),
+    getAiNotificationAccountStatus(organizationId, username),
+  ]);
+  return {
+    preference: {
+      emailEnabled: preference.emailEnabled,
+      pushEnabled: preference.pushEnabled,
+    },
+    account: {
+      ...account,
+      emailConfigured: Boolean(process.env.SMTP_HOST?.trim()),
+    },
+  };
+}
+
+router.get('/preferences', checkWineryScope('read'), async (req, res) => {
+  const session = (req as any).wineryContext;
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ configured: whatsappIsConfigured() });
+  return res.json(await preferencePayload(session.organizationId, session.username));
 });
 
-router.post('/whatsapp/task-statuses', checkWineryScope('read'), async (req, res) => {
+router.put('/preferences', checkWineryScope('read'), async (req, res) => {
   const session = (req as any).wineryContext;
-  if (!canAccess(session.role, 'tasks', 'view')) {
-    return res.status(403).json({ error: 'Forbidden: task access required.' });
+  const current = await getAiNotificationPreference(session.organizationId, session.username);
+  const emailEnabled = typeof req.body?.emailEnabled === 'boolean'
+    ? req.body.emailEnabled
+    : current.emailEnabled;
+  const pushEnabled = typeof req.body?.pushEnabled === 'boolean'
+    ? req.body.pushEnabled
+    : current.pushEnabled;
+  const account = await getAiNotificationAccountStatus(session.organizationId, session.username);
+  if (emailEnabled && !process.env.SMTP_HOST?.trim()) {
+    return res.status(409).json({ error: 'Email notifications are not configured for this deployment.' });
   }
-  const taskIds = Array.isArray(req.body?.taskIds) ? req.body.taskIds : null;
-  if (!taskIds || taskIds.length > 100 || taskIds.some((id: unknown) => (
-    typeof id !== 'string' || !TASK_ID_RE.test(id)
-  ))) {
-    return res.status(400).json({ error: 'taskIds must contain at most 100 valid task IDs.' });
+  if (emailEnabled && (!account.emailVerified || !account.hasEmail)) {
+    return res.status(409).json({ error: 'Verify your account email before enabling email notifications.' });
+  }
+  if (pushEnabled && (!account.pushConfigured || account.pushSubscriptionCount === 0)) {
+    return res.status(409).json({
+      error: 'Register this browser before enabling browser push notifications.',
+    });
+  }
+  await setAiNotificationPreference({
+    organizationId: session.organizationId,
+    username: session.username,
+    emailEnabled,
+    pushEnabled,
+    minimumSeverity: current.minimumSeverity,
+    inAppMinimumSeverity: current.inAppMinimumSeverity,
+  });
+  return res.json(await preferencePayload(session.organizationId, session.username));
+});
+
+router.post('/push-subscriptions', checkWineryScope('read'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  const account = await getAiNotificationAccountStatus(session.organizationId, session.username);
+  if (!account.pushConfigured) {
+    return res.status(409).json({ error: 'Web push is not configured for this deployment.' });
   }
   try {
-    return res.json({
-      deliveries: await listWhatsAppDeliveryStatuses(session.organizationId, taskIds),
+    const subscription = await registerAiPushSubscription({
+      organizationId: session.organizationId,
+      username: session.username,
+      subscription: req.body?.subscription,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.status(201).json({
+      subscription: {
+        id: subscription.id,
+        expirationTime: subscription.expirationTime,
+        createdAt: subscription.createdAt,
+      },
     });
   } catch (error) {
-    console.error('[whatsapp] delivery status read failed:', error instanceof Error ? error.message : 'unknown error');
-    return res.status(503).json({
-      code: 'whatsapp_delivery_store_unavailable',
-      error: 'WhatsApp delivery status is temporarily unavailable.',
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : 'Push subscription is invalid.',
     });
   }
 });
 
-router.post('/whatsapp/tasks', checkWineryScope('write'), async (req, res) => {
+router.delete('/push-subscriptions', checkWineryScope('read'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : '';
+  if (!endpoint) return res.status(400).json({ error: 'Push subscription endpoint is required.' });
+  const removed = await removeAiPushSubscription({
+    organizationId: session.organizationId,
+    username: session.username,
+    endpoint,
+  });
+  return res.json({ removed });
+});
+
+router.get('/status', checkWineryScope('read'), (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({
+    emailConfigured: Boolean(process.env.SMTP_HOST?.trim()),
+    pushConfigured: Boolean(
+      process.env.WEB_PUSH_VAPID_PUBLIC_KEY?.trim()
+      && process.env.WEB_PUSH_VAPID_PRIVATE_KEY?.trim()
+      && process.env.WEB_PUSH_VAPID_SUBJECT?.trim(),
+    ),
+  });
+});
+
+router.post('/tasks', checkWineryScope('write'), async (req, res) => {
   const session = (req as any).wineryContext;
   if (!canAccess(session.role, 'tasks', 'create')) {
     return res.status(403).json({ error: 'Forbidden: task creation access required.' });
   }
-
   const assigneeUsername = cleanText(req.body?.assigneeUsername, 160);
   const task = parseTask(req.body?.task);
   if (!USERNAME_RE.test(assigneeUsername) || !task) {
     return res.status(400).json({ error: 'A valid assignee and task are required.' });
   }
   if (task.assignedUserId !== assigneeUsername) {
-    return res.status(400).json({ error: 'The task assignment does not match the selected WhatsApp recipient.' });
+    return res.status(400).json({ error: 'The task assignment does not match the selected recipient.' });
   }
 
   await refreshCoreMetadataFromPostgres();
@@ -108,159 +183,95 @@ router.post('/whatsapp/tasks', checkWineryScope('write'), async (req, res) => {
   if (!membership || !recipient || recipient.accountEnabled === false) {
     return res.status(404).json({ error: 'The selected assignee is not an active member of this workspace.' });
   }
-  if (recipient.whatsappOptIn !== true) {
+
+  const [preference, account] = await Promise.all([
+    getAiNotificationPreference(session.organizationId, assigneeUsername),
+    getAiNotificationAccountStatus(session.organizationId, assigneeUsername),
+  ]);
+  const channels: TaskNotificationChannel[] = [];
+  if (
+    preference.emailEnabled
+    && process.env.SMTP_HOST?.trim()
+    && account.emailVerified
+    && account.hasEmail
+  ) channels.push('email');
+  if (
+    preference.pushEnabled
+    && account.pushConfigured
+    && account.pushSubscriptionCount > 0
+  ) channels.push('push');
+  if (channels.length === 0) {
     return res.status(409).json({
-      code: 'whatsapp_opt_in_required',
-      error: 'The selected assignee has not opted in to WhatsApp task notifications.',
-    });
-  }
-  const phone = normalizeWhatsAppPhone(recipient.phone);
-  if (!phone) {
-    return res.status(409).json({
-      code: 'whatsapp_phone_required',
-      error: 'The selected assignee must save a valid international WhatsApp number in their profile.',
+      code: 'notification_opt_in_required',
+      error: 'The selected assignee has not enabled email or browser push notifications.',
     });
   }
 
-  const rateKey = `rate:whatsapp-task:${hashToken(`${session.organizationId}:${session.username}`)}`;
-  const retryAfter = await whatsappNotificationLimiter.lockRemainingSeconds(rateKey);
+  const rateKey = `rate:task-notification:${hashToken(`${session.organizationId}:${session.username}`)}`;
+  const retryAfter = await taskNotificationLimiter.lockRemainingSeconds(rateKey);
   if (retryAfter > 0) {
     res.setHeader('Retry-After', String(retryAfter));
-    return res.status(429).json({ error: 'Too many WhatsApp task notifications. Try again later.' });
+    return res.status(429).json({ error: 'Too many task notifications. Try again later.' });
   }
-  await whatsappNotificationLimiter.recordFailure(rateKey);
+  await taskNotificationLimiter.recordFailure(rateKey);
 
   const sender = db.users.find((candidate: any) => candidate.username === session.username);
-  let config;
-  try {
-    config = whatsappConfigFromEnv();
-    if (!config) throw new WhatsAppConfigurationError('WhatsApp task notifications are not configured.');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'WhatsApp task notifications are not configured.';
-    return res.status(503).json({ code: 'whatsapp_not_configured', error: message });
-  }
+  const organization = db.organizations?.find((candidate: any) => candidate.id === session.organizationId);
+  const common = {
+    language: recipient.language === 'ka' ? 'ka' as const : 'en' as const,
+    wineryName: String(organization?.name || 'Winery'),
+    recipientName: String(recipient.fullName || recipient.username),
+    assignedBy: String(sender?.fullName || session.username),
+    task,
+    appUrl: appBaseUrl(req),
+  };
 
-  let claim;
-  try {
-    claim = await reserveWhatsAppDelivery({
+  const deliveries = await Promise.all(channels.map(async (channel) => {
+    const reservation = await reserveTaskNotificationDelivery({
       organizationId: session.organizationId,
       taskId: task.id,
       assigneeUsername,
       senderUsername: session.username,
-      templateName: config.taskTemplateName,
-      language: recipient.language === 'ka' ? 'ka' : 'en',
+      channel,
     });
-  } catch (error) {
-    console.error('[whatsapp] delivery claim failed:', error instanceof Error ? error.message : 'unknown error');
-    return res.status(503).json({
-      code: 'whatsapp_delivery_store_unavailable',
-      error: 'WhatsApp delivery could not be recorded safely.',
-    });
-  }
-
-  if (claim.outcome !== 'claimed') {
-    const delivery = projectWhatsAppDelivery(claim.record);
-    return res.status(claim.outcome === 'replay' ? 200 : 202).json({
-      ok: true,
-      ...delivery,
-    });
-  }
-
-  try {
-    const result = await sendWhatsAppTaskAssignment({
-      recipient: {
-        phone,
-        fullName: recipient.fullName || recipient.username,
-        language: recipient.language === 'ka' ? 'ka' : 'en',
-      },
-      task,
-      assignedBy: sender?.fullName || session.username,
-      appUrl: appBaseUrl(req),
-    });
-    const accepted = await acceptWhatsAppDelivery(claim.claimToken, result.messageId);
-    return res.status(202).json({
-      ok: true,
-      ...projectWhatsAppDelivery(accepted),
-    });
-  } catch (error) {
-    const deliveryCode = error instanceof WhatsAppDeliveryError
-      ? String(error.providerCode || error.status || 'provider_error')
-      : error instanceof WhatsAppConfigurationError
-        ? 'configuration_error'
-        : 'delivery_error';
-    const deliveryMessage = error instanceof Error ? error.message : 'WhatsApp task notification failed.';
-    await failWhatsAppDelivery(claim.claimToken, deliveryCode, deliveryMessage).catch(storeError => {
-      console.error('[whatsapp] failed to persist delivery failure:', storeError instanceof Error ? storeError.message : 'unknown error');
-    });
-    if (error instanceof WhatsAppConfigurationError) {
-      return res.status(503).json({ code: 'whatsapp_not_configured', error: error.message });
+    if (reservation.outcome !== 'claimed') {
+      return projectTaskNotificationDelivery(reservation.record);
     }
-    if (error instanceof WhatsAppDeliveryError) {
-      const status = error.status === 429 ? 429 : 502;
-      return res.status(status).json({
-        code: 'whatsapp_delivery_failed',
-        error: error.message,
-        ...(error.providerCode ? { providerCode: error.providerCode } : {}),
-      });
+    try {
+      if (channel === 'email') {
+        await sendTaskAssignmentEmail({
+          ...common,
+          to: String(recipient.email),
+        });
+      } else {
+        await sendTaskAssignmentPush({
+          ...common,
+          organizationId: session.organizationId,
+          username: assigneeUsername,
+        });
+      }
+      const completed = await completeTaskNotificationDelivery(
+        reservation.record.id,
+        reservation.record.claimToken,
+      );
+      return projectTaskNotificationDelivery(completed || reservation.record);
+    } catch (error) {
+      const failed = await failTaskNotificationDelivery(
+        reservation.record.id,
+        reservation.record.claimToken,
+        error,
+      );
+      return projectTaskNotificationDelivery(failed || reservation.record);
     }
-    console.error('[whatsapp] task notification failed:', error instanceof Error ? error.message : 'unknown error');
-    return res.status(502).json({ code: 'whatsapp_delivery_failed', error: 'WhatsApp task notification failed.' });
-  }
-});
-
-whatsappWebhookRouter.get('/', (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  let config;
-  try {
-    config = whatsappWebhookConfigFromEnv();
-  } catch {
-    return res.status(503).send('Webhook is not configured.');
-  }
-  if (!config) return res.status(503).send('Webhook is not configured.');
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-  if (mode !== 'subscribe' || typeof challenge !== 'string' || challenge.length > 512
-    || !verifyWhatsAppWebhookToken(config.verifyToken, token)) {
-    return res.status(403).send('Forbidden');
-  }
-  return res.status(200).type('text/plain').send(challenge);
-});
-
-whatsappWebhookRouter.post('/', async (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  let config;
-  try {
-    config = whatsappWebhookConfigFromEnv();
-  } catch {
-    return res.status(503).json({ error: 'Webhook is not configured.' });
-  }
-  if (!config) return res.status(503).json({ error: 'Webhook is not configured.' });
-  const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
-  if (!rawBody || rawBody.length === 0 || rawBody.length > 256 * 1024
-    || !verifyWhatsAppWebhookSignature(rawBody, req.headers['x-hub-signature-256'], config.appSecret)) {
-    return res.status(401).json({ error: 'Invalid webhook signature.' });
-  }
-
-  let payload: unknown;
-  try {
-    payload = JSON.parse(rawBody.toString('utf8'));
-  } catch {
-    return res.status(400).json({ error: 'Invalid webhook JSON.' });
-  }
-
-  try {
-    const events = parseWhatsAppWebhookStatusEvents(payload);
-    let matched = 0;
-    for (const event of events) {
-      if (await applyWhatsAppWebhookStatus(event)) matched += 1;
-    }
-    return res.status(200).json({ ok: true, received: events.length, matched });
-  } catch (error) {
-    console.error('[whatsapp] webhook status persistence failed:', error instanceof Error ? error.message : 'unknown error');
-    // A non-2xx response asks Meta to retry instead of losing a signed status.
-    return res.status(503).json({ error: 'Webhook status could not be persisted.' });
-  }
+  }));
+  const sentCount = deliveries.filter(delivery => delivery.status === 'sent').length;
+  return res.status(sentCount > 0 ? 202 : 502).json({
+    ok: sentCount > 0,
+    status: sentCount === deliveries.length ? 'sent' : sentCount > 0 ? 'partial' : 'failed',
+    deliveries,
+    updatedAt: new Date().toISOString(),
+    ...(sentCount === 0 ? { error: 'Task notification delivery failed.' } : {}),
+  });
 });
 
 export default router;

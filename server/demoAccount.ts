@@ -38,7 +38,6 @@ export function createDemoUser(config: DemoAccountConfig) {
     role: config.role,
     language: 'en',
     phone: '',
-    whatsappOptIn: false,
     // The public demo route creates the session directly. A random-looking,
     // non-advertised password hash keeps this a normal stored account without
     // publishing reusable credentials.

@@ -1,5 +1,4 @@
 import { getDbRuntimeStatus, getPostgresReadinessProbe, type PostgresReadinessProbe } from './db';
-import { whatsappIsFullyConfigured } from './whatsapp';
 
 export const READINESS_PROBE_TIMEOUT_MS = 3_000;
 
@@ -20,8 +19,8 @@ export interface ServiceReadiness {
     storageBackup: OptionalState;
     aiAssistant: OptionalState;
     email: OptionalState;
+    browserPush: OptionalState;
     googleOAuth: OptionalState;
-    whatsapp: OptionalState;
   };
 }
 
@@ -50,20 +49,18 @@ export function buildServiceReadiness(
     : 'not_configured';
   const aiAssistant: OptionalState = env.GEMINI_API_KEY?.trim() ? 'ready' : 'not_configured';
   const email: OptionalState = env.SMTP_HOST?.trim() ? 'ready' : 'not_configured';
+  const pushValues = [
+    env.WEB_PUSH_VAPID_PUBLIC_KEY,
+    env.WEB_PUSH_VAPID_PRIVATE_KEY,
+    env.WEB_PUSH_VAPID_SUBJECT,
+  ];
+  const browserPush: OptionalState = pushValues.some(value => value?.trim())
+    ? pushValues.every(value => value?.trim()) ? 'ready' : 'degraded'
+    : 'not_configured';
   const googleOAuth: OptionalState = env.GOOGLE_CLIENT_ID?.trim() && env.GOOGLE_CLIENT_SECRET?.trim()
     ? 'ready'
     : 'not_configured';
-  const whatsappValues = [
-    env.WHATSAPP_ACCESS_TOKEN,
-    env.WHATSAPP_PHONE_NUMBER_ID,
-    env.WHATSAPP_GRAPH_API_VERSION,
-    env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
-    env.WHATSAPP_APP_SECRET,
-  ];
-  const whatsapp: OptionalState = whatsappValues.some(value => value?.trim())
-    ? whatsappIsFullyConfigured(env) ? 'ready' : 'degraded'
-    : 'not_configured';
-  const optionalDegraded = [storageBackup, aiAssistant, email, googleOAuth, whatsapp].includes('degraded');
+  const optionalDegraded = [storageBackup, aiAssistant, email, browserPush, googleOAuth].includes('degraded');
 
   return {
     ok: databaseReady,
@@ -83,8 +80,8 @@ export function buildServiceReadiness(
       storageBackup,
       aiAssistant,
       email,
+      browserPush,
       googleOAuth,
-      whatsapp,
     },
   };
 }

@@ -6,13 +6,11 @@ import {
   type AiSeverity,
   type UserRole,
 } from '../lib/ai';
-import { normalizeWhatsAppPhone } from './whatsapp';
 import {
   aiWebPushConfigured,
   aiWebPushPublicKey,
   listAiPushSubscriptions,
 } from './aiPushSubscriptions';
-import { aiWhatsAppConfigured } from './aiNotificationWhatsApp';
 
 const SEVERITIES: AiSeverity[] = ['info', 'attention', 'warning', 'critical'];
 
@@ -23,8 +21,6 @@ export interface AiNotificationPreference {
   emailEnabledAt?: string;
   pushEnabled: boolean;
   pushEnabledAt?: string;
-  whatsappEnabled: boolean;
-  whatsappEnabledAt?: string;
   minimumSeverity: AiSeverity;
   inAppMinimumSeverity: AiSeverity;
   createdAt?: string;
@@ -36,7 +32,7 @@ export interface AiEmailRecipient {
   role: UserRole;
 }
 
-export type AiExternalNotificationChannel = 'email' | 'push' | 'whatsapp';
+export type AiExternalNotificationChannel = 'email' | 'push';
 
 export interface AiNotificationRecipient extends AiEmailRecipient {
   channel: AiExternalNotificationChannel;
@@ -72,26 +68,12 @@ export async function getAiNotificationAccountStatus(
     getAiEmailAccountStatus(username),
     listAiPushSubscriptions(organizationId, username),
   ]);
-  const prisma = await getPrismaClientForAdmin();
-  let user: any;
-  if (prisma) {
-    user = await (prisma as any).user.findUnique({
-      where: { username },
-      select: { phone: true, whatsappOptIn: true, accountEnabled: true },
-    });
-  } else {
-    user = (getDB().users || []).find((candidate: any) => candidate?.username === username);
-  }
   const publicKey = aiWebPushPublicKey();
   return {
     ...email,
     pushConfigured: aiWebPushConfigured(),
     ...(publicKey ? { pushPublicKey: publicKey } : {}),
     pushSubscriptionCount: subscriptions.length,
-    whatsappConfigured: aiWhatsAppConfigured(),
-    whatsappReady: user?.accountEnabled !== false
-      && user?.whatsappOptIn === true
-      && Boolean(normalizeWhatsAppPhone(user?.phone)),
   };
 }
 
@@ -112,23 +94,12 @@ export type AiPushDeliveryEligibility =
   }
   | { eligible: false; reason: string };
 
-export type AiWhatsAppDeliveryEligibility =
-  | {
-    eligible: true;
-    phone: string;
-    language: 'en' | 'ka';
-    wineryName: string;
-  }
-  | { eligible: false; reason: string };
-
 export interface AiNotificationAccountStatus {
   emailVerified: boolean;
   hasEmail: boolean;
   pushConfigured: boolean;
   pushPublicKey?: string;
   pushSubscriptionCount: number;
-  whatsappConfigured: boolean;
-  whatsappReady: boolean;
 }
 
 const localPreferences = new Map<string, AiNotificationPreference>();
@@ -159,8 +130,6 @@ function normalizePreference(
     ...(iso(value?.emailEnabledAt) ? { emailEnabledAt: iso(value.emailEnabledAt) } : {}),
     pushEnabled: value?.pushEnabled === true,
     ...(iso(value?.pushEnabledAt) ? { pushEnabledAt: iso(value.pushEnabledAt) } : {}),
-    whatsappEnabled: value?.whatsappEnabled === true,
-    ...(iso(value?.whatsappEnabledAt) ? { whatsappEnabledAt: iso(value.whatsappEnabledAt) } : {}),
     minimumSeverity: normalizeSeverity(value?.minimumSeverity),
     inAppMinimumSeverity: normalizeSeverity(value?.inAppMinimumSeverity, 'info'),
     ...(iso(value?.createdAt) ? { createdAt: iso(value.createdAt) } : {}),
@@ -192,7 +161,6 @@ export async function setAiNotificationPreference(input: {
   username: string;
   emailEnabled: boolean;
   pushEnabled?: boolean;
-  whatsappEnabled?: boolean;
   minimumSeverity: AiSeverity;
   inAppMinimumSeverity?: AiSeverity;
   now?: Date;
@@ -224,12 +192,6 @@ export async function setAiNotificationPreference(input: {
         ? existing.pushEnabledAt
         : now
       : null;
-    const whatsappEnabled = input.whatsappEnabled ?? (existing?.whatsappEnabled === true);
-    const whatsappEnabledAt = whatsappEnabled
-      ? existing?.whatsappEnabled === true && existing.whatsappEnabledAt
-        ? existing.whatsappEnabledAt
-        : now
-      : null;
     const inAppMinimumSeverity = normalizeSeverity(
       input.inAppMinimumSeverity ?? existing?.inAppMinimumSeverity,
       'info',
@@ -248,8 +210,8 @@ export async function setAiNotificationPreference(input: {
         emailEnabledAt,
         pushEnabled,
         pushEnabledAt,
-        whatsappEnabled,
-        whatsappEnabledAt,
+        whatsappEnabled: false,
+        whatsappEnabledAt: null,
         minimumSeverity,
         inAppMinimumSeverity,
       },
@@ -258,8 +220,8 @@ export async function setAiNotificationPreference(input: {
         emailEnabledAt,
         pushEnabled,
         pushEnabledAt,
-        whatsappEnabled,
-        whatsappEnabledAt,
+        whatsappEnabled: false,
+        whatsappEnabledAt: null,
         minimumSeverity,
         inAppMinimumSeverity,
       },
@@ -275,7 +237,6 @@ export async function setAiNotificationPreference(input: {
   );
   const timestamp = now.toISOString();
   const pushEnabled = input.pushEnabled ?? (existing?.pushEnabled === true);
-  const whatsappEnabled = input.whatsappEnabled ?? (existing?.whatsappEnabled === true);
   const record: AiNotificationPreference = {
     organizationId: input.organizationId,
     username: input.username,
@@ -289,12 +250,6 @@ export async function setAiNotificationPreference(input: {
     ...(pushEnabled
       ? { pushEnabledAt: existing?.pushEnabled && existing.pushEnabledAt
         ? existing.pushEnabledAt
-        : timestamp }
-      : {}),
-    whatsappEnabled,
-    ...(whatsappEnabled
-      ? { whatsappEnabledAt: existing?.whatsappEnabled && existing.whatsappEnabledAt
-        ? existing.whatsappEnabledAt
         : timestamp }
       : {}),
     minimumSeverity,
@@ -317,9 +272,6 @@ function channelEnabledAt(
   channel: AiExternalNotificationChannel,
 ): string | undefined {
   if (channel === 'push') return preference.pushEnabled ? preference.pushEnabledAt : undefined;
-  if (channel === 'whatsapp') {
-    return preference.whatsappEnabled ? preference.whatsappEnabledAt : undefined;
-  }
   return preference.emailEnabled ? preference.emailEnabledAt : undefined;
 }
 
@@ -407,11 +359,8 @@ export async function eligibleAiEmailRecipients(
 async function eligibleAiRecipientsForChannel(
   organizationId: string,
   finding: AiFindingRecord,
-  channel: 'push' | 'whatsapp',
 ): Promise<AiEmailRecipient[]> {
-  if (channel === 'push' && !aiWebPushConfigured()) return [];
-  if (channel === 'whatsapp' && !aiWhatsAppConfigured()) return [];
-  const enabledField = channel === 'push' ? 'pushEnabled' : 'whatsappEnabled';
+  if (!aiWebPushConfigured()) return [];
   const prisma = await getPrismaClientForAdmin();
   if (prisma) {
     const preferenceModel = (prisma as any).aiNotificationPreference;
@@ -419,17 +368,8 @@ async function eligibleAiRecipientsForChannel(
     const preferences = await preferenceModel.findMany({
       where: {
         organizationId,
-        [enabledField]: true,
+        pushEnabled: true,
         user: { accountEnabled: true },
-      },
-      include: {
-        user: {
-          select: {
-            phone: true,
-            whatsappOptIn: true,
-            accountEnabled: true,
-          },
-        },
       },
     });
     if (preferences.length === 0) return [];
@@ -439,39 +379,29 @@ async function eligibleAiRecipientsForChannel(
         where: { organizationId, userId: { in: usernames } },
         select: { userId: true, role: true },
       }),
-      channel === 'push'
-        ? (prisma as any).aiPushSubscription.findMany({
-          where: { organizationId, username: { in: usernames } },
-          select: { username: true },
-        })
-        : Promise.resolve([]),
+      (prisma as any).aiPushSubscription.findMany({
+        where: { organizationId, username: { in: usernames } },
+        select: { username: true },
+      }),
     ]);
     const pushUsernames = new Set(pushRows.map((row: any) => String(row.username)));
-    const preferenceByUsername = new Map(
-      preferences.map((value: any) => [
+    const preferenceByUsername = new Map<string, AiNotificationPreference>(
+      preferences.map((value: any): [string, AiNotificationPreference] => [
         String(value.username),
-        {
-          preference: normalizePreference(value, organizationId, String(value.username)),
-          user: value.user,
-        },
+        normalizePreference(value, organizationId, String(value.username)),
       ]),
     );
     return memberships
       .filter((membership: any) => {
-        const entry = preferenceByUsername.get(String(membership.userId)) as {
-          preference: AiNotificationPreference;
-          user: any;
-        } | undefined;
+        const preference = preferenceByUsername.get(String(membership.userId));
         if (
-          !entry
-          || !preferenceAllowsFinding(entry.preference, finding, channel)
+          !preference
+          || !preferenceAllowsFinding(preference, finding, 'push')
           || !isFindingRoutedToRole(membership.role as UserRole, finding)
         ) {
           return false;
         }
-        if (channel === 'push') return pushUsernames.has(String(membership.userId));
-        return entry.user?.whatsappOptIn === true
-          && Boolean(normalizeWhatsAppPhone(entry.user?.phone));
+        return pushUsernames.has(String(membership.userId));
       })
       .map((membership: any) => ({
         username: String(membership.userId),
@@ -483,23 +413,21 @@ async function eligibleAiRecipientsForChannel(
   const userByUsername = new Map(
     (db.users || []).map((user: any) => [String(user.username), user]),
   );
-  const pushUsers = channel === 'push'
-    ? new Set(
-      (await Promise.all(
-        (db.memberships || [])
-          .filter((membership: any) => membership?.organizationId === organizationId)
-          .map(async (membership: any) => ({
-            username: String(membership.userId || ''),
-            subscriptions: await listAiPushSubscriptions(
-              organizationId,
-              String(membership.userId || ''),
-            ),
-          })),
-      ))
-        .filter((entry) => entry.subscriptions.length > 0)
-        .map((entry) => entry.username),
-    )
-    : new Set<string>();
+  const pushUsers = new Set(
+    (await Promise.all(
+      (db.memberships || [])
+        .filter((membership: any) => membership?.organizationId === organizationId)
+        .map(async (membership: any) => ({
+          username: String(membership.userId || ''),
+          subscriptions: await listAiPushSubscriptions(
+            organizationId,
+            String(membership.userId || ''),
+          ),
+        })),
+    ))
+      .filter((entry) => entry.subscriptions.length > 0)
+      .map((entry) => entry.username),
+  );
   return (db.memberships || [])
     .filter((membership: any) => membership?.organizationId === organizationId)
     .filter((membership: any) => {
@@ -510,13 +438,12 @@ async function eligibleAiRecipientsForChannel(
         !user
         || user.accountEnabled === false
         || !preference
-        || !preferenceAllowsFinding(preference, finding, channel)
+        || !preferenceAllowsFinding(preference, finding, 'push')
         || !isFindingRoutedToRole(membership.role as UserRole, finding)
       ) {
         return false;
       }
-      if (channel === 'push') return pushUsers.has(username);
-      return user.whatsappOptIn === true && Boolean(normalizeWhatsAppPhone(user.phone));
+      return pushUsers.has(username);
     })
     .map((membership: any) => ({
       username: String(membership.userId),
@@ -528,15 +455,13 @@ export async function eligibleAiNotificationRecipients(
   organizationId: string,
   finding: AiFindingRecord,
 ): Promise<AiNotificationRecipient[]> {
-  const [email, push, whatsapp] = await Promise.all([
+  const [email, push] = await Promise.all([
     eligibleAiEmailRecipients(organizationId, finding),
-    eligibleAiRecipientsForChannel(organizationId, finding, 'push'),
-    eligibleAiRecipientsForChannel(organizationId, finding, 'whatsapp'),
+    eligibleAiRecipientsForChannel(organizationId, finding),
   ]);
   return [
     ...email.map((recipient) => ({ ...recipient, channel: 'email' as const })),
     ...push.map((recipient) => ({ ...recipient, channel: 'push' as const })),
-    ...whatsapp.map((recipient) => ({ ...recipient, channel: 'whatsapp' as const })),
   ];
 }
 
@@ -728,97 +653,6 @@ export async function aiPushDeliveryEligibility(input: {
     return { eligible: false, reason: 'Recipient has no active browser subscription.' };
   }
   return { eligible: true, language, wineryName };
-}
-
-export async function aiWhatsAppDeliveryEligibility(input: {
-  organizationId: string;
-  username: string;
-  recipientRole: UserRole;
-  severity: AiSeverity;
-  eventOccurredAt: string;
-}): Promise<AiWhatsAppDeliveryEligibility> {
-  if (!aiWhatsAppConfigured()) {
-    return { eligible: false, reason: 'AI WhatsApp delivery is not configured.' };
-  }
-  const prisma = await getPrismaClientForAdmin();
-  let preferenceValue: any;
-  let membership: any;
-  let user: any;
-  let wineryName = 'Winery';
-  if (prisma) {
-    const model = (prisma as any).aiNotificationPreference;
-    if (!model) throw new Error('AI notification preference storage is unavailable.');
-    [preferenceValue, membership] = await Promise.all([
-      model.findUnique({
-        where: {
-          organizationId_username: {
-            organizationId: input.organizationId,
-            username: input.username,
-          },
-        },
-        include: {
-          user: {
-            select: {
-              phone: true,
-              whatsappOptIn: true,
-              accountEnabled: true,
-              language: true,
-            },
-          },
-          organization: { select: { name: true } },
-        },
-      }),
-      (prisma as any).membership.findUnique({
-        where: {
-          userId_organizationId: {
-            userId: input.username,
-            organizationId: input.organizationId,
-          },
-        },
-        select: { role: true },
-      }),
-    ]);
-    user = preferenceValue?.user;
-    wineryName = String(preferenceValue?.organization?.name || 'Winery');
-  } else {
-    const db = getDB();
-    preferenceValue = localPreferences.get(preferenceKey(input.organizationId, input.username));
-    membership = (db.memberships || []).find((candidate: any) => (
-      candidate?.organizationId === input.organizationId
-      && candidate?.userId === input.username
-    ));
-    user = (db.users || []).find((candidate: any) => candidate?.username === input.username);
-    wineryName = String(
-      (db.organizations || []).find((candidate: any) => (
-        candidate?.id === input.organizationId
-      ))?.name || 'Winery',
-    );
-  }
-  if (membership?.role !== input.recipientRole) {
-    return { eligible: false, reason: 'Recipient role changed before delivery.' };
-  }
-  const phone = normalizeWhatsAppPhone(user?.phone);
-  if (!user || user.accountEnabled === false || user.whatsappOptIn !== true || !phone) {
-    return { eligible: false, reason: 'Recipient WhatsApp opt-in or phone is unavailable.' };
-  }
-  const preference = normalizePreference(
-    preferenceValue,
-    input.organizationId,
-    input.username,
-  );
-  const preferenceReason = deliveryPreferenceAllows({
-    preference,
-    channel: 'whatsapp',
-    severity: input.severity,
-    eventOccurredAt: input.eventOccurredAt,
-  });
-  if (preferenceReason) return { eligible: false, reason: preferenceReason };
-  return {
-    eligible: true,
-    phone,
-    language: user.language === 'ka' ? 'ka' : 'en',
-    wineryName,
-  };
 }
 
 export function __resetInMemoryAiNotificationPreferences(): void {

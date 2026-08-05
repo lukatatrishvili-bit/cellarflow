@@ -102,6 +102,7 @@ model Organization {
   aiKnowledgeDocuments      AiKnowledgeDocument[]
   aiKnowledgeChunks         AiKnowledgeChunk[]
   aiPushSubscriptions       AiPushSubscription[]
+  taskNotificationDeliveries TaskNotificationDelivery[]
 
   /// Authoritative JSONB snapshot of the full winery/vineyard ERP state.
   /// The detailed collection tables below are retained for compatibility but
@@ -221,8 +222,9 @@ model AiNotificationOutbox {
   @@index([organizationId, recipientUsername, createdAt], map: "AiNotificationOutbox_organizationId_recipientUsername_creat_idx")
 }
 
-/// Explicit, winery-scoped user consent for proactive AI delivery. Email is
-/// disabled by default and `emailEnabledAt` prevents retroactive backlog sends.
+/// Explicit, winery-scoped user consent for VinOS email and browser push.
+/// Enabled timestamps prevent retroactive AI backlog sends. WhatsApp columns
+/// remain only for migration compatibility and are forced off by active code.
 model AiNotificationPreference {
   organizationId      String
   organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -264,6 +266,28 @@ model AiPushSubscription {
 
   @@unique([organizationId, username, endpointHash])
   @@index([organizationId, username, updatedAt])
+}
+
+/// Idempotent delivery state for proactive task email and browser push.
+model TaskNotificationDelivery {
+  id                String       @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taskId            String
+  assigneeUsername  String
+  senderUsername    String
+  channel           String
+  status            String       @default("sending")
+  claimToken        String
+  attemptCount      Int          @default(1)
+  errorMessage      String?
+  sentAt            DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@unique([organizationId, taskId, channel])
+  @@index([organizationId, status, updatedAt])
+  @@index([status, updatedAt])
 }
 
 /// Per-user acknowledgement of the latest in-app transition for a finding.

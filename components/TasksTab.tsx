@@ -1,5 +1,5 @@
 import React from 'react';
-import { ClipboardList, CheckCircle2, MessageCircle, Trash, UserRound } from 'lucide-react';
+import { BellRing, ClipboardList, CheckCircle2, Mail, Trash, UserRound } from 'lucide-react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Task, TaskAssignmentInput } from '../lib/wineryState';
@@ -11,7 +11,8 @@ interface TaskTeamMember {
   fullName: string;
   role: string;
   language: 'en' | 'ka';
-  whatsappReady: boolean;
+  emailNotificationReady: boolean;
+  pushNotificationReady: boolean;
 }
 
 interface TaskFormDraft {
@@ -20,7 +21,7 @@ interface TaskFormDraft {
   dueDate: string;
   description: string;
   assignedUserId: string;
-  notifyWhatsApp: boolean;
+  notifyAssignee: boolean;
 }
 
 function taskDraftIsMeaningful(draft: TaskFormDraft): boolean {
@@ -44,9 +45,9 @@ interface TasksTabProps {
     description: string,
     assignment?: TaskAssignmentInput,
   ) => Task | void;
-  onUpdateTaskWhatsAppNotification?: (
+  onUpdateTaskNotification?: (
     taskId: string,
-    notification: NonNullable<Task['whatsappNotification']>,
+    notification: NonNullable<Task['notification']>,
   ) => void;
   setToastMessage?: (message: string | null) => void;
   currentUsername?: string;
@@ -76,7 +77,7 @@ export function TasksTab({
   onToggleTaskStatus,
   onDeleteTask,
   onAddNewTask,
-  onUpdateTaskWhatsAppNotification,
+  onUpdateTaskNotification,
   setToastMessage,
   currentUsername = '',
   prefilledTaskTitle = '',
@@ -95,23 +96,26 @@ export function TasksTab({
   const [members, setMembers] = React.useState<TaskTeamMember[]>([]);
   const [assignedUserId, setAssignedUserId] = React.useState('');
   const [dueDate, setDueDate] = React.useState('');
-  const [whatsappConfigured, setWhatsAppConfigured] = React.useState(false);
-  const [notifyWhatsApp, setNotifyWhatsApp] = React.useState(false);
+  const [notifyAssignee, setNotifyAssignee] = React.useState(false);
   const [loadingRecipients, setLoadingRecipients] = React.useState(true);
-  const [sendingWhatsAppTaskIds, setSendingWhatsAppTaskIds] = React.useState<Set<string>>(new Set());
+  const [sendingNotificationTaskIds, setSendingNotificationTaskIds] = React.useState<Set<string>>(new Set());
   const selectedMember = members.find(member => member.username === assignedUserId);
-  const canSendWhatsApp = Boolean(whatsappConfigured && selectedMember?.whatsappReady);
+  const selectedChannels = [
+    selectedMember?.emailNotificationReady ? 'email' : '',
+    selectedMember?.pushNotificationReady ? 'push' : '',
+  ].filter(Boolean);
+  const canNotifyAssignee = selectedChannels.length > 0;
   const taskDraft = React.useMemo<TaskFormDraft>(() => ({
     title: prefilledTaskTitle,
     priority: prefilledTaskPriority,
     dueDate,
     description: prefilledTaskDesc,
     assignedUserId,
-    notifyWhatsApp,
+    notifyAssignee,
   }), [
     assignedUserId,
     dueDate,
-    notifyWhatsApp,
+    notifyAssignee,
     prefilledTaskDesc,
     prefilledTaskPriority,
     prefilledTaskTitle,
@@ -122,7 +126,7 @@ export function TasksTab({
     setDueDate(draft.dueDate);
     setPrefilledTaskDesc(draft.description);
     setAssignedUserId(draft.assignedUserId);
-    setNotifyWhatsApp(draft.notifyWhatsApp);
+    setNotifyAssignee(draft.notifyAssignee);
   }, [
     setPrefilledTaskDesc,
     setPrefilledTaskPriority,
@@ -138,23 +142,13 @@ export function TasksTab({
     isMeaningful: taskDraftIsMeaningful,
     onRestore: restoreTaskDraft,
   });
-  const whatsappTaskKey = tasks
-    .filter(task => task.whatsappNotification)
-    .map(task => task.id)
-    .sort()
-    .join('\u0000');
-
   React.useEffect(() => {
     let active = true;
     setLoadingRecipients(true);
-    Promise.all([
-      fetch('/api/org/members').then(response => response.ok ? response.json() : { members: [] }),
-      fetch('/api/notifications/whatsapp/status').then(response => response.ok ? response.json() : { configured: false }),
-    ]).then(([memberPayload, statusPayload]) => {
+    fetch('/api/org/members').then(response => response.ok ? response.json() : { members: [] }).then((memberPayload) => {
       if (!active) return;
       const nextMembers = Array.isArray(memberPayload.members) ? memberPayload.members as TaskTeamMember[] : [];
       setMembers(nextMembers);
-      setWhatsAppConfigured(statusPayload.configured === true);
       setAssignedUserId(current => current || (
         nextMembers.some(member => member.username === currentUsername)
           ? currentUsername
@@ -163,7 +157,6 @@ export function TasksTab({
     }).catch(() => {
       if (!active) return;
       setMembers([]);
-      setWhatsAppConfigured(false);
     }).finally(() => {
       if (active) setLoadingRecipients(false);
     });
@@ -171,8 +164,8 @@ export function TasksTab({
   }, [currentUsername]);
 
   React.useEffect(() => {
-    setNotifyWhatsApp(canSendWhatsApp);
-  }, [assignedUserId, canSendWhatsApp]);
+    setNotifyAssignee(canNotifyAssignee);
+  }, [assignedUserId, canNotifyAssignee]);
 
   React.useEffect(() => {
     if (!focusTaskId) return;
@@ -181,59 +174,16 @@ export function TasksTab({
     taskElement?.focus({ preventScroll: true });
   }, [focusTaskId, tasks]);
 
-  React.useEffect(() => {
-    const taskIds = whatsappTaskKey ? whatsappTaskKey.split('\u0000') : [];
-    if (taskIds.length === 0 || !onUpdateTaskWhatsAppNotification) return;
-    let active = true;
-
-    const refresh = async () => {
-      const response = await fetch('/api/notifications/whatsapp/task-statuses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskIds }),
-      });
-      if (!response.ok || !active) return;
-      const payload = await response.json().catch(() => ({}));
-      const deliveries = Array.isArray(payload.deliveries) ? payload.deliveries : [];
-      deliveries.forEach((delivery: any) => {
-        const current = tasks.find(task => task.id === delivery.taskId)?.whatsappNotification;
-        const status = ['sending', 'accepted', 'sent', 'delivered', 'read', 'failed'].includes(delivery.status)
-          ? delivery.status as NonNullable<Task['whatsappNotification']>['status']
-          : null;
-        if (!status || !delivery.updatedAt
-          || (current?.status === status
-            && current?.messageId === delivery.messageId
-            && current?.error === delivery.error
-            && current?.updatedAt === delivery.updatedAt)) return;
-        onUpdateTaskWhatsAppNotification(delivery.taskId, {
-          status,
-          ...(typeof delivery.messageId === 'string' ? { messageId: delivery.messageId } : {}),
-          language: delivery.language === 'ka' ? 'ka' : 'en',
-          updatedAt: delivery.updatedAt,
-          ...(typeof delivery.error === 'string' ? { error: delivery.error } : {}),
-        });
-      });
-    };
-
-    void refresh().catch(() => undefined);
-    const interval = window.setInterval(() => void refresh().catch(() => undefined), 30_000);
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-    };
-  }, [onUpdateTaskWhatsAppNotification, tasks, whatsappTaskKey]);
-
-  const sendTaskWhatsApp = async (task: Task, assigneeUsername: string, isRetry = false) => {
-    if (!assigneeUsername || sendingWhatsAppTaskIds.has(task.id)) return;
-    setSendingWhatsAppTaskIds(current => new Set(current).add(task.id));
-    onUpdateTaskWhatsAppNotification?.(task.id, {
+  const sendTaskNotification = async (task: Task, assigneeUsername: string, isRetry = false) => {
+    if (!assigneeUsername || sendingNotificationTaskIds.has(task.id)) return;
+    setSendingNotificationTaskIds(current => new Set(current).add(task.id));
+    onUpdateTaskNotification?.(task.id, {
       status: 'sending',
-      ...(task.whatsappNotification?.messageId ? { messageId: task.whatsappNotification.messageId } : {}),
-      language: task.whatsappNotification?.language,
+      deliveries: task.notification?.deliveries,
       updatedAt: new Date().toISOString(),
     });
     try {
-      const response = await fetch('/api/notifications/whatsapp/tasks', {
+      const response = await fetch('/api/notifications/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -249,32 +199,44 @@ export function TasksTab({
         }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'WhatsApp notification failed.');
-      const status = ['sending', 'accepted', 'sent', 'delivered', 'read', 'failed'].includes(payload.status)
-        ? payload.status as NonNullable<Task['whatsappNotification']>['status']
-        : 'accepted';
-      onUpdateTaskWhatsAppNotification?.(task.id, {
+      const status = ['sent', 'partial', 'failed'].includes(payload.status)
+        ? payload.status as NonNullable<Task['notification']>['status']
+        : response.ok ? 'sent' : 'failed';
+      const deliveries = Array.isArray(payload.deliveries)
+        ? payload.deliveries.filter((delivery: any) => (
+          ['email', 'push'].includes(delivery?.channel)
+          && ['sending', 'sent', 'failed'].includes(delivery?.status)
+        ))
+        : [];
+      onUpdateTaskNotification?.(task.id, {
         status,
-        ...(typeof payload.messageId === 'string' ? { messageId: payload.messageId } : {}),
-        language: payload.language === 'ka' ? 'ka' : 'en',
+        deliveries,
         updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : new Date().toISOString(),
         ...(typeof payload.error === 'string' ? { error: payload.error } : {}),
       });
+      if (!response.ok) {
+        const message = typeof payload.error === 'string' ? payload.error : 'Task notification failed.';
+        setToastMessage?.(isKa
+          ? `${isRetry ? 'დავალების შეტყობინება' : 'დავალება დაემატა, მაგრამ შეტყობინება'} ვერ გაიგზავნა: ${message}`
+          : `${isRetry ? 'Task notification' : 'Task added, but its notification'} failed: ${message}`);
+        return;
+      }
       setToastMessage?.(isKa
-        ? (isRetry ? 'WhatsApp შეტყობინება ხელახლა გაიგზავნა.' : 'დავალება დაემატა და WhatsApp შეტყობინება მიღებულია.')
-        : (isRetry ? 'WhatsApp notification retried.' : 'Task added and WhatsApp notification accepted.'));
+        ? (isRetry ? 'დავალების შეტყობინება ხელახლა გაიგზავნა.' : 'დავალება დაემატა და შეტყობინება გაიგზავნა.')
+        : (isRetry ? 'Task notification retried.' : 'Task added and notification sent.'));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'WhatsApp notification failed.';
-      onUpdateTaskWhatsAppNotification?.(task.id, {
+      const message = error instanceof Error ? error.message : 'Task notification failed.';
+      onUpdateTaskNotification?.(task.id, {
         status: 'failed',
+        deliveries: task.notification?.deliveries,
         error: message.slice(0, 300),
         updatedAt: new Date().toISOString(),
       });
       setToastMessage?.(isKa
-        ? `${isRetry ? 'WhatsApp შეტყობინება' : 'დავალება დაემატა, მაგრამ WhatsApp შეტყობინება'} ვერ გაიგზავნა: ${message}`
-        : `${isRetry ? 'WhatsApp notification' : 'Task added, but WhatsApp notification'} failed: ${message}`);
+        ? `${isRetry ? 'დავალების შეტყობინება' : 'დავალება დაემატა, მაგრამ შეტყობინება'} ვერ გაიგზავნა: ${message}`
+        : `${isRetry ? 'Task notification' : 'Task added, but its notification'} failed: ${message}`);
     } finally {
-      setSendingWhatsAppTaskIds(current => {
+      setSendingNotificationTaskIds(current => {
         const next = new Set(current);
         next.delete(task.id);
         return next;
@@ -294,10 +256,10 @@ export function TasksTab({
       const createdTask = onAddNewTask(title, priority, dueDate, description, {
         assignedUserId: selectedMember?.username,
         assignedTo: selectedMember?.fullName || (isKa ? 'დაუნიშნავი' : 'Unassigned'),
-        notifyWhatsApp: notifyWhatsApp && canSendWhatsApp,
+        notifyAssignee: notifyAssignee && canNotifyAssignee,
       });
-      if (createdTask && notifyWhatsApp && canSendWhatsApp && selectedMember) {
-        void sendTaskWhatsApp(createdTask, selectedMember.username);
+      if (createdTask && notifyAssignee && canNotifyAssignee && selectedMember) {
+        void sendTaskNotification(createdTask, selectedMember.username);
       }
       if (createdTask) {
         clearTaskDraft();
@@ -422,28 +384,28 @@ export function TasksTab({
                 </div>
               </div>
 
-              <div className={`rounded-lg border px-3 py-2.5 ${canSendWhatsApp ? 'border-emerald-200 bg-emerald-50/60' : 'border-stone-200 bg-stone-50'}`}>
-                <label className={`flex items-start gap-2 ${canSendWhatsApp ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
+              <div className={`rounded-lg border px-3 py-2.5 ${canNotifyAssignee ? 'border-sky-200 bg-sky-50/60' : 'border-stone-200 bg-stone-50'}`}>
+                <label className={`flex items-start gap-2 ${canNotifyAssignee ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
                   <input
                     type="checkbox"
-                    checked={notifyWhatsApp && canSendWhatsApp}
-                    onChange={(event) => setNotifyWhatsApp(event.target.checked)}
-                    disabled={!canSendWhatsApp}
-                    className="mt-0.5 h-4 w-4 accent-emerald-700"
+                    checked={notifyAssignee && canNotifyAssignee}
+                    onChange={(event) => setNotifyAssignee(event.target.checked)}
+                    disabled={!canNotifyAssignee}
+                    className="mt-0.5 h-4 w-4 accent-sky-700"
                   />
                   <span>
                     <span className="flex items-center gap-1.5 font-bold text-stone-700">
-                      <MessageCircle className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-                      {isKa ? 'WhatsApp შეტყობინების გაგზავნა' : 'Send WhatsApp notification'}
+                      <BellRing className="h-3.5 w-3.5 text-sky-700" aria-hidden="true" />
+                      {isKa ? 'პასუხისმგებელი პირის შეტყობინება' : 'Notify the assignee'}
                     </span>
                     <span className="mt-0.5 block text-[9.5px] leading-relaxed text-stone-500">
-                      {!whatsappConfigured
-                        ? (isKa ? 'WhatsApp Cloud API ჯერ არ არის კონფიგურირებული.' : 'WhatsApp Cloud API is not configured yet.')
-                        : !selectedMember?.whatsappReady
-                          ? (isKa ? 'არჩეულ წევრს ნომერი ან თანხმობა არ აქვს ჩართული.' : 'The selected member has not enabled a number and opt-in.')
-                          : (selectedMember.language === 'ka'
-                            ? (isKa ? 'შეტყობინება გაიგზავნება ქართულად.' : 'The message will be sent in Georgian.')
-                            : (isKa ? 'შეტყობინება გაიგზავნება ინგლისურად.' : 'The message will be sent in English.'))}
+                      {!selectedMember
+                        ? (isKa ? 'ჯერ აირჩიეთ გუნდის წევრი.' : 'Select a team member first.')
+                        : !canNotifyAssignee
+                          ? (isKa ? 'არჩეულ წევრს ელფოსტა და Push შეტყობინებები გამორთული აქვს.' : 'The selected member has email and push notifications turned off.')
+                          : (isKa
+                            ? `გაიგზავნება: ${selectedChannels.join(' + ')}.`
+                            : `Will send via ${selectedChannels.join(' + ')}.`)}
                     </span>
                   </span>
                 </label>
@@ -520,42 +482,49 @@ export function TasksTab({
                       {task.description && <p className="text-xs text-stone-550 mt-1 leading-relaxed">{task.description}</p>}
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-[9.5px] font-semibold text-stone-500">
                         <span className="inline-flex items-center gap-1"><UserRound className="h-3 w-3" aria-hidden="true" /> {task.assignedTo || (isKa ? 'დაუნიშნავი' : 'Unassigned')}</span>
-                        {task.whatsappNotification && (
+                        {task.notification && (
                           <span
-                            title={task.whatsappNotification.error}
+                            title={task.notification.error}
                             className={`inline-flex items-center gap-1 ${
-                              ['accepted', 'sent', 'delivered', 'read'].includes(task.whatsappNotification.status)
+                              task.notification.status === 'sent'
                                 ? 'text-emerald-700'
-                                : task.whatsappNotification.status === 'failed'
+                                : task.notification.status === 'failed'
                                   ? 'text-rose-600'
                                   : 'text-amber-700'
                             }`}
                           >
-                            <MessageCircle className="h-3 w-3" aria-hidden="true" />
-                            {task.whatsappNotification.status === 'read'
-                              ? (isKa ? 'WhatsApp წაკითხულია' : 'WhatsApp read')
-                              : task.whatsappNotification.status === 'delivered'
-                                ? (isKa ? 'WhatsApp მიწოდებულია' : 'WhatsApp delivered')
-                                : task.whatsappNotification.status === 'sent'
-                                  ? (isKa ? 'WhatsApp გაგზავნილია' : 'WhatsApp sent')
-                                  : task.whatsappNotification.status === 'accepted'
-                                    ? (isKa ? 'WhatsApp მიღებულია' : 'WhatsApp accepted')
-                              : task.whatsappNotification.status === 'failed'
-                                ? (isKa ? 'WhatsApp ვერ გაიგზავნა' : 'WhatsApp failed')
-                                : (isKa ? 'WhatsApp იგზავნება' : 'WhatsApp sending')}
+                            <BellRing className="h-3 w-3" aria-hidden="true" />
+                            {task.notification.status === 'sent'
+                              ? (isKa ? 'შეტყობინება გაგზავნილია' : 'Notification sent')
+                              : task.notification.status === 'partial'
+                                ? (isKa ? 'ნაწილობრივ გაიგზავნა' : 'Partially sent')
+                                : task.notification.status === 'failed'
+                                  ? (isKa ? 'შეტყობინება ვერ გაიგზავნა' : 'Notification failed')
+                                  : (isKa ? 'შეტყობინება იგზავნება' : 'Notification sending')}
                           </span>
                         )}
-                        {task.whatsappNotification?.status === 'failed'
+                        {task.notification?.deliveries?.map(delivery => (
+                          <span
+                            key={delivery.channel}
+                            title={delivery.error}
+                            className={`inline-flex items-center gap-1 ${delivery.status === 'sent' ? 'text-emerald-700' : 'text-rose-600'}`}
+                          >
+                            {delivery.channel === 'email'
+                              ? <Mail className="h-3 w-3" aria-hidden="true" />
+                              : <BellRing className="h-3 w-3" aria-hidden="true" />}
+                            {delivery.channel === 'email' ? 'Email' : 'Push'}
+                          </span>
+                        ))}
+                        {['failed', 'partial'].includes(task.notification?.status || '')
                           && task.assignedUserId
-                          && whatsappConfigured
                           && canCreateTask && (
                             <button
                               type="button"
-                              onClick={() => void sendTaskWhatsApp(task, task.assignedUserId!, true)}
-                              disabled={sendingWhatsAppTaskIds.has(task.id)}
+                              onClick={() => void sendTaskNotification(task, task.assignedUserId!, true)}
+                              disabled={sendingNotificationTaskIds.has(task.id)}
                               className="rounded-md border border-rose-200 px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-wait disabled:opacity-50"
                             >
-                              {isKa ? 'ხელახლა გაგზავნა' : 'Retry WhatsApp'}
+                              {isKa ? 'ხელახლა გაგზავნა' : 'Retry notification'}
                             </button>
                           )}
                       </div>

@@ -204,15 +204,7 @@ jobs:
       SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
       MAIL_FROM: ${{ secrets.MAIL_FROM }}
-      WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
-      WHATSAPP_GRAPH_API_VERSION: ${{ vars.WHATSAPP_GRAPH_API_VERSION || 'v26.0' }}
-      WHATSAPP_TASK_TEMPLATE_NAME: ${{ vars.WHATSAPP_TASK_TEMPLATE_NAME || 'cellarflow_task_assignment' }}
-      WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN: ${{ vars.WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN || 'en_US' }}
-      WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA: ${{ vars.WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA || 'ka' }}
-      WHATSAPP_AI_FINDING_TEMPLATE_NAME: ${{ vars.WHATSAPP_AI_FINDING_TEMPLATE_NAME || 'cellarflow_ai_finding' }}
-      WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN: ${{ vars.WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN || 'en_US' }}
-      WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA: ${{ vars.WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA || 'ka' }}
-      WEB_PUSH_ENABLED: ${{ vars.WEB_PUSH_ENABLED || 'false' }}
+      WEB_PUSH_ENABLED: ${{ vars.WEB_PUSH_ENABLED || 'true' }}
       BILLING_ENABLED: ${{ vars.BILLING_ENABLED || 'false' }}
       TBC_API_BASE_URL: ${{ vars.TBC_API_BASE_URL || 'https://api.tbcbank.ge' }}
       TBC_RECURRING_ENABLED: ${{ vars.TBC_RECURRING_ENABLED || 'false' }}
@@ -389,21 +381,10 @@ jobs:
           )
 
           if [ -n "$CLOUDSQL_INSTANCE" ]; then DEPLOY_ARGS+=(--add-cloudsql-instances "$CLOUDSQL_INSTANCE"); fi
-          if [ "$WHATSAPP_ENABLED" = "true" ]; then
-            DEPLOY_ARGS+=(
-              --update-secrets "WHATSAPP_ACCESS_TOKEN=cellarflow-whatsapp-access-token:latest"
-              --update-secrets "WHATSAPP_PHONE_NUMBER_ID=cellarflow-whatsapp-phone-number-id:latest"
-              --update-secrets "WHATSAPP_WEBHOOK_VERIFY_TOKEN=cellarflow-whatsapp-webhook-verify-token:latest"
-              --update-secrets "WHATSAPP_APP_SECRET=cellarflow-whatsapp-app-secret:latest"
-              --update-env-vars "WHATSAPP_GRAPH_API_VERSION=$WHATSAPP_GRAPH_API_VERSION"
-              --update-env-vars "WHATSAPP_TASK_TEMPLATE_NAME=$WHATSAPP_TASK_TEMPLATE_NAME"
-              --update-env-vars "WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN=$WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN"
-              --update-env-vars "WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA=$WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA"
-              --update-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_NAME=$WHATSAPP_AI_FINDING_TEMPLATE_NAME"
-              --update-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN=$WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN"
-              --update-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA=$WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA"
-            )
-          fi
+          DEPLOY_ARGS+=(
+            --remove-secrets "WHATSAPP_ACCESS_TOKEN,WHATSAPP_PHONE_NUMBER_ID,WHATSAPP_WEBHOOK_VERIFY_TOKEN,WHATSAPP_APP_SECRET"
+            --remove-env-vars "WHATSAPP_GRAPH_API_VERSION,WHATSAPP_TASK_TEMPLATE_NAME,WHATSAPP_TASK_TEMPLATE_LANGUAGE_EN,WHATSAPP_TASK_TEMPLATE_LANGUAGE_KA,WHATSAPP_AI_FINDING_TEMPLATE_NAME,WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN,WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA,WHATSAPP_CONFIG_REVISION"
+          )
           if [ "$WEB_PUSH_ENABLED" = "true" ]; then
             DEPLOY_ARGS+=(
               --update-secrets "WEB_PUSH_VAPID_PUBLIC_KEY=cellarflow-web-push-vapid-public-key:latest"
@@ -516,16 +497,6 @@ jobs:
             if [ -n "$CLOUDSQL_INSTANCE" ]; then
               args+=(--set-cloudsql-instances "$CLOUDSQL_INSTANCE")
             fi
-            if [ "$WHATSAPP_ENABLED" = "true" ]; then
-              args+=(
-                --set-secrets "WHATSAPP_ACCESS_TOKEN=cellarflow-whatsapp-access-token:latest"
-                --set-secrets "WHATSAPP_PHONE_NUMBER_ID=cellarflow-whatsapp-phone-number-id:latest"
-                --set-env-vars "WHATSAPP_GRAPH_API_VERSION=$WHATSAPP_GRAPH_API_VERSION"
-                --set-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_NAME=$WHATSAPP_AI_FINDING_TEMPLATE_NAME"
-                --set-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN=$WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN"
-                --set-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA=$WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA"
-              )
-            fi
             if [ "$WEB_PUSH_ENABLED" = "true" ]; then
               args+=(
                 --set-secrets "WEB_PUSH_VAPID_PUBLIC_KEY=cellarflow-web-push-vapid-public-key:latest"
@@ -565,16 +536,6 @@ jobs:
           if [ -n "$SMTP_SECURE" ]; then DELIVERY_ARGS+=(--set-env-vars "SMTP_SECURE=$SMTP_SECURE"); fi
           if [ -n "$SMTP_USER" ]; then DELIVERY_ARGS+=(--set-env-vars "SMTP_USER=$SMTP_USER"); fi
           if [ -n "$MAIL_FROM" ]; then DELIVERY_ARGS+=(--set-env-vars "MAIL_FROM=$MAIL_FROM"); fi
-          if [ "$WHATSAPP_ENABLED" = "true" ]; then
-            DELIVERY_ARGS+=(
-              --set-secrets "WHATSAPP_ACCESS_TOKEN=cellarflow-whatsapp-access-token:latest"
-              --set-secrets "WHATSAPP_PHONE_NUMBER_ID=cellarflow-whatsapp-phone-number-id:latest"
-              --set-env-vars "WHATSAPP_GRAPH_API_VERSION=$WHATSAPP_GRAPH_API_VERSION"
-              --set-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_NAME=$WHATSAPP_AI_FINDING_TEMPLATE_NAME"
-              --set-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN=$WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_EN"
-              --set-env-vars "WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA=$WHATSAPP_AI_FINDING_TEMPLATE_LANGUAGE_KA"
-            )
-          fi
           if [ "$WEB_PUSH_ENABLED" = "true" ]; then
             DELIVERY_ARGS+=(
               --set-secrets "WEB_PUSH_VAPID_PUBLIC_KEY=cellarflow-web-push-vapid-public-key:latest"

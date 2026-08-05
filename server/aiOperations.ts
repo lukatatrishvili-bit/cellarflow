@@ -17,7 +17,6 @@ import {
   type AiModelCallOperationsSnapshot,
 } from './aiModelTelemetry';
 import { aiWebPushConfigured } from './aiPushSubscriptions';
-import { aiWhatsAppConfigured } from './aiNotificationWhatsApp';
 
 export type AiOperationsHealth = 'healthy' | 'attention' | 'critical';
 
@@ -26,7 +25,6 @@ export interface AiOperationsSnapshot {
   health: AiOperationsHealth;
   emailTransportConfigured: boolean;
   pushTransportConfigured: boolean;
-  whatsappTransportConfigured: boolean;
   organizations: Record<string, string>;
   monitoring: AiMonitoringOperationsSnapshot;
   notifications: AiNotificationOperationsSnapshot;
@@ -87,7 +85,6 @@ export async function getAiOperationsSnapshot(
     health,
     emailTransportConfigured: Boolean(process.env.SMTP_HOST?.trim()),
     pushTransportConfigured: aiWebPushConfigured(),
-    whatsappTransportConfigured: aiWhatsAppConfigured(),
     organizations,
     monitoring,
     notifications,

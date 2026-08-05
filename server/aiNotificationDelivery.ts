@@ -8,14 +8,12 @@ import {
 import {
   aiEmailDeliveryEligibility,
   aiPushDeliveryEligibility,
-  aiWhatsAppDeliveryEligibility,
 } from './aiNotificationPreferences';
 import { buildAiFindingEmail } from './aiNotificationEmail';
 import {
   AiPushNoSubscriptionsError,
   sendAiWebPushNotification,
 } from './aiNotificationPush';
-import { sendAiWhatsAppNotification } from './aiNotificationWhatsApp';
 
 export interface AiNotificationDeliveryResult {
   claimed: number;
@@ -31,7 +29,6 @@ export async function deliverAiNotificationBatch(options: {
   appUrl?: string;
   mailer?: (message: ReturnType<typeof buildAiFindingEmail>) => Promise<MailResult>;
   pushSender?: typeof sendAiWebPushNotification;
-  whatsappSender?: typeof sendAiWhatsAppNotification;
 } = {}): Promise<AiNotificationDeliveryResult> {
   const now = options.now || new Date();
   const rows = await claimAiNotificationBatch(options.limit || 25, now);
@@ -44,7 +41,6 @@ export async function deliverAiNotificationBatch(options: {
   };
   const mailer = options.mailer || sendMail;
   const pushSender = options.pushSender || sendAiWebPushNotification;
-  const whatsappSender = options.whatsappSender || sendAiWhatsAppNotification;
 
   for (const row of rows) {
     const eligibilityInput = {
@@ -56,9 +52,7 @@ export async function deliverAiNotificationBatch(options: {
     };
     const eligibility = row.channel === 'push'
       ? await aiPushDeliveryEligibility(eligibilityInput)
-      : row.channel === 'whatsapp'
-        ? await aiWhatsAppDeliveryEligibility(eligibilityInput)
-        : await aiEmailDeliveryEligibility(eligibilityInput);
+      : await aiEmailDeliveryEligibility(eligibilityInput);
     if (!eligibility.eligible) {
       const cancelled = await cancelAiNotification(
         row.id,
@@ -76,17 +70,6 @@ export async function deliverAiNotificationBatch(options: {
         await pushSender({
           organizationId: row.organizationId,
           username: row.recipientUsername,
-          language: eligibility.language,
-          wineryName: eligibility.wineryName,
-          payload: row.payload,
-          appUrl: options.appUrl ?? process.env.APP_URL,
-        });
-      } else if (row.channel === 'whatsapp') {
-        if (!('phone' in eligibility)) {
-          throw new Error('WhatsApp recipient eligibility did not include a phone number.');
-        }
-        await whatsappSender({
-          phone: eligibility.phone,
           language: eligibility.language,
           wineryName: eligibility.wineryName,
           payload: row.payload,

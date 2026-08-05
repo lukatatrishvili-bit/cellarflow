@@ -4,7 +4,6 @@ import { type AiFindingRecord, type UserRole } from '../lib/ai';
 import {
   aiEmailDeliveryEligibility,
   aiPushDeliveryEligibility,
-  aiWhatsAppDeliveryEligibility,
   eligibleAiNotificationRecipients,
   type AiExternalNotificationChannel,
 } from './aiNotificationPreferences';
@@ -93,7 +92,7 @@ function normalizeOutbox(value: any): AiNotificationOutboxRecord {
     id: String(value.id),
     organizationId: String(value.organizationId),
     eventKey: String(value.eventKey),
-    channel: ['email', 'push', 'whatsapp'].includes(String(value.channel))
+    channel: ['email', 'push'].includes(String(value.channel))
       ? value.channel as AiExternalNotificationChannel
       : 'email',
     findingId: String(value.findingId),
@@ -244,7 +243,7 @@ export async function enqueueAiFindingNotifications(
 }
 
 /**
- * Claims pending work for email/push/WhatsApp adapters. This module
+ * Claims pending work for email and browser-push adapters. This module
  * deliberately does not choose or call a provider.
  */
 export async function claimAiNotificationBatch(
@@ -258,8 +257,10 @@ export async function claimAiNotificationBatch(
   if (prisma) {
     const model = (prisma as any).aiNotificationOutbox;
     if (!model) throw new Error('AI notification outbox storage is unavailable.');
+    const activeChannels = { channel: { in: ['email', 'push'] } };
     const candidates = await model.findMany({
       where: {
+        ...activeChannels,
         OR: [
           { status: 'pending', availableAt: { lte: now } },
           { status: 'processing', claimedAt: { lte: staleBefore } },
@@ -472,6 +473,7 @@ export async function getAiNotificationOutboxOperations(
   if (prisma) {
     const model = (prisma as any).aiNotificationOutbox;
     if (!model) throw new Error('AI notification outbox storage is unavailable.');
+    const activeChannels = { channel: { in: ['email', 'push'] } };
     const [
       statusCounts,
       readyToDeliver,
@@ -481,22 +483,22 @@ export async function getAiNotificationOutboxOperations(
       recent,
       recentFailures,
     ] = await Promise.all([
-      Promise.all(statuses.map((status) => model.count({ where: { status } }))),
-      model.count({ where: { status: 'pending', availableAt: { lte: now } } }),
-      model.count({ where: { status: 'processing', claimedAt: { lte: staleBefore } } }),
+      Promise.all(statuses.map((status) => model.count({ where: { ...activeChannels, status } }))),
+      model.count({ where: { ...activeChannels, status: 'pending', availableAt: { lte: now } } }),
+      model.count({ where: { ...activeChannels, status: 'processing', claimedAt: { lte: staleBefore } } }),
       model.findFirst({
-        where: { status: 'pending' },
+        where: { ...activeChannels, status: 'pending' },
         orderBy: { availableAt: 'asc' },
         select: { availableAt: true },
       }),
       model.findFirst({
-        where: { status: 'delivered' },
+        where: { ...activeChannels, status: 'delivered' },
         orderBy: { deliveredAt: 'desc' },
         select: { deliveredAt: true },
       }),
-      model.findMany({ orderBy: { createdAt: 'desc' }, take }),
+      model.findMany({ where: activeChannels, orderBy: { createdAt: 'desc' }, take }),
       model.findMany({
-        where: { status: 'failed' },
+        where: { ...activeChannels, status: 'failed' },
         orderBy: { failedAt: 'desc' },
         take,
       }),
@@ -570,6 +572,9 @@ export async function retryFailedAiNotification(
     if (!model) throw new Error('AI notification outbox storage is unavailable.');
     const value = await model.findUnique({ where: { id } });
     if (!value) return { outcome: 'not_found' };
+    if (!['email', 'push'].includes(String(value.channel))) {
+      return { outcome: 'ineligible', reason: 'This notification channel is no longer supported.' };
+    }
     const record = normalizeOutbox(value);
     if (record.status !== 'failed') {
       return { outcome: 'not_retryable', status: record.status };
@@ -629,7 +634,6 @@ function channelDeliveryEligibility(record: AiNotificationOutboxRecord) {
     eventOccurredAt: record.payload.lastSeenAt,
   };
   if (record.channel === 'push') return aiPushDeliveryEligibility(input);
-  if (record.channel === 'whatsapp') return aiWhatsAppDeliveryEligibility(input);
   return aiEmailDeliveryEligibility(input);
 }
 

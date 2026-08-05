@@ -344,10 +344,15 @@ export interface Task {
   assignedUserId?: string;
   status: 'pending' | 'completed';
   description: string;
-  whatsappNotification?: {
-    status: 'sending' | 'accepted' | 'sent' | 'delivered' | 'read' | 'failed';
-    messageId?: string;
-    language?: 'en' | 'ka';
+  notification?: {
+    status: 'sending' | 'sent' | 'partial' | 'failed';
+    deliveries?: Array<{
+      channel: 'email' | 'push';
+      status: 'sending' | 'sent' | 'failed';
+      attemptCount?: number;
+      error?: string;
+      updatedAt?: string;
+    }>;
     updatedAt: string;
     error?: string;
   };
@@ -356,7 +361,7 @@ export interface Task {
 export interface TaskAssignmentInput {
   assignedUserId?: string;
   assignedTo?: string;
-  notifyWhatsApp?: boolean;
+  notifyAssignee?: boolean;
 }
 
 export interface TransferEvent {
@@ -1039,8 +1044,6 @@ export interface UserProfile {
   language: 'en' | 'ka';
   /** Personal international number; never exposed for other workspace members. */
   phone?: string;
-  /** Explicit consent to receive operational task templates through WhatsApp. */
-  whatsappOptIn?: boolean;
   enabledModules?: string[];
   enabledWidgets?: string[];
   registrationComplete?: boolean;

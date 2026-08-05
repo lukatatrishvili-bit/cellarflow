@@ -10,7 +10,6 @@ import {
   Leaf,
   Mail,
   Menu,
-  MessageCircle,
   PackageCheck,
   Phone,
   ShieldCheck,
@@ -79,8 +78,6 @@ const copy = {
     contactReplyPlaceholder: 'you@winery.com',
     contactMessage: 'How can VinOS help?',
     contactMessagePlaceholder: 'Tell me briefly about your vineyard, cellar, or team.',
-    contactSubmit: 'WhatsApp',
-    whatsappLabel: 'WHATSAPP',
     mobileLabel: 'MOBILE',
     installFull: 'Install VinOS PWA',
     chromeHelp: 'Open the browser menu and choose “Install VinOS”.',
@@ -137,8 +134,6 @@ const copy = {
     contactReplyPlaceholder: 'you@winery.com',
     contactMessage: 'რით შეიძლება VinOS დაგეხმაროთ?',
     contactMessagePlaceholder: 'მოკლედ მომწერეთ თქვენი ვენახის, მარნის ან გუნდის შესახებ.',
-    contactSubmit: 'WhatsApp',
-    whatsappLabel: 'WHATSAPP',
     mobileLabel: 'მობილური',
     installFull: 'VinOS PWA-ის დაყენება',
     chromeHelp: 'გახსენით ბრაუზერის მენიუ და აირჩიეთ „VinOS-ის დაყენება“.',
@@ -383,19 +378,14 @@ export default function MarketingLanding() {
   const handleContactSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const name = String(form.get('name') || '').trim();
     const replyTo = String(form.get('replyTo') || '').trim();
     const message = String(form.get('message') || '').trim();
     const text = language === 'ka'
       ? `გამარჯობა, მე ვარ ${name}.\nსაკონტაქტო ინფორმაცია: ${replyTo}\n\n${message}`
       : `Hello, my name is ${name}.\nContact: ${replyTo}\n\n${message}`;
-    if (submitter?.value === 'email') {
-      const subject = language === 'ka' ? `VinOS — შეტყობინება ${name}-სგან` : `VinOS inquiry from ${name}`;
-      window.location.href = `mailto:luka.tatrishvili@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
-      return;
-    }
-    window.open(`https://wa.me/995599304205?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+    const subject = language === 'ka' ? `VinOS — შეტყობინება ${name}-სგან` : `VinOS inquiry from ${name}`;
+    window.location.href = `mailto:luka.tatrishvili@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
   };
 
   return (
@@ -535,15 +525,11 @@ export default function MarketingLanding() {
                 <textarea name="message" rows={4} placeholder={t.contactMessagePlaceholder} required />
               </label>
               <div className="ml-contact-links">
-                <button type="submit" name="channel" value="whatsapp">
-                  <MessageCircle size={18} />
-                  <span><small>{t.whatsappLabel}</small><strong>+995 599 304 205</strong></span>
-                </button>
                 <a href="tel:+995599304205">
                   <Phone size={18} />
                   <span><small>{t.mobileLabel}</small><strong>+995 599 304 205</strong></span>
                 </a>
-                <button type="submit" name="channel" value="email">
+                <button type="submit">
                   <Mail size={18} />
                   <span><small>{t.emailLabel}</small><strong>luka.tatrishvili@gmail.com</strong></span>
                 </button>

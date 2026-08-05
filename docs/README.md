@@ -33,7 +33,7 @@ supersedes-chain inside each file.
 | [`cloud-sql-recovery-runbook.md`](./cloud-sql-recovery-runbook.md) | **Active** | Backup policy, isolated restore drill, checksum comparison, RPO/RTO. Tooling implemented 2026-07-20; the live policy verification and first restore drill remain operator actions. |
 | [`billing-operations-runbook.md`](./billing-operations-runbook.md) | **Active** | Renewals, callbacks, reconciliation, failures, cancellation, support handling. Code and the scheduled Cloud Run job are implemented; TBC merchant approval, production secrets, and the first observed renewal remain operator actions. |
 | [`relational-projection-runbook.md`](./relational-projection-runbook.md) | **Active** | Dry-run drift checks, bounded repair, rollout, rollback. Covers the first tenant-safe relational slice. |
-| [`whatsapp-task-notifications.md`](./whatsapp-task-notifications.md) | **Active** | Meta template, webhook verification, delivery tracking, retries, deployment configuration. |
+| [`notification-delivery.md`](./notification-delivery.md) | **Active** | Personal channel toggles, task delivery, browser push, email, retries, and deployment configuration. |
 | [`ai-intelligence-operations.md`](./ai-intelligence-operations.md) | **Reference** | Winery Intelligence knowledge, delivery, and scheduled operations. Deterministic rules stay authoritative; model analysis is an optional layer around the same validated findings. |
 | [`dependency-security.md`](./dependency-security.md) | **Active** | Dependency audit policy and the enforced CI gate. Last reviewed 2026-07-20. |
 | [`../deployment_guide.md`](../deployment_guide.md) | **Active** | Google Cloud deployment architecture and repository configuration. |

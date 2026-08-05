@@ -136,7 +136,6 @@ export function applyLiveSessionProfile(
     ...(typeof candidate.fullName === 'string' ? { fullName: candidate.fullName } : {}),
     ...(candidate.language === 'en' || candidate.language === 'ka' ? { language: candidate.language } : {}),
     ...(typeof candidate.phone === 'string' ? { phone: candidate.phone } : {}),
-    ...(typeof candidate.whatsappOptIn === 'boolean' ? { whatsappOptIn: candidate.whatsappOptIn } : {}),
     ...(Array.isArray(candidate.enabledModules)
       ? { enabledModules: candidate.enabledModules.filter((item): item is string => typeof item === 'string') }
       : {}),
@@ -205,7 +204,6 @@ const createSignedOutUser = (): UserProfile => ({
   role: 'Read-Only',
   language: 'en',
   phone: '',
-  whatsappOptIn: false,
   registrationComplete: true,
 });
 
@@ -2319,8 +2317,8 @@ export function useWineryState() {
       ...(assignment.assignedUserId ? { assignedUserId: assignment.assignedUserId } : {}),
       status: 'pending',
       description,
-      ...(assignment.notifyWhatsApp ? {
-        whatsappNotification: {
+      ...(assignment.notifyAssignee ? {
+        notification: {
           status: 'sending' as const,
           updatedAt: new Date().toISOString(),
         },
@@ -2331,13 +2329,13 @@ export function useWineryState() {
     return newTask;
   };
 
-  const handleUpdateTaskWhatsAppNotification = (
+  const handleUpdateTaskNotification = (
     taskId: string,
-    notification: NonNullable<Task['whatsappNotification']>,
+    notification: NonNullable<Task['notification']>,
   ) => {
     setTasks(prev => prev.map(task => task.id === taskId ? {
       ...task,
-      whatsappNotification: notification,
+      notification,
     } : task));
   };
 
@@ -2851,7 +2849,7 @@ export function useWineryState() {
     handleAddLabLog,
     handleToggleTaskStatus,
     handleAddNewTask,
-    handleUpdateTaskWhatsAppNotification,
+    handleUpdateTaskNotification,
     handleAddAttachment,
     handleDeleteAttachment,
     handleSaveCrmLead,

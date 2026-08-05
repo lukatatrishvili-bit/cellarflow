@@ -35,7 +35,7 @@ interface DeliveryRecord {
   id: string;
   organizationId: string;
   recipientUsername: string;
-  channel: 'email' | 'push' | 'whatsapp';
+  channel: 'email' | 'push';
   severity: string;
   status: DeliveryStatus;
   attemptCount: number;
@@ -48,7 +48,6 @@ interface OperationsSnapshot {
   health: 'healthy' | 'attention' | 'critical';
   emailTransportConfigured: boolean;
   pushTransportConfigured: boolean;
-  whatsappTransportConfigured: boolean;
   organizations: Record<string, string>;
   monitoring: {
     backend: 'postgresql' | 'memory';
@@ -333,7 +332,6 @@ export default function AiOperationsAdmin({ isKa, onMessage }: Props) {
             {[
               ['SMTP', snapshot.emailTransportConfigured],
               ['Push', snapshot.pushTransportConfigured],
-              ['WhatsApp', snapshot.whatsappTransportConfigured],
             ].map(([label, configured]) => (
               <span
                 key={String(label)}

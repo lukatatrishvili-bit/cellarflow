@@ -95,9 +95,10 @@ describe('release workflow contracts', () => {
     expect(workflow).toContain('--retained-transaction-log-days "$CLOUDSQL_TRANSACTION_LOG_DAYS"');
     expect(workflow).toContain('--retain-backups-on-delete');
     expect(workflow).toContain('Cloud SQL project and region must match the deployment target.');
-    expect(workflow).toContain("WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}");
-    expect(workflow).toContain('WHATSAPP_WEBHOOK_VERIFY_TOKEN=cellarflow-whatsapp-webhook-verify-token:latest');
-    expect(workflow).toContain('WHATSAPP_APP_SECRET=cellarflow-whatsapp-app-secret:latest');
+    expect(workflow).not.toContain('WHATSAPP_ENABLED:');
+    expect(workflow).toContain('WEB_PUSH_VAPID_PUBLIC_KEY=cellarflow-web-push-vapid-public-key:latest');
+    expect(workflow).toContain('WEB_PUSH_VAPID_PRIVATE_KEY=cellarflow-web-push-vapid-private-key:latest');
+    expect(workflow).toContain('WEB_PUSH_VAPID_SUBJECT=cellarflow-web-push-vapid-subject:latest');
     expect(workflow).toContain("BILLING_ENABLED: ${{ vars.BILLING_ENABLED || 'false' }}");
     expect(workflow).toContain('TBC_CLIENT_SECRET=cellarflow-tbc-client-secret:latest');
     expect(workflow).toContain('BILLING_CRON_SECRET=cellarflow-billing-cron-secret:latest');

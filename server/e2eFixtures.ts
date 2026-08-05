@@ -15,7 +15,7 @@ const READER_USERNAME = 'e2e_reader';
 const GEORGIAN_USERNAME = 'e2e_georgian';
 const PASSPHRASE = 'E2e-release-passphrase-2026';
 const TASK_ID = 'task_e2e_deep_link';
-const TASK_TITLE = 'Verify the signed WhatsApp delivery';
+const TASK_TITLE = 'Verify the task notification delivery';
 
 export function e2eFixturesAreAllowed(
   env: NodeJS.ProcessEnv = process.env,
@@ -64,7 +64,6 @@ router.post('/reset', async (_req, res) => {
       role: 'Owner/Admin',
       language: 'en',
       phone: '',
-      whatsappOptIn: false,
       passwordHash: hashPassword(PASSPHRASE),
       enabledModules: ['vazi', 'gvino'],
       enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'],
@@ -81,7 +80,6 @@ router.post('/reset', async (_req, res) => {
       role: 'Read-Only',
       language: 'en',
       phone: '',
-      whatsappOptIn: false,
       passwordHash: hashPassword(PASSPHRASE),
       enabledModules: ['vazi', 'gvino'],
       enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'],
@@ -98,7 +96,6 @@ router.post('/reset', async (_req, res) => {
       role: 'Owner/Admin',
       language: 'ka',
       phone: '',
-      whatsappOptIn: false,
       passwordHash: hashPassword(PASSPHRASE),
       enabledModules: ['vazi', 'gvino'],
       enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'],
