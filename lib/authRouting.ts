@@ -3,6 +3,7 @@ export const DEFAULT_AUTHENTICATED_ROUTE = '/dashboard';
 export const POST_LOGIN_RETURN_TO_KEY = 'vinos_post_login_return_to';
 
 const PUBLIC_ROUTES = [
+  '/',
   LOGIN_ROUTE,
   '/welcome',
   '/pricing',
@@ -49,7 +50,7 @@ export function authRedirectTarget(
   const returnTo = safeProtectedReturnTo(pendingReturnTo);
 
   if (pathname === '/') {
-    return isAuthenticated ? returnTo || `${DEFAULT_AUTHENTICATED_ROUTE}${suffix}` : `${LOGIN_ROUTE}${suffix}`;
+    return isAuthenticated ? returnTo || `${DEFAULT_AUTHENTICATED_ROUTE}${suffix}` : null;
   }
   if (pathname === LOGIN_ROUTE) return isAuthenticated ? returnTo || DEFAULT_AUTHENTICATED_ROUTE : null;
   if (isPublicAppRoute(pathname)) return null;

@@ -197,7 +197,8 @@ export default function App() {
   const browserRoute = useMemo(readBrowserRoute, [routeRevision, state.isLoggedIn, state.isAuthResolved]);
   const normalizedPathname = browserRoute.split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/';
   const isTerroirPulsePage = normalizedPathname === '/terroir-pulse';
-  const isMarketingPage = normalizedPathname === '/welcome';
+  const isMarketingPage = normalizedPathname === '/welcome'
+    || (normalizedPathname === '/' && !state.isLoggedIn);
   const perf = usePerformanceManager();
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
@@ -324,7 +325,7 @@ export default function App() {
       replaceRoute(target);
     }).catch(() => {
       if (cancelled) return;
-      const isPublic = ['/welcome', '/pricing', '/terroir-pulse', '/reset-password', '/accept-invite']
+      const isPublic = ['/', '/welcome', '/pricing', '/terroir-pulse', '/reset-password', '/accept-invite']
         .includes(normalizedPathname);
       const fallbackTarget = state.isLoggedIn
         ? (normalizedPathname === '/' || normalizedPathname === LOGIN_ROUTE ? DEFAULT_AUTHENTICATED_ROUTE : null)

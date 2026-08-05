@@ -9,14 +9,14 @@ import {
 } from '../lib/authRouting';
 
 describe('authentication route decisions', () => {
-  it('sends signed-out root and protected visits to login', () => {
-    expect(authRedirectTarget('/', false)).toBe(LOGIN_ROUTE);
+  it('keeps the signed-out root public and sends protected visits to login', () => {
+    expect(authRedirectTarget('/', false)).toBeNull();
     expect(authRedirectTarget('/dashboard', false)).toBe(LOGIN_ROUTE);
     expect(authRedirectTarget('/tasks?task=task-1', false)).toBe(LOGIN_ROUTE);
   });
 
   it('preserves public and account-access routes', () => {
-    for (const pathname of ['/welcome', '/pricing', '/terroir-pulse', '/reset-password', '/accept-invite']) {
+    for (const pathname of ['/', '/welcome', '/pricing', '/terroir-pulse', '/reset-password', '/accept-invite']) {
       expect(isPublicAppRoute(pathname), pathname).toBe(true);
       expect(authRedirectTarget(pathname, false), pathname).toBeNull();
     }
