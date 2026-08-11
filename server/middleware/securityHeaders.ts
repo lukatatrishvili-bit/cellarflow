@@ -17,6 +17,9 @@ import express from 'express';
 const isProd = process.env.NODE_ENV === 'production';
 const cspEnforce = process.env.CSP_ENFORCE === 'true';
 
+/** Same-origin collector in server/routes/telemetry.ts. */
+const CSP_REPORT_PATH = '/api/telemetry/csp-report';
+
 // External origins the client legitimately contacts. Gemini AI is proxied
 // through /api/gemini (same origin), so it needs no CSP allowance.
 const OPEN_METEO = 'https://open-meteo.com https://api.open-meteo.com https://geocoding-api.open-meteo.com https://archive-api.open-meteo.com';
@@ -42,6 +45,12 @@ function buildCsp(): string {
     `connect-src 'self' ${OPEN_METEO} ${GMAPS_CONNECT} ${OPEN_STREET_MAP}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
+    // Without a sink, Report-Only mode is a no-op: the browser evaluates the
+    // policy and discards the result. `report-uri` is formally deprecated but
+    // is still the only directive Safari and older Chrome honour; `report-to`
+    // is the modern path and pairs with the Reporting-Endpoints header below.
+    `report-uri ${CSP_REPORT_PATH}`,
+    'report-to csp-endpoint',
   ].join('; ');
 }
 
@@ -57,6 +66,11 @@ export function securityHeaders(): express.RequestHandler {
 
     if (isProd) {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      // Declares the named group that the policy's `report-to` directive uses.
+      res.setHeader(
+        'Reporting-Endpoints',
+        `csp-endpoint="${CSP_REPORT_PATH}"`,
+      );
       const header = cspEnforce ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only';
       res.setHeader(header, csp);
     }

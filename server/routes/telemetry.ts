@@ -1,5 +1,5 @@
 import express from 'express';
-import { liveSessionRole, parseCookies } from '../middleware/auth';
+import { liveSessionRole, parseCookies, requireMasterAdmin } from '../middleware/auth';
 import { verifySessionToken } from '../auth';
 import { getUserData, createEmptyUserData } from '../db';
 import {
@@ -48,6 +48,8 @@ const CLIENT_ERROR_WINDOW_MS = 60_000;
 const CLIENT_ERROR_MAX_PER_WINDOW = 5;
 const performanceHits = new Map<string, { count: number; windowStart: number }>();
 const PERFORMANCE_MAX_PER_WINDOW = 12;
+const cspReportHits = new Map<string, { count: number; windowStart: number }>();
+const CSP_REPORT_MAX_PER_WINDOW = 20;
 
 const clip = (v: unknown, max: number) => String(v ?? '').slice(0, max);
 const safeRoute = (value: unknown): string => {
@@ -92,6 +94,130 @@ router.post('/client-error', (req, res) => {
   if (clientErrors.length > MAX_CLIENT_ERRORS) clientErrors.shift();
 
   res.status(204).end();
+});
+
+// ── CSP violation intake ───────────────────────────────────────────────────
+// The Content-Security-Policy ships in Report-Only mode; without a collector
+// the browser evaluates it and throws the result away, so promoting it to
+// enforcing would be a guess. Violations are **aggregated by directive +
+// blocked URI** rather than stored individually: a single broken page emits one
+// report per occurrence, which would flood a flat ring buffer and hide the long
+// tail. What matters for the promotion decision is the distinct set of things
+// the policy would block, and how often each fires.
+
+export interface CspViolationGroup {
+  directive: string;
+  blockedUri: string;
+  documentPath: string;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+const MAX_CSP_GROUPS = 200;
+const cspViolations = new Map<string, CspViolationGroup>();
+
+export function getCspViolations(): CspViolationGroup[] {
+  return [...cspViolations.values()].sort((a, b) => b.count - a.count);
+}
+
+/** Test seam — the aggregate outlives a request, so suites must reset it. */
+export function resetCspViolations(): void {
+  cspViolations.clear();
+  cspReportHits.clear();
+}
+
+/**
+ * Strip a blocked URI down to scheme://host. The full URL can embed tenant data
+ * (signed attachment links, query strings), and the origin is all that is
+ * needed to decide which CSP source expression to add.
+ */
+function safeBlockedUri(value: unknown): string {
+  const raw = clip(value, 300);
+  if (!raw) return '';
+  // CSP keywords, reported verbatim by browsers instead of a URL.
+  if (['inline', 'eval', 'self', 'data', 'blob', 'about', 'wasm-eval'].includes(raw)) return raw;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return clip(raw.split(/[?#]/)[0], 120);
+  }
+}
+
+function recordCspViolation(directive: unknown, blockedUri: unknown, documentUri: unknown): void {
+  const cleanDirective = clip(directive, 60);
+  if (!cleanDirective) return;
+  const cleanBlocked = safeBlockedUri(blockedUri);
+  const key = `${cleanDirective}|${cleanBlocked}`;
+  const now = new Date().toISOString();
+
+  const existing = cspViolations.get(key);
+  if (existing) {
+    existing.count += 1;
+    existing.lastSeen = now;
+    return;
+  }
+  // Bounded: once full, stop admitting new groups rather than evicting — the
+  // established groups carry the counts that inform the promotion decision.
+  if (cspViolations.size >= MAX_CSP_GROUPS) return;
+  cspViolations.set(key, {
+    directive: cleanDirective,
+    blockedUri: cleanBlocked,
+    documentPath: safeRoute(documentUri),
+    count: 1,
+    firstSeen: now,
+    lastSeen: now,
+  });
+}
+
+// Browsers post violation reports as `application/csp-report` (report-uri) or
+// `application/reports+json` (the newer Reporting API). Neither content type is
+// handled by the global `express.json()`, so this route parses its own body.
+const cspReportParser = express.json({
+  type: ['application/csp-report', 'application/reports+json', 'application/json'],
+  limit: '32kb',
+});
+
+router.post('/csp-report', cspReportParser, (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  const hit = cspReportHits.get(ip);
+  if (!hit || now - hit.windowStart > CLIENT_ERROR_WINDOW_MS) {
+    cspReportHits.set(ip, { count: 1, windowStart: now });
+  } else if (++hit.count > CSP_REPORT_MAX_PER_WINDOW) {
+    return res.status(429).json({ ok: false });
+  }
+  if (cspReportHits.size > 1000) cspReportHits.clear();
+
+  const body = req.body;
+  if (Array.isArray(body)) {
+    // Reporting API: a batch of typed reports, only some of them CSP.
+    for (const report of body.slice(0, 20)) {
+      if (!report || typeof report !== 'object' || report.type !== 'csp-violation') continue;
+      const inner = report.body ?? {};
+      recordCspViolation(inner.effectiveDirective, inner.blockedURL, inner.documentURL);
+    }
+  } else if (body && typeof body === 'object') {
+    // Legacy report-uri: a single { "csp-report": { ... } } envelope.
+    const inner = body['csp-report'];
+    if (inner && typeof inner === 'object') {
+      recordCspViolation(
+        inner['effective-directive'] || inner['violated-directive'],
+        inner['blocked-uri'],
+        inner['document-uri'],
+      );
+    }
+  }
+
+  res.status(204).end();
+});
+
+// Read side for the CSP rollout: what would enforcing actually break?
+router.get('/csp-violations', async (req, res) => {
+  const auth = await requireMasterAdmin(req, res);
+  if (!auth) return;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ groups: getCspViolations() });
 });
 
 const performanceNames = new Set(['LCP', 'INP', 'CLS', 'route_load', 'offline_start']);
