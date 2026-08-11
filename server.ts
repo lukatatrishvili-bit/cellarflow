@@ -20,6 +20,7 @@ import terroirPulseRouter from './server/routes/terroirPulse';
 import notificationsRouter from './server/routes/notifications';
 import aiOperationsAdminRouter from './server/routes/aiOperationsAdmin';
 import { securityHeaders } from './server/middleware/securityHeaders';
+import { originCheck } from './server/middleware/originCheck';
 import { warnOnAppUrlMismatch } from './server/appUrlMismatch';
 import { demoAccountConfig } from './server/config';
 import { getServiceReadiness } from './server/readiness';
@@ -41,6 +42,9 @@ app.set('trust proxy', 1);
 // completely healthy, so the server says so once per host.
 app.use(warnOnAppUrlMismatch({ isProduction: process.env.NODE_ENV === 'production' }));
 app.use(securityHeaders());
+// Second, cookie-independent CSRF layer. Rejects only state-changing requests
+// that prove they are cross-site, so non-browser clients stay unaffected.
+app.use(originCheck());
 // Whole-state sync is the largest body this service accepts. Mount its parser
 // (and the matching error handler) before the general one so an over-limit
 // payload answers with a structured, actionable 413 instead of the parser's

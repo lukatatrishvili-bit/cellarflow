@@ -84,6 +84,10 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
     en: 'The message could not be sent. Check the address and try again.',
     ka: 'შეტყობინების გაგზავნა ვერ მოხერხდა. შეამოწმეთ მისამართი და სცადეთ ხელახლა.',
   },
+  cross_origin_rejected: {
+    en: 'This request was blocked because it did not come from the app itself. Reload the page and try again.',
+    ka: 'ეს მოთხოვნა დაიბლოკა, რადგან თავად აპლიკაციიდან არ მოსულა. გადატვირთეთ გვერდი და სცადეთ ხელახლა.',
+  },
 
   // --- Notifications and background services -------------------------------
   notification_opt_in_required: {
