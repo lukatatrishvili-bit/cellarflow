@@ -3,6 +3,8 @@ import { GoogleGenAI } from '@google/genai';
 import { getDB } from '../db';
 import { requireCapability } from '../middleware/auth';
 import { GEMINI_MODEL } from '../config';
+import { reserveAiModelCalls } from '../aiModelBudget';
+import { resolveAiConfig } from '../../lib/ai';
 
 const router = express.Router();
 
@@ -107,6 +109,26 @@ router.post('/', async (req, res) => {
     }
 
     const username = auth.username;
+
+    // Every other model-calling route reserves against the organization's daily
+    // budget; this one — the interactive Copilot, and so the highest-volume of
+    // them — did not, leaving a single authenticated account able to spend the
+    // Gemini quota without limit. Reserve before the call, not after, so a
+    // burst of concurrent requests cannot race past the ceiling.
+    const db = getDB();
+    const organizationId = db.users.find(u => u.username === username)?.activeOrganizationId;
+    if (!organizationId) {
+      return res.status(400).json({ error: 'No active organization set for user' });
+    }
+    const aiConfig = resolveAiConfig(db.orgData[organizationId]?.companyProfile?.aiConfig);
+    const reservation = await reserveAiModelCalls(organizationId, aiConfig.maxModelCallsPerDay, 1);
+    if (!reservation.granted) {
+      return res.status(429).json({
+        code: 'ai_budget_exhausted',
+        error: 'This winery has used its AI allowance for today.',
+        budget: { used: reservation.used, remaining: reservation.remaining },
+      });
+    }
 
     let historicalContext = "";
     historicalContext = getHistoricalContext(username);

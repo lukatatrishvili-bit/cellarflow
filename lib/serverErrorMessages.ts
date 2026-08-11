@@ -98,6 +98,10 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
     en: 'Winery Intelligence is temporarily unavailable. Your data is unaffected.',
     ka: 'Winery Intelligence დროებით მიუწვდომელია. თქვენს მონაცემებზე ეს არ მოქმედებს.',
   },
+  ai_budget_exhausted: {
+    en: 'This winery has used its AI allowance for today. It resets tomorrow, or an administrator can raise the daily limit in AI settings.',
+    ka: 'ამ მარანმა დღეს AI-ის ლიმიტი ამოწურა. ის ხვალ განახლდება, ან ადმინისტრატორს შეუძლია დღიური ლიმიტი AI-ის პარამეტრებში გაზარდოს.',
+  },
   ai_notification_retry_unavailable: {
     en: 'This notification cannot be retried right now.',
     ka: 'ამ შეტყობინების ხელახლა გაგზავნა ამჟამად შეუძლებელია.',
