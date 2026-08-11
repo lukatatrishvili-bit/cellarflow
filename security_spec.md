@@ -6,6 +6,8 @@ This document describes the controls the application actually runs. PostgreSQL i
 
 - The browser is untrusted. Role labels, organization ids, record ids, timestamps, command receipts, sync baselines, tombstones, and attachment metadata supplied by a client must be revalidated at the server boundary.
 - Authentication is established by the server session. Production sessions require a strong `SESSION_SECRET`; account verification, recovery, invitation, Google OAuth, and demo access are governed by server routes and environment policy.
+- A session ends on the server, not only in the browser. Logout, password reset, and security-sensitive administrative changes increment the stored session version, so a token captured earlier fails its next request. Revocation is account-wide rather than per-device, and the environment master admin holds no stored version — that session expires rather than being revoked.
+- State-changing requests must originate from the application itself. Two independent layers enforce this: the `SameSite=Lax` session cookie, and a request-layer check that rejects any unsafe-method request proving itself cross-site through `Sec-Fetch-Site`, a foreign `Origin`, or the opaque `null` origin. Safe methods are exempt so emailed OAuth and account-review links keep working, and an absent header is not treated as evidence, so non-browser clients are unaffected.
 - Authorization comes from the current server-side organization membership, not cached browser state. Role changes take effect on the next request.
 - Every operational read or write is scoped to the active organization. Human-readable record ids are never sufficient authority by themselves.
 - Production writes require a durable backend. `/api/ready` rejects unavailable/mismatched PostgreSQL, incomplete hydration, active backend write failures, and production-local JSON.
@@ -27,15 +29,17 @@ The automated suites must reject at least these attack classes:
 1. unauthenticated API access and session forgery;
 2. cross-organization reads, writes, invitations, command replay, and id collisions;
 3. cached-role privilege escalation after a live membership downgrade;
-4. reused command ids with a different command type or request body;
-5. concurrent command races that could double-transfer, double-bottle, double-dispatch, or overfill storage/vessels;
-6. reversal of a stale command after dependent work has changed the affected state;
-7. forged command-owned records or incomplete compound side effects submitted through sync;
-8. same-field two-client edits, both edit/delete orderings, delete/delete replay, and stale-record resurrection;
-9. malformed, oversized, prototype-polluting, or excessively large sync/command recovery payloads;
-10. attachment path traversal, unsupported MIME, mismatched checksum, and excessive inline bytes;
-11. brute-force authentication attempts across multiple application instances;
-12. schema drift, missing production secrets, unsafe local persistence, and a deployed revision that fails readiness.
+4. replay of a session token after logout, password reset, or an administrative account change;
+5. cross-site state-changing requests, covering a foreign `Origin`, `Sec-Fetch-Site: cross-site`, and the opaque `null` origin, without blocking safe methods or header-less non-browser clients;
+6. reused command ids with a different command type or request body;
+7. concurrent command races that could double-transfer, double-bottle, double-dispatch, or overfill storage/vessels;
+8. reversal of a stale command after dependent work has changed the affected state;
+9. forged command-owned records or incomplete compound side effects submitted through sync;
+10. same-field two-client edits, both edit/delete orderings, delete/delete replay, and stale-record resurrection;
+11. malformed, oversized, prototype-polluting, or excessively large sync/command recovery payloads;
+12. attachment path traversal, unsupported MIME, mismatched checksum, and excessive inline bytes;
+13. brute-force authentication attempts across multiple application instances;
+14. schema drift, missing production secrets, unsafe local persistence, and a deployed revision that fails readiness.
 
 ## Operational gates
 
