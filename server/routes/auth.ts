@@ -1162,8 +1162,44 @@ authRouter.get('/google/callback', async (req, res) => {
   }
 });
 
-authRouter.post('/logout', (req, res) => {
+/**
+ * Session tokens are stateless HMAC blobs, so clearing the cookie only removes
+ * the browser's copy — a token captured beforehand stayed valid until its own
+ * expiry, which is up to 30 days for a "remember me" login. Bumping the stored
+ * session version invalidates it server-side on the next request, reusing the
+ * same mechanism as password reset and admin lockout.
+ *
+ * Note this is a global sign-out: every device holding a session for the
+ * account is logged out, because the version is per-user, not per-session.
+ * Per-device revocation would require issuing and tracking session ids.
+ */
+authRouter.post('/logout', async (req, res) => {
+  // Clear the cookie first and unconditionally. Revocation is best-effort on
+  // top of that — a database hiccup must never leave the user still signed in.
   res.setHeader('Set-Cookie', clearSessionCookie());
+
+  try {
+    const session = verifySessionToken(parseCookies(req.headers.cookie)['maranios_session']);
+    if (session?.username) {
+      await refreshCoreMetadataFromPostgres();
+      // The env master admin has no db.users row and therefore no version to
+      // bump; its session simply expires.
+      const user = getDB().users.find(u => u.username === session.username);
+      if (user) {
+        user.sessionVersion = sessionVersionForUser(user) + 1;
+        await saveCoreMetadata('auth-logout');
+        await auditSecurityEvent({
+          eventType: 'session.logout',
+          username: user.username,
+          organizationId: user.activeOrganizationId,
+          ip: clientIp(req),
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[auth] logout session revocation failed:', err);
+  }
+
   res.json({ success: true });
 });
 
