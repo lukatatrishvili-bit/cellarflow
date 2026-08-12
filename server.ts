@@ -21,6 +21,7 @@ import notificationsRouter from './server/routes/notifications';
 import aiOperationsAdminRouter from './server/routes/aiOperationsAdmin';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { originCheck } from './server/middleware/originCheck';
+import { requestCeiling } from './server/middleware/requestCeiling';
 import { warnOnAppUrlMismatch } from './server/appUrlMismatch';
 import { demoAccountConfig } from './server/config';
 import { getServiceReadiness } from './server/readiness';
@@ -45,6 +46,14 @@ app.use(securityHeaders());
 // Second, cookie-independent CSRF layer. Rejects only state-changing requests
 // that prove they are cross-site, so non-browser clients stay unaffected.
 app.use(originCheck());
+// Runaway guards on the expensive paths, mounted BEFORE the body parsers so a
+// refused request never costs a 5 MB parse. Whole-state sync and the full-state
+// read share one bucket: they are the same client workflow, and alternating
+// between them must not buy double the allowance.
+const stateCeiling = requestCeiling({ name: 'state', max: 120, windowMs: 60_000 });
+app.use('/api/sync', stateCeiling);
+app.use('/api/db', stateCeiling);
+app.use('/api/commands', requestCeiling({ name: 'commands', max: 120, windowMs: 60_000 }));
 // Whole-state sync is the largest body this service accepts. Mount its parser
 // (and the matching error handler) before the general one so an over-limit
 // payload answers with a structured, actionable 413 instead of the parser's

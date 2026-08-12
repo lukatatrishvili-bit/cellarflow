@@ -10,6 +10,8 @@ This document describes the controls the application actually runs. PostgreSQL i
 - State-changing requests must originate from the application itself. Two independent layers enforce this: the `SameSite=Lax` session cookie, and a request-layer check that rejects any unsafe-method request proving itself cross-site through `Sec-Fetch-Site`, a foreign `Origin`, or the opaque `null` origin. Safe methods are exempt so emailed OAuth and account-review links keep working, and an absent header is not treated as evidence, so non-browser clients are unaffected.
 - Authorization comes from the current server-side organization membership, not cached browser state. Role changes take effect on the next request.
 - Every operational read or write is scoped to the active organization. Human-readable record ids are never sufficient authority by themselves.
+- Script execution in the browser is allowlisted. The production Content-Security-Policy permits no inline script and no `eval`, so injected markup cannot execute, and it names only origins the browser actually contacts. It ships in Report-Only mode with violations collected at `/api/telemetry/csp-report`; `CSP_ENFORCE=true` promotes it once a production run reports clean. `style-src` still allows inline styles, which nonces cannot cover for runtime style attributes.
+- Model spend and request volume are bounded per organization. Every route that calls a model reserves against the winery's daily allowance before the provider is contacted, and whole-state sync, the full-state read, and the command endpoints refuse a caller past a fixed ceiling. The request ceiling is per instance and in memory, so it bounds a runaway client rather than a distributed one; cross-instance enforcement exists where it matters most, on authentication.
 - Production writes require a durable backend. `/api/ready` rejects unavailable/mismatched PostgreSQL, incomplete hydration, active backend write failures, and production-local JSON.
 
 ## Data invariants
@@ -39,7 +41,10 @@ The automated suites must reject at least these attack classes:
 11. malformed, oversized, prototype-polluting, or excessively large sync/command recovery payloads;
 12. attachment path traversal, unsupported MIME, mismatched checksum, and excessive inline bytes;
 13. brute-force authentication attempts across multiple application instances;
-14. schema drift, missing production secrets, unsafe local persistence, and a deployed revision that fails readiness.
+14. request floods against whole-state sync, the full-state read, and the command endpoints, refused before the body is parsed and billed per account rather than per address;
+15. model calls beyond the winery's configured daily allowance, including concurrent requests racing the same remaining capacity;
+16. a build or generated document that reintroduces inline script, and a policy that loses its strict `script-src` or its reporting sink;
+17. schema drift, missing production secrets, unsafe local persistence, and a deployed revision that fails readiness.
 
 ## Operational gates
 

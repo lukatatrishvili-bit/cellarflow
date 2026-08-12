@@ -88,6 +88,10 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
     en: 'This request was blocked because it did not come from the app itself. Reload the page and try again.',
     ka: 'ეს მოთხოვნა დაიბლოკა, რადგან თავად აპლიკაციიდან არ მოსულა. გადატვირთეთ გვერდი და სცადეთ ხელახლა.',
   },
+  rate_limited: {
+    en: 'Too many requests from this account in a short time. Your changes are kept — wait a moment and they will sync.',
+    ka: 'ამ ანგარიშიდან მოკლე დროში ძალიან ბევრი მოთხოვნა შევიდა. თქვენი ცვლილებები შენახულია — მოიცადეთ და დასინქრონდება.',
+  },
 
   // --- Notifications and background services -------------------------------
   notification_opt_in_required: {
