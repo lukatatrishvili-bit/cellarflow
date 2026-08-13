@@ -32,8 +32,13 @@ async function signIn(
 
 test('owner signs in and reaches the operational overview', async ({ page }) => {
   const fixture = await resetFixture(page);
+
+  // The root path serves the public marketing page rather than bouncing to the
+  // login screen; signing in is reached from there.
   await page.goto('/');
+  await page.getByRole('link', { name: 'Sign in' }).first().click();
   await expect(page).toHaveURL(/\/login$/);
+
   await signIn(page, fixture.owner);
   await expect(page).toHaveURL(/\/dashboard$/);
 
@@ -61,9 +66,9 @@ test('task deep link survives authentication and focuses the exact task', async 
 
 test('authenticated login and logout replace protected history entries', async ({ page }) => {
   const fixture = await resetFixture(page);
-  await page.goto('/');
-  await expect(page).toHaveURL(/\/login$/);
   await page.goto('/welcome');
+  // The subject here is the protected route, which must still bounce a signed
+  // out visitor to the login screen — unlike the public root path.
   await page.goto('/dashboard');
   await expect(page).toHaveURL(/\/login$/);
 
