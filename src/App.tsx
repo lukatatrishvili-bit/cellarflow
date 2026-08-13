@@ -2182,7 +2182,7 @@ export default function App() {
         <main className="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
 
           {/* Sticky sidebar */}
-          <aside className={`app-sidebar shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} lg:self-start lg:sticky lg:top-20 transition-[width] duration-300`}>
+          <aside className={`app-sidebar shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} lg:self-start lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1 lg:[scrollbar-gutter:stable] transition-[width] duration-300`}>
             <div className="lg:hidden rounded-xl border border-stone-200 bg-white p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
               <label htmlFor="mobile-winery-section" className="mb-1.5 block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">
                 {state.lang === 'ka' ? 'მარნის განყოფილება' : 'Winery section'}
