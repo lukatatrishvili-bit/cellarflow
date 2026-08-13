@@ -11,12 +11,15 @@ import {
 import {
   applyDeletions,
   createDeletionMatcher,
+  createMergeOutcomeTally,
   mergeCollections,
   isValidId,
   toClientKey,
   type DeletedRecordRef,
+  type MergeOutcomeTally,
 } from '../sync';
 import { prepareAuditLogsForServerMerge } from '../../lib/auditHash';
+import { windowAuditLogsForHydration } from '../../lib/auditHydration';
 import { syncRecordFingerprint } from '../../lib/deletionTombstones';
 import { compareBottlingRunsNewestFirst } from '../../lib/bottlingIntegrity';
 import { reservedBottlesFor } from '../../lib/sales';
@@ -46,7 +49,7 @@ import {
   type PermissionModule,
 } from '../permissions';
 import { assessFootprintPressure, measureStateFootprint } from '../../lib/retention';
-import { recordSyncOperationalMetric } from '../operationalTelemetry';
+import { recordSyncOperationalMetric, recordSyncMergeOutcomeMetric } from '../operationalTelemetry';
 import { organizationHasFeature, recordProductionUsage } from '../billing/service';
 
 const router = express.Router();
@@ -155,6 +158,12 @@ function pruneTestUserSeedDuplicates(userDb: any): void {
   if (Array.isArray(userDb.samplings)) {
     userDb.samplings = userDb.samplings.filter((item: any) => !staleSamplingIds.has(item?.id));
   }
+}
+
+function isValidCalendarDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 /**
@@ -2138,6 +2147,189 @@ export function validateSyncPayload(
             }
           }
 
+          else if (key === 'qualitySops') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Quality SOP ${item.id} requires a title of at most 200 characters.`);
+            }
+            if (!['sanitation', 'calibration', 'sampling', 'bottling', 'compliance', 'safety', 'other'].includes(item.category)) {
+              throw new Error(`Quality SOP ${item.id} has invalid category.`);
+            }
+            if (!['once', 'daily', 'weekly', 'monthly', 'quarterly', 'seasonal'].includes(item.frequency)) {
+              throw new Error(`Quality SOP ${item.id} has invalid frequency.`);
+            }
+            if (!isValidCalendarDate(item.nextDueDate)) {
+              throw new Error(`Quality SOP ${item.id} requires a next due date.`);
+            }
+            if (!Array.isArray(item.checklist) || item.checklist.length === 0 || item.checklist.length > 50
+              || item.checklist.some((entry: unknown) => typeof entry !== 'string' || !entry.trim() || entry.length > 300)) {
+              throw new Error(`Quality SOP ${item.id} requires 1-50 valid checklist items.`);
+            }
+            if (!Array.isArray(item.completionHistory) || item.completionHistory.length > 100) {
+              throw new Error(`Quality SOP ${item.id} has invalid completion history.`);
+            }
+            const previousCompletions = Array.isArray(existingItem?.completionHistory)
+              ? existingItem.completionHistory
+              : [];
+            const completionIds = new Set<string>();
+            for (const completion of item.completionHistory) {
+              if (!completion || !isValidId(completion.id) || completionIds.has(completion.id)
+                || typeof completion.completedAt !== 'string' || Number.isNaN(Date.parse(completion.completedAt))
+                || typeof completion.completedBy !== 'string' || !completion.completedBy.trim() || completion.completedBy.length > 160
+                || !Array.isArray(completion.completedChecklist)
+                || completion.completedChecklist.length !== item.checklist.length
+                || completion.completedChecklist.some((entry: unknown) => typeof entry !== 'string' || !item.checklist.includes(entry))
+                || typeof completion.evidenceNote !== 'string' || completion.evidenceNote.length > 2_000
+                || (item.evidenceRequired && !completion.evidenceNote.trim())) {
+                throw new Error(`Quality SOP ${item.id} has invalid completion evidence.`);
+              }
+              completionIds.add(completion.id);
+            }
+            if (previousCompletions.length) {
+              const previousIds = new Set(previousCompletions.map((completion: any) => completion.id));
+              const firstRetainedIndex = item.completionHistory.findIndex((completion: any) => previousIds.has(completion.id));
+              const addedCount = firstRetainedIndex < 0 ? item.completionHistory.length : firstRetainedIndex;
+              const expectedRetained = previousCompletions.slice(0, Math.max(0, 100 - addedCount));
+              const actualRetained = firstRetainedIndex < 0 ? [] : item.completionHistory.slice(firstRetainedIndex);
+              if (JSON.stringify(actualRetained) !== JSON.stringify(expectedRetained)) {
+                throw new Error(`Quality SOP ${item.id} completion evidence is append-only.`);
+              }
+            }
+            if (item.relatedVesselId && !effectiveRecord('vessels', item.relatedVesselId)) {
+              throw new Error(`Quality SOP ${item.id} references an unknown vessel.`);
+            }
+            if (item.relatedLotId && !effectiveRecord('lots', item.relatedLotId)) {
+              throw new Error(`Quality SOP ${item.id} references an unknown lot.`);
+            }
+          }
+
+          else if (key === 'purchaseOrders') {
+            if (typeof item.orderNumber !== 'string' || !item.orderNumber.trim() || item.orderNumber.length > 120) {
+              throw new Error(`Purchase order ${item.id} requires a valid order number.`);
+            }
+            if (typeof item.supplierName !== 'string' || !item.supplierName.trim() || item.supplierName.length > 240) {
+              throw new Error(`Purchase order ${item.id} requires a supplier.`);
+            }
+            if (!['draft', 'submitted', 'ordered', 'partially_received', 'received', 'cancelled'].includes(item.status)) {
+              throw new Error(`Purchase order ${item.id} has invalid status.`);
+            }
+            if (!['GEL', 'EUR', 'USD'].includes(item.currency)) {
+              throw new Error(`Purchase order ${item.id} has unsupported currency.`);
+            }
+            if (!Array.isArray(item.lines) || item.lines.length === 0 || item.lines.length > 200) {
+              throw new Error(`Purchase order ${item.id} requires 1-200 lines.`);
+            }
+            for (const line of item.lines) {
+              if (!line || typeof line !== 'object' || !isValidId(line.id)
+                || !isValidId(line.inventoryItemId) || !effectiveRecord('inventory', line.inventoryItemId)) {
+                throw new Error(`Purchase order ${item.id} has an invalid inventory line.`);
+              }
+              for (const field of ['quantity', 'receivedQuantity', 'unitCost']) {
+                if (typeof line[field] !== 'number' || !Number.isFinite(line[field]) || line[field] < 0
+                  || (field === 'quantity' && line[field] === 0)) {
+                  throw new Error(`Purchase order ${item.id} line ${line.id} has invalid ${field}.`);
+                }
+              }
+              if (line.receivedQuantity > line.quantity) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} received quantity exceeds the order.`);
+              }
+              const inventoryItem = effectiveRecord('inventory', line.inventoryItemId);
+              if (typeof line.unit !== 'string' || !line.unit.trim() || line.unit !== inventoryItem.unit
+                || typeof line.productName !== 'string' || !line.productName.trim() || line.productName.length > 240) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} does not match its inventory item.`);
+              }
+            }
+            if (item.status === 'received' && (
+              typeof item.receivedAt !== 'string' || Number.isNaN(Date.parse(item.receivedAt))
+              || !isValidId(item.receiptCommandId)
+              || item.lines.some((line: any) => line.receivedQuantity !== line.quantity)
+            )) {
+              throw new Error(`Purchase order ${item.id} requires receipt evidence before it can be closed.`);
+            }
+          }
+
+          else if (key === 'productionPlans') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Production plan ${item.id} requires a title.`);
+            }
+            if (!['harvest', 'intake', 'transfer', 'fermentation', 'lab', 'bottling', 'sanitation', 'procurement', 'dispatch', 'other'].includes(item.kind)) {
+              throw new Error(`Production plan ${item.id} has invalid kind.`);
+            }
+            if (!['planned', 'ready', 'blocked', 'in_progress', 'completed', 'cancelled'].includes(item.status)) {
+              throw new Error(`Production plan ${item.id} has invalid status.`);
+            }
+            if (!isValidCalendarDate(item.startDate) || !isValidCalendarDate(item.endDate)) {
+              throw new Error(`Production plan ${item.id} requires valid start and end dates.`);
+            }
+            if (item.endDate < item.startDate) {
+              throw new Error(`Production plan ${item.id} cannot end before it starts.`);
+            }
+            if (!Array.isArray(item.vesselIds) || !Array.isArray(item.dependencyIds)) {
+              throw new Error(`Production plan ${item.id} has invalid vessel or dependency references.`);
+            }
+            for (const vesselId of item.vesselIds) {
+              if (!isValidId(vesselId) || !effectiveRecord('vessels', vesselId)) {
+                throw new Error(`Production plan ${item.id} references unknown vessel ${vesselId}.`);
+              }
+            }
+            for (const dependencyId of item.dependencyIds) {
+              if (!isValidId(dependencyId) || dependencyId === item.id || !effectiveRecord('productionPlans', dependencyId)) {
+                throw new Error(`Production plan ${item.id} references unknown dependency ${dependencyId}.`);
+              }
+            }
+            if (item.lotId && !effectiveRecord('lots', item.lotId)) {
+              throw new Error(`Production plan ${item.id} references an unknown lot.`);
+            }
+            if (item.quantityLiters !== undefined
+              && (typeof item.quantityLiters !== 'number' || !Number.isFinite(item.quantityLiters) || item.quantityLiters < 0)) {
+              throw new Error(`Production plan ${item.id} quantity must be non-negative.`);
+            }
+          }
+
+          else if (key === 'recallCases') {
+            if (!isValidId(item.lotId) || !effectiveRecord('lots', item.lotId)) {
+              throw new Error(`Recall case ${item.id} references an unknown lot.`);
+            }
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200
+              || typeof item.reason !== 'string' || !item.reason.trim() || item.reason.length > 2_000) {
+              throw new Error(`Recall case ${item.id} requires a valid title and reason.`);
+            }
+            if (!['draft', 'active', 'contained', 'closed'].includes(item.status)) {
+              throw new Error(`Recall case ${item.id} has invalid status.`);
+            }
+            if (existingItem) {
+              for (const field of ['lotId', 'title', 'reason', 'openedAt', 'openedBy', 'affectedBottlingRunIds', 'affectedOrderIds', 'affectedDispatchIds', 'containmentTaskIds']) {
+                if (JSON.stringify(item[field]) !== JSON.stringify(existingItem[field])) {
+                  throw new Error(`Recall case ${item.id} exposure evidence cannot be modified.`);
+                }
+              }
+              if (existingItem.status === 'closed' && item.status !== 'closed') {
+                throw new Error(`Recall case ${item.id} is closed and cannot be reopened.`);
+              }
+            }
+            if (item.status === 'closed' && (
+              typeof item.closedAt !== 'string' || Number.isNaN(Date.parse(item.closedAt))
+              || typeof item.closedBy !== 'string' || !item.closedBy.trim()
+            )) {
+              throw new Error(`Recall case ${item.id} requires closure evidence.`);
+            }
+            const referenceCollections: Array<[string, string]> = [
+              ['affectedBottlingRunIds', 'bottlingRuns'],
+              ['affectedOrderIds', 'salesOrders'],
+              ['affectedDispatchIds', 'salesDispatches'],
+              ['containmentTaskIds', 'tasks'],
+            ];
+            for (const [field, collection] of referenceCollections) {
+              if (!Array.isArray(item[field]) || item[field].length > 2_000) {
+                throw new Error(`Recall case ${item.id} has invalid ${field}.`);
+              }
+              for (const recordId of item[field]) {
+                if (!isValidId(recordId) || !effectiveRecord(collection, recordId)) {
+                  throw new Error(`Recall case ${item.id} references unknown ${collection} record ${recordId}.`);
+                }
+              }
+            }
+          }
+
           else if (key === 'tasks') {
             if (item.priority && !['high', 'medium', 'low'].includes(item.priority)) {
               throw new Error(`Task ${item.id} has invalid priority: ${item.priority}`);
@@ -2376,6 +2568,17 @@ function omitRecordFields(record: any, fields: string[]): any {
  * Return a schema-complete, role-filtered DB snapshot. Unauthorized collections
  * stay present as []/{} so hydration clears stale data from an earlier role or
  * organization instead of retaining it client-side.
+ *
+ * `auditLogs` is additionally windowed to the newest
+ * `AUDIT_HYDRATION_WINDOW` records. It is the one collection with no natural
+ * display limit and unbounded growth, and it was previously the largest thing
+ * every client downloaded at login and carried for the life of the session. The
+ * full, verified chain is served by `GET /api/audit-trail` instead; see
+ * `lib/auditHydration.ts` for what a holder of a window may and may not claim
+ * about it.
+ *
+ * This function is the single choke point for `/api/db` and every sync response,
+ * so windowing here covers hydration and re-hydration alike.
  */
 export function redactWineryDatabaseForRole(role: string, userDb: any): any {
   const empty = createEmptyUserData() as any;
@@ -2385,7 +2588,9 @@ export function redactWineryDatabaseForRole(role: string, userDb: any): any {
 
   for (const [collection, emptyValue] of Object.entries(empty)) {
     if (collection === 'syncDeletionLedger') continue;
-    const storedValue = userDb?.[collection];
+    const storedValue = collection === 'auditLogs'
+      ? windowAuditLogsForHydration(userDb?.[collection])
+      : userDb?.[collection];
     if (collection === 'attachments') {
       response.attachments = (Array.isArray(storedValue) ? storedValue : [])
         .filter((attachment: any) => {
@@ -2448,6 +2653,15 @@ export interface SyncCandidateResult {
   deletionRejected?: boolean;
   deletionError?: string;
   recoverableCollections?: Record<string, any>;
+  /**
+   * What the merge did, per record. Travels on the result rather than being
+   * reported from inside the merge because a request may build several
+   * candidates — the optimistic-concurrency retry loop rebuilds on fresh state,
+   * and the deletion-recovery path builds a safe candidate beside the first.
+   * Only the candidate a request actually acts on should be counted, and only
+   * the caller knows which that was.
+   */
+  mergeOutcomes: MergeOutcomeTally;
 }
 
 export const MAX_SYNC_DELETION_LEDGER_ENTRIES = 20_000;
@@ -2680,10 +2894,11 @@ export function buildSyncCandidate(
   deletedRecords?: DeletedRecordRef[],
 ): SyncCandidateResult {
   const originalDb = JSON.parse(JSON.stringify(userDb));
+  const mergeOutcomes = createMergeOutcomeTally();
   const hasDeletions = createDeletionMatcher(deletedIds, deletedRecords).hasDeletions;
   const versionConflicts = deletionVersionConflicts(userDb, deletedRecords);
   if (versionConflicts.length > 0) {
-    return { candidateDb: originalDb, conflicts: versionConflicts, deletionConflict: true };
+    return { candidateDb: originalDb, conflicts: versionConflicts, deletionConflict: true, mergeOutcomes };
   }
 
   const ledgerPreparation = prepareCollectionsAgainstDeletionLedger(userDb, collections);
@@ -2692,18 +2907,19 @@ export function buildSyncCandidate(
       candidateDb: originalDb,
       conflicts: ledgerPreparation.conflicts,
       deletionConflict: hasDeletions,
+      mergeOutcomes,
     };
   }
 
   const candidateDb = JSON.parse(JSON.stringify(userDb));
-  const conflicts = mergeCollections(candidateDb, ledgerPreparation.safeCollections, historyScope);
+  const conflicts = mergeCollections(candidateDb, ledgerPreparation.safeCollections, historyScope, mergeOutcomes);
 
   // A multi-collection payload represents one client transaction (dispatch +
   // stock movement + order update, bottling + lot rollback, etc.). Persisting
   // clean siblings while an anchor record conflicts creates orphan workflows,
   // so conservatively defer the entire payload.
   if (conflicts.length > 0) {
-    return { candidateDb: originalDb, conflicts, deletionConflict: hasDeletions };
+    return { candidateDb: originalDb, conflicts, deletionConflict: hasDeletions, mergeOutcomes };
   }
 
   if (hasDeletions) {
@@ -2733,7 +2949,7 @@ export function buildSyncCandidate(
     appendDeletionLedger(candidateDb, [], ledgerPreparation.recreatedIdentities);
   }
 
-  return { candidateDb, conflicts, deletionConflict: false };
+  return { candidateDb, conflicts, deletionConflict: false, mergeOutcomes };
 }
 
 /**
@@ -3098,6 +3314,10 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     const { candidateDb, conflicts } = candidate;
     const deletionDeferred = candidate.deletionConflict;
     if (conflicts.length > 0) {
+      // Recorded here as well as on the success path: a conflict IS the outcome
+      // being measured, and counting only successful syncs would omit every
+      // case the three-way merge failed to absorb.
+      recordSyncMergeOutcomeMetric(candidate.mergeOutcomes);
       telemetry.conflict = true;
       await setOrganizationStateHeaders(res, session.username);
       return res.json({
@@ -3158,6 +3378,11 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
       }
       throw err;
     }
+
+    // Past the save: this attempt's merge is the one that persisted. Attempts
+    // abandoned by the optimistic-concurrency retry above never reach here, so
+    // a contended write is counted once rather than once per attempt.
+    recordSyncMergeOutcomeMetric(candidate.mergeOutcomes);
 
     // Capacity is informational during harvest: usage is updated server-side,
     // but exceeding a plan never blocks or discards operational records.

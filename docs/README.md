@@ -18,6 +18,7 @@ supersedes-chain inside each file.
 |---|---|---|---|
 | [`improvement-plan-2026-07-26.md`](./improvement-plan-2026-07-26.md) | **Active** | 2026-07-26 | The authoritative whole-app improvement and launch plan. When any document below conflicts with it, this one wins. |
 | [`improvement-plan.md`](./improvement-plan.md) | **Active** (pointer) | — | Stable filename for bookmarks; forwards to the dated plan above. Holds no plan content of its own. |
+| [`scale-out-and-delta-sync-design-2026-08-13.md`](./scale-out-and-delta-sync-design-2026-08-13.md) | **Active** | 2026-08-13 | Design pass on running more than one instance and on per-record delta sync. Revises the earlier assumption that delta sync gates scale-out: the write path and authorization are already multi-instance safe, so the blockers are `documentHistory` and the per-request directory scan. |
 | [`ai-process-integration-plan-2026-07-26.md`](./ai-process-integration-plan-2026-07-26.md) | **Active** | 2026-07-26 | Plan for making AI a contextual layer inside each workflow rather than a separate chat surface. Written in Georgian. |
 | [`production-readiness-plan.md`](./production-readiness-plan.md) | **Active** | 2026-07-06 | Production readiness evidence and the live checks still outstanding. |
 | [`experience-master-plan.md`](./experience-master-plan.md) | **Historical** | 2026-07-06 | Deep experience audit, written as a self-contained execution prompt. Its stack guardrails (animate transform/opacity only, respect reduced motion, no new heavy dependencies, no bundle growth) still hold. |
@@ -35,6 +36,7 @@ supersedes-chain inside each file.
 | [`relational-projection-runbook.md`](./relational-projection-runbook.md) | **Active** | Dry-run drift checks, bounded repair, rollout, rollback. Covers the first tenant-safe relational slice. |
 | [`notification-delivery.md`](./notification-delivery.md) | **Active** | Personal channel toggles, task delivery, browser push, email, retries, and deployment configuration. |
 | [`ai-intelligence-operations.md`](./ai-intelligence-operations.md) | **Reference** | Winery Intelligence knowledge, delivery, and scheduled operations. Deterministic rules stay authoritative; model analysis is an optional layer around the same validated findings. |
+| [`operations-control.md`](./operations-control.md) | **Reference** | Unified Today queue, exact-payload approvals, scan-to-action, recall containment, recurring SOPs, purchasing/receiving, production planning, permissions, and entitlement boundaries. |
 | [`dependency-security.md`](./dependency-security.md) | **Active** | Dependency audit policy and the enforced CI gate. Last reviewed 2026-07-20. |
 | [`../deployment_guide.md`](../deployment_guide.md) | **Active** | Google Cloud deployment architecture and repository configuration. |
 

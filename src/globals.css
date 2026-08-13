@@ -1,7 +1,6 @@
 @import "tailwindcss";
 
 /* One modern UI family, one data family, and full Georgian coverage. */
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap');
 
 .leaflet-container {
   font-family: inherit;

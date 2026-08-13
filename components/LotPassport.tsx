@@ -20,6 +20,7 @@ import type {
 } from '../lib/wineryState';
 import type { StorageLocation, StockMovement } from '../lib/storage';
 import { buildPassportHtml } from '../lib/lotPassport';
+import { AUDIT_TRAIL_MAX_LIMIT, type AuditTrailPage } from '../lib/auditTrailPage';
 import { GitMerge, X, Printer, FileText } from 'lucide-react';
 import { useFocusTrap } from './useFocusTrap';
 
@@ -73,6 +74,15 @@ export default function LotPassport({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  /**
+   * This lot's audit entries, fetched from the server.
+   *
+   * The passport cannot filter the locally held `auditLogs` for these: the
+   * client keeps only a recent window of the chain, while a lot's entries reach
+   * back to its harvest — a 2019 lot would silently lose every row. `null`
+   * means the fetch has not succeeded, and the document says so.
+   */
+  const [lotAuditLogs, setLotAuditLogs] = useState<MaraniOSAuditLog[] | null>(null);
   useFocusTrap(dialogRef, { active: true, onClose });
 
   const deepLink =
@@ -93,6 +103,34 @@ export default function LotPassport({
       active = false;
     };
   }, [deepLink]);
+
+  /**
+   * `relatedAuditLogs` matches a lot by id *or* name across several free-text
+   * fields, so both terms are queried and the results unioned — the server
+   * search covers the same fields, and the passport still applies its own
+   * matching to what comes back.
+   */
+  useEffect(() => {
+    let active = true;
+    const terms = [lot.id, lot.name].filter((term): term is string => !!term);
+
+    Promise.all(terms.map(async term => {
+      const params = new URLSearchParams({ search: term, limit: String(AUDIT_TRAIL_MAX_LIMIT) });
+      const res = await fetch(`/api/audit-trail?${params.toString()}`);
+      if (!res.ok) throw new Error(`Audit history unavailable: ${res.status}`);
+      const page: AuditTrailPage = await res.json();
+      return page.entries.map(entry => entry.log);
+    }))
+      .then(pages => {
+        if (!active) return;
+        const byId = new Map<string, MaraniOSAuditLog>();
+        for (const log of pages.flat()) byId.set(log.id, log);
+        setLotAuditLogs([...byId.values()]);
+      })
+      .catch(() => { /* offline: fall back to the local window, flagged below */ });
+
+    return () => { active = false; };
+  }, [lot.id, lot.name]);
 
   const html = useMemo(
     () => buildPassportHtml({
@@ -115,7 +153,8 @@ export default function LotPassport({
       salesDispatches,
       certificationRecords,
       attachments,
-      auditLogs,
+      auditLogs: lotAuditLogs ?? auditLogs,
+      auditHistoryComplete: lotAuditLogs !== null,
     }),
     [
       lot,
@@ -138,6 +177,7 @@ export default function LotPassport({
       certificationRecords,
       attachments,
       auditLogs,
+      lotAuditLogs,
     ]
   );
 

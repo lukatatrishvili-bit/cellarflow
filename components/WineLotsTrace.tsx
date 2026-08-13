@@ -863,7 +863,7 @@ export function WineLotsTrace({
                             value={transitionOperator}
                             onChange={(e) => setTransitionOperator(e.target.value)}
                             className="w-full bg-[#FAF8F5] border border-stone-200 px-2 py-1.5 rounded outline-none text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
-                            placeholder={lang === 'ka' ? 'მაგ. ნინო გელაშვილი' : 'e.g. Sophia Rossi'}
+                            placeholder={lang === 'ka' ? 'მაგ. პასუხისმგებელი პირი' : 'e.g. Responsible person'}
                             required
                           />
                         </div>

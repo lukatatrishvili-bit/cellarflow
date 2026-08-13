@@ -87,36 +87,28 @@ const EXTRACTION_SCHEMA = {
   required: ['invoice', 'lines', 'warnings'],
 } as const;
 
-const ENRICHMENT_SCHEMA = {
-  type: 'OBJECT',
-  properties: {
-    products: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          line_id: { type: 'STRING' },
-          product_name: { type: 'STRING' },
-          brand_name: { type: 'STRING' },
-          manufacturer_name: { type: 'STRING' },
-          active_ingredients: { type: 'ARRAY', items: { type: 'STRING' } },
-          recommended_dosage: { type: 'STRING' },
-          usage_instructions: { type: 'STRING' },
-          safety_notes: { type: 'STRING' },
-          source_titles: {
-            type: 'ARRAY',
-            items: { type: 'STRING' },
-            description: 'Displayed page titles copied exactly from Google Search results used for this product',
-          },
-          source_official: { type: 'BOOLEAN' },
-          not_applicable: { type: 'BOOLEAN' },
-        },
-        required: ['line_id', 'product_name', 'active_ingredients', 'source_titles', 'source_official', 'not_applicable'],
-      },
-    },
-  },
-  required: ['products'],
-} as const;
+// Gemini rejects responseSchema/responseMimeType whenever a tool is enabled
+// ("Tool use with a response mime type: 'application/json' is unsupported"), so
+// the grounded enrichment call states its contract in the prompt instead and
+// the reply is parsed defensively.
+const ENRICHMENT_JSON_CONTRACT = [
+  'Reply with a single JSON object and nothing else:',
+  '{"products":[{"line_id":string,"product_name":string,"brand_name":string,'
+  + '"manufacturer_name":string,"active_ingredients":string[],"recommended_dosage":string,'
+  + '"usage_instructions":string,"safety_notes":string,"source_sites":string[],'
+  + '"source_official":boolean,"not_applicable":boolean}]}',
+  'line_id must be copied exactly from the supplied products.',
+  'source_sites lists the website domains you actually opened for that product, exactly as the'
+  + ' search results display them (for example lallemandwine.com). Never list a site you did not use.',
+  'Use an empty string or empty array for anything you cannot support with those sites.',
+].join('\n');
+
+// Cited sources become inventory productSourceUrls, which sync caps at 20 per
+// item. Staying well below that keeps a heavily grounded line postable.
+const MAX_LINE_SOURCES = 8;
+// The invoice receipt command rejects source urls longer than this, so an
+// over-long grounding redirect is dropped rather than blocking the whole post.
+const MAX_SOURCE_URL_LENGTH = 1_000;
 
 export interface InvoiceAnalysisRequest {
   file?: {
@@ -364,8 +356,18 @@ function sourceDomain(url: string): string | undefined {
   }
 }
 
-function titleKey(value: string): string {
-  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+// Grounding chunks expose the originating website in `web.title` and keep
+// `web.uri` on a Google redirect host, so the site — not the redirect hostname —
+// is what identifies a source.
+function siteKey(value: string): string {
+  return value
+    .toLocaleLowerCase()
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split(/[/?#]/)[0]
+    .replace(/[^\p{L}\p{N}.-]+/gu, '')
+    .replace(/\.+$/, '');
 }
 
 function groundingSources(response: any): InvoiceSourceReference[] {
@@ -374,27 +376,48 @@ function groundingSources(response: any): InvoiceSourceReference[] {
   const seen = new Set<string>();
   const sources: InvoiceSourceReference[] = [];
   for (const chunk of chunks) {
-    const title = stringValue(chunk?.web?.title, 240);
-    const url = stringValue(chunk?.web?.uri, 2_000);
-    if (!title || !/^https:\/\//i.test(url) || seen.has(url)) continue;
+    const site = stringValue(chunk?.web?.title, 240);
+    const url = stringValue(chunk?.web?.uri, MAX_SOURCE_URL_LENGTH + 1);
+    if (!site || !/^https:\/\//i.test(url) || url.length > MAX_SOURCE_URL_LENGTH || seen.has(url)) continue;
     seen.add(url);
     sources.push({
       id: `invoice-source-${sources.length + 1}`,
-      title,
+      title: site,
       url,
-      domain: sourceDomain(url),
+      domain: siteKey(site) || sourceDomain(url),
       official: false,
     });
   }
   return sources.slice(0, 40);
 }
 
-function matchSourceTitles(titles: string[], sources: InvoiceSourceReference[]): InvoiceSourceReference[] {
-  const requested = titles.map(titleKey).filter(Boolean);
+function matchSourceSites(sites: string[], sources: InvoiceSourceReference[]): InvoiceSourceReference[] {
+  const requested = sites.map(siteKey).filter(Boolean);
+  if (!requested.length) return [];
   return sources.filter((source) => {
-    const candidate = titleKey(source.title);
-    return requested.some((title) => title === candidate || title.includes(candidate) || candidate.includes(title));
-  });
+    const candidate = siteKey(source.domain || source.title);
+    if (!candidate) return false;
+    return requested.some((site) => site === candidate
+      || site.endsWith(`.${candidate}`)
+      || candidate.endsWith(`.${site}`));
+  }).slice(0, MAX_LINE_SOURCES);
+}
+
+// The grounded reply is plain text, so unwrap a ```json fence or the outermost
+// object before parsing.
+function parseJsonReply(text: string): unknown {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const candidates = [trimmed];
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1));
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch { /* try the next candidate */ }
+  }
+  return null;
 }
 
 async function enrichLines(
@@ -413,7 +436,7 @@ async function enrichLines(
     'Do not guess product identity from a generic invoice description. When identity is uncertain or no official page exists, leave enrichment fields empty.',
     'Copy dosage and usage wording conservatively, preserving basis and units (for example g/hL versus g/100 kg). Never convert dosage units unless the official source explicitly gives both.',
     'Safety notes are a short reminder to consult the current local label/SDS, not a substitute for it.',
-    'For every source used, copy its displayed search-result page title exactly into source_titles. source_official is true only if every cited page is an official manufacturer or regulator source.',
+    'For every source used, copy the site domain shown in the search result into source_sites. source_official is true only if every cited site is an official manufacturer or regulator source.',
     lang === 'ka'
       ? 'Write usage and safety summaries in Georgian, while keeping product names, units, and chemical names unchanged.'
       : 'Write usage and safety summaries in English.',
@@ -426,7 +449,7 @@ async function enrichLines(
       sku: line.sku || '',
       category: line.category,
     })))}`,
-    'Respond only with JSON matching the supplied schema.',
+    ENRICHMENT_JSON_CONTRACT,
   ].join('\n\n');
 
   try {
@@ -440,57 +463,67 @@ async function enrichLines(
       const response = await client.models.generateContent({
         model: GEMINI_MODEL,
         contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: 'application/json',
-          responseSchema: ENRICHMENT_SCHEMA as never,
-        },
+        config: { tools: [{ googleSearch: {} }] },
       });
       responseForSources = response;
-      const text = response.text || '';
-      let parsed: unknown = null;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = null;
-      }
+      const parsed = parseJsonReply(response.text || '');
       return { value: parsed, valid: Boolean(parsed) };
     });
     const sources = groundingSources(responseForSources);
     const products = payload && typeof payload === 'object' && Array.isArray((payload as any).products)
       ? (payload as any).products as Array<Record<string, unknown>>
       : [];
+    if (!products.length) {
+      return {
+        lines,
+        sources: [],
+        warning: 'Invoice extraction succeeded, but the online product research returned no usable result.',
+      };
+    }
     const productById = new Map(products.map((product) => [stringValue(product.line_id, 220), product]));
 
     for (const line of lines) {
       const product = productById.get(line.id);
       if (!product || product.not_applicable === true) continue;
-      const matchedSources = matchSourceTitles(stringList(product.source_titles, 8, 240), sources);
-      if (!matchedSources.length) {
-        if (stringList(product.source_titles).length) {
-          line.warnings.push('Online product details were withheld because their cited source could not be verified.');
-        }
-        continue;
+      const activeIngredients = stringList(product.active_ingredients, 10, 180);
+      const recommendedDosage = optionalString(product.recommended_dosage, 500);
+      const usageInstructions = optionalString(product.usage_instructions, 800);
+      const safetyNotes = optionalString(product.safety_notes, 500);
+      if (!activeIngredients.length && !recommendedDosage && !usageInstructions && !safetyNotes) continue;
+
+      // Grounding metadata only lists the pages the model actually cited in the
+      // emitted text, so a researched line can carry sites that are absent from
+      // it. The findings are still shown for review — the badge and the warning
+      // state plainly that no source backs them.
+      const matchedSources = matchSourceSites(stringList(product.source_sites, MAX_LINE_SOURCES, 240), sources);
+      const official = matchedSources.length > 0 && product.source_official === true;
+      if (matchedSources.length) {
+        matchedSources.forEach((source) => {
+          if (official) source.official = true;
+        });
+        line.sourceIds = matchedSources.map((source) => source.id);
+        line.sourceStatus = official ? 'official' : 'grounded';
+        // Product identity is only rewritten when a cited page backs it;
+        // otherwise the invoice's own wording stands.
+        line.productName = stringValue(product.product_name, 240) || line.productName;
+        line.brandName = optionalString(product.brand_name, 160) || line.brandName;
+        line.manufacturerName = optionalString(product.manufacturer_name, 180) || line.manufacturerName;
       }
-      const official = product.source_official === true;
-      matchedSources.forEach((source) => {
-        if (official) source.official = true;
-      });
-      line.sourceIds = matchedSources.map((source) => source.id);
-      line.sourceStatus = official ? 'official' : 'grounded';
-      line.productName = stringValue(product.product_name, 240) || line.productName;
-      line.brandName = optionalString(product.brand_name, 160) || line.brandName;
-      line.manufacturerName = optionalString(product.manufacturer_name, 180) || line.manufacturerName;
-      line.activeIngredients = stringList(product.active_ingredients, 10, 180);
-      line.recommendedDosage = optionalString(product.recommended_dosage, 500);
-      line.usageInstructions = optionalString(product.usage_instructions, 800);
-      line.safetyNotes = optionalString(product.safety_notes, 500);
-      if (!official) {
+      line.activeIngredients = activeIngredients;
+      line.recommendedDosage = recommendedDosage;
+      line.usageInstructions = usageInstructions;
+      line.safetyNotes = safetyNotes;
+      if (!matchedSources.length) {
+        line.warnings.push('Online product details could not be traced to a cited search result. Verify them against the current product label before use.');
+      } else if (!official) {
         line.warnings.push('Online references were found, but the source was not confirmed as an official manufacturer or regulator page.');
       }
     }
     return { lines, sources };
-  } catch {
+  } catch (error) {
+    // A silent catch hid a permanent request-shape rejection here for a long
+    // time; enrichment stays non-fatal, but the reason is always logged.
+    console.error('[invoice] official source enrichment failed', error);
     return {
       lines,
       sources: [],

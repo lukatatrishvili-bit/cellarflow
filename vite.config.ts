@@ -33,9 +33,13 @@ export default defineConfig({
           if (normalized.includes('/node_modules/react/') || normalized.includes('/node_modules/react-dom/')) {
             return 'vendor-react';
           }
-          if (normalized.includes('/node_modules/lucide-react/')) {
-            return 'vendor-icons';
-          }
+          // lucide-react is deliberately NOT forced into a chunk. Naming it
+          // here collects every icon used anywhere in the app — including ones
+          // reached only from lazy destinations like Vazi, MasterAdmin, and
+          // Weather — into a single chunk the entry HTML preloads, so the whole
+          // icon surface was paid for at first paint. Letting the icons split
+          // with their consumers moved 28.5 KB off the critical path for +0.3%
+          // total JS spread across lazily-loaded chunks.
           if (normalized.includes('/node_modules/motion/')) {
             return 'vendor-motion';
           }

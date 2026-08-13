@@ -63,8 +63,10 @@ describe('subscription entitlements and capacity', () => {
     }
     expect(hasEntitlement({ planId: 'micro', status: 'active' }, 'advanced_reports')).toBe(false);
     expect(hasEntitlement({ planId: 'professional', status: 'active' }, 'advanced_reports')).toBe(true);
-    expect(hasEntitlement({ planId: 'business', status: 'active' }, 'multi_site')).toBe(true);
-    expect(hasEntitlement({ planId: 'enterprise', status: 'active' }, 'api_access')).toBe(true);
+    expect(hasEntitlement({ planId: 'small', status: 'active' }, 'data_import_export')).toBe(true);
+    expect(hasEntitlement({ planId: 'business', status: 'active' }, 'audit_dashboards')).toBe(true);
+    expect(hasEntitlement({ planId: 'enterprise', status: 'active' }, 'custom_integrations')).toBe(true);
+    expect(hasEntitlement({ planId: 'enterprise', status: 'active' }, 'api_access')).toBe(false);
   });
 
   it('applies negotiated feature overrides and preserves core for expired accounts', () => {

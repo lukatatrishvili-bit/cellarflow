@@ -950,6 +950,11 @@ export function getSeederData(orgId: string): UserDataState {
     attachments: [],
     crmLeads: [],
     aiDrafts: [],
+    workflowApprovals: [],
+    qualitySops: [],
+    purchaseOrders: [],
+    productionPlans: [],
+    recallCases: [],
     aiFindings: [],
   };
 }

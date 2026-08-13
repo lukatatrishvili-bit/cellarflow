@@ -36,7 +36,7 @@ const copy = {
     navIdea: 'Our idea',
     navContact: 'Contact',
     signIn: 'Sign in',
-    startFree: 'One month free',
+    startFree: 'Try now',
     menuLabel: 'Toggle navigation',
     languageLabel: 'Change language',
     heroEyebrow: 'THE OPERATING SYSTEM FOR WINE',
@@ -56,12 +56,9 @@ const copy = {
     platformCopy: 'Vineyard, cellar and laboratory work stay connected.',
     benefitsIndex: '02 / CAPABILITIES',
     benefitsTitle: '',
-    storyCaptionOne: '8,000 YEARS OF WINE CULTURE',
-    storyCaptionTwo: 'MEETS THE NEXT VINTAGE',
     storyIndex: '03 / THE IDEA',
     storyTitle: 'Built for the place where tradition and precision meet.',
     storyLead: 'Georgia has made wine for 8,000 years. VinOS carries that continuity into modern cellar work.',
-    storyBody: 'The craft stays human; vineyard, cellar and laboratory records gain one reliable memory.',
     trialIndex: '04 / START WITH VINOS',
     trialTitleOne: 'Try VinOS',
     trialTitleTwo: '',
@@ -92,13 +89,13 @@ const copy = {
     navIdea: 'ჩვენი იდეა',
     navContact: 'კონტაქტი',
     signIn: 'შესვლა',
-    startFree: '1 თვე უფასოდ',
+    startFree: 'გამოსცადე',
     menuLabel: 'მენიუს გახსნა',
     languageLabel: 'ენის შეცვლა',
     heroEyebrow: 'თანამედროვე მართვა მევენახეობა-მეღვინეობისთვის',
     heroLineOne: 'ვენახიდან ბოთლამდე.',
     heroLineTwo: '',
-    heroLineThree: 'ყველაფერი ხელის გულზე.',
+    heroLineThree: 'ყველაფერი ერთ სივრცეში.',
     heroCopy: 'ვენახი, მარანი და ლაბორატორია — ერთიან სისტემაში.',
     startVintage: 'გამოსცადეთ უფასოდ',
     installPwa: 'PWA-ის დაყენება',
@@ -112,12 +109,9 @@ const copy = {
     platformCopy: 'ვენახი, მარანი და ლაბორატორია ერთმანეთთანაა დაკავშირებული.',
     benefitsIndex: '02 / შესაძლებლობები',
     benefitsTitle: '',
-    storyCaptionOne: 'ღვინის კულტურის 8,000 წელი',
-    storyCaptionTwo: 'ხვდება ახალ რთველს',
     storyIndex: '03 / იდეა',
     storyTitle: 'ხიდი ტრადიციასა და სიზუსტეს შორის.',
     storyLead: 'საქართველოში ღვინოს 8,000 წელია აყენებენ. VinOS ამ უწყვეტობას თანამედროვე მარნის საქმიანობაში აგრძელებს.',
-    storyBody: 'მეღვინის გამოცდილება მთავარია; VinOS კი ვენახის, მარნისა და ლაბორატორიის ჩანაწერებს ერთიანად ინახავს.',
     trialIndex: '04 / დაიწყეთ VINOS-ით',
     trialTitleOne: 'გამოსცადეთ VinOS',
     trialTitleTwo: '',
@@ -484,18 +478,10 @@ export default function MarketingLanding() {
         </section>
 
         <section className="ml-story" id="story">
-          <div className="ml-story-art" data-reveal>
-            <div className="ml-qvevri" aria-hidden="true">
-              <div className="ml-qvevri-neck" />
-              <div className="ml-qvevri-body"><span /><i /><i /></div>
-            </div>
-            <span className="ml-story-caption">{t.storyCaptionOne}<br />{t.storyCaptionTwo}</span>
-          </div>
           <div className="ml-story-copy" data-reveal>
             <span>{t.storyIndex}</span>
             <h2>{t.storyTitle}</h2>
             <p className="ml-story-lead">{t.storyLead}</p>
-            <p>{t.storyBody}</p>
           </div>
         </section>
 

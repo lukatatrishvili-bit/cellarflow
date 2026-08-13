@@ -23,6 +23,28 @@ import { clientIp } from '../config';
  *      throttling an authenticated caller's own workload.
  *   2. Ceilings are set well above any legitimate client so this never becomes
  *      an availability problem of its own. It is a runaway guard, not a quota.
+ *
+ * ## Semantics above one instance — decided, not inherited
+ *
+ * `max` is a **per-instance** ceiling. Running N instances therefore permits up
+ * to N × `max` per caller globally, because a caller's requests are spread
+ * across instances by the load balancer. That is accepted deliberately:
+ *
+ *   - What this guards against is a runaway client, and N × a number already set
+ *     well above legitimate use is still bounded and still far below the load
+ *     that motivated the guard.
+ *   - The limits that must hold globally — credential brute force, account
+ *     recovery, invitation and OAuth callback abuse — do NOT rely on this. They
+ *     use `createSharedLoginLimiter`, which is backed by the `loginAttempt`
+ *     table and is already correct across instances.
+ *   - Dividing `max` by the instance count would be worse than useless: HTTP
+ *     keep-alive keeps a client's requests on one connection, so a caller can
+ *     legitimately send its whole burst to a single instance. A divided ceiling
+ *     would refuse real work while the global budget sat unused.
+ *
+ * So: raising `--max-instances` raises the effective global ceiling
+ * proportionally, and that is the intended behaviour. If a limit ever needs to
+ * hold globally, it belongs in `createSharedLoginLimiter`, not here.
  */
 
 interface Window {
@@ -36,11 +58,63 @@ export interface RequestCeilingOptions {
   windowMs: number;
   /** Distinguishes buckets so two mounts cannot share a counter. */
   name: string;
+  /**
+   * How many callers may be tracked before eviction. Defaults to
+   * `MAX_TRACKED_CALLERS`; exposed so the eviction path can be exercised by a
+   * test without generating twenty thousand identities.
+   */
+  maxTrackedCallers?: number;
 }
 
 // Bounds the map itself: a rotating-identity flood must not become a memory
 // leak. Well above the number of clients a single instance realistically holds.
 const MAX_TRACKED_CALLERS = 20_000;
+
+/**
+ * Make room for a new caller without discarding the counters that are doing the
+ * work.
+ *
+ * The previous behaviour — `windows.clear()` on reaching the cap — reset every
+ * tracked caller at once, so enough unrelated traffic wiped a throttled
+ * client's window and handed it a fresh allowance. The ceiling was weakest
+ * exactly when the service was busiest, and reaching that state needed no
+ * privilege: just keep arriving as new callers.
+ *
+ * Eviction order matters more than it looks. Expired windows go first, since
+ * they carry no information. If everything tracked is still live, the entry
+ * with the *lowest count* is dropped — deliberately not the oldest. Oldest
+ * sounds right and is wrong here: the longest-tracked caller is typically the
+ * one being throttled, so evicting it rebuilds the original hole. A caller
+ * below its limit loses nothing by being forgotten; a caller at its limit is
+ * the only reason this map exists.
+ */
+function evictForNewCaller(
+  windows: Map<string, Window>,
+  now: number,
+  windowMs: number,
+  cap: number,
+): void {
+  if (windows.size < cap) return;
+
+  for (const [key, window] of windows) {
+    if (now - window.windowStart >= windowMs) windows.delete(key);
+  }
+  if (windows.size < cap) return;
+
+  let evictKey: string | null = null;
+  let lowestCount = Infinity;
+  let oldestStart = Infinity;
+  for (const [key, window] of windows) {
+    // Lowest count wins; among equals, the window closest to expiring.
+    if (window.count < lowestCount
+      || (window.count === lowestCount && window.windowStart < oldestStart)) {
+      lowestCount = window.count;
+      oldestStart = window.windowStart;
+      evictKey = key;
+    }
+  }
+  if (evictKey !== null) windows.delete(evictKey);
+}
 
 /**
  * Identify the caller without touching the database. The session cookie is an
@@ -57,6 +131,7 @@ function callerKey(req: express.Request): string {
 
 export function requestCeiling(options: RequestCeilingOptions): express.RequestHandler {
   const windows = new Map<string, Window>();
+  const cap = options.maxTrackedCallers ?? MAX_TRACKED_CALLERS;
 
   return (req, res, next) => {
     const key = `${options.name}:${callerKey(req)}`;
@@ -64,7 +139,7 @@ export function requestCeiling(options: RequestCeilingOptions): express.RequestH
     const existing = windows.get(key);
 
     if (!existing || now - existing.windowStart >= options.windowMs) {
-      if (windows.size >= MAX_TRACKED_CALLERS) windows.clear();
+      if (!existing) evictForNewCaller(windows, now, options.windowMs, cap);
       windows.set(key, { count: 1, windowStart: now });
       return next();
     }

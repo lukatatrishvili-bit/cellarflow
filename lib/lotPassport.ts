@@ -44,6 +44,17 @@ export interface PassportData {
   certificationRecords?: CertificationRecord[];
   attachments?: DocumentAttachment[];
   auditLogs?: MaraniOSAuditLog[];
+  /**
+   * Whether `auditLogs` covers this lot's whole history.
+   *
+   * The client is hydrated with only a recent window of the audit chain
+   * (`lib/auditHydration.ts`), and a lot's entries can be years old, so
+   * filtering the window would quietly drop rows from a compliance document.
+   * The passport fetches the lot's full history from the server; when that is
+   * unavailable it renders what it has and says so, rather than presenting a
+   * partial audit section as complete.
+   */
+  auditHistoryComplete?: boolean;
 }
 
 interface TimelineItem {
@@ -203,6 +214,7 @@ export function buildPassportHtml(data: PassportData): string {
     certificationRecords = [],
     attachments = [],
     auditLogs = [],
+    auditHistoryComplete = true,
   } = data;
 
   const generatedAt = new Date().toLocaleString();
@@ -519,10 +531,17 @@ export function buildPassportHtml(data: PassportData): string {
     <h2 class="section">Audit History</h2>
     <table>
       <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Changed item</th><th>Hash</th></tr></thead>
-      <tbody>${tableRows(audits.slice(0, 12), 'No audit entries were found for this lot.', log => `
+      <tbody>${tableRows(audits.slice(0, 12), auditHistoryComplete
+        ? 'No audit entries were found for this lot.'
+        : 'Audit history could not be retrieved; this section is incomplete.', log => `
         <tr><td>${esc(safeDate(log.timestamp) || log.timestamp)}</td><td>${esc(log.user)}</td><td>${esc(log.actionType)}</td><td>${esc(log.changedItem)}</td><td>${esc(log.chainHash ? log.chainHash.slice(0, 12) : '-')}</td></tr>
       `)}</tbody>
     </table>
+    ${auditHistoryComplete ? '' : `
+    <div class="muted" style="margin-top:6px; font-family: Arial, Helvetica, sans-serif;">
+      Audit history was unavailable when this passport was generated, so only the entries cached on
+      this device are shown. Regenerate while connected for the complete, server-verified history.
+    </div>`}
 
     <div class="foot">
       <div>

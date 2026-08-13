@@ -9,6 +9,7 @@ import {
   normalizeTerroirSharingSettings,
   type TerroirSharingSettings,
 } from '../lib/terroirPulse';
+import { readDemoAccountConfig } from './demoAccount';
 import { hashToken } from './emailVerification';
 import { approvalStatusForUser } from './registrationApproval';
 import { syncVesselLotProjection } from './relationalProjection';
@@ -33,7 +34,9 @@ let lastPostgresMigrationSource: string | null = null;
 let pendingGcsBackupJson: string | null = null;
 let pendingGcsBackupTimer: ReturnType<typeof setTimeout> | null = null;
 const organizationStateMeta = new Map<string, OrganizationStateMeta>();
+const lastPresenceWriteAt = new Map<string, number>();
 const GCS_BACKUP_MIN_INTERVAL_MS = 90_000;
+const PRESENCE_WRITE_INTERVAL_MS = 30_000;
 const DEFAULT_USER_MODULES = ['vazi', 'gvino'];
 const DEFAULT_USER_WIDGETS = ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'];
 
@@ -165,9 +168,60 @@ export async function initDB(): Promise<void> {
   }
 }
 
+/**
+ * Drop organizations that the demo purge itself has just stranded.
+ *
+ * Deliberately narrow. A general "delete every organization nobody belongs to"
+ * sweep at boot is far too dangerous for this codebase: an organization can be
+ * claimed by `user.activeOrganizationId` alone, without a membership row — the
+ * e2e fixtures do exactly that — so a sweep would quietly delete live
+ * workspaces. Startup should never destroy data it did not create.
+ *
+ * This only considers ids that belonged to the demo user a moment ago, and only
+ * removes them once nothing else references them at all.
+ */
+function removeStrandedDemoOrganizations(demoOrgIds: string[]): void {
+  if (!dbData || !demoOrgIds.length) return;
+
+  const stillClaimed = new Set<string>([
+    ...(dbData.memberships || []).map((m: any) => m.organizationId),
+    ...(dbData.users || []).map((u: any) => u.activeOrganizationId).filter(Boolean),
+  ]);
+
+  const stranded = demoOrgIds.filter(id => !stillClaimed.has(id));
+  if (!stranded.length) return;
+
+  dbData.organizations = (dbData.organizations || []).filter((org: any) => !stranded.includes(org.id));
+  for (const id of stranded) delete dbData.orgData?.[id];
+  console.log(`[db] removed ${stranded.length} demo organization(s) left behind by the demo purge.`);
+}
+
 function cleanupDemoData(): void {
   if (!dbData) return;
+
+  /**
+   * When the demo login is switched on, the demo account IS the product
+   * surface. Deleting it on every boot meant `ensureDemoAccount` rebuilt it
+   * from scratch each restart, with a fresh organization — so anything seeded
+   * into the demo workspace was orphaned within one restart, and the demo was
+   * permanently empty.
+   *
+   * The purge exists so a real deployment carries no demo records, and that
+   * property is preserved: it still runs whenever demo mode is off. Enabled,
+   * the account persists and the demo becomes something you can actually
+   * prepare in advance.
+   */
+  if (readDemoAccountConfig().enabled) return;
+
   console.log('[db] performing demo data cleanup...');
+
+  // Note which workspaces the demo account holds before removing it, so the
+  // sweep below can only ever touch those.
+  const demoOrgIds = [
+    ...(dbData.memberships || []).filter((m: any) => m.userId === 'demo').map((m: any) => m.organizationId),
+    ...(dbData.users || []).filter((u: any) => u.username === 'demo').map((u: any) => u.activeOrganizationId),
+  ].filter(Boolean).filter((id, index, all) => all.indexOf(id) === index);
+
   dbData.users = (dbData.users || []).filter((u: any) => u.username !== 'demo');
   dbData.memberships = (dbData.memberships || []).filter((m: any) => m.userId !== 'demo');
   if (dbData.organizations) {
@@ -176,6 +230,7 @@ function cleanupDemoData(): void {
   if (dbData.orgData) {
     delete dbData.orgData['org_demo_georgian'];
   }
+  removeStrandedDemoOrganizations(demoOrgIds);
 }
 
 
@@ -206,11 +261,37 @@ async function loadLocalOrGcsDB(): Promise<void> {
       console.log('[db] successfully loaded database from local file!');
       return;
     } catch (e) {
-      console.error('[db] failed to parse local database file:', e);
+      /**
+       * A file that exists but will not parse is an emergency, not a reason to
+       * start fresh.
+       *
+       * This used to log and fall through to the empty database below, which
+       * `initDB` then saved straight back over the file — turning a corrupt but
+       * potentially salvageable database into a permanent, total loss, and
+       * destroying the evidence in the same step. The log even claimed no
+       * database had been found, while it sat right there unreadable.
+       *
+       * So: keep the bytes under a timestamped name and refuse to boot. Someone
+       * has to look at this, and an operator can recover far more from a corrupt
+       * file than from an empty one.
+       */
+      const preservedPath = `${targetPath}.corrupt-${Date.now()}`;
+      try {
+        fs.copyFileSync(targetPath, preservedPath);
+      } catch (copyError) {
+        console.error('[db] could not preserve the unreadable database file:', copyError);
+      }
+      const detail = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `The database file at ${targetPath} exists but could not be parsed (${detail}). `
+        + `Refusing to start, because continuing would overwrite it with an empty database. `
+        + `A copy has been kept at ${preservedPath}. `
+        + `Repair or restore that file, or move it aside to intentionally start from empty.`,
+      );
     }
   }
 
-  // 3. Fallback to empty
+  // 3. No database anywhere — a genuine first run.
   console.log('[db] no database found on GCS or local disk. Initializing empty database.');
   dbData = {
     users: [],
@@ -261,6 +342,12 @@ export interface UserDataState {
   attachments: any[];
   crmLeads: any[];
   aiDrafts: any[];
+  /** Server-owned review queue for command payloads awaiting human approval. */
+  workflowApprovals: any[];
+  qualitySops: any[];
+  purchaseOrders: any[];
+  productionPlans: any[];
+  recallCases: any[];
   /** Intelligence-layer findings with their review lifecycle. */
   aiFindings: any[];
   integrationHub?: IntegrationHubState;
@@ -318,6 +405,11 @@ export function createEmptyUserData(): UserDataState {
     attachments: [],
     crmLeads: [],
     aiDrafts: [],
+    workflowApprovals: [],
+    qualitySops: [],
+    purchaseOrders: [],
+    productionPlans: [],
+    recallCases: [],
     aiFindings: [],
     integrationHub: createEmptyIntegrationHubState(),
     terroirSharing: { ...DEFAULT_TERROIR_SHARING_SETTINGS },
@@ -386,6 +478,11 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     crmLeads: Array.isArray(data.crmLeads) ? data.crmLeads : [],
     aiDrafts: Array.isArray(data.aiDrafts) ? data.aiDrafts : [],
+    workflowApprovals: Array.isArray(data.workflowApprovals) ? data.workflowApprovals : [],
+    qualitySops: Array.isArray(data.qualitySops) ? data.qualitySops : [],
+    purchaseOrders: Array.isArray(data.purchaseOrders) ? data.purchaseOrders : [],
+    productionPlans: Array.isArray(data.productionPlans) ? data.productionPlans : [],
+    recallCases: Array.isArray(data.recallCases) ? data.recallCases : [],
     aiFindings: Array.isArray(data.aiFindings) ? data.aiFindings : [],
     integrationHub: ensureIntegrationHubState(data.integrationHub),
     terroirSharing: normalizeTerroirSharingSettings(
@@ -413,7 +510,16 @@ function normalizeDbState(data: Partial<DBState> & { userData?: Record<string, P
           : 1,
       }))
       : [],
-    organizations: Array.isArray(data?.organizations) ? data.organizations : [],
+    organizations: Array.isArray(data?.organizations)
+      ? data.organizations.map((organization: any) => {
+        organization.status = organization?.status || 'active';
+        organization.internalNotes = typeof organization?.internalNotes === 'string' ? organization.internalNotes : '';
+        organization.internalTags = Array.isArray(organization?.internalTags)
+          ? organization.internalTags.map((tag: unknown) => String(tag)).filter(Boolean)
+          : [];
+        return organization;
+      })
+      : [],
     memberships: Array.isArray(data?.memberships) ? data.memberships : [],
     invitations: Array.isArray(data?.invitations)
       ? data.invitations.map((invite: any) => {
@@ -566,6 +672,60 @@ export async function flushPendingGcsBackup(): Promise<void> {
   await backupJsonToGcsNow(latestJson);
 }
 
+/**
+ * Map one PostgreSQL user row into the in-process directory shape.
+ *
+ * Shared by the bulk hydrate and the keyed session lookup on purpose: two
+ * mappings for the same row would drift, and the fields below decide whether a
+ * request is authorised (accountEnabled, approvalStatus, sessionVersion).
+ */
+function mapPostgresUserRow(u: any) {
+  return {
+    id: u.id,
+    username: u.username,
+    email: u.email,
+    fullName: u.fullName,
+    role: u.role,
+    language: u.language,
+    phone: u.phone || '',
+    whatsappOptIn: u.whatsappOptIn === true,
+    passwordHash: u.passwordHash,
+    emailVerified: u.emailVerified,
+    verifyTokenHash: u.verifyTokenHash,
+    verifyTokenExpires: u.verifyTokenExpires ? Number(u.verifyTokenExpires) : null,
+    resetTokenHash: u.resetTokenHash,
+    resetTokenExpires: u.resetTokenExpires ? Number(u.resetTokenExpires) : null,
+    isDemo: u.isDemo,
+    activeOrganizationId: u.activeOrganizationId,
+    enabledModules: stringArray(u.enabledModules, DEFAULT_USER_MODULES),
+    enabledWidgets: stringArray(u.enabledWidgets, DEFAULT_USER_WIDGETS),
+    registrationComplete: u.registrationComplete ?? true,
+    accountEnabled: u.accountEnabled !== false,
+    approvalStatus: approvalStatusForUser(u),
+    approvalRequestedAt: u.approvalRequestedAt ? new Date(u.approvalRequestedAt).toISOString() : undefined,
+    approvalDecidedAt: u.approvalDecidedAt ? new Date(u.approvalDecidedAt).toISOString() : undefined,
+    approvalDecidedBy: u.approvalDecidedBy || undefined,
+    approvalTokenHash: u.approvalTokenHash,
+    approvalTokenExpires: u.approvalTokenExpires ? Number(u.approvalTokenExpires) : null,
+    sessionVersion: Number.isInteger(u.sessionVersion) && u.sessionVersion > 0 ? u.sessionVersion : 1,
+    lastSeenAt: u.lastSeenAt ? new Date(u.lastSeenAt).toISOString() : undefined,
+    createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
+    updatedAt: u.updatedAt ? new Date(u.updatedAt).toISOString() : undefined,
+  };
+}
+
+/** Map one PostgreSQL membership row into the in-process directory shape. */
+function mapPostgresMembershipRow(m: any) {
+  return {
+    id: m.id,
+    userId: m.userId,
+    organizationId: m.organizationId,
+    role: m.role,
+    createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : undefined,
+    updatedAt: m.updatedAt ? new Date(m.updatedAt).toISOString() : undefined,
+  };
+}
+
 function dbFromPostgresRows(rows: {
   users: any[];
   organizations: any[];
@@ -574,40 +734,15 @@ function dbFromPostgresRows(rows: {
   organizationStates: any[];
 }): DBState {
   const db: DBState = {
-    users: rows.users.map(u => ({
-      id: u.id,
-      username: u.username,
-      email: u.email,
-      fullName: u.fullName,
-      role: u.role,
-      language: u.language,
-      phone: u.phone || '',
-      whatsappOptIn: u.whatsappOptIn === true,
-      passwordHash: u.passwordHash,
-      emailVerified: u.emailVerified,
-      verifyTokenHash: u.verifyTokenHash,
-      verifyTokenExpires: u.verifyTokenExpires ? Number(u.verifyTokenExpires) : null,
-      resetTokenHash: u.resetTokenHash,
-      resetTokenExpires: u.resetTokenExpires ? Number(u.resetTokenExpires) : null,
-      isDemo: u.isDemo,
-      activeOrganizationId: u.activeOrganizationId,
-      enabledModules: stringArray(u.enabledModules, DEFAULT_USER_MODULES),
-      enabledWidgets: stringArray(u.enabledWidgets, DEFAULT_USER_WIDGETS),
-      registrationComplete: u.registrationComplete ?? true,
-      accountEnabled: u.accountEnabled !== false,
-      approvalStatus: approvalStatusForUser(u),
-      approvalRequestedAt: u.approvalRequestedAt ? new Date(u.approvalRequestedAt).toISOString() : undefined,
-      approvalDecidedAt: u.approvalDecidedAt ? new Date(u.approvalDecidedAt).toISOString() : undefined,
-      approvalDecidedBy: u.approvalDecidedBy || undefined,
-      approvalTokenHash: u.approvalTokenHash,
-      approvalTokenExpires: u.approvalTokenExpires ? Number(u.approvalTokenExpires) : null,
-      sessionVersion: Number.isInteger(u.sessionVersion) && u.sessionVersion > 0 ? u.sessionVersion : 1,
-      createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
-      updatedAt: u.updatedAt ? new Date(u.updatedAt).toISOString() : undefined,
-    })),
+    users: rows.users.map(mapPostgresUserRow),
     organizations: rows.organizations.map(o => ({
       id: o.id,
       name: o.name,
+      status: o.status || 'active',
+      archivedAt: o.archivedAt ? new Date(o.archivedAt).toISOString() : null,
+      deletionScheduledAt: o.deletionScheduledAt ? new Date(o.deletionScheduledAt).toISOString() : null,
+      internalNotes: o.internalNotes || '',
+      internalTags: stringArray(o.internalTags),
       createdAt: o.createdAt ? new Date(o.createdAt).toISOString() : undefined,
       updatedAt: o.updatedAt ? new Date(o.updatedAt).toISOString() : undefined,
     })),
@@ -627,6 +762,7 @@ function dbFromPostgresRows(rows: {
       tokenHash: i.tokenHash,
       expiresAt: i.expiresAt.toISOString(),
       acceptedAt: i.acceptedAt ? i.acceptedAt.toISOString() : null,
+      revokedAt: i.revokedAt ? i.revokedAt.toISOString() : null,
       createdAt: i.createdAt ? new Date(i.createdAt).toISOString() : undefined,
     })),
     securityAuditEvents: [],
@@ -723,6 +859,33 @@ export function getDB(): DBState {
   return dbData;
 }
 
+/**
+ * Record lightweight user presence without turning every authenticated API
+ * request into a database write. Memory is updated immediately; the shared
+ * PostgreSQL row (or JSON fallback) is refreshed at most twice per minute.
+ */
+export async function touchUserPresence(username: string, now = new Date()): Promise<string | null> {
+  const normalized = String(username || '').trim();
+  if (!normalized) return null;
+  const db = getDB();
+  const user = db.users.find(candidate => candidate.username === normalized);
+  if (!user) return null;
+
+  const iso = now.toISOString();
+  user.lastSeenAt = iso;
+  const previousWrite = lastPresenceWriteAt.get(normalized) || 0;
+  if (now.getTime() - previousWrite < PRESENCE_WRITE_INTERVAL_MS) return iso;
+  lastPresenceWriteAt.set(normalized, now.getTime());
+
+  const prisma = await getPrisma();
+  if (prisma) {
+    await prisma.user.updateMany({ where: { username: normalized }, data: { lastSeenAt: now } });
+  } else {
+    saveDB({ syncPostgres: false, gcsBackup: false });
+  }
+  return iso;
+}
+
 function writeLocalJsonBackup(jsonStr: string): void {
   try {
     const templatePath = path.resolve(__dirname, '../db.json');
@@ -805,8 +968,23 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
         if (!org?.id) continue;
         await tx.organization.upsert({
           where: { id: org.id },
-          update: { name: org.name || org.id },
-          create: { id: org.id, name: org.name || org.id },
+          update: {
+            name: org.name || org.id,
+            status: org.status || 'active',
+            archivedAt: org.archivedAt ? new Date(org.archivedAt) : null,
+            deletionScheduledAt: org.deletionScheduledAt ? new Date(org.deletionScheduledAt) : null,
+            internalNotes: org.internalNotes || null,
+            internalTags: Array.isArray(org.internalTags) ? org.internalTags : [],
+          },
+          create: {
+            id: org.id,
+            name: org.name || org.id,
+            status: org.status || 'active',
+            archivedAt: org.archivedAt ? new Date(org.archivedAt) : null,
+            deletionScheduledAt: org.deletionScheduledAt ? new Date(org.deletionScheduledAt) : null,
+            internalNotes: org.internalNotes || null,
+            internalTags: Array.isArray(org.internalTags) ? org.internalTags : [],
+          },
         });
       }
 
@@ -840,6 +1018,7 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             approvalTokenHash: user.approvalTokenHash || null,
             approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
             sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
+            lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : null,
           },
           create: {
             id: user.id || undefined,
@@ -869,6 +1048,7 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             approvalTokenHash: user.approvalTokenHash || null,
             approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
             sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
+            lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : null,
           },
         });
       }
@@ -899,6 +1079,7 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
           create: {
             id: invite.id,
@@ -908,6 +1089,7 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
         });
       }
@@ -919,6 +1101,78 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
     lastPostgresSyncError = err instanceof Error ? err.message : String(err);
     console.error(`[db] PostgreSQL core metadata persistence failed (${source}):`, err);
     throw err;
+  }
+}
+
+export interface SessionPrincipal {
+  user: any;
+  memberships: any[];
+}
+
+/**
+ * Load exactly the rows an authenticated request needs to authorise itself: one
+ * user and their memberships, by key.
+ *
+ * This exists because the request path used to call
+ * `refreshCoreMetadataFromPostgres()`, which issues four unfiltered `findMany`
+ * queries and rebuilds the whole in-process directory — every user,
+ * organization, membership, and invitation on the platform, on every
+ * authenticated request. That is O(all tenants) per request, serialized through
+ * one event loop, to answer a question about one person.
+ *
+ * Freshness is not relaxed to achieve that. The fields the request path decides
+ * on — `accountEnabled`, `approvalStatus`, `sessionVersion`, and the membership
+ * role — are still read from PostgreSQL on every request, because approval can
+ * be withdrawn and roles changed after a session is issued. Only the scope of
+ * the read changes.
+ *
+ * The rows are also written back into the process directory, so code that reads
+ * `getDB().users` for the *requesting* user keeps seeing current data. Routes
+ * that enumerate other users already call `refreshCoreMetadataFromPostgres()`
+ * themselves — every admin and auth handler does — so none of them depended on
+ * this path as their source of freshness.
+ *
+ * Returns `null` when PostgreSQL is unavailable, leaving the caller on the
+ * in-memory directory exactly as before.
+ */
+export async function loadSessionPrincipal(username: string): Promise<SessionPrincipal | null> {
+  const prisma = await getPrisma();
+  if (!prisma) return null;
+
+  try {
+    const row = await prisma.user.findUnique({
+      where: { username },
+      include: { memberships: true },
+    });
+    if (!row) {
+      // Deleted between requests: drop the stale directory entry so a cached
+      // row cannot keep authorising a user who no longer exists.
+      const db = getDB();
+      db.users = db.users.filter((candidate: any) => candidate.username !== username);
+      db.memberships = (db.memberships || []).filter((candidate: any) => candidate.userId !== username);
+      return null;
+    }
+
+    const user = mapPostgresUserRow(row);
+    const memberships = (row.memberships || []).map(mapPostgresMembershipRow);
+
+    const db = getDB();
+    const userIndex = db.users.findIndex((candidate: any) => candidate.username === username);
+    if (userIndex === -1) db.users.push(user);
+    else db.users[userIndex] = user;
+
+    if (!db.memberships) db.memberships = [];
+    db.memberships = [
+      ...db.memberships.filter((candidate: any) => candidate.userId !== username),
+      ...memberships,
+    ];
+
+    lastPostgresSyncError = null;
+    return { user, memberships };
+  } catch (err) {
+    lastPostgresSyncError = err instanceof Error ? err.message : String(err);
+    console.warn('[db] session principal lookup failed; using process cache fallback:', err);
+    return null;
   }
 }
 
@@ -948,6 +1202,7 @@ export type InvitationAcceptanceStatus =
   | 'success'
   | 'not_found'
   | 'already_accepted'
+  | 'revoked'
   | 'expired'
   | 'user_not_found'
   | 'email_mismatch'
@@ -981,6 +1236,7 @@ export async function acceptInvitationAtomically(
       const invite = await tx.invitation.findUnique({ where: { tokenHash } });
       if (!invite) return { status: 'not_found' } as InvitationAcceptanceResult;
       if (invite.acceptedAt) return { status: 'already_accepted' } as InvitationAcceptanceResult;
+      if (invite.revokedAt) return { status: 'revoked' } as InvitationAcceptanceResult;
       if (invite.expiresAt.getTime() <= now.getTime()) return { status: 'expired' } as InvitationAcceptanceResult;
 
       const user = await tx.user.findUnique({ where: { username } });
@@ -995,6 +1251,7 @@ export async function acceptInvitationAtomically(
         where: {
           id: invite.id,
           acceptedAt: null,
+          revokedAt: null,
           expiresAt: { gt: now },
         },
         data: { acceptedAt: now },
@@ -1037,6 +1294,7 @@ export async function acceptInvitationAtomically(
   const invite = db.invitations.find((candidate: any) => candidate.tokenHash === tokenHash);
   if (!invite) return { status: 'not_found' };
   if (invite.acceptedAt) return { status: 'already_accepted' };
+  if (invite.revokedAt) return { status: 'revoked' };
   if (new Date(invite.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
 
   const user = db.users.find((candidate: any) => candidate.username === username);
@@ -1159,6 +1417,49 @@ export async function deleteUserMetadataFromPostgres(username: string): Promise<
   } catch (err) {
     lastPostgresSyncError = err instanceof Error ? err.message : String(err);
     console.error(`[db] PostgreSQL user metadata delete failed (${username}):`, err);
+    throw err;
+  }
+}
+
+/**
+ * Remove one tenant and every PostgreSQL record owned by it. The Prisma
+ * relations use cascading deletes, so this also clears memberships, the JSONB
+ * organization state, billing metadata, and relational projections.
+ *
+ * Core-metadata saves intentionally only upsert records. Deletion therefore
+ * needs an explicit database operation or another application instance would
+ * rehydrate the removed tenant on its next metadata refresh.
+ */
+export async function deleteOrganizationMetadataFromPostgres(organizationId: string): Promise<void> {
+  const prisma = await getPrisma();
+  if (!prisma) return;
+
+  try {
+    await prisma.organization.deleteMany({ where: { id: organizationId } });
+    lastPostgresSyncAt = new Date().toISOString();
+    lastPostgresSyncError = null;
+  } catch (err) {
+    lastPostgresSyncError = err instanceof Error ? err.message : String(err);
+    console.error(`[db] PostgreSQL organization metadata delete failed (${organizationId}):`, err);
+    throw err;
+  }
+}
+
+/** Explicit counterpart to the membership upserts in saveCoreMetadata. */
+export async function deleteMembershipMetadataFromPostgres(
+  username: string,
+  organizationId: string,
+): Promise<void> {
+  const prisma = await getPrisma();
+  if (!prisma) return;
+
+  try {
+    await prisma.membership.deleteMany({ where: { userId: username, organizationId } });
+    lastPostgresSyncAt = new Date().toISOString();
+    lastPostgresSyncError = null;
+  } catch (err) {
+    lastPostgresSyncError = err instanceof Error ? err.message : String(err);
+    console.error(`[db] PostgreSQL membership metadata delete failed (${username}, ${organizationId}):`, err);
     throw err;
   }
 }
@@ -1379,6 +1680,7 @@ async function persistFullDbToPostgres(
             tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
           create: {
             id: invite.id,
@@ -1388,6 +1690,7 @@ async function persistFullDbToPostgres(
             tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
         });
       }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useWorkspaceRoute } from './useWorkspaceRoute';
 import { normalizeSupportedLanguage, type Language } from '../lib/language';
 import {
   SyncQueueManager,
@@ -74,7 +75,6 @@ import {
   type AiDraftQueueStatus,
 } from '../lib/aiDraftActions';
 import { isKnownRole } from '../server/permissions';
-import { clearTenantCachedData } from '../lib/tenantCache';
 import type {
   BottlingCommandResponse,
   CellarOperationCommandResponse,
@@ -87,6 +87,12 @@ import type {
   TransferCommandResponse,
   TransferReversalCommandResponse,
 } from '../lib/commands/client';
+import type {
+  ProductionPlanItem,
+  PurchaseOrder,
+  QualitySop,
+  RecallCase,
+} from '../lib/operationsControl';
 
 interface RolePersistence {
   setItem(key: string, value: string): void;
@@ -168,7 +174,7 @@ export function isWineryDatabaseSnapshot(value: unknown): value is Record<string
     'auditLogs', 'bottlingRuns', 'transfers', 'grapeIntakes', 'cellarOps',
     'costEntries', 'storageLocations', 'stockMovements', 'invoiceReceipts', 'inventoryMovements', 'salesDispatches',
     'salesOrders', 'supplierPayments', 'certificationRecords', 'attachments',
-    'crmLeads', 'aiDrafts',
+    'crmLeads', 'aiDrafts', 'qualitySops', 'purchaseOrders', 'productionPlans', 'recallCases',
   ];
   return arrayKeys.every(key => Array.isArray(candidate[key]))
     && Boolean(candidate.winePricing && typeof candidate.winePricing === 'object' && !Array.isArray(candidate.winePricing))
@@ -344,6 +350,7 @@ export function useWineryState() {
       }));
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        const { clearTenantCachedData } = await import('../lib/tenantCache');
         clearTenantCachedData(localStorage);
         // Conflict snapshots are tenant data. Invalidate them as soon as the
         // server commits the switch, before any new-workspace screen can open.
@@ -442,6 +449,10 @@ export function useWineryState() {
   const [attachments, setAttachments] = useState<DocumentAttachment[]>([]);
   const [crmLeads, setCrmLeads] = useState<CrmLeadRecord[]>([]);
   const [aiDrafts, setAiDrafts] = useState<AiDraftQueueItem[]>([]);
+  const [qualitySops, setQualitySops] = useState<QualitySop[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [productionPlans, setProductionPlans] = useState<ProductionPlanItem[]>([]);
+  const [recallCases, setRecallCases] = useState<RecallCase[]>([]);
 
   // FermentationTab owns its own daily-reading form state and commit handler.
   const [chartLotId, setChartLotId] = useState<string>('');
@@ -603,6 +614,10 @@ export function useWineryState() {
     setSafe(setAttachments, data.attachments, 'attachments', 'cf_attachments');
     setSafe(setCrmLeads, data.crmLeads, 'crmLeads', 'cf_crm_leads');
     setSafe(setAiDrafts, data.aiDrafts, 'aiDrafts', 'cf_ai_drafts');
+    setSafe(setQualitySops, data.qualitySops, 'qualitySops', 'cf_quality_sops');
+    setSafe(setPurchaseOrders, data.purchaseOrders, 'purchaseOrders', 'cf_purchase_orders');
+    setSafe(setProductionPlans, data.productionPlans, 'productionPlans', 'cf_production_plans');
+    setSafe(setRecallCases, data.recallCases, 'recallCases', 'cf_recall_cases');
     setSafe(setCompanyProfile, data.companyProfile, 'companyProfile', 'vinea_company_profile');
     const syncedAt = new Date().toISOString();
     setLastSyncAt(syncedAt);
@@ -626,7 +641,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
         companyProfile
       };
 
@@ -1151,6 +1166,10 @@ export function useWineryState() {
     localStorage.removeItem('cf_attachments');
     localStorage.removeItem('cf_crm_leads');
     localStorage.removeItem('cf_ai_drafts');
+    localStorage.removeItem('cf_quality_sops');
+    localStorage.removeItem('cf_purchase_orders');
+    localStorage.removeItem('cf_production_plans');
+    localStorage.removeItem('cf_recall_cases');
     localStorage.removeItem('vinea_company_profile');
     localStorage.removeItem('vinea_deleted_ids');
 
@@ -1190,6 +1209,10 @@ export function useWineryState() {
     setAttachments([]);
     setCrmLeads([]);
     setAiDrafts([]);
+    setQualitySops([]);
+    setPurchaseOrders([]);
+    setProductionPlans([]);
+    setRecallCases([]);
   };
 
   const handleAuthRegister = async (profileData: RegistrationProfileData): Promise<boolean> => {
@@ -1224,7 +1247,7 @@ export function useWineryState() {
           vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
           blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
           samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
           companyProfile
         } : {});
         if (initialDB) {
@@ -1233,7 +1256,8 @@ export function useWineryState() {
         return true;
       } else {
         const err = await res.json();
-        setLoginError(err.error || 'Registration failed');
+        const { localizeServerError } = await import('../lib/serverErrorMessages');
+        setLoginError(localizeServerError(err.code, err.error || 'Registration failed', lang));
         return false;
       }
     } catch (err) {
@@ -1343,6 +1367,10 @@ export function useWineryState() {
         localStorage.removeItem('cf_attachments');
         localStorage.removeItem('cf_crm_leads');
         localStorage.removeItem('cf_ai_drafts');
+        localStorage.removeItem('cf_quality_sops');
+        localStorage.removeItem('cf_purchase_orders');
+        localStorage.removeItem('cf_production_plans');
+        localStorage.removeItem('cf_recall_cases');
         localStorage.removeItem('vinea_company_profile');
         localStorage.removeItem('vinea_deleted_ids');
 
@@ -1415,6 +1443,10 @@ export function useWineryState() {
       setAttachments(parseCached('cf_attachments', []));
       setCrmLeads(parseCached('cf_crm_leads', []));
       setAiDrafts(parseCached('cf_ai_drafts', []));
+      setQualitySops(parseCached('cf_quality_sops', []));
+      setPurchaseOrders(parseCached('cf_purchase_orders', []));
+      setProductionPlans(parseCached('cf_production_plans', []));
+      setRecallCases(parseCached('cf_recall_cases', []));
 
       setBlocks(parseCached('vinea_blocks', defaults.initialVineyardBlocks));
       setVineyardProjects(parseCached('vinea_projects', defaults.initialVineyardPlantingProjects));
@@ -1643,7 +1675,11 @@ export function useWineryState() {
       certificationRecords: setCertificationRecords,
       attachments: setAttachments,
       crmLeads: setCrmLeads,
-      aiDrafts: setAiDrafts
+      aiDrafts: setAiDrafts,
+      qualitySops: setQualitySops,
+      purchaseOrders: setPurchaseOrders,
+      productionPlans: setProductionPlans,
+      recallCases: setRecallCases,
     };
 
     // One serialization for this call, reused by every branch below. It was
@@ -1698,7 +1734,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
         companyProfile
       };
 
@@ -1733,6 +1769,10 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('attachments', 'cf_attachments', attachments); }, [attachments, isClient]);
   useEffect(() => { handleCollectionUpdate('crmLeads', 'cf_crm_leads', crmLeads); }, [crmLeads, isClient]);
   useEffect(() => { handleCollectionUpdate('aiDrafts', 'cf_ai_drafts', aiDrafts); }, [aiDrafts, isClient]);
+  useEffect(() => { handleCollectionUpdate('qualitySops', 'cf_quality_sops', qualitySops); }, [qualitySops, isClient]);
+  useEffect(() => { handleCollectionUpdate('purchaseOrders', 'cf_purchase_orders', purchaseOrders); }, [purchaseOrders, isClient]);
+  useEffect(() => { handleCollectionUpdate('productionPlans', 'cf_production_plans', productionPlans); }, [productionPlans, isClient]);
+  useEffect(() => { handleCollectionUpdate('recallCases', 'cf_recall_cases', recallCases); }, [recallCases, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
@@ -1755,6 +1795,17 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('irrigationLogs', 'vinea_irrigation', irrigationLogs); }, [irrigationLogs, isClient]);
   useEffect(() => { handleCollectionUpdate('fertilizerLogs', 'vinea_fertilizer', fertilizerLogs); }, [fertilizerLogs, isClient]);
   useEffect(() => { handleCollectionUpdate('auditLogs', 'vinea_audit_logs', auditLogs); }, [auditLogs, isClient]);
+
+  // Declared after the localStorage restore above so a destination named in the
+  // URL wins over the last one this browser happened to be on: effects run in
+  // declaration order, and a shared link must land where it points.
+  useWorkspaceRoute({
+    isActive: isClient && isLoggedIn,
+    activeModule,
+    activeTab,
+    setActiveModule,
+    setActiveTab,
+  });
 
   // Input Sanitizer/Validator Helper for ID poisoning prevention
   const sanitizeId = (id: string): string => {
@@ -2346,7 +2397,7 @@ export function useWineryState() {
       harvests, irrigationLogs, fertilizerLogs, auditLogs, bottlingRuns, transfers,
       grapeIntakes, cellarOps, costEntries, storageLocations, stockMovements,
       salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments,
-      crmLeads, aiDrafts,
+      crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
     };
     const capturedAt = new Date().toISOString();
     const versionedRecords = records.map(record => {
@@ -2709,6 +2760,10 @@ export function useWineryState() {
       attachments: db.attachments || attachments,
       crmLeads: db.crmLeads || crmLeads,
       aiDrafts: db.aiDrafts || aiDrafts,
+      qualitySops: db.qualitySops || qualitySops,
+      purchaseOrders: db.purchaseOrders || purchaseOrders,
+      productionPlans: db.productionPlans || productionPlans,
+      recallCases: db.recallCases || recallCases,
       companyProfile: db.companyProfile || companyProfile
     };
 
@@ -2783,6 +2838,10 @@ export function useWineryState() {
     attachments, setAttachments,
     crmLeads, setCrmLeads,
     aiDrafts, setAiDrafts,
+    qualitySops, setQualitySops,
+    purchaseOrders, setPurchaseOrders,
+    productionPlans, setProductionPlans,
+    recallCases, setRecallCases,
 
     // Inputs
     chartLotId, setChartLotId,

@@ -8,10 +8,16 @@ import { gzipSync } from 'node:zlib';
  *
  * Measures the CRITICAL PATH only: chunks referenced directly by
  * dist/index.html (script tags + modulepreloads). Lazy chunks (module tabs,
- * exceljs, RxDB storage) are intentionally excluded — they may grow. The
- * The current ceiling leaves little headroom over the 2026-07 baseline of
- * ~582 KB raw / ~178 KB gzip JS and ~220 KB raw CSS, so it catches a heavy
- * library or translation dictionary accidentally imported into App.tsx.
+ * exceljs, RxDB storage) are intentionally excluded — they may grow. It catches
+ * a heavy library or translation dictionary accidentally imported into App.tsx.
+ *
+ * Baseline as of 2026-08-12: ~572 KB raw / ~170 KB gzip JS and ~236 KB raw CSS,
+ * against ceilings of 600 / 190 / 260. The raw-JS margin had previously eroded
+ * to 43 bytes, which made the guard useless — any honest change tripped it, and
+ * the failure looked like an unrelated regression. It was recovered by letting
+ * lucide-react split with its consumers instead of forcing every icon in the
+ * app into one eagerly preloaded chunk (see vite.config.ts). Keep real margin
+ * here: a budget with no slack gets raised reflexively rather than respected.
  *
  * Skips when dist/ is absent (unit-test runs without a build).
  */
@@ -93,8 +99,13 @@ describe.skipIf(!hasBuild)('lazy destination bundle budgets', () => {
     },
     {
       route: 'administration',
+      // Raised from 120 KB when lucide-react stopped being forced into one
+      // eagerly preloaded chunk: this destination now carries the icons it
+      // actually uses instead of everyone paying for them at first paint. The
+      // cost moved off the critical path, it did not appear. Gzip is unchanged
+      // at ~27 KB, which is the number that reflects what users download.
       prefixes: ['MasterAdminPortal-'],
-      rawKB: 120,
+      rawKB: 145,
       gzipKB: 40,
     },
     {

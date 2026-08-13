@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RegistrationPanel, SignInPanel, WorkspaceSetupDialog } from '../components/RegistrationExperience';
 
 describe('progressive registration experience', () => {
-  it('keeps account creation focused on four essential fields', () => {
+  it('requires the identity and reachable contact details needed for review', () => {
     const markup = renderToStaticMarkup(
       <RegistrationPanel
         lang="en"
@@ -15,13 +15,17 @@ describe('progressive registration experience', () => {
       />,
     );
 
-    expect(markup).toContain('name="fullName"');
+    expect(markup).toContain('name="firstName"');
+    expect(markup).toContain('name="lastName"');
     expect(markup).toContain('name="email"');
+    expect(markup).toContain('name="phone"');
     expect(markup).toContain('name="companyName"');
     expect(markup).toContain('name="passcode"');
     expect(markup).not.toContain('name="username"');
     expect(markup).not.toContain('name="enabledModules"');
-    expect(markup).toContain('Continue with Google');
+    expect(markup).toContain('Continue with Google and complete details');
+    expect(markup).toContain('Every registration is reviewed manually');
+    expect(markup).toContain('before sign-in is enabled');
   });
 
   it('presents product focus as personalization instead of a permission role', () => {

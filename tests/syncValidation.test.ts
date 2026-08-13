@@ -1947,4 +1947,63 @@ describe('sync payload validation', () => {
       inventoryMovements: [{ ...movement, quantity: 99 }],
     }, undefined)).toThrow(/Immutable Inventory Movement Ledger/);
   });
+
+  it('validates recurring SOP evidence as an append-only bounded history', () => {
+    const original = {
+      id: 'sop-1', title: 'ATP check', category: 'sanitation', frequency: 'monthly',
+      nextDueDate: '2026-08-13', checklist: ['Rinse'], evidenceRequired: true,
+      completionHistory: [{ id: 'completion-1', completedAt: '2026-07-13T10:00:00.000Z', completedBy: 'ana', completedChecklist: ['Rinse'], evidenceNote: '18 RLU' }],
+    };
+    const db = operationalDb({ qualitySops: [original] });
+    expect(() => validateSyncPayload(db, { qualitySops: [{
+      ...original,
+      nextDueDate: '2026-09-13',
+      completionHistory: [
+        { id: 'completion-2', completedAt: '2026-08-13T10:00:00.000Z', completedBy: 'ana', completedChecklist: ['Rinse'], evidenceNote: '12 RLU' },
+        ...original.completionHistory,
+      ],
+    }] }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, { qualitySops: [{
+      ...original,
+      completionHistory: [{ ...original.completionHistory[0], evidenceNote: 'forged' }],
+    }] }, undefined)).toThrow(/append-only/i);
+  });
+
+  it('requires purchase-order receipt evidence before closing an order', () => {
+    const inventory = [{ id: 'item-1', name: 'Yeast', unit: 'kg' }];
+    const line = { id: 'po-line-1', inventoryItemId: 'item-1', productName: 'Yeast', quantity: 2, receivedQuantity: 0, unit: 'kg', unitCost: 10 };
+    const order = { id: 'po-1', orderNumber: 'PO-1', supplierName: 'Supplier', status: 'ordered', currency: 'GEL', lines: [line] };
+    const db = operationalDb({ inventory, purchaseOrders: [order] });
+    expect(() => validateSyncPayload(db, { purchaseOrders: [{ ...order, status: 'received', lines: [{ ...line, receivedQuantity: 2 }] }] }, undefined)).toThrow(/receipt evidence/i);
+    expect(() => validateSyncPayload(db, { purchaseOrders: [{
+      ...order, status: 'received', receivedAt: '2026-08-13T10:00:00.000Z', receiptCommandId: 'cmd-receipt-1',
+      lines: [{ ...line, receivedQuantity: 2 }],
+    }] }, undefined)).not.toThrow();
+  });
+
+  it('rejects impossible production dates and unknown dependencies', () => {
+    const base = {
+      id: 'plan-1', title: 'Transfer', kind: 'transfer', status: 'planned',
+      startDate: '2026-08-14', endDate: '2026-08-15', vesselIds: [], dependencyIds: [],
+    };
+    const db = operationalDb({ productionPlans: [] });
+    expect(() => validateSyncPayload(db, { productionPlans: [{ ...base, endDate: '2026-08-13' }] }, undefined)).toThrow(/cannot end before/i);
+    expect(() => validateSyncPayload(db, { productionPlans: [{ ...base, dependencyIds: ['missing'] }] }, undefined)).toThrow(/unknown dependency/i);
+  });
+
+  it('freezes recall exposure and makes closure terminal', () => {
+    const recall = {
+      id: 'recall-1', lotId: 'lot-1', title: 'Recall lot-1', reason: 'Cork issue', status: 'active',
+      openedAt: '2026-08-13T10:00:00.000Z', openedBy: 'ana', affectedBottlingRunIds: [],
+      affectedOrderIds: [], affectedDispatchIds: [], containmentTaskIds: [], notes: '',
+    };
+    const db = operationalDb({ lots: [{ id: 'lot-1' }], recallCases: [recall] });
+    expect(() => validateSyncPayload(db, { recallCases: [{ ...recall, status: 'closed' }] }, undefined)).toThrow(/closure evidence/i);
+    const closed = { ...recall, status: 'closed', closedAt: '2026-08-13T11:00:00.000Z', closedBy: 'ana' };
+    expect(() => validateSyncPayload(db, { recallCases: [closed] }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(operationalDb({ lots: [{ id: 'lot-1' }], recallCases: [closed] }), {
+      recallCases: [{ ...closed, status: 'active' }],
+    }, undefined)).toThrow(/cannot be reopened/i);
+    expect(() => validateSyncPayload(db, { recallCases: [{ ...recall, reason: 'Changed' }] }, undefined)).toThrow(/exposure evidence/i);
+  });
 });

@@ -515,8 +515,8 @@ export default function InvoiceInventoryImporter({
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-stone-600">
               {ka
-                ? 'AI მოიძიებს მწარმოებლის ან მარეგულირებლის წყაროებს აქტიური ინგრედიენტების, დოზირებისა და გამოყენების ინსტრუქციისთვის.'
-                : 'AI searches manufacturer or regulator sources for active ingredients, dosage, and use instructions. Unsupported claims are withheld.'}
+                ? 'AI მოიძიებს მწარმოებლის ან მარეგულირებლის წყაროებს აქტიური ინგრედიენტების, დოზირებისა და გამოყენების ინსტრუქციისთვის. დაუდასტურებელი წყაროს მქონე მონაცემები აღინიშნება თქვენი შემოწმებისთვის.'
+                : 'AI searches manufacturer or regulator sources for active ingredients, dosage, and use instructions. Findings without a verified source are flagged for your review.'}
             </p>
             <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3">
               <input

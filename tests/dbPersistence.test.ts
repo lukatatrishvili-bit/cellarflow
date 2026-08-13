@@ -307,7 +307,7 @@ describe('database persistence', () => {
 
     expect(result).toEqual({ status: 'success', organizationId: 'org-postgres', role: 'Read-Only' });
     expect(tx.invitation.updateMany).toHaveBeenCalledWith({
-      where: { id: 'invite-postgres', acceptedAt: null, expiresAt: { gt: now } },
+      where: { id: 'invite-postgres', acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
       data: { acceptedAt: now },
     });
     expect(tx.membership.upsert).toHaveBeenCalledWith(expect.objectContaining({

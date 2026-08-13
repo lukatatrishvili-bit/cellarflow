@@ -14,6 +14,32 @@ export interface SyncOperationalMetric {
   outcome: 'success' | 'conflict' | 'rejected';
 }
 
+/**
+ * Per-record merge outcomes for one sync that was actually acted on.
+ *
+ * Answers two open design questions with measurement rather than intuition
+ * (`docs/scale-out-and-delta-sync-design-2026-08-13.md`):
+ *
+ *   - `baselineUnavailable` vs `fieldMergeApplied` decides whether the
+ *     process-memory baselines behind three-way merge are worth persisting.
+ *     They are the one piece of state that makes a second server instance
+ *     change user-visible behaviour, so this ratio gates the scale-out plan.
+ *   - `unchanged` measures how much of each payload the client did not need to
+ *     send, which is the size of the prize for per-record delta sync.
+ *
+ * Counts only — no ids, collections, field names, or tenant data.
+ */
+export interface SyncMergeOutcomeMetric {
+  at: string;
+  newRecord: number;
+  unchanged: number;
+  cleanFastForward: number;
+  fieldMergeApplied: number;
+  sameFieldConflict: number;
+  baselineUnavailable: number;
+  legacyLastWriteWins: number;
+}
+
 export interface CommandOperationalMetric {
   at: string;
   commandType: string;
@@ -40,6 +66,7 @@ export interface ClientPerformanceMetric {
 }
 
 const syncSamples: SyncOperationalMetric[] = [];
+const mergeOutcomeSamples: SyncMergeOutcomeMetric[] = [];
 const commandSamples: CommandOperationalMetric[] = [];
 const clientPerformanceSamples: ClientPerformanceMetric[] = [];
 
@@ -54,7 +81,9 @@ const appendBounded = <T>(samples: T[], metric: T): void => {
   if (samples.length > MAX_OPERATIONAL_TELEMETRY_SAMPLES) samples.shift();
 };
 
-function emit(metric: SyncOperationalMetric | CommandOperationalMetric | ClientPerformanceMetric): void {
+function emit(
+  metric: SyncOperationalMetric | SyncMergeOutcomeMetric | CommandOperationalMetric | ClientPerformanceMetric,
+): void {
   if (process.env.NODE_ENV === 'test') return;
   // Cloud runtimes retain stdout; metrics contain only bounded numeric values
   // and a known command type, never tenant ids, command ids, or payload data.
@@ -102,6 +131,31 @@ export function recordSyncOperationalMetric(metric: Omit<SyncOperationalMetric, 
     outcome: metric.outcome,
   };
   appendBounded(syncSamples, normalized);
+  emit(normalized);
+}
+
+export function recordSyncMergeOutcomeMetric(metric: Omit<SyncMergeOutcomeMetric, 'at'>): void {
+  const normalized: SyncMergeOutcomeMetric = {
+    at: new Date().toISOString(),
+    newRecord: finite(metric.newRecord, 100_000),
+    unchanged: finite(metric.unchanged, 100_000),
+    cleanFastForward: finite(metric.cleanFastForward, 100_000),
+    fieldMergeApplied: finite(metric.fieldMergeApplied, 100_000),
+    sameFieldConflict: finite(metric.sameFieldConflict, 100_000),
+    baselineUnavailable: finite(metric.baselineUnavailable, 100_000),
+    legacyLastWriteWins: finite(metric.legacyLastWriteWins, 100_000),
+  };
+  // A sync that merged nothing (an empty or new-records-only payload) carries no
+  // signal for either question and would dilute the sample window.
+  const merged = normalized.cleanFastForward
+    + normalized.fieldMergeApplied
+    + normalized.sameFieldConflict
+    + normalized.baselineUnavailable
+    + normalized.legacyLastWriteWins
+    + normalized.unchanged;
+  if (merged === 0) return;
+
+  appendBounded(mergeOutcomeSamples, normalized);
   emit(normalized);
 }
 
@@ -175,6 +229,49 @@ export function getOperationalTelemetrySnapshot() {
       averageMergeMs: average(syncSamples.map(sample => sample.mergeMs)),
       p95DurationMs: percentile95(syncSamples.map(sample => sample.durationMs)),
     },
+    syncMergeOutcomes: (() => {
+      const sum = (pick: (sample: SyncMergeOutcomeMetric) => number) =>
+        mergeOutcomeSamples.reduce((total, sample) => total + pick(sample), 0);
+
+      const newRecord = sum(sample => sample.newRecord);
+      const unchanged = sum(sample => sample.unchanged);
+      const cleanFastForward = sum(sample => sample.cleanFastForward);
+      const fieldMergeApplied = sum(sample => sample.fieldMergeApplied);
+      const sameFieldConflict = sum(sample => sample.sameFieldConflict);
+      const baselineUnavailable = sum(sample => sample.baselineUnavailable);
+      const legacyLastWriteWins = sum(sample => sample.legacyLastWriteWins);
+
+      // Records that arrived with a baseline the server had already moved past.
+      // Only these three exercise three-way merge at all.
+      const staleBaseline = fieldMergeApplied + sameFieldConflict + baselineUnavailable;
+      const records = newRecord + unchanged + cleanFastForward + staleBaseline + legacyLastWriteWins;
+
+      return {
+        samples: mergeOutcomeSamples.length,
+        records,
+        newRecord,
+        unchanged,
+        cleanFastForward,
+        fieldMergeApplied,
+        sameFieldConflict,
+        baselineUnavailable,
+        legacyLastWriteWins,
+        staleBaseline,
+        // How often three-way merge earns its keep: a stale baseline that was
+        // resolved silently instead of surfacing a conflict.
+        fieldMergeSuccessRate: rate(fieldMergeApplied, staleBaseline),
+        // How often it already fails for want of in-process history. This is the
+        // rate every stale-baseline merge would hit on a second instance, so a
+        // number that is already high means the baselines are not worth
+        // persisting — deleting the merge would cost little.
+        baselineUnavailableRate: rate(baselineUnavailable, staleBaseline),
+        // Conflicts no merge strategy could avoid: both sides edited one field.
+        unavoidableConflictRate: rate(sameFieldConflict, staleBaseline),
+        // Share of merged records the client did not need to send at all — the
+        // prize for per-record delta sync.
+        redundantRecordRate: rate(unchanged, records),
+      };
+    })(),
     commands: {
       samples: commandSamples.length,
       replayRate: rate(commandSamples.filter(sample => sample.outcome === 'replayed').length, commandSamples.length),
@@ -199,6 +296,7 @@ export function getOperationalTelemetrySnapshot() {
 
 export function resetOperationalTelemetryForTests(): void {
   syncSamples.length = 0;
+  mergeOutcomeSamples.length = 0;
   commandSamples.length = 0;
   clientPerformanceSamples.length = 0;
 }

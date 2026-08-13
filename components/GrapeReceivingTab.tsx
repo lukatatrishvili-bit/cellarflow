@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Grape, CheckCircle2, AlertTriangle, ArrowRight, Sprout, Truck, RotateCcw, X } from 'lucide-react';
+import {
+  Grape, CheckCircle2, AlertTriangle, ArrowRight, Sprout, Truck, RotateCcw, X,
+  Scale, FlaskConical, Coins, FileText, Warehouse, History,
+} from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type {
   WineLot, Vessel, VineyardBlock, HarvestRecord, GrapeIntakeRecord, MaraniOSAuditLog,
@@ -7,7 +10,7 @@ import type {
 } from '../lib/wineryState';
 import { estimateMustVolumeL, brixToPotentialAlcohol } from '../lib/wineryOperations';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS, inferWineClassForVariety } from '../lib/georgianWineKnowledge';
-import { EmptyState } from './ui/primitives';
+import { EmptyState, FormSection, InlineNotice } from './ui/primitives';
 import DateInput from './ui/DateInput';
 import { resolveCostAutomationSettings, type CostEntry } from '../lib/costing';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
@@ -151,6 +154,7 @@ export function GrapeReceivingTab({
   const [microzone, setMicrozone] = useState('');
   const [grossWeightKg, setGross] = useState('');
   const [tareWeightKg, setTare] = useState('');
+  const [netWeightKg, setNetWeight] = useState('');
   const [brix, setBrix] = useState('');
   const [ph, setPh] = useState('');
   const [ta, setTa] = useState('');
@@ -179,7 +183,7 @@ export function GrapeReceivingTab({
     [harvests],
   );
 
-  const net = Math.max(0, (parseFloat(grossWeightKg) || 0) - (parseFloat(tareWeightKg) || 0));
+  const net = Math.max(0, parseFloat(netWeightKg) || 0);
   const yieldPct = parseFloat(juiceYieldPct) || 0;
   const estVolumeL = estimateMustVolumeL(net, yieldPct);
   const potentialAbv = brixToPotentialAlcohol(parseFloat(brix) || 0);
@@ -249,7 +253,11 @@ export function GrapeReceivingTab({
     setVariety(h.variety);
     const inferredClass = inferWineClassForVariety(h.variety);
     if (inferredClass) setWineClass(inferredClass);
-    if (h.estimatedTons) setGross(String(Math.round((h.actualHarvestedKg || h.estimatedTons * 1000))));
+    if (h.estimatedTons) {
+      const gross = Math.round(h.actualHarvestedKg || h.estimatedTons * 1000);
+      setGross(String(gross));
+      setNetWeight(String(Math.max(0, gross - (parseFloat(tareWeightKg) || 0))));
+    }
     if (h.temperatureAtHarvest != null) setTemp(String(h.temperatureAtHarvest));
     setDate(h.actualHarvestDate || h.estimatedHarvestDate || today);
     setVintage(Number((h.actualHarvestDate || h.estimatedHarvestDate || today).slice(0, 4)) || thisYear);
@@ -276,6 +284,7 @@ export function GrapeReceivingTab({
     setMicrozone(input.microzone || '');
     setGross(String(input.grossWeightKg));
     setTare(String(input.tareWeightKg));
+    setNetWeight(String(Math.max(0, input.grossWeightKg - input.tareWeightKg)));
     setBrix(String(input.brix));
     setPh(String(input.ph));
     setTa(String(input.titratableAcidity));
@@ -329,8 +338,33 @@ export function GrapeReceivingTab({
     if (inferredClass) setWineClass(inferredClass);
   };
 
+  const normalizedWeight = (value: number) => String(Math.round(value * 1000) / 1000);
+
+  const handleGrossWeightChange = (value: string) => {
+    setGross(value);
+    const gross = parseFloat(value) || 0;
+    const tare = parseFloat(tareWeightKg) || 0;
+    setNetWeight(gross > tare ? normalizedWeight(gross - tare) : '');
+  };
+
+  const handleTareWeightChange = (value: string) => {
+    setTare(value);
+    const gross = parseFloat(grossWeightKg) || 0;
+    const tare = parseFloat(value) || 0;
+    setNetWeight(gross > tare ? normalizedWeight(gross - tare) : '');
+  };
+
+  const handleNetWeightChange = (value: string) => {
+    setNetWeight(value);
+    const tare = parseFloat(tareWeightKg) || 0;
+    const manualNet = parseFloat(value);
+    setGross(Number.isFinite(manualNet) && manualNet > 0
+      ? normalizedWeight(manualNet + tare)
+      : (tare > 0 ? normalizedWeight(tare) : ''));
+  };
+
   const resetForm = () => {
-    setHarvestRecordId(''); setVariety(''); setGross(''); setTare('');
+    setHarvestRecordId(''); setVariety(''); setGross(''); setTare(''); setNetWeight('');
     setBrix(''); setPh(''); setTa(''); setTemp(''); setCostPerKg(''); setTotalCost(''); setNotes(''); setDest('');
     setTransportName(''); setTransportNumber(''); setWeighingDocumentNumber(''); setLabAnalysisNumber('');
     setSupplierIdCode(''); setCadastralCode(''); setMunicipality(''); setVillage(''); setMicrozone('');
@@ -576,26 +610,37 @@ export function GrapeReceivingTab({
       </datalist>
       {/* Header */}
       <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm dark:bg-stone-900 dark:border-stone-800">
-        <span className="text-[9px] uppercase tracking-widest bg-[#4e0e15]/10 text-[#4e0e15] px-2.5 py-0.5 rounded font-bold">
-          {ka ? 'მარანი · დურდოს მიღება' : 'Cellar · Grape Receiving'}
-        </span>
-        <h3 className="text-xl font-serif font-black text-stone-900 uppercase mt-1 flex items-center gap-2 dark:text-amber-100">
-          <Grape className="w-5 h-5 text-[#4e0e15]" />
-          {ka ? 'ყურძნის მიღება' : 'Grape Intake'}
-        </h3>
-        <p className="text-xs text-stone-400 font-semibold mt-0.5">
-          {!canReceiveGrapes
-            ? (ka
-              ? 'გადახედეთ მიღების ისტორიას და გახსენით დაკავშირებული ღვინის პარტიები.'
-              : 'Review receiving history and open linked wine batches.')
-            : canFillDestinationVessel
-              ? (ka
-                ? 'ყურძნის მიღება საკუთარი ვენახიდან ან მომწოდებლისგან — ავტომატურად იქმნება პარტია და ივსება ჭურჭელი'
-                : 'Receive fruit from an own block or a supplier — auto-creates the wine batch and fills the vessel')
-              : (ka
-                ? 'აღრიცხეთ ყურძნის მიღება და შექმენით პარტია; ჭურჭლის მინიჭება მოგვიანებით შეიძლება.'
-                : 'Record grape intake and create its batch; a vessel can be assigned later.')}
-        </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <span className="text-[9px] uppercase tracking-widest bg-[#4e0e15]/10 text-[#4e0e15] px-2.5 py-0.5 rounded font-bold">
+              {ka ? 'მარანი · დურდოს მიღება' : 'Cellar · Grape Receiving'}
+            </span>
+            <h3 className="text-xl font-serif font-black text-stone-900 uppercase mt-1 flex items-center gap-2 dark:text-amber-100">
+              <Grape className="w-5 h-5 text-[#4e0e15]" />
+              {ka ? 'ყურძნის მიღება' : 'Grape Intake'}
+            </h3>
+            <p className="text-xs text-stone-400 font-semibold mt-0.5">
+              {!canReceiveGrapes
+                ? (ka
+                  ? 'გადახედეთ მიღების ისტორიას და გახსენით დაკავშირებული ღვინის პარტიები.'
+                  : 'Review receiving history and open linked wine batches.')
+                : canFillDestinationVessel
+                  ? (ka
+                    ? 'ყურძნის მიღება საკუთარი ვენახიდან ან მომწოდებლისგან — ავტომატურად იქმნება პარტია და ივსება ჭურჭელი'
+                    : 'Receive fruit from an own block or a supplier — auto-creates the wine batch and fills the vessel')
+                  : (ka
+                    ? 'აღრიცხეთ ყურძნის მიღება და შექმენით პარტია; ჭურჭლის მინიჭება მოგვიანებით შეიძლება.'
+                    : 'Record grape intake and create its batch; a vessel can be assigned later.')}
+            </p>
+          </div>
+          <a
+            href="#grape-intake-history"
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#d8c9bb] bg-[#faf7f2] px-3 py-2 text-xs font-bold text-[#4e0e15] transition-colors hover:border-[#4e0e15] hover:bg-[#f5ece5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4e0e15] dark:border-stone-700 dark:bg-stone-950 dark:text-amber-200"
+          >
+            <History className="h-4 w-4" />
+            {ka ? 'ყურძნის მიღების ისტორია' : 'Grape intake history'}
+          </a>
+        </div>
       </div>
 
       {(!canReceiveGrapes || restrictedOptionalActions.length > 0) && (
@@ -641,255 +686,340 @@ export function GrapeReceivingTab({
       )}
 
       <fieldset disabled={Boolean(pendingIntent) || isSubmitting} className="contents">
-      <div className={canReceiveGrapes ? 'grid grid-cols-1 2xl:grid-cols-[1.1fr_1fr] gap-4' : 'grid grid-cols-1 gap-4'}>
+      {/* The form owns the full width and splits into two columns itself, so
+          its inner `sm:` field grids still see the breakpoint they expect. */}
+      <div className="space-y-4">
         {/* ── Intake form ───────────────────────────────── */}
         {canReceiveGrapes && (
-        <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
-          {/* Source toggle */}
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setSource('own')}
-              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer ${source === 'own' ? 'bg-[#4e0e15] text-amber-50 border-[#4e0e15]' : 'bg-stone-50 text-stone-500 border-stone-200 dark:bg-stone-900 dark:border-stone-800'}`}>
-              <Sprout className="w-3.5 h-3.5" /> {ka ? 'საკუთარი ვენახი' : 'Own vineyard'}
-            </button>
-            <button type="button" onClick={() => { setSource('supplier'); setHarvestRecordId(''); }}
-              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer ${source === 'supplier' ? 'bg-[#4e0e15] text-amber-50 border-[#4e0e15]' : 'bg-stone-50 text-stone-500 border-stone-200 dark:bg-stone-900 dark:border-stone-800'}`}>
-              <Truck className="w-3.5 h-3.5" /> {ka ? 'მომწოდებელი' : 'Supplier'}
-            </button>
-          </div>
+        <div className="bg-white border border-[#e8dfd5] p-4 sm:p-5 rounded-2xl shadow-sm space-y-4 dark:bg-stone-900 dark:border-stone-800">
+          {/* Paired sections keep each step readable instead of stretching a
+              single field across the full card width on wide screens. */}
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 xl:items-start">
+            <FormSection
+              icon={source === 'own' ? Sprout : Truck}
+              title={ka ? 'ხილის წყარო' : 'Fruit source'}
+              description={ka
+                ? 'აირჩიეთ საიდან შემოდის ყურძენი — წარმოშობის ველები ავტომატურად ივსება.'
+                : 'Choose where the fruit comes from — origin fields fill in automatically.'}
+            >
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setSource('own')}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer ${source === 'own' ? 'bg-[#4e0e15] text-amber-50 border-[#4e0e15]' : 'bg-white text-stone-500 border-stone-200 dark:bg-stone-900 dark:border-stone-800'}`}>
+                  <Sprout className="w-3.5 h-3.5" /> {ka ? 'საკუთარი ვენახი' : 'Own vineyard'}
+                </button>
+                <button type="button" onClick={() => { setSource('supplier'); setHarvestRecordId(''); }}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border transition-colors cursor-pointer ${source === 'supplier' ? 'bg-[#4e0e15] text-amber-50 border-[#4e0e15]' : 'bg-white text-stone-500 border-stone-200 dark:bg-stone-900 dark:border-stone-800'}`}>
+                  <Truck className="w-3.5 h-3.5" /> {ka ? 'მომწოდებელი' : 'Supplier'}
+                </button>
+              </div>
 
-          {/* Own vineyard: optional pending-harvest prefill + block */}
-          {source === 'own' ? (
-            <>
-              {canLinkHarvest && pendingHarvests.length > 0 && (
-                <div>
-                  <label className={labelCls}>{ka ? 'მოსავლის ჩანაწერიდან (არჩევითი)' : 'From planned harvest (optional)'}</label>
-                  <select value={harvestRecordId} onChange={e => applyHarvest(e.target.value)} className={inputCls}>
-                    <option value="">{ka ? '— ხელით შევსება —' : '— enter manually —'}</option>
-                    {pendingHarvests.map(h => {
-                      const b = blocks.find(x => x.id === h.blockId);
-                      return <option key={h.id} value={h.id}>{h.variety} · {b?.name || h.blockId} · ~{h.estimatedTons}t</option>;
-                    })}
-                  </select>
+              {source === 'own' ? (
+                <div className={`grid grid-cols-1 gap-2 ${canLinkHarvest && pendingHarvests.length > 0 ? 'sm:grid-cols-2' : ''}`}>
+                  {canLinkHarvest && pendingHarvests.length > 0 && (
+                    <div>
+                      <label className={labelCls}>{ka ? 'მოსავლის ჩანაწერიდან (არჩევითი)' : 'From planned harvest (optional)'}</label>
+                      <select value={harvestRecordId} onChange={e => applyHarvest(e.target.value)} className={inputCls}>
+                        <option value="">{ka ? '— ხელით შევსება —' : '— enter manually —'}</option>
+                        {pendingHarvests.map(h => {
+                          const b = blocks.find(x => x.id === h.blockId);
+                          return <option key={h.id} value={h.id}>{h.variety} · {b?.name || h.blockId} · ~{h.estimatedTons}t</option>;
+                        })}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className={labelCls}>{ka ? 'ვენახის ბლოკი' : 'Vineyard block'}</label>
+                    <select value={blockId} onChange={e => applyBlock(e.target.value)} className={inputCls}>
+                      <option value="">{ka ? '— აირჩიეთ ბლოკი —' : '— select block —'}</option>
+                      {blocks.map(b => <option key={b.id} value={b.id}>{b.name} ({b.grapeVariety})</option>)}
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelCls}>{ka ? 'მომწოდებლის სახელი' : 'Supplier name'}</label>
+                    <input type="text" value={supplierName} onChange={e => setSupplierName(e.target.value)}
+                      placeholder={ka ? 'მაგ. გიორგი ბ. — სოფ. ვაზისუბანი' : 'e.g. Giorgi B. - Vazisubani'} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>{ka ? 'მომწოდებლის საიდ. კოდი' : 'Supplier ID / company code'}</label>
+                    <input type="text" value={supplierIdCode} onChange={e => setSupplierIdCode(e.target.value)}
+                      placeholder={ka ? 'პირადი ან კომპანიის კოდი' : 'Personal or company code'} className={inputCls} />
+                  </div>
                 </div>
               )}
-              <div>
-                <label className={labelCls}>{ka ? 'ვენახის ბლოკი' : 'Vineyard block'}</label>
-                <select value={blockId} onChange={e => applyBlock(e.target.value)} className={inputCls}>
-                  <option value="">{ka ? '— აირჩიეთ ბლოკი —' : '— select block —'}</option>
-                  {blocks.map(b => <option key={b.id} value={b.id}>{b.name} ({b.grapeVariety})</option>)}
-                </select>
-              </div>
-            </>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <label className={labelCls}>{ka ? 'მომწოდებლის სახელი' : 'Supplier name'}</label>
-                <input type="text" value={supplierName} onChange={e => setSupplierName(e.target.value)}
-                  placeholder={ka ? 'მაგ. გიორგი ბ. — სოფ. ვაზისუბანი' : 'e.g. Giorgi B. - Vazisubani'} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>{ka ? 'მომწოდებლის საიდ. კოდი' : 'Supplier ID / company code'}</label>
-                <input type="text" value={supplierIdCode} onChange={e => setSupplierIdCode(e.target.value)}
-                  placeholder={ka ? 'პირადი ან კომპანიის კოდი' : 'Personal or company code'} className={inputCls} />
-              </div>
-            </div>
-          )}
+            </FormSection>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div>
-              <label className={labelCls}>{ka ? 'ჯიში' : 'Variety'}</label>
-              <input type="text" value={variety} onChange={e => handleVarietyChange(e.target.value)}
-                list="georgian-grape-variety-options"
-                placeholder={ka ? 'საფერავი' : 'Saperavi'} className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'მოსავალი (წელი)' : 'Vintage'}</label>
-              <input type="number" value={vintage} onChange={e => setVintage(parseInt(e.target.value) || thisYear)} className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
-              <DateInput lang={lang} value={date} onValueChange={setDate} className={inputCls} required />
-            </div>
-          </div>
+            <FormSection
+              icon={Grape}
+              title={ka ? 'პარტიის იდენტობა' : 'Batch identity'}
+              description={ka
+                ? 'ეს ველები განსაზღვრავს შექმნილი ღვინის პარტიის სახელს და ტიპს.'
+                : 'These fields name and classify the wine batch this intake creates.'}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className={labelCls}>{ka ? 'ჯიში' : 'Variety'}</label>
+                  <input type="text" value={variety} onChange={e => handleVarietyChange(e.target.value)}
+                    list="georgian-grape-variety-options"
+                    placeholder={ka ? 'საფერავი' : 'Saperavi'} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ღვინის ტიპი' : 'Wine class'}</label>
+                  <select value={wineClass} onChange={e => setWineClass(e.target.value as WineClass)} className={inputCls}>
+                    {WINE_CLASSES.map(c => <option key={c.key} value={c.key}>{ka ? c.ka : c.en}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'მოსავალი (წელი)' : 'Vintage'}</label>
+                  <input type="number" value={vintage} onChange={e => setVintage(parseInt(e.target.value) || thisYear)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
+                  <DateInput lang={lang} value={date} onValueChange={setDate} className={inputCls} required />
+                </div>
+              </div>
+            </FormSection>
 
-          <div className="border-t border-stone-100 pt-4 space-y-2 dark:border-stone-800">
-            <div className="flex items-center justify-between gap-3">
-              <span className={labelCls}>{ka ? 'ოფიციალური მიღების ველები' : 'Official receiving fields'}</span>
-              <span className="text-[9px] font-mono text-stone-400">{ka ? 'აკლებული გამოჩნდება დოკუმენტებში' : 'Missing values become document warnings'}</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-              <div>
-                <label className={labelCls}>{ka ? 'ტრანსპორტი' : 'Transport name'}</label>
-                <input type="text" value={transportName} onChange={e => setTransportName(e.target.value)} placeholder={ka ? 'მძღოლი / კომპანია' : 'Driver / company'} className={inputCls} />
+            <FormSection
+              icon={Scale}
+              title={ka ? 'მასა და გამოსავალი' : 'Weight & yield'}
+              description={ka
+                ? 'ნეტო წონა ხელით შეიყვანეთ ან ბრუტოსა და ტარის მიხედვით ავტომატურად გამოთვალეთ.'
+                : 'Enter net weight manually or calculate it from gross and tare.'}
+              footer={(
+                <dl className="grid grid-cols-3 gap-2 text-center">
+                  {[
+                    {
+                      label: ka ? 'ნეტო' : 'Net weight',
+                      value: `${net.toLocaleString()} kg`,
+                      tone: 'text-stone-800 dark:text-amber-50',
+                    },
+                    {
+                      label: ka ? 'სავარაუდო ტკბილი' : 'Est. must',
+                      value: `${estVolumeL.toLocaleString()} L`,
+                      tone: overfill ? 'text-rose-600' : 'text-[#4e0e15] dark:text-amber-300',
+                    },
+                    {
+                      label: ka ? 'პოტ. ალკოჰოლი' : 'Potential ABV',
+                      value: potentialAbv > 0 ? `${potentialAbv}%` : '—',
+                      tone: 'text-stone-800 dark:text-amber-50',
+                    },
+                  ].map(metric => (
+                    <div key={metric.label} className="rounded-lg border border-stone-200 bg-white px-2 py-2 dark:border-stone-800 dark:bg-stone-900">
+                      <dt className="text-[8px] font-bold uppercase tracking-widest text-stone-400">{metric.label}</dt>
+                      <dd className={`mt-0.5 font-mono text-sm font-black ${metric.tone}`}>{metric.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                <div>
+                  <label className={labelCls}>{ka ? 'ბრუტო (კგ)' : 'Gross (kg)'}</label>
+                  <input type="number" min={0} step="0.001" value={grossWeightKg} onChange={e => handleGrossWeightChange(e.target.value)} placeholder="12500" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ტარა (კგ)' : 'Tare (kg)'}</label>
+                  <input type="number" min={0} step="0.001" value={tareWeightKg} onChange={e => handleTareWeightChange(e.target.value)} placeholder="500" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ნეტო (კგ)' : 'Net weight (kg)'}</label>
+                  <input type="number" min={0} step="0.001" value={netWeightKg} onChange={e => handleNetWeightChange(e.target.value)} placeholder="12000" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'გამოსავ. %' : 'Yield %'}</label>
+                  <input type="number" min={1} max={100} value={juiceYieldPct} onChange={e => setYield(e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </FormSection>
+
+            <FormSection
+              icon={FlaskConical}
+              title={ka ? 'ხარისხი მიღებისას' : 'Quality at reception'}
+              description={ka
+                ? 'შემოსული ყურძნის ქიმია და მდგომარეობა.'
+                : 'Chemistry and condition of the fruit as it arrives.'}
+            >
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className={labelCls}>°Brix</label>
+                  <input type="number" step="0.1" value={brix} onChange={e => setBrix(e.target.value)} placeholder="22.5" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>pH</label>
+                  <input type="number" step="0.01" value={ph} onChange={e => setPh(e.target.value)} placeholder="3.30" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'მჟავ. (TA)' : 'TA g/L'}</label>
+                  <input type="number" step="0.1" value={ta} onChange={e => setTa(e.target.value)} placeholder="6.0" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ტემპ. °C' : 'Temp °C'}</label>
+                  <input type="number" step="0.1" value={temperatureC} onChange={e => setTemp(e.target.value)} placeholder="18" className={inputCls} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className={labelCls}>{ka ? 'მდგომარეობა' : 'Condition'}</label>
+                  <select value={condition} onChange={e => setCondition(e.target.value as GrapeIntakeCondition)} className={inputCls}>
+                    {CONDITIONS.map(c => <option key={c.key} value={c.key}>{ka ? c.ka : c.en}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'კრეფა' : 'Picking'}</label>
+                  <select value={pickingMethod} onChange={e => setPicking(e.target.value as 'hand' | 'machine')} className={inputCls}>
+                    <option value="hand">{ka ? 'ხელით' : 'Hand'}</option>
+                    <option value="machine">{ka ? 'მექანიკური' : 'Machine'}</option>
+                  </select>
+                </div>
+              </div>
+            </FormSection>
+
+            {canPostIntakeCost && (
+              <FormSection
+                icon={Coins}
+                title={ka ? 'ყურძნის ღირებულება' : 'Fruit cost'}
+                description={ka
+                  ? 'შეყვანილი თანხა ავტომატურად ჩაიწერება ხარჯების წიგნში.'
+                  : 'What you enter here posts straight to the cost ledger.'}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelCls}>{ka ? 'ყურძნის ფასი / კგ' : `Fruit cost / kg (${currency})`}</label>
+                    <input type="number" min={0} step="0.01" value={costPerKg} onChange={e => setCostPerKg(e.target.value)}
+                      placeholder="0.00" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>{ka ? 'სულ ყურძნის ხარჯი' : `Total fruit cost (${currency})`}</label>
+                    <input type="number" min={0} step="0.01" value={totalCost} onChange={e => setTotalCost(e.target.value)}
+                      placeholder={effectiveFruitRate > 0 && net > 0 ? String(Math.round(net * effectiveFruitRate * 100) / 100) : 'optional override'} className={inputCls} />
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'გადახდის სტატუსი' : 'Payment status'}</label>
+                  <select value={paymentStatus || 'not_applicable'} onChange={e => setPaymentStatus(e.target.value as GrapeIntakeRecord['paymentStatus'])} className={inputCls}>
+                    <option value="not_applicable">{ka ? 'არ გამოიყენება' : 'Not applicable'}</option>
+                    <option value="unpaid">{ka ? 'გადასახდელი' : 'Unpaid'}</option>
+                    <option value="partial">{ka ? 'ნაწილობრივ' : 'Partial'}</option>
+                    <option value="paid">{ka ? 'გადახდილია' : 'Paid'}</option>
+                  </select>
+                </div>
+                {automaticOwnGrapeRate > 0 && !costPerKgNum && !explicitTotalCost && (
+                  <InlineNotice tone="success">
+                    {ka
+                      ? `საკუთარი ყურძნის ავტომატური ფასი: ${automaticOwnGrapeRate.toFixed(2)} ${currency}/კგ`
+                      : `Automatic own-grape rate: ${automaticOwnGrapeRate.toFixed(2)} ${currency}/kg`}
+                  </InlineNotice>
+                )}
+                {computedFruitCost > 0 && (
+                  <InlineNotice tone="success">
+                    {ka ? 'ხარჯების წიგნში ჩაიწერება:' : 'Will post to cost ledger:'}{' '}
+                    <strong className="font-mono">{computedFruitCost.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}</strong>
+                  </InlineNotice>
+                )}
+              </FormSection>
+            )}
+
+            <FormSection
+              icon={Warehouse}
+              title={canFillDestinationVessel
+                ? (ka ? 'დანიშნულება და ოპერატორი' : 'Destination & operator')
+                : (ka ? 'ოპერატორი და შენიშვნები' : 'Operator & notes')}
+              description={canFillDestinationVessel
+                ? (ka
+                  ? 'ჭურჭლის მინიჭება არჩევითია — მისი გაკეთება მოგვიანებითაც შეიძლება.'
+                  : 'Assigning a vessel is optional; it can be done later.')
+                : (ka
+                  ? 'ვინ მიიღო ყურძენი და რა შენიშვნები ახლავს მიღებას.'
+                  : 'Who received the fruit and any notes for this receipt.')}
+            >
+              <div className={`grid grid-cols-1 gap-2 ${canFillDestinationVessel ? 'sm:grid-cols-2' : ''}`}>
+                {canFillDestinationVessel && (
+                <div>
+                  <label className={labelCls}>{ka ? 'დანიშნულების ჭურჭელი' : 'Destination vessel'}</label>
+                  <select value={destinationVesselId} onChange={e => setDest(e.target.value)} className={inputCls}>
+                    <option value="">{ka ? '— მოგვიანებით —' : '— assign later —'}</option>
+                    {eligibleVessels.map(v => (
+                      <option key={v.id} value={v.id}>{v.id} — {round1(v.capacity - v.currentVolume)} L {ka ? 'თავისუფ.' : 'free'}</option>
+                    ))}
+                  </select>
+                </div>
+                )}
+                <div>
+                  <label className={labelCls}>{ka ? 'ოპერატორი' : 'Operator'}</label>
+                  <input type="text" value={operator} onChange={e => setOperator(e.target.value)} placeholder={currentUserName} className={inputCls} />
+                </div>
               </div>
               <div>
-                <label className={labelCls}>{ka ? 'ტრანსპორტის ნომერი' : 'Transport number'}</label>
-                <input type="text" value={transportNumber} onChange={e => setTransportNumber(e.target.value)} placeholder="AA-000-AA" className={inputCls} />
+                <label className={labelCls}>{ka ? 'შენიშვნები' : 'Notes'}</label>
+                <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
+                  placeholder={ka ? 'მაგ. ჯანმრთელი მტევნები, მსუბუქი ბოტრიტისი' : 'e.g. healthy clusters, light botrytis'} className={inputCls} />
               </div>
-              <div>
-                <label className={labelCls}>{ka ? 'აწონის დოკ. №' : 'Weighing document no.'}</label>
-                <input type="text" value={weighingDocumentNumber} onChange={e => setWeighingDocumentNumber(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>{ka ? 'ლაბ. ანალიზის №' : 'Lab analysis no.'}</label>
-                <input type="text" value={labAnalysisNumber} onChange={e => setLabAnalysisNumber(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>{ka ? 'საკადასტრო კოდი' : 'Cadastral code'}</label>
-                <input type="text" value={cadastralCode} onChange={e => setCadastralCode(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>{ka ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
-                <input type="text" value={municipality} onChange={e => setMunicipality(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>{ka ? 'სოფელი / მიკროზონა' : 'Village / microzone'}</label>
-                <div className="grid grid-cols-2 gap-2">
+              {overfill && (
+                <InlineNotice tone="danger">
+                  {ka
+                    ? `სავარაუდო მოცულობა აღემატება ჭურჭლის თავისუფალ ტევადობას (${freeCapacity} L).`
+                    : `Estimated volume exceeds the vessel’s free capacity (${freeCapacity} L).`}
+                </InlineNotice>
+              )}
+              {/* Blocks submission without this the reviewer would only see a
+                  disabled button and no reason. */}
+              {destinationUnavailable && !overfill && (
+                <InlineNotice tone="danger">
+                  {ka
+                    ? 'არჩეული ჭურჭელი დაკავებული ან დაუწმენდავია. აირჩიეთ სუფთა და ცარიელი ჭურჭელი.'
+                    : 'The selected vessel is not clean and empty. Choose a clean, unassigned vessel.'}
+                </InlineNotice>
+              )}
+            </FormSection>
+
+            <div className="xl:col-span-2">
+            <FormSection
+              icon={FileText}
+              title={ka ? 'ოფიციალური მიღების ველები' : 'Official receiving fields'}
+              description={ka
+                ? 'აკლებული გამოჩნდება დოკუმენტებში'
+                : 'Missing values become document warnings'}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                <div>
+                  <label className={labelCls}>{ka ? 'ტრანსპორტი' : 'Transport name'}</label>
+                  <input type="text" value={transportName} onChange={e => setTransportName(e.target.value)} placeholder={ka ? 'მძღოლი / კომპანია' : 'Driver / company'} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ტრანსპორტის ნომერი' : 'Transport number'}</label>
+                  <input type="text" value={transportNumber} onChange={e => setTransportNumber(e.target.value)} placeholder="AA-000-AA" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'აწონის დოკ. №' : 'Weighing document no.'}</label>
+                  <input type="text" value={weighingDocumentNumber} onChange={e => setWeighingDocumentNumber(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ლაბ. ანალიზის №' : 'Lab analysis no.'}</label>
+                  <input type="text" value={labAnalysisNumber} onChange={e => setLabAnalysisNumber(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'საკადასტრო კოდი' : 'Cadastral code'}</label>
+                  <input type="text" value={cadastralCode} onChange={e => setCadastralCode(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
+                  <input type="text" value={municipality} onChange={e => setMunicipality(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'სოფელი' : 'Village'}</label>
                   <input type="text" value={village} onChange={e => setVillage(e.target.value)} placeholder={ka ? 'სოფელი' : 'Village'} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'მიკროზონა' : 'Microzone'}</label>
                   <input type="text" value={microzone} onChange={e => setMicrozone(e.target.value)} list="georgian-microzone-options" placeholder={ka ? 'მიკროზონა' : 'Microzone'} className={inputCls} />
                 </div>
               </div>
+            </FormSection>
             </div>
           </div>
-
-          {/* Weighbridge */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div>
-              <label className={labelCls}>{ka ? 'ბრუტო (კგ)' : 'Gross (kg)'}</label>
-              <input type="number" min={0} value={grossWeightKg} onChange={e => setGross(e.target.value)} placeholder="12500" className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'ტარა (კგ)' : 'Tare (kg)'}</label>
-              <input type="number" min={0} value={tareWeightKg} onChange={e => setTare(e.target.value)} placeholder="500" className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'გამოსავ. %' : 'Yield %'}</label>
-              <input type="number" min={1} max={100} value={juiceYieldPct} onChange={e => setYield(e.target.value)} className={inputCls} />
-            </div>
-          </div>
-
-          {/* Costing */}
-          {canPostIntakeCost && (
-          <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div>
-              <label className={labelCls}>{ka ? 'ყურძნის ფასი / კგ' : `Fruit cost / kg (${currency})`}</label>
-              <input type="number" min={0} step="0.01" value={costPerKg} onChange={e => setCostPerKg(e.target.value)}
-                placeholder="0.00" className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'სულ ყურძნის ხარჯი' : `Total fruit cost (${currency})`}</label>
-              <input type="number" min={0} step="0.01" value={totalCost} onChange={e => setTotalCost(e.target.value)}
-                placeholder={effectiveFruitRate > 0 && net > 0 ? String(Math.round(net * effectiveFruitRate * 100) / 100) : 'optional override'} className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'გადახდის სტატუსი' : 'Payment status'}</label>
-              <select value={paymentStatus || 'not_applicable'} onChange={e => setPaymentStatus(e.target.value as GrapeIntakeRecord['paymentStatus'])} className={inputCls}>
-                <option value="not_applicable">{ka ? 'არ გამოიყენება' : 'Not applicable'}</option>
-                <option value="unpaid">{ka ? 'გადასახდელი' : 'Unpaid'}</option>
-                <option value="partial">{ka ? 'ნაწილობრივ' : 'Partial'}</option>
-                <option value="paid">{ka ? 'გადახდილია' : 'Paid'}</option>
-              </select>
-            </div>
-          </div>
-          {automaticOwnGrapeRate > 0 && !costPerKgNum && !explicitTotalCost && (
-            <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-semibold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-300">
-              {ka
-                ? `საკუთარი ყურძნის ავტომატური ფასი: ${automaticOwnGrapeRate.toFixed(2)} ${currency}/კგ`
-                : `Automatic own-grape rate: ${automaticOwnGrapeRate.toFixed(2)} ${currency}/kg`}
-            </div>
-          )}
-          {computedFruitCost > 0 && (
-            <div className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 dark:bg-emerald-950/20 dark:text-emerald-300 dark:border-emerald-900">
-              {ka ? 'ხარჯების წიგნში ჩაიწერება:' : 'Will post to cost ledger:'} <strong>{computedFruitCost.toLocaleString(undefined, { maximumFractionDigits: 2 })} {currency}</strong>
-            </div>
-          )}
-          </>
-          )}
-
-          {/* Chemistry */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-            <div>
-              <label className={labelCls}>°Brix</label>
-              <input type="number" step="0.1" value={brix} onChange={e => setBrix(e.target.value)} placeholder="22.5" className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>pH</label>
-              <input type="number" step="0.01" value={ph} onChange={e => setPh(e.target.value)} placeholder="3.30" className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'მჟავ. (TA)' : 'TA g/L'}</label>
-              <input type="number" step="0.1" value={ta} onChange={e => setTa(e.target.value)} placeholder="6.0" className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'ტემპ. °C' : 'Temp °C'}</label>
-              <input type="number" step="0.1" value={temperatureC} onChange={e => setTemp(e.target.value)} placeholder="18" className={inputCls} />
-            </div>
-          </div>
-
-          {/* Classification */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div>
-              <label className={labelCls}>{ka ? 'ღვინის ტიპი' : 'Wine class'}</label>
-              <select value={wineClass} onChange={e => setWineClass(e.target.value as WineClass)} className={inputCls}>
-                {WINE_CLASSES.map(c => <option key={c.key} value={c.key}>{ka ? c.ka : c.en}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'მდგომარეობა' : 'Condition'}</label>
-              <select value={condition} onChange={e => setCondition(e.target.value as GrapeIntakeCondition)} className={inputCls}>
-                {CONDITIONS.map(c => <option key={c.key} value={c.key}>{ka ? c.ka : c.en}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>{ka ? 'კრეფა' : 'Picking'}</label>
-              <select value={pickingMethod} onChange={e => setPicking(e.target.value as 'hand' | 'machine')} className={inputCls}>
-                <option value="hand">{ka ? 'ხელით' : 'Hand'}</option>
-                <option value="machine">{ka ? 'მექანიკური' : 'Machine'}</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Destination + operator */}
-          <div className={`grid grid-cols-1 gap-2 ${canFillDestinationVessel ? 'sm:grid-cols-2' : ''}`}>
-            {canFillDestinationVessel && (
-            <div>
-              <label className={labelCls}>{ka ? 'დანიშნულების ჭურჭელი' : 'Destination vessel'}</label>
-              <select value={destinationVesselId} onChange={e => setDest(e.target.value)} className={inputCls}>
-                <option value="">{ka ? '— მოგვიანებით —' : '— assign later —'}</option>
-                {eligibleVessels.map(v => (
-                  <option key={v.id} value={v.id}>{v.id} — {round1(v.capacity - v.currentVolume)} L {ka ? 'თავისუფ.' : 'free'}</option>
-                ))}
-              </select>
-            </div>
-            )}
-            <div>
-              <label className={labelCls}>{ka ? 'ოპერატორი' : 'Operator'}</label>
-              <input type="text" value={operator} onChange={e => setOperator(e.target.value)} placeholder={currentUserName} className={inputCls} />
-            </div>
-          </div>
-
-          <div>
-            <label className={labelCls}>{ka ? 'შენიშვნები' : 'Notes'}</label>
-            <input type="text" value={notes} onChange={e => setNotes(e.target.value)}
-              placeholder={ka ? 'მაგ. ჯანმრთელი მტევნები, მსუბუქი ბოტრიტისი' : 'e.g. healthy clusters, light botrytis'} className={inputCls} />
-          </div>
-
-          {/* Live summary */}
-          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono border-t border-stone-100 pt-3 dark:border-stone-800">
-            <span className="text-stone-500">{ka ? 'ნეტო:' : 'Net:'} <strong className="text-stone-800 dark:text-amber-50">{net.toLocaleString()} kg</strong></span>
-            <span className="text-stone-500">{ka ? 'სავარაუდო ტკბილი:' : 'Est. must:'} <strong className={overfill ? 'text-rose-600' : 'text-[#4e0e15] dark:text-amber-300'}>{estVolumeL.toLocaleString()} L</strong></span>
-            {potentialAbv > 0 && <span className="text-stone-500">{ka ? 'პოტ. ალკ.:' : 'Pot. ABV:'} <strong>{potentialAbv}%</strong></span>}
-          </div>
-
-          {overfill && (
-            <div className="flex items-center gap-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              {ka
-                ? `სავარაუდო მოცულობა აღემატება ჭურჭლის თავისუფალ ტევადობას (${freeCapacity} L).`
-                : `Estimated volume exceeds the vessel’s free capacity (${freeCapacity} L).`}
-            </div>
-          )}
 
           <button onClick={handleSubmit} disabled={!canSubmit}
             className="sticky bottom-3 z-10 w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#4e0e15] hover:bg-[#34070a] disabled:opacity-50 disabled:cursor-not-allowed text-amber-50 rounded-xl text-xs font-bold uppercase tracking-wide cursor-pointer transition-colors shadow-lg shadow-[#4e0e15]/20 lg:static lg:shadow-none">
@@ -899,7 +1029,7 @@ export function GrapeReceivingTab({
         )}
 
         {/* ── Recent intakes ────────────────────────────── */}
-        <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
+        <div id="grape-intake-history" className="scroll-mt-24 bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
           <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-center justify-between dark:border-stone-800">
             <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
               <Grape className="w-4 h-4" /> {ka ? 'მიღების ჟურნალი' : 'Intake log'}
@@ -911,37 +1041,41 @@ export function GrapeReceivingTab({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold">
-                    {ka ? 'Correct grape intake' : 'Correct grape intake'}
+                    {ka ? 'ყურძნის მიღების შესწორება' : 'Correct grape intake'}
                     {reversalIntake ? ` · ${reversalIntake.variety}` : ''}
                   </p>
                   <p className="mt-0.5 text-[10px] font-medium text-amber-800/80 dark:text-amber-200/80">
-                    The original receipt remains in the audit trail; linked state is restored with compensating records.
+                    {ka
+                      ? 'თავდაპირველი ჩანაწერი აუდიტში რჩება; დაკავშირებული მდგომარეობა კომპენსირებადი ჩანაწერებით აღდგება.'
+                      : 'The original receipt remains in the audit trail; linked state is restored with compensating records.'}
                   </p>
                 </div>
                 {!pendingReversalIntent && (
                   <button type="button" onClick={() => { setReversalIntakeId(''); setReversalReason(''); }}
-                    aria-label="Close correction" className="text-amber-700 hover:text-amber-950 dark:text-amber-300">
+                    aria-label={ka ? 'შესწორების დახურვა' : 'Close correction'}
+                    className="text-amber-700 hover:text-amber-950 dark:text-amber-300">
                     <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
               <label className="mt-3 block text-[9px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
-                {ka ? 'Correction reason' : 'Correction reason'}
+                {ka ? 'შესწორების მიზეზი' : 'Correction reason'}
                 <textarea value={reversalReason} onChange={event => setReversalReason(event.target.value)}
                   disabled={Boolean(pendingReversalIntent)} maxLength={500} rows={2}
                   className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-medium normal-case tracking-normal text-stone-800 outline-none focus:border-amber-600 disabled:opacity-70 dark:border-amber-900 dark:bg-stone-950 dark:text-amber-50"
-                  placeholder="Why is this correction required?" />
+                  placeholder={ka ? 'რატომ არის შესწორება საჭირო?' : 'Why is this correction required?'} />
               </label>
               <button type="button" onClick={handleReverseIntake}
                 disabled={isReversing || (!pendingReversalIntent && !reversalReason.trim())}
                 className="mt-2 inline-flex items-center gap-2 rounded-lg bg-amber-900 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-amber-50 disabled:opacity-50 dark:bg-amber-700">
                 <RotateCcw className="h-3.5 w-3.5" />
-                {pendingReversalIntent ? 'Resubmit same correction' : 'Confirm correction'}
+                {pendingReversalIntent
+                  ? (ka ? 'იგივე შესწორების ხელახლა გაგზავნა' : 'Resubmit same correction')
+                  : (ka ? 'შესწორების დადასტურება' : 'Confirm correction')}
               </button>
             </div>
           )}
           {intakes.length === 0 ? (
-            <>
             <EmptyState
               icon={Grape}
               title={ka ? 'ყურძნის მიღება ჯერ არ არის' : 'No grape intakes yet'}
@@ -953,11 +1087,6 @@ export function GrapeReceivingTab({
                   ? 'არსებული მიღების ჩანაწერები აქ გამოჩნდება.'
                   : 'Existing intake records will appear here.')}
             />
-            <div className="hidden">
-              <Grape className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              {ka ? 'ჯერ არ არის მიღება აღრიცხული. შეავსეთ ფორმა მარცხნივ.' : 'No intakes yet. Fill in the form to receive your first fruit.'}
-            </div>
-            </>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-[11px]">
@@ -968,7 +1097,7 @@ export function GrapeReceivingTab({
                     <th className="p-2.5 text-right">{ka ? 'ნეტო' : 'Net'}</th>
                     <th className="p-2.5 text-right">{ka ? 'ტკბილი' : 'Must'}</th>
                     <th className="p-2.5">{ka ? 'პარტია' : 'Batch'}</th>
-                    {canReverseHarvestIntake && <th className="p-2.5 text-right">{ka ? 'Action' : 'Action'}</th>}
+                    {canReverseHarvestIntake && <th className="p-2.5 text-right">{ka ? 'მოქმედება' : 'Action'}</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50 dark:divide-stone-800">

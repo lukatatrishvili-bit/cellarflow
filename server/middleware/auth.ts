@@ -2,7 +2,7 @@ import express from 'express';
 import { verifySessionToken, sessionMatchesUserVersion, userAccountIsEnabled } from '../auth';
 import { approvalStatusForUser } from '../registrationApproval';
 import { can, type Capability } from '../permissions';
-import { getDB, getUserOrganizationStateMeta, refreshCoreMetadataFromPostgres, getPrismaClientForAdmin } from '../db';
+import { getDB, getUserOrganizationStateMeta, loadSessionPrincipal, getPrismaClientForAdmin, touchUserPresence } from '../db';
 import { cleanEnv, COOKIE_SECURE } from '../config';
 import { createSharedLoginLimiter } from '../loginLimiter';
 
@@ -56,19 +56,25 @@ export async function liveSessionRole(req: express.Request): Promise<{ username:
   if (envAdmin && String(session.username).trim().toLowerCase() === envAdmin) {
     return { username: session.username, role: 'Owner/Admin' };
   }
-  await refreshCoreMetadataFromPostgres();
-  const user = getDB().users.find(u => u.username === session.username);
+  // Read only this user's rows, not the whole platform directory. The checks
+  // below are unchanged and still resolved against PostgreSQL on every request;
+  // see `loadSessionPrincipal` for why the narrower read is safe. When
+  // PostgreSQL is unavailable the in-memory directory answers, as it did before.
+  const principal = await loadSessionPrincipal(session.username);
+  const db = getDB();
+  const user = principal?.user || db.users.find(u => u.username === session.username);
   if (!user) return null;
   if (!userAccountIsEnabled(user)) return null;
   // Approval can be withdrawn after a session was issued; every request re-checks.
   if (approvalStatusForUser(user) !== 'approved') return null;
   if (!sessionMatchesUserVersion(session, user)) return null;
-  const db = getDB();
   const activeOrganizationId = user.activeOrganizationId;
+  const memberships = principal?.memberships || db.memberships || [];
   const membership = activeOrganizationId
-    ? db.memberships?.find(m => m.userId === user.username && m.organizationId === activeOrganizationId)
+    ? memberships.find((m: any) => m.userId === user.username && m.organizationId === activeOrganizationId)
     : null;
   if (activeOrganizationId && !membership) return null;
+  await touchUserPresence(user.username);
   return { username: user.username, role: membership?.role || user.role };
 }
 
@@ -187,6 +193,16 @@ export function checkWineryScope(capability: Capability) {
     const organizationId = user.activeOrganizationId;
     if (!organizationId) {
       return res.status(400).json({ error: 'No active organization set for user' });
+    }
+    const organization = db.organizations.find(org => org.id === organizationId);
+    const organizationStatus = organization?.status || 'active';
+    if (organizationStatus !== 'active') {
+      return res.status(423).json({
+        code: organizationStatus === 'archived' ? 'organization_archived' : 'organization_suspended',
+        error: organizationStatus === 'archived'
+          ? 'This organization is archived. Ask the master administrator to restore it.'
+          : 'This organization is suspended. Ask the master administrator to restore access.',
+      });
     }
     const requestedOrganizationId = req.get('X-CellarFlow-Org-Id');
     if (organizationContextMismatch(requestedOrganizationId, organizationId)) {

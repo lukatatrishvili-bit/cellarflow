@@ -187,7 +187,9 @@ const PAGE_STYLE = `
   .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; border-top: 1px solid #e8dfd5; padding-top: 24px; }
   button { font: inherit; font-weight: 700; font-size: 13px; border-radius: 10px; padding: 12px 24px; border: none; cursor: pointer; }
   .approve { background: #4e0e15; color: #fff; }
+  .approve:disabled { background: #d6d3d1; color: #78716c; cursor: not-allowed; }
   .reject { background: #fff; color: #9a3412; border: 1px solid #fed7aa; }
+  .blocked { border: 1px solid #fed7aa; background: #fff7ed; color: #9a3412; border-radius: 12px; padding: 12px 14px; margin: -10px 0 22px; font-size: 13px; line-height: 1.5; }
   .note { font-size: 12px; color: #8c7f76; margin: 18px 0 0; line-height: 1.5; }
   a { color: #4e0e15; font-weight: 700; }
 `;
@@ -221,10 +223,12 @@ function detailRow(label: string, value: string | undefined): string {
  */
 export function renderApprovalReviewPage(opts: {
   details: RegistrationApprovalDetails;
+  blockingIssues?: string[];
   token: string;
   actionPath: string;
 }): string {
   const { details } = opts;
+  const blockingIssues = opts.blockingIssues || [];
   const rows = [
     detailRow('Full name', details.fullName),
     detailRow('Email', details.email),
@@ -244,9 +248,12 @@ export function renderApprovalReviewPage(opts: {
     <p class="lead">This person asked for access to VinOS. Nobody can sign in until you approve it.</p>
     <dl>
 ${rows}    </dl>
+    ${blockingIssues.length > 0
+      ? `<div class="blocked"><strong>Approval blocked.</strong> The applicant still needs to provide: ${escapeHtml(blockingIssues.join(', '))}.</div>`
+      : ''}
     <form method="POST" action="${escapeHtml(opts.actionPath)}" class="actions">
       <input type="hidden" name="token" value="${escapeHtml(opts.token)}" />
-      <button type="submit" name="decision" value="approve" class="approve">Approve access</button>
+      <button type="submit" name="decision" value="approve" class="approve"${blockingIssues.length > 0 ? ' disabled aria-disabled="true"' : ''}>Approve access</button>
       <button type="submit" name="decision" value="reject" class="reject">Reject</button>
     </form>
     <p class="note">Approving lets this account sign in once its email address is confirmed. Rejecting keeps the account permanently locked; you can still change either decision later from the master admin console.</p>`);

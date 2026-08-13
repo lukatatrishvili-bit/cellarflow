@@ -1,29 +1,141 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Download, Filter, Hash, Search, ShieldCheck, X } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CloudOff, Download, Filter, Hash, Search, ShieldCheck, X } from 'lucide-react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
-import { buildAuditHashChain } from '../lib/auditHash';
+import {
+  AUDIT_TRAIL_MAX_LIMIT,
+  buildAuditTrailPage,
+  type AuditModuleFilter,
+  type AuditTrailPage,
+  type AuditTrailQuery,
+} from '../lib/auditTrailPage';
+import { isWindowedAuditChain } from '../lib/auditHydration';
 import type { MaraniOSAuditLog } from '../lib/wineryState';
 
 interface AuditTrailTabProps {
   lang: Language;
+  /**
+   * The tenant's local mirror — the recent window the server hydrates, not the
+   * whole chain. Used only when the trail cannot be reached; online, the chain
+   * shown is the one verified server-side against stored state.
+   */
   auditLogs: MaraniOSAuditLog[];
 }
 
-type ModuleFilter = 'all' | MaraniOSAuditLog['module'];
 type TimeFilter = 'all' | '24h' | '7d' | '30d';
+/**
+ * Where the displayed page came from, and what may honestly be claimed about it.
+ *
+ * `local-window` is the case that needs care. A windowed chain cannot be
+ * verified locally at all — `buildAuditHashChain` asserts
+ * `chainSequence === index + 1`, so a window starting at #501 fails on its first
+ * record and marks every record tampered. Reporting that as tampering would
+ * accuse a winery of forging its own records because it went offline, so the
+ * verification column and banner report it as unavailable instead.
+ */
+type TrailSource = 'server' | 'local' | 'local-window';
+
+const PAGE_SIZE = 100;
+const SEARCH_DEBOUNCE_MS = 300;
+/** Matches the sync ceiling on a single collection; nothing can exceed it. */
+const MAX_EXPORT_PAGES = Math.ceil(20_000 / AUDIT_TRAIL_MAX_LIMIT);
 
 const csvCell = (value: unknown) => {
   const text = String(value ?? '');
   return `"${text.replace(/"/g, '""')}"`;
 };
 
+function cutoffFor(timeFilter: TimeFilter): string | null {
+  if (timeFilter === 'all') return null;
+  const days = timeFilter === '24h' ? 1 : timeFilter === '7d' ? 7 : 30;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
   const t = translations[lang];
-  const [searchTerm, setSearchTerm] = useState('');
-  const [moduleFilter, setModuleFilter] = useState<ModuleFilter>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [moduleFilter, setModuleFilter] = useState<AuditModuleFilter>('all');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
-  const verification = useMemo(() => buildAuditHashChain(auditLogs), [auditLogs]);
+  const [pageIndex, setPageIndex] = useState(0);
+
+  const [page, setPage] = useState<AuditTrailPage | null>(null);
+  const [source, setSource] = useState<TrailSource>('server');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Typing must not put one request per keystroke on a server that verifies a
+  // hash chain to answer.
+  //
+  // Every filter change resets to the first page in the same update as the
+  // filter itself. Doing it in a follow-up effect instead costs a wasted round
+  // trip: the old offset is still in state for one render, so a reader on page
+  // three who types a search fetches page three of the new result set and then
+  // immediately fetches page one.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPageIndex(0);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  const query = useMemo<AuditTrailQuery>(() => ({
+    module: moduleFilter,
+    since: cutoffFor(timeFilter),
+    search,
+    offset: pageIndex * PAGE_SIZE,
+    limit: PAGE_SIZE,
+  }), [moduleFilter, pageIndex, search, timeFilter]);
+
+  const auditLogsRef = useRef(auditLogs);
+  auditLogsRef.current = auditLogs;
+
+  const fetchPage = useCallback(async (
+    trailQuery: AuditTrailQuery,
+    signal?: AbortSignal,
+  ): Promise<{ page: AuditTrailPage; source: TrailSource }> => {
+    const params = new URLSearchParams();
+    if (trailQuery.module && trailQuery.module !== 'all') params.set('module', trailQuery.module);
+    if (trailQuery.since) params.set('since', trailQuery.since);
+    if (trailQuery.search) params.set('search', trailQuery.search);
+    params.set('offset', String(trailQuery.offset ?? 0));
+    params.set('limit', String(trailQuery.limit ?? PAGE_SIZE));
+
+    try {
+      const res = await fetch(`/api/audit-trail?${params.toString()}`, { signal });
+      if (!res.ok) throw new Error(`Audit trail request failed: ${res.status}`);
+      return { page: await res.json(), source: 'server' };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      // Offline, or the trail is briefly unavailable. The local mirror goes
+      // through the same paging module, so ordering and search are identical;
+      // only the authority behind the verification differs, and the banner
+      // below says so rather than letting it pass as server-verified.
+      const local = auditLogsRef.current;
+      return {
+        page: buildAuditTrailPage(local, trailQuery),
+        source: isWindowedAuditChain(local) ? 'local-window' : 'local',
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setIsLoading(true);
+
+    fetchPage(query, controller.signal)
+      .then(result => {
+        if (!active) return;
+        setPage(result.page);
+        setSource(result.source);
+      })
+      .catch(() => { /* superseded by a newer query */ })
+      .finally(() => { if (active) setIsLoading(false); });
+
+    return () => { active = false; controller.abort(); };
+  }, [fetchPage, query]);
 
   const moduleLabel = useCallback((module: MaraniOSAuditLog['module']) => {
     if (module === 'VAZI') return t.nav_vazi || 'Vazi';
@@ -38,81 +150,94 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
     return t.all || 'All';
   };
 
-  const moduleCounts = useMemo(() => auditLogs.reduce<Record<MaraniOSAuditLog['module'], number>>((acc, log) => {
-    acc[log.module] = (acc[log.module] || 0) + 1;
-    return acc;
-  }, { GVINO: 0, VAZI: 0, MARANIOS: 0 }), [auditLogs]);
+  const chain = page?.chain;
+  const entries = page?.entries || [];
+  const total = page?.total || 0;
+  const moduleCounts = page?.moduleCounts || { GVINO: 0, VAZI: 0, MARANIOS: 0 };
+  /**
+   * A window's local "invalid" count is an artefact of the missing head of the
+   * chain, not evidence about the records. Suppress it rather than raise a
+   * tamper alarm the data cannot support.
+   */
+  const canVerifyLocally = source !== 'local-window';
+  const invalidCount = canVerifyLocally ? (chain?.invalidCount || 0) : 0;
+  const hasActiveFilters = !!searchInput || moduleFilter !== 'all' || timeFilter !== 'all';
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const rangeStart = total === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(total, (pageIndex + 1) * PAGE_SIZE);
 
-  const filteredLogs = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    const now = Date.now();
-    const cutoff =
-      timeFilter === '24h' ? now - 24 * 60 * 60 * 1000 :
-      timeFilter === '7d' ? now - 7 * 24 * 60 * 60 * 1000 :
-      timeFilter === '30d' ? now - 30 * 24 * 60 * 60 * 1000 :
-      null;
+  const resetFilters = () => {
+    setSearchInput('');
+    setSearch('');
+    setModuleFilter('all');
+    setTimeFilter('all');
+    setPageIndex(0);
+  };
 
-    return auditLogs.filter(log => {
-      if (moduleFilter !== 'all' && log.module !== moduleFilter) return false;
-      if (cutoff != null) {
-        const timestamp = new Date(log.timestamp).getTime();
-        if (Number.isFinite(timestamp) && timestamp < cutoff) return false;
+  /**
+   * Export covers every record matching the filter, not the page on screen: a
+   * compliance export that silently stopped at 100 rows would be worse than no
+   * export at all. Pages are walked at the server's maximum window.
+   */
+  const exportCsv = async () => {
+    if (isExporting || total === 0) return;
+    setIsExporting(true);
+    try {
+      const collected: AuditTrailPage['entries'] = [];
+      let exportSource: TrailSource = 'server';
+
+      for (let pageNumber = 0; pageNumber < MAX_EXPORT_PAGES; pageNumber += 1) {
+        const result = await fetchPage({
+          ...query,
+          offset: pageNumber * AUDIT_TRAIL_MAX_LIMIT,
+          limit: AUDIT_TRAIL_MAX_LIMIT,
+        });
+        if (result.source !== 'server') exportSource = result.source;
+        collected.push(...result.page.entries);
+        if (collected.length >= result.page.total || result.page.entries.length === 0) break;
       }
-      if (!query) return true;
 
-      return [
+      // An export taken from a window carries no verification it can stand
+      // behind. Emitting "valid: no" would be a false accusation and "yes" a
+      // false assurance, so the columns say unavailable and name the source.
+      const verified = exportSource !== 'local-window';
+
+      const headers = ['Timestamp', 'Module', 'User', 'Action', 'Item', 'Before', 'After', 'Notes', 'Record #', 'Chain Hash', 'Previous Hash', 'Algorithm', 'Persisted', 'Valid', 'Verified by'];
+      const rows = collected.map(({ log, verification }) => [
         log.timestamp,
         moduleLabel(log.module),
-        log.module,
         log.user,
         log.actionType,
         log.changedItem,
-        log.oldValue,
-        log.newValue,
-        log.notes,
-        verification.byId[log.id]?.hash,
-        verification.byId[log.id]?.sequence,
-      ].some(value => String(value || '').toLowerCase().includes(query));
-    });
-  }, [auditLogs, moduleFilter, moduleLabel, searchTerm, timeFilter, verification.byId]);
+        log.oldValue || '',
+        log.newValue || '',
+        log.notes || '',
+        verified ? (verification?.sequence || '') : (log.chainSequence || ''),
+        verified ? (verification?.hash || '') : (log.chainHash || ''),
+        verified ? (verification?.previousHash || '') : (log.previousHash || ''),
+        verification?.algorithm || chain?.algorithm || '',
+        verification?.persisted ? 'yes' : 'computed',
+        verified ? (verification?.valid ? 'yes' : 'no') : 'unavailable',
+        exportSource === 'server'
+          ? 'server'
+          : exportSource === 'local'
+            ? 'local-cache'
+            : 'local-cache-window (unverified)',
+      ]);
 
-  const hasActiveFilters = !!searchTerm || moduleFilter !== 'all' || timeFilter !== 'all';
-  const verifiedCount = verification.verifiedCount;
-
-  const resetFilters = () => {
-    setSearchTerm('');
-    setModuleFilter('all');
-    setTimeFilter('all');
-  };
-
-  const exportCsv = () => {
-    const headers = ['Timestamp', 'Module', 'User', 'Action', 'Item', 'Before', 'After', 'Notes', 'Record #', 'Chain Hash', 'Previous Hash', 'Algorithm', 'Persisted', 'Valid'];
-    const rows = filteredLogs.map(log => [
-      log.timestamp,
-      moduleLabel(log.module),
-      log.user,
-      log.actionType,
-      log.changedItem,
-      log.oldValue || '',
-      log.newValue || '',
-      log.notes || '',
-      verification.byId[log.id]?.sequence || '',
-      verification.byId[log.id]?.hash || '',
-      verification.byId[log.id]?.previousHash || '',
-      verification.byId[log.id]?.algorithm || verification.algorithm,
-      verification.byId[log.id]?.persisted ? 'yes' : 'computed',
-      verification.byId[log.id]?.valid ? 'yes' : 'no',
-    ]);
-    const csv = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `audit-trail-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+      const csv = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit-trail-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
@@ -133,22 +258,24 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
           <button
             type="button"
             onClick={exportCsv}
-            disabled={filteredLogs.length === 0}
+            disabled={total === 0 || isExporting}
             className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#4e0e15] text-amber-50 disabled:opacity-50 disabled:cursor-not-allowed text-[10px] font-black uppercase tracking-widest hover:bg-[#34070a] transition-colors cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            {lang === 'ka' ? 'CSV ექსპორტი' : 'Export CSV'}
+            {isExporting
+              ? (lang === 'ka' ? 'მიმდინარეობს…' : 'Exporting…')
+              : (lang === 'ka' ? 'CSV ექსპორტი' : 'Export CSV')}
           </button>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           <div className="rounded-xl border border-stone-100 bg-[#FAF8F5]/70 p-3">
             <span className="block text-[9px] uppercase font-mono font-bold tracking-widest text-stone-400">{lang === 'ka' ? 'სულ' : 'Total logs'}</span>
-            <strong className="block mt-1 text-lg font-serif text-stone-900">{auditLogs.length.toLocaleString()}</strong>
+            <strong className="block mt-1 text-lg font-serif text-stone-900">{(chain?.totalEntries || 0).toLocaleString()}</strong>
           </div>
           <div className="rounded-xl border border-stone-100 bg-[#FAF8F5]/70 p-3">
             <span className="block text-[9px] uppercase font-mono font-bold tracking-widest text-stone-400">{lang === 'ka' ? 'ნაჩვენებია' : 'Showing'}</span>
-            <strong className="block mt-1 text-lg font-serif text-[#4e0e15]">{filteredLogs.length.toLocaleString()}</strong>
+            <strong className="block mt-1 text-lg font-serif text-[#4e0e15]">{total.toLocaleString()}</strong>
           </div>
           <div className="rounded-xl border border-stone-100 bg-[#FAF8F5]/70 p-3">
             <span className="block text-[9px] uppercase font-mono font-bold tracking-widest text-stone-400">{moduleLabel('GVINO')}</span>
@@ -161,55 +288,79 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
         </div>
 
         <div className={`rounded-2xl border p-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 ${
-          verification.invalidCount > 0
+          invalidCount > 0
             ? 'border-amber-200 bg-amber-50/70'
-            : 'border-emerald-100 bg-emerald-50/60'
+            : source !== 'server'
+              ? 'border-stone-200 bg-stone-50/70'
+              : 'border-emerald-100 bg-emerald-50/60'
         }`}>
           <div className="flex items-start gap-2">
             <div className={`w-8 h-8 rounded-xl bg-white border flex items-center justify-center shrink-0 ${
-              verification.invalidCount > 0 ? 'border-amber-100' : 'border-emerald-100'
+              invalidCount > 0 ? 'border-amber-100' : source !== 'server' ? 'border-stone-200' : 'border-emerald-100'
             }`}>
-              {verification.invalidCount > 0 ? (
+              {invalidCount > 0 ? (
                 <AlertTriangle className="w-4 h-4 text-amber-700" />
+              ) : source !== 'server' ? (
+                <CloudOff className="w-4 h-4 text-stone-500" />
               ) : (
                 <Hash className="w-4 h-4 text-emerald-700" />
               )}
             </div>
             <div>
               <span className={`block text-[9px] uppercase font-mono font-black tracking-widest ${
-                verification.invalidCount > 0 ? 'text-amber-800' : 'text-emerald-800'
+                invalidCount > 0 ? 'text-amber-800' : source !== 'server' ? 'text-stone-600' : 'text-emerald-800'
               }`}>
                 {lang === 'ka' ? 'შემოწმების ჯაჭვი' : 'Tamper-evident verification chain'}
               </span>
               <p className={`text-[11px] font-semibold mt-0.5 ${
-                verification.invalidCount > 0 ? 'text-amber-900/75' : 'text-emerald-900/70'
+                invalidCount > 0 ? 'text-amber-900/75' : source !== 'server' ? 'text-stone-500' : 'text-emerald-900/70'
               }`}>
-                {lang === 'ka'
-                  ? 'ჩანაწერები უკავშირდება წინა ჩანაწერის ჰეშს; ექსპორტში ინახება ჯაჭვის ჰეშებიც.'
-                  : verification.invalidCount > 0
-                    ? 'One or more persisted audit hashes no longer match the canonical chain.'
-                    : 'New audit records are server-stamped with a hash linked to the previous record; legacy records are verified by computed chain.'}
+                {source === 'local-window'
+                  ? (lang === 'ka'
+                    ? 'ოფლაინ რეჟიმი: ხელმისაწვდომია მხოლოდ ბოლო ჩანაწერები, ამიტომ ჯაჭვის შემოწმება შეუძლებელია. ჩანაწერები ნაჩვენებია შემოწმების გარეშე.'
+                    : 'Offline: only recent records are held on this device, so the chain cannot be verified here. Records are shown unverified.')
+                  : source === 'local'
+                    ? (lang === 'ka'
+                      ? 'ოფლაინ რეჟიმი: ჯაჭვი შემოწმებულია ლოკალური ასლით, არა სერვერზე შენახული ჩანაწერებით.'
+                      : 'Offline: verified against this device’s local copy, not the stored chain.')
+                    : invalidCount > 0
+                      ? (lang === 'ka'
+                        ? 'ერთი ან მეტი შენახული ჰეში აღარ ემთხვევა კანონიკურ ჯაჭვს.'
+                        : 'One or more persisted audit hashes no longer match the canonical chain.')
+                      : (lang === 'ka'
+                        ? 'ჩანაწერები უკავშირდება წინა ჩანაწერის ჰეშს; შემოწმება ხდება სერვერზე, სრულ ჯაჭვზე.'
+                        : 'Records are chained to the previous record’s hash and verified server-side across the full chain.')}
               </p>
             </div>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-[10px] font-mono">
             <span className="px-2.5 py-1 rounded-lg bg-white border border-emerald-100 text-emerald-900">
-              {verification.algorithm}
+              {chain?.algorithm || 'SHA-256'}
             </span>
+            {canVerifyLocally ? (
+              <span className="px-2.5 py-1 rounded-lg bg-white border border-emerald-100 text-emerald-900">
+                {(chain?.verifiedCount || 0).toLocaleString()} / {(chain?.totalEntries || 0).toLocaleString()} {lang === 'ka' ? 'ჩანაწერი' : 'records'}
+              </span>
+            ) : (
+              <span className="px-2.5 py-1 rounded-lg bg-white border border-stone-200 text-stone-500">
+                {lang === 'ka' ? 'შემოწმება მიუწვდომელია' : 'Verification unavailable'}
+              </span>
+            )}
             <span className="px-2.5 py-1 rounded-lg bg-white border border-emerald-100 text-emerald-900">
-              {verifiedCount.toLocaleString()} / {auditLogs.length.toLocaleString()} {lang === 'ka' ? 'ჩანაწერი' : 'records'}
+              {(chain?.signedCount || 0).toLocaleString()} server-signed
             </span>
-            <span className="px-2.5 py-1 rounded-lg bg-white border border-emerald-100 text-emerald-900">
-              {verification.signedCount.toLocaleString()} server-signed
-            </span>
-            {verification.invalidCount > 0 ? (
+            {invalidCount > 0 ? (
               <span className="px-2.5 py-1 rounded-lg bg-white border border-amber-100 text-amber-900">
-                {verification.invalidCount.toLocaleString()} invalid
+                {invalidCount.toLocaleString()} invalid
               </span>
             ) : null}
-            <code className="px-2.5 py-1 rounded-lg bg-white border border-emerald-100 text-[#4e0e15] font-bold" title={verification.rootHash || 'No root hash yet'}>
-              {verification.rootHash ? `${verification.rootHash.slice(0, 18)}…` : '—'}
-            </code>
+            {/* A window's computed root is derived from a chain missing its
+                head, so it is not this organization's root hash at all. */}
+            {canVerifyLocally ? (
+              <code className="px-2.5 py-1 rounded-lg bg-white border border-emerald-100 text-[#4e0e15] font-bold" title={chain?.rootHash || 'No root hash yet'}>
+                {chain?.rootHash ? `${chain.rootHash.slice(0, 18)}…` : '—'}
+              </code>
+            ) : null}
           </div>
         </div>
 
@@ -218,8 +369,8 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
             <label className="relative block">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
               <input
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
                 placeholder={lang === 'ka' ? 'ძებნა მომხმარებლით, მოქმედებით, ღვინის კოდით...' : 'Search user, action, wine code, note...'}
                 className="w-full pl-8 pr-3 py-2 rounded-xl bg-white border border-stone-200 text-xs font-semibold text-stone-700 outline-none focus:border-[#4e0e15]"
               />
@@ -229,7 +380,7 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
               <Filter className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
               <select
                 value={moduleFilter}
-                onChange={e => setModuleFilter(e.target.value as ModuleFilter)}
+                onChange={e => { setModuleFilter(e.target.value as AuditModuleFilter); setPageIndex(0); }}
                 className="w-full appearance-none pl-8 pr-3 py-2 rounded-xl bg-white border border-stone-200 text-xs font-bold text-stone-700 outline-none focus:border-[#4e0e15]"
               >
                 <option value="all">{t.all || 'All'} modules</option>
@@ -241,7 +392,7 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
 
             <select
               value={timeFilter}
-              onChange={e => setTimeFilter(e.target.value as TimeFilter)}
+              onChange={e => { setTimeFilter(e.target.value as TimeFilter); setPageIndex(0); }}
               className="w-full px-3 py-2 rounded-xl bg-white border border-stone-200 text-xs font-bold text-stone-700 outline-none focus:border-[#4e0e15]"
             >
               {(['all', '24h', '7d', '30d'] as TimeFilter[]).map(value => (
@@ -277,15 +428,17 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-50 font-mono text-[11px] font-medium text-stone-800">
-              {filteredLogs.length === 0 ? (
+              {entries.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="p-8 text-center text-stone-400 font-sans">
-                    {auditLogs.length === 0
-                      ? (lang === 'ka' ? 'აუდიტის ჩანაწერები ჯერ არ არის.' : 'No audit entries yet.')
-                      : (lang === 'ka' ? 'ფილტრებით ჩანაწერები ვერ მოიძებნა.' : 'No audit entries match the active filters.')}
+                    {isLoading && !page
+                      ? (lang === 'ka' ? 'იტვირთება…' : 'Loading audit trail…')
+                      : (chain?.totalEntries || 0) === 0
+                        ? (lang === 'ka' ? 'აუდიტის ჩანაწერები ჯერ არ არის.' : 'No audit entries yet.')
+                        : (lang === 'ka' ? 'ფილტრებით ჩანაწერები ვერ მოიძებნა.' : 'No audit entries match the active filters.')}
                   </td>
                 </tr>
-              ) : filteredLogs.map(log => (
+              ) : entries.map(({ log, verification }) => (
                 <tr key={log.id} className="hover:bg-stone-50/50 duration-75 align-top">
                   <td className="p-3 text-slate-400 whitespace-nowrap">{new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString()}</td>
                   <td className="p-3 font-serif font-bold uppercase">
@@ -297,26 +450,36 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
                   <td className="p-3 text-[10px] text-stone-500 max-w-[180px] whitespace-pre-wrap">{log.oldValue || '—'}</td>
                   <td className="p-3 text-[10px] text-stone-800 max-w-[220px] whitespace-pre-wrap">{log.newValue || '—'}</td>
                   <td className={`p-3 text-[10px] whitespace-nowrap ${
-                    verification.byId[log.id]?.valid === false ? 'text-amber-800' : 'text-emerald-800'
+                    canVerifyLocally && verification?.valid === false ? 'text-amber-800' : 'text-emerald-800'
                   }`}>
-                    {verification.byId[log.id] ? (
+                    {!canVerifyLocally ? (
+                      <span
+                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border border-stone-200 bg-stone-50 text-stone-500"
+                        title={lang === 'ka'
+                          ? 'ჯაჭვის შემოწმება საჭიროებს სრულ ისტორიას, რომელიც ამ მოწყობილობაზე არ ინახება.'
+                          : 'Verifying this record requires the full chain, which is not held on this device.'}
+                      >
+                        <CloudOff className="w-3 h-3" />
+                        <span>{lang === 'ka' ? 'შეუმოწმებელი' : 'unverified'}</span>
+                      </span>
+                    ) : verification ? (
                       <div
                         className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border ${
-                          verification.byId[log.id].valid
+                          verification.valid
                             ? 'bg-emerald-50 border-emerald-100'
                             : 'bg-amber-50 border-amber-100'
                         }`}
-                        title={`Record #${verification.byId[log.id].sequence}\nHash: ${verification.byId[log.id].hash}\nPrevious: ${verification.byId[log.id].previousHash}${verification.byId[log.id].persisted ? '\nPersisted: yes' : '\nPersisted: computed'}${verification.byId[log.id].reason ? `\n${verification.byId[log.id].reason}` : ''}`}
+                        title={`Record #${verification.sequence}\nHash: ${verification.hash}\nPrevious: ${verification.previousHash}${verification.persisted ? '\nPersisted: yes' : '\nPersisted: computed'}${verification.reason ? `\n${verification.reason}` : ''}`}
                       >
-                        {verification.byId[log.id].valid ? (
+                        {verification.valid ? (
                           <CheckCircle2 className="w-3 h-3" />
                         ) : (
                           <AlertTriangle className="w-3 h-3" />
                         )}
-                        <span>#{verification.byId[log.id].sequence}</span>
-                        <code className="font-bold">{verification.byId[log.id].hash.slice(0, 10)}</code>
-                        {!verification.byId[log.id].persisted ? (
-                          <span className="text-[9px] opacity-70">{lang === 'ka' ? 'computed' : 'computed'}</span>
+                        <span>#{verification.sequence}</span>
+                        <code className="font-bold">{verification.hash.slice(0, 10)}</code>
+                        {!verification.persisted ? (
+                          <span className="text-[9px] opacity-70">computed</span>
                         ) : null}
                       </div>
                     ) : (
@@ -328,6 +491,37 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-stone-400">
+            {total === 0
+              ? '—'
+              : `${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} / ${total.toLocaleString()}`}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPageIndex(index => Math.max(0, index - 1))}
+              disabled={pageIndex === 0 || isLoading}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-stone-200 bg-white disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-black uppercase tracking-widest text-stone-500 hover:text-stone-900 cursor-pointer"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              {lang === 'ka' ? 'უკან' : 'Previous'}
+            </button>
+            <span className="text-[10px] font-mono text-stone-500">
+              {(pageIndex + 1).toLocaleString()} / {pageCount.toLocaleString()}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPageIndex(index => index + 1)}
+              disabled={pageIndex + 1 >= pageCount || isLoading}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-stone-200 bg-white disabled:opacity-40 disabled:cursor-not-allowed text-[10px] font-black uppercase tracking-widest text-stone-500 hover:text-stone-900 cursor-pointer"
+            >
+              {lang === 'ka' ? 'შემდეგი' : 'Next'}
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
     </main>

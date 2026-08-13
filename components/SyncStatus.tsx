@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import { IndexedDBQueue, SyncQueueManager } from '../lib/syncQueue';
+import { startPresenceHeartbeat } from '../lib/presenceHeartbeat';
 
 /**
  * Header connection chip with offline data-safety visibility: shows ONLINE/
@@ -12,6 +13,8 @@ export default function SyncStatus({ lang }: { lang: Language }) {
   const ka = lang === 'ka';
   const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [pending, setPending] = useState(0);
+
+  useEffect(() => startPresenceHeartbeat(), []);
 
   useEffect(() => {
     let active = true;

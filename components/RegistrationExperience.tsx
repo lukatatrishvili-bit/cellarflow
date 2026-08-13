@@ -1,9 +1,8 @@
-import React, { lazy, Suspense, useMemo, useRef, useState, type FormEvent } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
   Building2,
-  Check,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -13,12 +12,14 @@ import {
   Mail,
   MapPin,
   PlayCircle,
+  Phone,
   ShieldCheck,
   Sprout,
   UserRound,
   Wine,
 } from 'lucide-react';
 import type { CompanyProfile, UserProfile } from '../lib/wineryState';
+import { localizeServerError } from '../lib/serverErrorMessages';
 import type { PickedLocation } from './LocationPicker';
 import { useFocusTrap } from './useFocusTrap';
 
@@ -27,8 +28,10 @@ const LocationPicker = lazy(() => import('./LocationPicker'));
 type RegistrationLanguage = 'en' | 'ka';
 
 export interface RegistrationSubmission {
-  fullName: string;
+  firstName: string;
+  lastName: string;
   email: string;
+  phone: string;
   companyName: string;
   passcode: string;
 }
@@ -47,15 +50,20 @@ const COPY = {
   en: {
     eyebrow: 'Your workspace starts here',
     title: 'Run your estate with less friction.',
-    description: 'Create the secure account now. We will personalize vineyard, cellar, and location settings after you verify your email.',
-    google: 'Continue with Google',
+    description: 'Submit accurate contact details for a secure workspace access request.',
+    google: 'Continue with Google and complete details',
     divider: 'or create with email',
-    fullName: 'Full name',
-    fullNamePlaceholder: 'Your name',
+    firstName: 'First name',
+    firstNamePlaceholder: 'Your first name',
+    lastName: 'Last name',
+    lastNamePlaceholder: 'Your last name',
     email: 'Work email',
     emailPlaceholder: 'you@winery.com',
     company: 'Estate or company',
     companyPlaceholder: 'Kvareli Estate',
+    phone: 'Reachable phone number',
+    phonePlaceholder: '+995 555 12 34 56',
+    phoneHint: 'Include the country code. The administrator may use this number during review.',
     passcode: 'Password',
     passcodePlaceholder: 'At least 8 characters',
     passcodeHint: 'Use 8 or more characters. Passphrases work well.',
@@ -65,22 +73,28 @@ const COPY = {
     signIn: 'Sign in',
     privacy: 'Your operational data stays private to your workspace.',
     fast: '',
-    later: 'Finish details later',
+    reviewTitle: 'Every registration is reviewed manually',
+    reviewDescription: 'After you submit, verify your email. The VinOS administrator will review your identity and organization details before sign-in is enabled. We will email you after the decision.',
     showPassword: 'Show password',
     hidePassword: 'Hide password',
   },
   ka: {
     eyebrow: 'თქვენი სამუშაო სივრცე აქ იწყება',
     title: 'მართეთ მეურნეობა ნაკლები სირთულით.',
-    description: 'ახლა შექმენით უსაფრთხო ანგარიში. ელფოსტის დადასტურების შემდეგ ვენახის, მარნისა და მდებარეობის პარამეტრებს მოარგებთ.',
-    google: 'Google-ით გაგრძელება',
+    description: 'უსაფრთხო სამუშაო სივრცეზე წვდომის მოთხოვნისთვის შეავსეთ ზუსტი საკონტაქტო მონაცემები.',
+    google: 'Google-ით გაგრძელება და დეტალების შევსება',
     divider: 'ან შექმენით ელფოსტით',
-    fullName: 'სრული სახელი',
-    fullNamePlaceholder: 'თქვენი სახელი',
+    firstName: 'სახელი',
+    firstNamePlaceholder: 'თქვენი სახელი',
+    lastName: 'გვარი',
+    lastNamePlaceholder: 'თქვენი გვარი',
     email: 'სამუშაო ელფოსტა',
     emailPlaceholder: 'you@winery.com',
     company: 'მამული ან კომპანია',
     companyPlaceholder: 'ყვარლის მამული',
+    phone: 'მოქმედი ტელეფონის ნომერი',
+    phonePlaceholder: '+995 555 12 34 56',
+    phoneHint: 'მიუთითეთ ქვეყნის კოდი. ადმინისტრატორმა შეიძლება ნომერი განხილვის დროს გამოიყენოს.',
     passcode: 'პაროლი',
     passcodePlaceholder: 'მინიმუმ 8 სიმბოლო',
     passcodeHint: 'გამოიყენეთ 8 ან მეტი სიმბოლო. გრძელი ფრაზაც გამოდგება.',
@@ -90,7 +104,8 @@ const COPY = {
     signIn: 'შესვლა',
     privacy: 'თქვენი საოპერაციო მონაცემები მხოლოდ თქვენს სივრცეში რჩება.',
     fast: '',
-    later: 'დეტალები მოგვიანებით',
+    reviewTitle: 'ყველა რეგისტრაციას ადმინისტრატორი ამოწმებს',
+    reviewDescription: 'გაგზავნის შემდეგ დაადასტურეთ ელფოსტა. VinOS-ის ადმინისტრატორი შეამოწმებს თქვენს პირად და ორგანიზაციის მონაცემებს, შემდეგ კი ჩართავს შესვლას. გადაწყვეტილებას ელფოსტით მიიღებთ.',
     showPassword: 'პაროლის ჩვენება',
     hidePassword: 'პაროლის დამალვა',
   },
@@ -181,8 +196,10 @@ export function RegistrationPanel({
     if (submitting) return;
     const form = new FormData(event.currentTarget);
     await onSubmit({
-      fullName: String(form.get('fullName') || '').trim(),
+      firstName: String(form.get('firstName') || '').trim(),
+      lastName: String(form.get('lastName') || '').trim(),
       email: String(form.get('email') || '').trim(),
+      phone: String(form.get('phone') || '').trim(),
       companyName: String(form.get('companyName') || '').trim(),
       passcode: String(form.get('passcode') || ''),
     });
@@ -203,8 +220,12 @@ export function RegistrationPanel({
         <p className="mt-3 max-w-md text-sm leading-6 text-stone-500 dark:text-stone-400">
           {copy.description}
         </p>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-stone-600 dark:text-stone-300">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-2.5 py-1 dark:bg-stone-800"><Check className="h-3.5 w-3.5 text-emerald-700" />{copy.later}</span>
+        <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden="true" />
+          <div>
+            <div className="text-sm font-black">{copy.reviewTitle}</div>
+            <p className="mt-1 text-xs leading-5 text-amber-900/80 dark:text-amber-100/75">{copy.reviewDescription}</p>
+          </div>
         </div>
       </div>
 
@@ -224,9 +245,14 @@ export function RegistrationPanel({
       </div>
 
       <form className="space-y-4" onSubmit={handleSubmit} aria-busy={submitting}>
-        <FieldShell id="registration-full-name" label={copy.fullName} icon={<UserRound className="h-4 w-4" />}>
-          <input id="registration-full-name" name="fullName" type="text" autoComplete="name" placeholder={copy.fullNamePlaceholder} className={inputClassName} style={{ paddingLeft: '2.75rem' }} required />
-        </FieldShell>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FieldShell id="registration-first-name" label={copy.firstName} icon={<UserRound className="h-4 w-4" />}>
+            <input id="registration-first-name" name="firstName" type="text" autoComplete="given-name" placeholder={copy.firstNamePlaceholder} className={inputClassName} style={{ paddingLeft: '2.75rem' }} maxLength={80} required />
+          </FieldShell>
+          <FieldShell id="registration-last-name" label={copy.lastName} icon={<UserRound className="h-4 w-4" />}>
+            <input id="registration-last-name" name="lastName" type="text" autoComplete="family-name" placeholder={copy.lastNamePlaceholder} className={inputClassName} style={{ paddingLeft: '2.75rem' }} maxLength={120} required />
+          </FieldShell>
+        </div>
 
         <FieldShell id="registration-email" label={copy.email} icon={<Mail className="h-4 w-4" />}>
           <input id="registration-email" name="email" type="email" autoComplete="email" inputMode="email" placeholder={copy.emailPlaceholder} className={inputClassName} style={{ paddingLeft: '2.75rem' }} required />
@@ -235,6 +261,11 @@ export function RegistrationPanel({
         <FieldShell id="registration-company" label={copy.company} icon={<Building2 className="h-4 w-4" />}>
           <input id="registration-company" name="companyName" type="text" autoComplete="organization" placeholder={copy.companyPlaceholder} className={inputClassName} style={{ paddingLeft: '2.75rem' }} required />
         </FieldShell>
+
+        <FieldShell id="registration-phone" label={copy.phone} icon={<Phone className="h-4 w-4" />}>
+          <input id="registration-phone" name="phone" type="tel" autoComplete="tel" inputMode="tel" placeholder={copy.phonePlaceholder} className={inputClassName} style={{ paddingLeft: '2.75rem' }} aria-describedby="registration-phone-hint" required />
+        </FieldShell>
+        <p id="registration-phone-hint" className="-mt-2 text-xs leading-5 text-stone-500 dark:text-stone-400">{copy.phoneHint}</p>
 
         <FieldShell id="registration-passcode" label={copy.passcode} icon={<LockKeyhole className="h-4 w-4" />}>
           <input
@@ -289,6 +320,213 @@ export function RegistrationPanel({
       <p className="mt-5 flex items-center justify-center gap-2 text-center text-xs leading-5 text-stone-400">
         <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> {copy.privacy}
       </p>
+    </div>
+  );
+}
+
+interface GoogleRegistrationProfile {
+  email: string;
+  firstName: string;
+  lastName: string;
+}
+
+interface GoogleRegistrationPanelProps {
+  lang: RegistrationLanguage;
+  onLanguageChange: (lang: RegistrationLanguage) => void;
+}
+
+const GOOGLE_REGISTRATION_COPY = {
+  en: {
+    eyebrow: 'Google email confirmed',
+    title: 'Complete your access request',
+    description: 'Google confirmed your email. VinOS still requires accurate identity and contact details before the administrator can review your request.',
+    firstName: 'First name',
+    lastName: 'Last name',
+    email: 'Google email',
+    company: 'Estate or company',
+    phone: 'Reachable phone number',
+    phoneHint: 'Include the country code. Use a number where the administrator can reach you during review.',
+    reviewTitle: 'Submitting does not grant access immediately',
+    reviewDescription: 'The VinOS administrator will review these details. You cannot sign in until the request is approved; the decision will be sent to your Google email.',
+    submit: 'Send request for review',
+    submitting: 'Sending request…',
+    cancel: 'Use another sign-in method',
+    loading: 'Loading verified Google profile…',
+    expired: 'This Google registration session expired. Start with Google again to continue securely.',
+    restart: 'Continue with Google again',
+    companyPlaceholder: 'Kvareli Estate',
+    phonePlaceholder: '+995 555 12 34 56',
+  },
+  ka: {
+    eyebrow: 'Google-ის ელფოსტა დადასტურებულია',
+    title: 'დაასრულეთ წვდომის მოთხოვნა',
+    description: 'Google-მა თქვენი ელფოსტა დაადასტურა. ადმინისტრატორის განხილვამდე VinOS-ს მაინც სჭირდება ზუსტი პირადი და საკონტაქტო მონაცემები.',
+    firstName: 'სახელი',
+    lastName: 'გვარი',
+    email: 'Google-ის ელფოსტა',
+    company: 'მამული ან კომპანია',
+    phone: 'მოქმედი ტელეფონის ნომერი',
+    phoneHint: 'მიუთითეთ ქვეყნის კოდი და ნომერი, რომელზეც ადმინისტრატორი განხილვის დროს დაგიკავშირდებათ.',
+    reviewTitle: 'წვდომა გააქტიურდება მოთხოვნის დადასტურების შემდეგ.',
+    reviewDescription: 'მოთხოვნის დადასტურების შესახებ წერილს მიიღებთ თქვენ მიერ მითითებულ ელ-ფოსტაზე.',
+    submit: 'მოთხოვნის გაგზავნა განსახილველად',
+    submitting: 'მოთხოვნა იგზავნება…',
+    cancel: 'შესვლის სხვა მეთოდის გამოყენება',
+    loading: 'Google-ის დადასტურებული პროფილი იტვირთება…',
+    expired: 'Google-ის რეგისტრაციის სესიას ვადა გაუვიდა. უსაფრთხოდ გასაგრძელებლად თავიდან გამოიყენეთ Google.',
+    restart: 'Google-ით თავიდან გაგრძელება',
+    companyPlaceholder: 'ყვარლის მამული',
+    phonePlaceholder: '+995 555 12 34 56',
+  },
+} as const;
+
+export function GoogleRegistrationPanel({
+  lang,
+  onLanguageChange,
+}: GoogleRegistrationPanelProps) {
+  const copy = GOOGLE_REGISTRATION_COPY[lang];
+  const [profile, setProfile] = useState<GoogleRegistrationProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await fetch('/api/auth/google/registration', { headers: { Accept: 'application/json' } });
+        const body = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!response.ok) {
+          setError(localizeServerError(body.code, body.error || copy.expired, lang));
+          return;
+        }
+        setProfile({
+          email: String(body.email || ''),
+          firstName: String(body.firstName || ''),
+          lastName: String(body.lastName || ''),
+        });
+      } catch {
+        if (!cancelled) setError(copy.expired);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [copy.expired, lang]);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!profile || submitting) return;
+    const form = new FormData(event.currentTarget);
+    setSubmitting(true);
+    setError('');
+    try {
+      const response = await fetch('/api/auth/google/registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: String(form.get('firstName') || '').trim(),
+          lastName: String(form.get('lastName') || '').trim(),
+          companyName: String(form.get('companyName') || '').trim(),
+          phone: String(form.get('phone') || '').trim(),
+          language: lang,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(localizeServerError(body.code, body.error || 'Registration request could not be sent.', lang));
+        return;
+      }
+      window.location.replace(body.authenticated
+        ? '/dashboard?complete_registration=1'
+        : '/login?approval=pending');
+    } catch {
+      setError(lang === 'ka' ? 'რეგისტრაციის სერვერთან დაკავშირება ვერ მოხერხდა.' : 'Could not reach the registration service.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-56 items-center justify-center gap-2 text-sm font-semibold text-stone-500">
+        <Loader2 className="h-4 w-4 animate-spin text-[#68121d]" /> {copy.loading}
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="py-8 text-center">
+        <ShieldCheck className="mx-auto h-9 w-9 text-amber-600" />
+        <h1 className="mt-4 font-serif text-2xl font-black text-stone-950 dark:text-stone-50">{copy.title}</h1>
+        <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-stone-500">{error || copy.expired}</p>
+        <a href="/api/auth/google/login" className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#68121d] px-5 text-sm font-black text-white">
+          <GoogleMark /> {copy.restart}
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-lg">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200">
+          <CheckCircle2 className="h-3.5 w-3.5" /> {copy.eyebrow}
+        </div>
+        <LanguageSwitcher lang={lang} onLanguageChange={onLanguageChange} />
+      </div>
+      <h1 className="font-serif text-3xl font-black tracking-tight text-stone-950 dark:text-stone-50">{copy.title}</h1>
+      <p className="mt-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{copy.description}</p>
+
+      <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+        <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-300" />
+        <div>
+          <div className="text-sm font-black">{copy.reviewTitle}</div>
+          <p className="mt-1 text-xs leading-5 text-amber-900/80 dark:text-amber-100/75">{copy.reviewDescription}</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4" aria-busy={submitting}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FieldShell id="google-registration-first-name" label={copy.firstName} icon={<UserRound className="h-4 w-4" />}>
+            <input id="google-registration-first-name" name="firstName" type="text" autoComplete="given-name" defaultValue={profile.firstName} className={inputClassName} style={{ paddingLeft: '2.75rem' }} maxLength={80} required />
+          </FieldShell>
+          <FieldShell id="google-registration-last-name" label={copy.lastName} icon={<UserRound className="h-4 w-4" />}>
+            <input id="google-registration-last-name" name="lastName" type="text" autoComplete="family-name" defaultValue={profile.lastName} className={inputClassName} style={{ paddingLeft: '2.75rem' }} maxLength={120} required />
+          </FieldShell>
+        </div>
+        <FieldShell id="google-registration-email" label={copy.email} icon={<Mail className="h-4 w-4" />}>
+          <input id="google-registration-email" type="email" value={profile.email} readOnly aria-readonly="true" className={`${inputClassName} bg-stone-100 text-stone-600`} style={{ paddingLeft: '2.75rem' }} />
+        </FieldShell>
+        <FieldShell id="google-registration-company" label={copy.company} icon={<Building2 className="h-4 w-4" />}>
+          <input id="google-registration-company" name="companyName" type="text" autoComplete="organization" placeholder={copy.companyPlaceholder} className={inputClassName} style={{ paddingLeft: '2.75rem' }} required />
+        </FieldShell>
+        <FieldShell id="google-registration-phone" label={copy.phone} icon={<Phone className="h-4 w-4" />}>
+          <input id="google-registration-phone" name="phone" type="tel" autoComplete="tel" inputMode="tel" placeholder={copy.phonePlaceholder} aria-describedby="google-registration-phone-hint" className={inputClassName} style={{ paddingLeft: '2.75rem' }} required />
+        </FieldShell>
+        <p id="google-registration-phone-hint" className="-mt-2 text-xs leading-5 text-stone-500 dark:text-stone-400">{copy.phoneHint}</p>
+
+        {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm font-semibold text-rose-800">{error}</div>}
+
+        <button type="submit" disabled={submitting} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#68121d] px-5 text-sm font-black text-white shadow-lg transition hover:bg-[#7d1724] disabled:cursor-wait disabled:opacity-65">
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+          {submitting ? copy.submitting : copy.submit}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void fetch('/api/auth/google/registration/cancel', { method: 'POST' })
+              .finally(() => window.location.replace('/login'));
+          }}
+          disabled={submitting}
+          className="h-10 w-full text-sm font-bold text-stone-500 transition hover:text-[#68121d] disabled:opacity-50"
+        >
+          {copy.cancel}
+        </button>
+      </form>
     </div>
   );
 }
@@ -377,6 +615,17 @@ export function SignInPanel({
 }: SignInPanelProps) {
   const copy = SIGN_IN_COPY[lang];
   const [showPasscode, setShowPasscode] = useState(false);
+  const completingGoogleRegistration = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('google_registration') === '1';
+
+  if (completingGoogleRegistration) {
+    return (
+      <GoogleRegistrationPanel
+        lang={lang}
+        onLanguageChange={onLanguageChange}
+      />
+    );
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

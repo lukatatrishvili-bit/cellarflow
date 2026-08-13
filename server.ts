@@ -19,6 +19,8 @@ import billingRouter from './server/routes/billing';
 import terroirPulseRouter from './server/routes/terroirPulse';
 import notificationsRouter from './server/routes/notifications';
 import aiOperationsAdminRouter from './server/routes/aiOperationsAdmin';
+import auditTrailRouter from './server/routes/auditTrail';
+import workflowApprovalsRouter from './server/routes/workflowApprovals';
 import { securityHeaders } from './server/middleware/securityHeaders';
 import { originCheck } from './server/middleware/originCheck';
 import { requestCeiling } from './server/middleware/requestCeiling';
@@ -54,6 +56,11 @@ const stateCeiling = requestCeiling({ name: 'state', max: 120, windowMs: 60_000 
 app.use('/api/sync', stateCeiling);
 app.use('/api/db', stateCeiling);
 app.use('/api/commands', requestCeiling({ name: 'commands', max: 120, windowMs: 60_000 }));
+// The audit trail reads full organization state and verifies its hash chain, so
+// it belongs among the guarded paths. It gets its own bucket rather than the
+// state one because a CSV export legitimately walks every page in a burst, and
+// that must not consume a worker's sync allowance.
+app.use('/api/audit-trail', requestCeiling({ name: 'audit-trail', max: 240, windowMs: 60_000 }));
 // Whole-state sync is the largest body this service accepts. Mount its parser
 // (and the matching error handler) before the general one so an over-limit
 // payload answers with a structured, actionable 413 instead of the parser's
@@ -86,6 +93,8 @@ app.use('/api/ai', aiRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/terroir-pulse', terroirPulseRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/audit-trail', auditTrailRouter);
+app.use('/api/workflow-approvals', workflowApprovalsRouter);
 
 // Dev seeder endpoint
 app.get('/api/dev/seed-testuser1', seedTestUserHandler);

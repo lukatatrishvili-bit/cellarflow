@@ -83,6 +83,7 @@ import {
   validateInvoiceAnalysisRequest,
   type InvoiceAnalysisRequest,
 } from '../invoiceAnalyzer';
+import { organizationHasFeature } from '../billing/service';
 
 const router = express.Router();
 
@@ -1080,6 +1081,13 @@ router.post('/invoices/analyze', async (req, res) => {
   if (!auth) return;
   const workspace = await loadWorkspace(auth);
   if (!workspace) return res.status(404).json({ error: 'No active organization.' });
+  if (!await organizationHasFeature(workspace.orgId, 'data_import_export')) {
+    return res.status(403).json({
+      code: 'subscription_feature_required',
+      feature: 'data_import_export',
+      error: 'Invoice import is not included in the current subscription plan.',
+    });
+  }
   if (
     !canAccess(workspace.role, 'inventory', 'create')
     && !canAccess(workspace.role, 'inventory', 'update')

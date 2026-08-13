@@ -676,7 +676,7 @@ export function LotLineageGraphTab({
         <div className={`${isFullscreen ? 'fixed inset-2 z-50 flex flex-col rounded-xl sm:inset-4' : 'rounded-2xl'} bg-white border border-[#e8dfd5] shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800`}>
           <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-center justify-between dark:border-stone-800">
             <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
-              <Sparkles className="w-4 h-4" /> {ka ? 'მიკვლევადობის ტილო' : 'Horizontal lineage canvas'}
+              <Sparkles className="w-4 h-4" /> {ka ? 'მიკვლევადობის ხე' : 'Traceability tree'}
             </span>
             <div className="flex items-center gap-2">
               {focusPathOnly && <StatusBadge tone="brand">{ka ? 'ფოკუსი' : 'focused'}</StatusBadge>}

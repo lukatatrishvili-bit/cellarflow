@@ -254,7 +254,7 @@ export function detectSo2Protection(
       entityId: lot.id,
       entityLabel: label,
       relatedEntities: latest.tankId ? [{ type: 'vessel', id: latest.tankId, label: latest.tankId }] : [],
-      title: text(`SO₂ protection below target — ${label}`, `SO₂-ის დაცვა სამიზნეზე დაბალია — ${label}`),
+      title: text(`SO₂ protection below target — ${label}`, `თავისუფალი SO2-ის დონე დაბალია — ${label}`),
       observation: text(
         `Molecular SO₂ is ${num(molecular, 2)} mg/L (free ${num(latest.freeSo2, 0)} mg/L at pH ${num(latest.ph, 2)}), against this winery's ${num(targets.molecularSo2MinMgL, 2)} mg/L floor. Measured ${ageDays} day${ageDays === 1 ? '' : 's'} ago.`,
         `მოლეკულური SO₂ არის ${num(molecular, 2)} მგ/ლ (თავისუფალი ${num(latest.freeSo2, 0)} მგ/ლ, pH ${num(latest.ph, 2)}), ამ მარნის ზღვარია ${num(targets.molecularSo2MinMgL, 2)} მგ/ლ. გაზომილია ${ageDays} დღის წინ.`,

@@ -76,6 +76,7 @@ Start with the [documentation index](docs/README.md). The active references incl
 - [Billing operations runbook](docs/billing-operations-runbook.md)
 - [Email and browser-push notifications](docs/notification-delivery.md)
 - [Winery Intelligence knowledge, delivery, and scheduled operations](docs/ai-intelligence-operations.md)
+- [Operations control workflows](docs/operations-control.md)
 - [Relational projection runbook](docs/relational-projection-runbook.md)
 - [Deployment guide](deployment_guide.md)
 

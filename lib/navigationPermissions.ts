@@ -3,9 +3,11 @@ import { can, canAccess, type PermissionModule } from '../server/permissions';
 export const WINERY_TAB_IDS = [
   'dashboard',
   'intelligence',
+  'control',
   'intake',
   'lots',
   'lineage',
+  'recall',
   'vessels',
   'operations',
   'transfers',
@@ -14,6 +16,9 @@ export const WINERY_TAB_IDS = [
   'calculators',
   'bottling',
   'inventory',
+  'procurement',
+  'quality',
+  'planner',
   'tasks',
   'ai',
   'notes',
@@ -39,6 +44,7 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
       case 'intake': return 'grape_intake';
       case 'lots':
       case 'lineage': return 'lots';
+      case 'recall': return 'lots';
       case 'vessels':
       case 'qvevri': return 'vessels';
       case 'operations': return 'operations';
@@ -48,6 +54,10 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
       case 'calculators': return 'lab';
       case 'bottling': return 'bottling';
       case 'inventory': return 'inventory';
+      case 'procurement': return 'inventory';
+      case 'quality': return 'tasks';
+      case 'planner': return 'planning';
+      case 'control': return 'tasks';
       case 'tasks':
       case 'ai': return 'tasks';
       case 'notes': return 'notes';

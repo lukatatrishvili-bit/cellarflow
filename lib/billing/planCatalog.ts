@@ -41,7 +41,7 @@ export interface PlanDefinition {
 }
 
 const CORE: BillingFeature[] = ['operational_core', 'unlimited_users', 'single_site'];
-const SMALL: BillingFeature[] = [...CORE, 'data_import_export', 'custom_fields', 'guided_setup'];
+const SMALL: BillingFeature[] = [...CORE, 'data_import_export', 'guided_setup'];
 const PROFESSIONAL: BillingFeature[] = [
   ...SMALL,
   'production_cost_tracking',
@@ -50,20 +50,16 @@ const PROFESSIONAL: BillingFeature[] = [
   'management_tools',
 ];
 const BUSINESS: BillingFeature[] = [
-  ...PROFESSIONAL.filter(feature => feature !== 'single_site'),
-  'multi_site',
+  ...PROFESSIONAL,
   'advanced_roles',
   'audit_dashboards',
   'priority_support',
 ];
 const ENTERPRISE: BillingFeature[] = [
   ...BUSINESS,
-  'sso',
-  'api_access',
   'custom_integrations',
   'sla',
   'dedicated_success',
-  'multi_company',
 ];
 
 /** Single source of truth for public prices, capacity limits, and entitlements. */
@@ -95,7 +91,7 @@ export const PLAN_CATALOG: readonly PlanDefinition[] = [
     highlights: [
       { en: 'Everything in Micro', ka: 'ყველაფერი მიკრო გეგმიდან' },
       { en: 'Data import and export', ka: 'მონაცემების იმპორტი და ექსპორტი' },
-      { en: 'Custom fields and guided setup', ka: 'მორგებული ველები და მართვადი გამართვა' },
+      { en: 'Guided setup and receiving tools', ka: 'მართვადი გამართვა და მიღების ხელსაწყოები' },
     ],
   },
   {
@@ -123,7 +119,7 @@ export const PLAN_CATALOG: readonly PlanDefinition[] = [
     enterpriseStartingPrice: false,
     features: BUSINESS,
     highlights: [
-      { en: 'Multi-site management', ka: 'მრავალლოკაციური მართვა' },
+      { en: 'Audit and management dashboards', ka: 'აუდიტისა და მართვის დაფები' },
       { en: 'Advanced roles and dashboards', ka: 'გაფართოებული როლები და დაფები' },
       { en: 'Priority support', ka: 'პრიორიტეტული მხარდაჭერა' },
     ],
@@ -138,7 +134,7 @@ export const PLAN_CATALOG: readonly PlanDefinition[] = [
     enterpriseStartingPrice: true,
     features: ENTERPRISE,
     highlights: [
-      { en: 'SSO and API access', ka: 'SSO და API წვდომა' },
+      { en: 'Enterprise integration controls', ka: 'კორპორაციული ინტეგრაციის კონტროლი' },
       { en: 'Custom integrations and SLA', ka: 'მორგებული ინტეგრაციები და SLA' },
       { en: 'Dedicated customer success', ka: 'პერსონალური წარმატების მენეჯერი' },
     ],

@@ -17,7 +17,12 @@ const APPLICANT = {
   email: 'nino@estate.test',
   fullName: 'Nino Kharaishvili',
   passcode: 'vintage-2026-cellar',
-  companyProfile: { companyName: 'Kharaishvili Marani', country: 'Georgia', region: 'Kakheti' },
+  companyProfile: {
+    companyName: 'Kharaishvili Marani',
+    country: 'Georgia',
+    region: 'Kakheti',
+    phone: '+995 555 12 34 56',
+  },
 };
 
 function resetDb(): ReturnType<typeof dbModule.getDB> {
@@ -115,6 +120,26 @@ beforeEach(() => {
 });
 
 describe.sequential('registration approval gate', () => {
+  it('rejects incomplete identity and phone details before creating an account', async () => {
+    const oneName = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ ...APPLICANT, fullName: 'Nino' }),
+    });
+    expect(oneName.status).toBe(400);
+    expect((await oneName.json()).code).toBe('last_name_required');
+
+    const noPhone = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...APPLICANT,
+        companyProfile: { ...APPLICANT.companyProfile, phone: '' },
+      }),
+    });
+    expect(noPhone.status).toBe(400);
+    expect((await noPhone.json()).code).toBe('phone_required');
+    expect(dbModule.getDB().users).toHaveLength(0);
+  });
+
   it('locks a new signup and emails the reviewer the applicant details', async () => {
     const response = await registerApplicant();
     expect(response.status).toBe(200);
@@ -133,6 +158,7 @@ describe.sequential('registration approval gate', () => {
     expect(reviewerMail?.text).toContain(APPLICANT.fullName);
     expect(reviewerMail?.text).toContain(APPLICANT.email);
     expect(reviewerMail?.text).toContain('Kharaishvili Marani');
+    expect(reviewerMail?.text).toContain('+995555123456');
     expect(mailTo(APPLICANT.email)?.text).toContain('/api/auth/verify-email?token=');
   });
 

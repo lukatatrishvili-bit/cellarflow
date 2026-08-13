@@ -163,6 +163,28 @@ describe('GrapeReceivingTab compound action permissions', () => {
     expect(markup).toContain('Record intake &amp; create batch');
   });
 
+  it('groups the intake form into named sections in both languages', () => {
+    const english = renderReceiving();
+    for (const section of [
+      'Fruit source', 'Batch identity', 'Weight &amp; yield', 'Quality at reception',
+      'Fruit cost', 'Destination &amp; operator', 'Official receiving fields',
+    ]) {
+      expect(english).toContain(section);
+    }
+    // The derived numbers are a labelled readout, not a trailing footnote.
+    expect(english).toContain('Net weight (kg)');
+    expect(english).toContain('Potential ABV');
+    expect(english).toContain('href="#grape-intake-history"');
+    expect(english).toContain('id="grape-intake-history"');
+
+    const georgian = renderReceiving({ lang: 'ka' });
+    expect(georgian).toContain('ხილის წყარო');
+    expect(georgian).toContain('მასა და გამოსავალი');
+    expect(georgian).toContain('ნეტო (კგ)');
+    expect(georgian).toContain('ყურძნის მიღების ისტორია');
+    expect(georgian).toContain('ოფიციალური მიღების ველები');
+  });
+
   it('localizes read-only guidance and empty history in Georgian', () => {
     const markup = renderReceiving({
       lang: 'ka',

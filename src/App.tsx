@@ -11,6 +11,7 @@ import {
   type NotificationItem,
 } from '../lib/notificationFeed';
 import { useWineryState } from '../hooks/useWineryState';
+import { parseWorkspaceRoute } from '../lib/workspaceRoute';
 import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
 import { usePerformanceManager } from '../hooks/usePerformanceManager';
@@ -29,7 +30,6 @@ import {
   vineyardWorkflowPermissions,
 } from '../lib/workflowPermissions';
 import type { BillingFeature } from '../lib/billing/planCatalog';
-import { clearTenantCachedData } from '../lib/tenantCache';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -76,16 +76,23 @@ const SignInPanel = lazyRetry(() => import('../components/RegistrationExperience
 const WorkspaceSetupDialog = lazyRetry(() => import('../components/RegistrationExperience').then(module => ({ default: module.WorkspaceSetupDialog })));
 const StatusToastHost = lazyRetry(() => import('../components/StatusToastHost'));
 const SyncStatus = lazyRetry(() => import('../components/SyncStatus'));
+const InstallButton = lazyRetry(() => import('../components/InstallButton'));
+const OperationsControlTab = lazyRetry(() => import('../components/OperationsControlTab'));
+const RecallCockpitTab = lazyRetry(() => import('../components/RecallCockpitTab'));
+const QualitySopTab = lazyRetry(() => import('../components/QualitySopTab'));
+const ProcurementTab = lazyRetry(() => import('../components/ProcurementTab'));
+const ProductionPlannerTab = lazyRetry(() => import('../components/ProductionPlannerTab'));
+const ScanToAction = lazyRetry(() => import('../components/ScanToAction'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
-import InstallButton from '../components/InstallButton';
 import type { WorkspaceSetupSubmission } from '../components/RegistrationExperience';
 import type {
   AuthAccountFlow,
   AuthenticatedStateNotice,
   ReturnToSignInContext,
 } from '../components/AuthAccountFlows';
+import type { CellarScanTarget } from '../components/ScanToAction';
 
 // Core Lucide Icons mapping
 import {
@@ -126,7 +133,12 @@ import {
   BadgeCheck,
   Settings,
   Menu,
-  LogOut
+  LogOut,
+  ShieldCheck,
+  AlertOctagon,
+  ShoppingCart,
+  CalendarRange,
+  ScanLine,
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -168,6 +180,21 @@ function readBrowserRoute(): string {
     : `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }
 
+/**
+ * Whether the URL itself says which module to show.
+ *
+ * Landing on `/dashboard` resets the workspace to the portal, which was the
+ * right default while the pathname was the only destination the URL carried.
+ * Now that `?module=` can name one, that reset has to defer to it — otherwise
+ * Back and Forward restore the address bar and are immediately overruled, and a
+ * shared link opens on the portal instead of where it points.
+ */
+function routeNamesWorkspaceModule(route: string): boolean {
+  const queryAt = route.indexOf('?');
+  if (queryAt < 0) return false;
+  return parseWorkspaceRoute(route.slice(queryAt)).module !== null;
+}
+
 function clearPostLoginReturnTo(): void {
   if (typeof window === 'undefined') return;
   try {
@@ -202,6 +229,7 @@ export default function App() {
   const perf = usePerformanceManager();
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
   // Stable identity, so ToastHost's memo actually holds across App re-renders.
   const openSyncTroubleshooter = useCallback(() => setShowSyncTroubleshooter(true), []);
 
@@ -218,8 +246,12 @@ export default function App() {
     setPrefilledOpVesselId,
     setPrefilledSourceId,
     setPrefilledDestId,
+    setPassportLotId,
+    setToastMessage,
     handleAuthLogout,
   } = state;
+  const currentUserForScan = state.currentUser;
+  const scanLanguage = state.lang;
 
   // Handlers passed to memoized module components. Declared inline they were
   // allocated fresh on every App render, which defeated those components' memo
@@ -231,11 +263,31 @@ export default function App() {
     setPrefilledSourceId('');
     setPrefilledDestId('');
   }, [setPrefilledSourceId, setPrefilledDestId]);
+  const closeScanner = useCallback(() => setIsScannerOpen(false), []);
+  const handleScanResolve = useCallback((target: CellarScanTarget) => {
+    setActiveModule('gvino');
+    if (target.kind === 'vessel') {
+      if (canViewUserDestination(currentUserForScan, 'gvino', 'operations')) {
+        setPrefilledOpVesselId(target.id);
+        setActiveTab('operations');
+      } else {
+        setSelectedTankId(target.id);
+        setActiveTab('vessels');
+      }
+      setToastMessage(scanLanguage === 'ka' ? `${target.id} ოპერაციისთვის მზადაა.` : `${target.id} is ready for an operation.`);
+      return;
+    }
+    setPassportLotId(target.id);
+    setActiveTab('lots');
+    setToastMessage(scanLanguage === 'ka' ? `${target.id} პარტიის პასპორტი გაიხსნა.` : `${target.id} lot passport opened.`);
+  }, [currentUserForScan, scanLanguage, setActiveModule, setActiveTab, setPassportLotId, setPrefilledOpVesselId, setSelectedTankId, setToastMessage]);
 
   const qvevriCount = useMemo(
     () => state.vessels.filter(vessel => vessel.type === 'qvevri').length,
     [state.vessels],
   );
+  const scanVesselIds = useMemo(() => state.vessels.map(vessel => vessel.id), [state.vessels]);
+  const scanLotIds = useMemo(() => state.lots.map(lot => lot.id), [state.lots]);
 
   const closeVesselDrawer = useCallback(() => setSelectedTankId(null), [setSelectedTankId]);
   const consumeAiFindingFocus = useCallback(() => setFocusedAiFindingId(null), []);
@@ -314,6 +366,7 @@ export default function App() {
           state.isLoggedIn
           && normalizedPathname === DEFAULT_AUTHENTICATED_ROUTE
           && !state.currentUser.isMasterAdmin
+          && !routeNamesWorkspaceModule(browserRoute)
         ) setActiveModule('portal');
         setResolvedAuthRouteKey(authRouteKey);
         return;
@@ -321,6 +374,7 @@ export default function App() {
       if (
         target.split(/[?#]/, 1)[0] === DEFAULT_AUTHENTICATED_ROUTE
         && !state.currentUser.isMasterAdmin
+        && !routeNamesWorkspaceModule(target)
       ) setActiveModule('portal');
       replaceRoute(target);
     }).catch(() => {
@@ -336,6 +390,7 @@ export default function App() {
           state.isLoggedIn
           && normalizedPathname === DEFAULT_AUTHENTICATED_ROUTE
           && !state.currentUser.isMasterAdmin
+          && !routeNamesWorkspaceModule(browserRoute)
         ) setActiveModule('portal');
         setResolvedAuthRouteKey(authRouteKey);
       }
@@ -435,6 +490,7 @@ export default function App() {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || 'Could not end the support session.');
       }
+      const { clearTenantCachedData } = await import('../lib/tenantCache');
       clearTenantCachedData(localStorage);
       localStorage.removeItem('vinea_curr_user');
       localStorage.removeItem('vinea_active_module');
@@ -974,6 +1030,7 @@ export default function App() {
       tabs: [
         { id: 'dashboard', label: t.overview, icon: LayoutDashboard },
         { id: 'intelligence', label: t.ai_intelligence, icon: BrainCircuitIcon },
+        { id: 'control', label: state.lang === 'ka' ? 'დღეს' : 'Today', icon: ShieldCheck },
       ],
     },
     {
@@ -982,6 +1039,7 @@ export default function App() {
         { id: 'intake', label: t.grape_intake || 'Grape Intake', icon: Grape },
         { id: 'lots', label: t.wine_lots, icon: Wine },
         { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
+        { id: 'recall', label: state.lang === 'ka' ? 'გაწვევა' : 'Recall', icon: AlertOctagon },
       ],
     },
     {
@@ -999,6 +1057,9 @@ export default function App() {
       label: state.lang === 'ka' ? 'სამუშაოები' : 'Tools',
       tabs: [
         { id: 'inventory', label: t.inventory, icon: Boxes },
+        { id: 'procurement', label: state.lang === 'ka' ? 'შესყიდვა' : 'Purchasing', icon: ShoppingCart },
+        { id: 'quality', label: state.lang === 'ka' ? 'ხარისხი' : 'Quality SOPs', icon: ShieldCheck },
+        { id: 'planner', label: state.lang === 'ka' ? 'გეგმა' : 'Planner', icon: CalendarRange },
         { id: 'tasks', label: t.tasks, icon: ClipboardList },
         { id: 'notes', label: t.notes, icon: FileText },
         { id: 'calculators', label: t.calculators, icon: TestTube },
@@ -1384,6 +1445,19 @@ export default function App() {
         </Suspense>
       )}
 
+      {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
+        <Suspense fallback={null}>
+          <ScanToAction
+            open={isScannerOpen}
+            lang={state.lang}
+            vesselIds={scanVesselIds}
+            lotIds={scanLotIds}
+            onResolve={handleScanResolve}
+            onClose={closeScanner}
+          />
+        </Suspense>
+      )}
+
       {/* Restore handle shown while retracted (manual click only) */}
       {headerHidden && (
         <button
@@ -1564,6 +1638,18 @@ export default function App() {
           {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
             <button
               type="button"
+              onClick={() => setIsScannerOpen(true)}
+              className="min-h-10 min-w-10 rounded-xl border border-stone-200 bg-stone-50 p-2 text-stone-600 transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-[#651522] dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300"
+              title={state.lang === 'ka' ? 'ჭურჭლის ან პარტიის სკანირება' : 'Scan vessel or lot'}
+              aria-label={state.lang === 'ka' ? 'ჭურჭლის ან პარტიის სკანირება' : 'Scan vessel or lot'}
+            >
+              <ScanLine className="h-4 w-4" />
+            </button>
+          )}
+
+          {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
+            <button
+              type="button"
               onClick={() => setIsCommandOpen(true)}
               className="hidden xl:flex items-center gap-2 w-40 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-left text-[11px] font-semibold text-stone-500 shadow-2xs transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-amber-100"
               title={state.lang === 'ka' ? 'ყველაფრის ძიება' : 'Search everything'}
@@ -1574,7 +1660,7 @@ export default function App() {
             </button>
           )}
 
-          <InstallButton lang={state.lang} />
+          <Suspense fallback={null}><InstallButton lang={state.lang} /></Suspense>
 
           {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
             <Suspense fallback={null}>
@@ -1839,13 +1925,14 @@ export default function App() {
                       try {
                         const registered = await state.handleAuthRegister({
                           email: submission.email,
-                          fullName: submission.fullName,
+                          fullName: `${submission.firstName} ${submission.lastName}`.trim(),
                           passcode: submission.passcode,
                           language: state.lang === 'ka' ? 'ka' : 'en',
                           rememberMe: true,
                           companyProfile: {
                             companyName: submission.companyName,
                             contactEmail: submission.email,
+                            phone: submission.phone,
                             measurementUnits: 'metric',
                             currency: 'GEL',
                           },
@@ -2140,21 +2227,32 @@ export default function App() {
           />
         </Suspense>
       ) : state.activeModule === 'analytics' ? (
-        <Suspense fallback={<ModuleLoader />}>
-          <YearComparisonTab
-            lang={state.lang}
-            lots={state.lots}
-            harvests={state.harvests}
-            grapeIntakes={state.grapeIntakes}
-            bottlingRuns={state.bottlingRuns}
-            costEntries={state.costEntries}
-            stockMovements={state.stockMovements}
-            dispatches={state.salesDispatches}
-            orders={state.salesOrders}
-            currency={state.companyProfile.currency || 'GEL'}
-            onNavigate={handleNavigate}
-          />
-        </Suspense>
+        billingAllows('advanced_reports') ? (
+          <Suspense fallback={<ModuleLoader />}>
+            <YearComparisonTab
+              lang={state.lang}
+              lots={state.lots}
+              harvests={state.harvests}
+              grapeIntakes={state.grapeIntakes}
+              bottlingRuns={state.bottlingRuns}
+              costEntries={state.costEntries}
+              stockMovements={state.stockMovements}
+              dispatches={state.salesDispatches}
+              orders={state.salesOrders}
+              currency={state.companyProfile.currency || 'GEL'}
+              onNavigate={handleNavigate}
+            />
+          </Suspense>
+        ) : (
+          <main className="mx-auto w-full max-w-3xl flex-1 p-6">
+            <div className="rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center dark:border-amber-900 dark:bg-amber-950/30">
+              <BarChart3 className="mx-auto h-10 w-10 text-amber-700 dark:text-amber-300" />
+              <h2 className="mt-4 font-serif text-2xl font-semibold text-stone-950 dark:text-white">{state.lang === 'ka' ? 'გაფართოებული ანგარიშები' : 'Advanced reports'}</h2>
+              <p className="mx-auto mt-2 max-w-xl text-sm text-stone-600 dark:text-stone-300">{state.lang === 'ka' ? 'წლების შედარება და მარჟის გაფართოებული ანალიზი ხელმისაწვდომია Professional გეგმიდან.' : 'Year comparison and advanced margin analysis are available on the Professional plan and above.'}</p>
+              <button type="button" onClick={() => window.location.assign('/pricing')} className="mt-5 min-h-11 rounded-xl bg-[#651522] px-5 text-xs font-black text-white">{state.lang === 'ka' ? 'გეგმების ნახვა' : 'View plans'}</button>
+            </div>
+          </main>
+        )
       ) : state.activeModule === 'docs' ? (
         <Suspense fallback={<ModuleLoader />}>
           <OfficialDocsTab
@@ -2182,7 +2280,7 @@ export default function App() {
         <main className="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
 
           {/* Sticky sidebar */}
-          <aside className={`app-sidebar shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} lg:self-start lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1 lg:[scrollbar-gutter:stable] transition-[width] duration-300`}>
+          <aside className={`app-sidebar shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} lg:self-start lg:sticky lg:top-20 lg:max-h-[calc(100dvh-9rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1 lg:pb-2 lg:[scrollbar-gutter:stable] transition-[width] duration-300`}>
             <div className="lg:hidden rounded-xl border border-stone-200 bg-white p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
               <label htmlFor="mobile-winery-section" className="mb-1.5 block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">
                 {state.lang === 'ka' ? 'მარნის განყოფილება' : 'Winery section'}
@@ -2385,6 +2483,21 @@ export default function App() {
               </Suspense>
             )}
 
+            {/* A2. UNIFIED TODAY QUEUE & APPROVALS */}
+            {state.activeTab === 'control' && (
+              <OperationsControlTab
+                lang={state.lang}
+                currentUsername={state.currentUser.username}
+                currentRole={state.currentUser.role}
+                tasks={state.tasks}
+                qualitySops={state.qualitySops}
+                purchaseOrders={state.purchaseOrders}
+                productionPlans={state.productionPlans}
+                onNavigate={state.setActiveTab}
+                setToastMessage={state.setToastMessage}
+              />
+            )}
+
             {/* B. VESSELS TAB */}
             {state.activeTab === 'vessels' && (
               <div className="space-y-4 text-stone-800 animate-fade-in">
@@ -2476,6 +2589,32 @@ export default function App() {
                 salesDispatches={state.salesDispatches}
                 certificationRecords={state.certificationRecords}
                 focusLotId={lineageFocusLotId}
+              />
+            )}
+
+            {/* C1A. RECALL & CONTAINMENT */}
+            {state.activeTab === 'recall' && (
+              <RecallCockpitTab
+                lang={state.lang}
+                currentUsername={state.currentUser.username}
+                currentUserName={state.currentUser.fullName}
+                lots={state.lots}
+                grapeIntakes={state.grapeIntakes}
+                harvests={state.harvests}
+                vessels={state.vessels}
+                bottlingRuns={state.bottlingRuns}
+                cellarOps={state.cellarOps}
+                transfers={state.transfers}
+                storageLocations={state.storageLocations}
+                stockMovements={state.stockMovements}
+                salesOrders={state.salesOrders}
+                salesDispatches={state.salesDispatches}
+                recallCases={state.recallCases}
+                onUpdateRecallCases={state.setRecallCases}
+                onAddTask={state.handleAddNewTask}
+                canManage={canAccess(state.currentUser.role, 'lots', 'update')}
+                canCreateTasks={canAccess(state.currentUser.role, 'tasks', 'create')}
+                setToastMessage={state.setToastMessage}
               />
             )}
 
@@ -2642,9 +2781,60 @@ export default function App() {
                 canCreateInventory={canAccess(state.currentUser.role, 'inventory', 'create')}
                 canUpdateInventory={canAccess(state.currentUser.role, 'inventory', 'update')}
                 canDeleteInventory={canAccess(state.currentUser.role, 'inventory', 'delete')}
-                canPostInvoiceCosts={canAccess(state.currentUser.role, 'costs', 'create')}
+                canPostInvoiceCosts={canAccess(state.currentUser.role, 'costs', 'create') && billingAllows('data_import_export')}
                 accountingCurrency={state.companyProfile.currency || 'GEL'}
                 onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
+              />
+            )}
+
+            {/* H1. PROCUREMENT */}
+            {state.activeTab === 'procurement' && (
+              <ProcurementTab
+                lang={state.lang}
+                currentUsername={state.currentUser.username}
+                accountingCurrency={state.companyProfile.currency || 'GEL'}
+                inventory={state.inventory}
+                purchaseOrders={state.purchaseOrders}
+                onUpdatePurchaseOrders={state.setPurchaseOrders}
+                onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
+                canCreate={canAccess(state.currentUser.role, 'inventory', 'create')}
+                canUpdate={canAccess(state.currentUser.role, 'inventory', 'update')}
+                canReceive={canAccess(state.currentUser.role, 'inventory', 'update') && canAccess(state.currentUser.role, 'costs', 'create')}
+                setToastMessage={state.setToastMessage}
+              />
+            )}
+
+            {/* H2. RECURRING QUALITY SOPS */}
+            {state.activeTab === 'quality' && (
+              <QualitySopTab
+                lang={state.lang}
+                currentUsername={state.currentUser.username}
+                vessels={state.vessels}
+                lots={state.lots}
+                qualitySops={state.qualitySops}
+                onUpdateQualitySops={state.setQualitySops}
+                canCreate={canAccess(state.currentUser.role, 'tasks', 'create')}
+                canUpdate={canAccess(state.currentUser.role, 'tasks', 'update')}
+                canDelete={canAccess(state.currentUser.role, 'tasks', 'delete')}
+                setToastMessage={state.setToastMessage}
+              />
+            )}
+
+            {/* H3. VISUAL PRODUCTION PLANNER */}
+            {state.activeTab === 'planner' && (
+              <ProductionPlannerTab
+                lang={state.lang}
+                currentUsername={state.currentUser.username}
+                productionPlans={state.productionPlans}
+                onUpdateProductionPlans={state.setProductionPlans}
+                vessels={state.vessels}
+                lots={state.lots}
+                blocks={state.blocks}
+                harvests={state.harvests}
+                canCreate={canAccess(state.currentUser.role, 'planning', 'create')}
+                canUpdate={canAccess(state.currentUser.role, 'planning', 'update')}
+                canDelete={canAccess(state.currentUser.role, 'planning', 'delete')}
+                setToastMessage={state.setToastMessage}
               />
             )}
 

@@ -18,6 +18,14 @@
  * chain reads as tampered. Truncating it does not degrade the audit trail — it
  * invalidates it. Anything that reduces what the client holds for `auditLogs`
  * has to move chain verification server-side first.
+ *
+ * That precondition is now met. `GET /api/audit-trail` verifies the whole
+ * stored chain server-side and returns a verified window, so the audit *view*
+ * no longer needs the client to hold every record (`server/routes/auditTrail.ts`,
+ * `lib/auditTrailPage.ts`). The client still hydrates and syncs the full
+ * collection — that has not changed, and the ceiling described above is still
+ * the one a busy winery walks into. What changed is that windowing `auditLogs`
+ * is now a persistence decision rather than a correctness impossibility.
  */
 
 /** How much freedom we have to drop records from a collection. */

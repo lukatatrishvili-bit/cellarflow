@@ -165,7 +165,7 @@ export function WineryDashboardTab({
     ...(canViewFermentation ? fermentsMissingReading.map(lot => ({
       id: `ferm-${lot.id}`,
       tone: 'warning' as const,
-      title: `${isKa ? 'დუღილის ჩანაწერი აკლია' : 'Fermentation reading missing'}: ${lot.name}`,
+      title: `${isKa ? 'დუღილის ჩანაწერი დასამატებელია' : 'Fermentation reading missing'}: ${lot.name}`,
       detail: `${lot.currentVolume.toLocaleString()} L · ${lot.variety}`,
       action: go('fermentation'),
       actionLabel: canCreateFermentation ? (isKa ? 'ჩაწერა' : 'Log reading') : (isKa ? 'დუღილის ნახვა' : 'Review fermentation'),

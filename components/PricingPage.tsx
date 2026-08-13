@@ -33,11 +33,8 @@ const comparisonFeatures = [
   'production_cost_tracking',
   'advanced_reports',
   'workflow_approvals',
-  'multi_site',
   'advanced_roles',
   'priority_support',
-  'sso',
-  'api_access',
   'custom_integrations',
 ] as const;
 

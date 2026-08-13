@@ -84,6 +84,11 @@ export const COLLECTIONS: readonly CollectionDefinition[] = [
   { key: 'attachments', storageKey: 'cf_attachments', authority: 'client-editable' },
   { key: 'crmLeads', storageKey: 'cf_crm_leads', authority: 'client-editable' },
   { key: 'aiDrafts', storageKey: 'cf_ai_drafts', authority: 'client-editable' },
+  // --- Operational control -------------------------------------------------
+  { key: 'qualitySops', storageKey: 'cf_quality_sops', authority: 'client-editable' },
+  { key: 'purchaseOrders', storageKey: 'cf_purchase_orders', authority: 'client-editable' },
+  { key: 'productionPlans', storageKey: 'cf_production_plans', authority: 'client-editable' },
+  { key: 'recallCases', storageKey: 'cf_recall_cases', authority: 'client-editable' },
   // --- Vineyard -------------------------------------------------------------
   { key: 'blocks', storageKey: 'vinea_blocks', authority: 'client-editable' },
   { key: 'vineyardProjects', storageKey: 'vinea_projects', authority: 'client-editable' },

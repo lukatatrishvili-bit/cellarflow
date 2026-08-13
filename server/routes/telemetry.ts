@@ -50,6 +50,54 @@ const performanceHits = new Map<string, { count: number; windowStart: number }>(
 const PERFORMANCE_MAX_PER_WINDOW = 12;
 const cspReportHits = new Map<string, { count: number; windowStart: number }>();
 const CSP_REPORT_MAX_PER_WINDOW = 20;
+/** Bounds each throttle map so an IP flood cannot become a memory leak. */
+const THROTTLE_MAX_TRACKED_IPS = 1_000;
+
+/**
+ * Per-IP window for the public telemetry endpoints. Returns true when the
+ * caller is over its ceiling for this window.
+ *
+ * Expired entries are swept rather than the map being cleared wholesale. The
+ * previous `clear()` reset every tracked IP at once, so ordinary traffic from
+ * unrelated clients could hand a spamming IP a fresh allowance — the throttle
+ * was weakest exactly when the endpoint was busiest.
+ *
+ * These windows are per instance. Running N instances permits N × the ceiling
+ * per IP, which is accepted for the same reason as `requestCeiling`: these are
+ * spam guards on endpoints whose stored output is separately bounded, not
+ * security limits. See `server/middleware/requestCeiling.ts` for the decision.
+ */
+function overThrottle(
+  hits: Map<string, { count: number; windowStart: number }>,
+  ip: string,
+  maxPerWindow: number,
+  now: number = Date.now(),
+): boolean {
+  const hit = hits.get(ip);
+  if (hit && now - hit.windowStart <= CLIENT_ERROR_WINDOW_MS) {
+    return ++hit.count > maxPerWindow;
+  }
+
+  if (!hit && hits.size >= THROTTLE_MAX_TRACKED_IPS) {
+    for (const [key, tracked] of hits) {
+      if (now - tracked.windowStart > CLIENT_ERROR_WINDOW_MS) hits.delete(key);
+    }
+    if (hits.size >= THROTTLE_MAX_TRACKED_IPS) {
+      let oldestKey: string | null = null;
+      let oldestStart = Infinity;
+      for (const [key, tracked] of hits) {
+        if (tracked.windowStart < oldestStart) {
+          oldestStart = tracked.windowStart;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey !== null) hits.delete(oldestKey);
+    }
+  }
+
+  hits.set(ip, { count: 1, windowStart: now });
+  return false;
+}
 
 const clip = (v: unknown, max: number) => String(v ?? '').slice(0, max);
 const safeRoute = (value: unknown): string => {
@@ -70,13 +118,9 @@ export function getRecentClientErrors(): ClientErrorReport[] {
 router.post('/client-error', (req, res) => {
   const ip = req.ip || req.socket?.remoteAddress || 'unknown';
   const now = Date.now();
-  const hit = clientErrorHits.get(ip);
-  if (!hit || now - hit.windowStart > CLIENT_ERROR_WINDOW_MS) {
-    clientErrorHits.set(ip, { count: 1, windowStart: now });
-  } else if (++hit.count > CLIENT_ERROR_MAX_PER_WINDOW) {
+  if (overThrottle(clientErrorHits, ip, CLIENT_ERROR_MAX_PER_WINDOW, now)) {
     return res.status(429).json({ ok: false });
   }
-  if (clientErrorHits.size > 1000) clientErrorHits.clear(); // cheap leak guard
 
   const cookies = parseCookies(req.headers.cookie);
   const session = verifySessionToken(cookies['maranios_session']);
@@ -181,13 +225,9 @@ const cspReportParser = express.json({
 router.post('/csp-report', cspReportParser, (req, res) => {
   const ip = req.ip || req.socket?.remoteAddress || 'unknown';
   const now = Date.now();
-  const hit = cspReportHits.get(ip);
-  if (!hit || now - hit.windowStart > CLIENT_ERROR_WINDOW_MS) {
-    cspReportHits.set(ip, { count: 1, windowStart: now });
-  } else if (++hit.count > CSP_REPORT_MAX_PER_WINDOW) {
+  if (overThrottle(cspReportHits, ip, CSP_REPORT_MAX_PER_WINDOW, now)) {
     return res.status(429).json({ ok: false });
   }
-  if (cspReportHits.size > 1000) cspReportHits.clear();
 
   const body = req.body;
   if (Array.isArray(body)) {
@@ -232,13 +272,9 @@ const routeClasses = new Set(['landing', 'auth', 'tasks', 'billing', 'public', '
 router.post('/performance', (req, res) => {
   const ip = req.ip || req.socket?.remoteAddress || 'unknown';
   const now = Date.now();
-  const hit = performanceHits.get(ip);
-  if (!hit || now - hit.windowStart > CLIENT_ERROR_WINDOW_MS) {
-    performanceHits.set(ip, { count: 1, windowStart: now });
-  } else if (++hit.count > PERFORMANCE_MAX_PER_WINDOW) {
+  if (overThrottle(performanceHits, ip, PERFORMANCE_MAX_PER_WINDOW, now)) {
     return res.status(429).json({ ok: false });
   }
-  if (performanceHits.size > 1000) performanceHits.clear();
 
   const metrics = Array.isArray(req.body?.metrics) ? req.body.metrics.slice(0, 8) : [];
   for (const metric of metrics) {

@@ -3,14 +3,24 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   ShieldAlert, RefreshCw, Trash2, Edit, Activity, Cpu, Database,
   Server, User, Users, Check, X, ShieldCheck, Terminal, AlertTriangle, KeyRound,
-  Eye, Mail, ScrollText, Unlock, Download, Wrench, Gauge, SearchCode, CreditCard
+  Eye, Mail, ScrollText, Unlock, Download, Wrench, Gauge, SearchCode, CreditCard,
+  Building2, Plus, UserPlus, Moon, Sun, Rows3
 } from 'lucide-react';
 import { useFocusTrap } from './useFocusTrap';
 import { localizedRoleLabel } from '../lib/roleLabels';
-import MasterBillingAdmin from './MasterBillingAdmin';
+import { localizeServerError } from '../lib/serverErrorMessages';
 import { clearTenantCachedData } from '../lib/tenantCache';
+import type { AdminOrgInspection } from './admin/AdminOrganizationWorkspace';
+import './masterAdminTheme.css';
 
 const AiOperationsAdmin = React.lazy(() => import('./AiOperationsAdmin'));
+const MasterBillingAdmin = React.lazy(() => import('./MasterBillingAdmin'));
+const AdminRoleExplorer = React.lazy(() => import('./admin/AdminRoleExplorer'));
+const AdminOrganizationWorkspace = React.lazy(() => import('./admin/AdminOrganizationWorkspace'));
+const AdminControlSnapshot = React.lazy(() => import('./admin/AdminControlSnapshot'));
+const AdminOrganizationBulkBar = React.lazy(() => import('./admin/AdminOrganizationBulkBar'));
+const AdminCsvExportButton = React.lazy(() => import('./admin/AdminOrganizationBulkBar').then(module => ({ default: module.AdminCsvExportButton })));
+const AdminOrganizationQuickActions = React.lazy(() => import('./admin/AdminOrganizationQuickActions'));
 
 interface MasterAdminPortalProps {
   lang: string;
@@ -30,6 +40,9 @@ interface UserRecord {
   approvalStatus?: 'pending' | 'approved' | 'rejected';
   isDemo: boolean;
   createdAt: string;
+  lastSeenAt: string | null;
+  isOnline: boolean;
+  activeOrganizationId: string | null;
   organizations: Array<{ id: string; name: string; role: string }>;
 }
 
@@ -48,6 +61,7 @@ interface PendingRegistration {
   provider?: 'password' | 'google';
   requestedAt?: string;
   emailVerified?: boolean;
+  approvalBlockedReasons?: string[];
 }
 
 interface OrgRecord {
@@ -55,6 +69,15 @@ interface OrgRecord {
   name: string;
   createdAt: string;
   membersCount: number;
+  ownersCount: number;
+  onlineMembersCount: number;
+  pendingInvitationsCount: number;
+  status: 'active' | 'suspended' | 'archived';
+  archivedAt: string | null;
+  deletionScheduledAt: string | null;
+  internalTags: string[];
+  lastActivity: string | null;
+  health: { level: 'healthy' | 'warning' | 'critical'; issues: string[] };
   tanksCount: number;
   lotsCount: number;
   dataSize: number;
@@ -98,15 +121,6 @@ interface ClientErrorReport {
   userAgent: string;
   appVersion: string;
   username: string | null;
-}
-
-interface OrgInspection {
-  organization: { id: string; name: string; createdAt: string };
-  wineryName: string;
-  members: Array<{ username: string; role: string }>;
-  dataSizeBytes: number;
-  lastActivity: string | null;
-  collections: Array<{ key: string; count: number; lastModified: string | null }>;
 }
 
 interface SystemHealth {
@@ -200,6 +214,15 @@ interface SystemHealth {
   };
 }
 
+const ORGANIZATION_ROLES = [
+  'Owner/Admin',
+  'Winemaker',
+  'Viticulturist',
+  'Lab Technician',
+  'Cellar Worker',
+  'Read-Only',
+] as const;
+
 export default function MasterAdminPortal({
   lang,
   currentUser,
@@ -207,7 +230,12 @@ export default function MasterAdminPortal({
   setToastMessage
 }: MasterAdminPortalProps) {
   const isKa = lang === 'ka';
-  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'billing' | 'ai-ops' | 'ops' | 'audit' | 'client-errors' | 'terminal'>('stats');
+  const adminActionError = (data: any, englishFallback: string, georgianFallback: string) => (
+    data?.code
+      ? localizeServerError(data.code, data.error, lang as 'en' | 'ka')
+      : data?.error || (isKa ? georgianFallback : englishFallback)
+  );
+  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'orgs' | 'billing' | 'access' | 'ai-ops' | 'ops' | 'audit' | 'client-errors' | 'terminal'>('stats');
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -220,6 +248,24 @@ export default function MasterAdminPortal({
   // Search & Filters
   const [userSearch, setUserSearch] = useState('');
   const [orgSearch, setOrgSearch] = useState('');
+  const [userView, setUserView] = useState<'all' | 'online' | 'offline' | 'unassigned' | 'disabled' | 'pending'>('all');
+  const [orgView, setOrgView] = useState<'all' | 'active' | 'suspended' | 'archived' | 'attention'>('all');
+  const [selectedUsernames, setSelectedUsernames] = useState<Set<string>>(new Set());
+  const [bulkUserAction, setBulkUserAction] = useState('assign');
+  const [bulkOrganizationId, setBulkOrganizationId] = useState('');
+  const [bulkRole, setBulkRole] = useState('Winemaker');
+  const [bulkWorking, setBulkWorking] = useState(false);
+  const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<Set<string>>(new Set());
+  const [bulkOrganizationStatus, setBulkOrganizationStatus] = useState<'active' | 'suspended' | 'archived'>('suspended');
+  const [bulkOrganizationReason, setBulkOrganizationReason] = useState('');
+  const [bulkOrganizationWorking, setBulkOrganizationWorking] = useState(false);
+  const [initialBillingOrgId, setInitialBillingOrgId] = useState('');
+  const [adminTheme, setAdminTheme] = useState<'light' | 'dark'>(() => {
+    try { return localStorage.getItem('vinos_master_admin_theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
+  });
+  const [adminDensity, setAdminDensity] = useState<'comfortable' | 'compact'>(() => {
+    try { return localStorage.getItem('vinos_master_admin_density') === 'compact' ? 'compact' : 'comfortable'; } catch { return 'comfortable'; }
+  });
 
   // Editing States
   const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
@@ -230,8 +276,28 @@ export default function MasterAdminPortal({
   const [newPasscode, setNewPasscode] = useState('');
   const [isUpdatingUser, setIsUpdatingUser] = useState(false);
 
+  // Tenant and membership management
+  const [creatingOrganization, setCreatingOrganization] = useState(false);
+  const [newOrganizationName, setNewOrganizationName] = useState('');
+  const [newOrganizationOwner, setNewOrganizationOwner] = useState('');
+  const [isCreatingOrganization, setIsCreatingOrganization] = useState(false);
+  const [managingOrganizationId, setManagingOrganizationId] = useState<string | null>(null);
+  const [managedOrganizationName, setManagedOrganizationName] = useState('');
+  const [organizationDeleteConfirmation, setOrganizationDeleteConfirmation] = useState('');
+  const [isSavingOrganization, setIsSavingOrganization] = useState(false);
+  const [isDeletingOrganization, setIsDeletingOrganization] = useState(false);
+  const [managingUsername, setManagingUsername] = useState<string | null>(null);
+  const [membershipOrganizationId, setMembershipOrganizationId] = useState('');
+  const [membershipRole, setMembershipRole] = useState('Winemaker');
+  const [membershipMakeActive, setMembershipMakeActive] = useState(false);
+  const [membershipAction, setMembershipAction] = useState<string | null>(null);
+
   // Deleting States
   const [deletingUsername, setDeletingUsername] = useState<string | null>(null);
+  /** Wineries the pending deletion would destroy, as reported by the server. */
+  const [pendingOrphanedOrgs, setPendingOrphanedOrgs] = useState<Array<{
+    id: string; name: string; lotsCount: number; tanksCount: number; dataSize: number;
+  }> | null>(null);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
 
   // Real process telemetry: event-loop lag history sampled from /api/admin/stats.
@@ -242,7 +308,7 @@ export default function MasterAdminPortal({
   const [lockoutsBackend, setLockoutsBackend] = useState<string>('');
   const [adminTrail, setAdminTrail] = useState<AdminAction[]>([]);
   const [inspectingOrgId, setInspectingOrgId] = useState<string | null>(null);
-  const [inspection, setInspection] = useState<OrgInspection | null>(null);
+  const [inspection, setInspection] = useState<AdminOrgInspection | null>(null);
   const [inspectionLoading, setInspectionLoading] = useState(false);
   const [testEmailTo, setTestEmailTo] = useState('');
   const [sendingTestEmail, setSendingTestEmail] = useState(false);
@@ -258,8 +324,19 @@ export default function MasterAdminPortal({
   const terminalBottomRef = useRef<HTMLDivElement>(null);
   const editUserDialogRef = useRef<HTMLDivElement | null>(null);
   const deleteUserDialogRef = useRef<HTMLDivElement | null>(null);
+  const createOrganizationDialogRef = useRef<HTMLDivElement | null>(null);
+  const manageMembershipDialogRef = useRef<HTMLDivElement | null>(null);
   useFocusTrap(editUserDialogRef, { active: !!editingUser, onClose: () => setEditingUser(null) });
   useFocusTrap(deleteUserDialogRef, { active: !!deletingUsername, onClose: () => setDeletingUsername(null) });
+  useFocusTrap(createOrganizationDialogRef, { active: creatingOrganization, onClose: () => setCreatingOrganization(false) });
+  useFocusTrap(manageMembershipDialogRef, { active: !!managingUsername, onClose: () => setManagingUsername(null) });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('vinos_master_admin_theme', adminTheme);
+      localStorage.setItem('vinos_master_admin_density', adminDensity);
+    } catch { /* local preferences are optional */ }
+  }, [adminDensity, adminTheme]);
 
   // Fetch Data
   const fetchData = useCallback(async () => {
@@ -411,13 +488,13 @@ export default function MasterAdminPortal({
   // Support mode: become the target user (audited server-side). Full reload so
   // the whole app re-hydrates as that account; the impersonation banner offers
   // the way back.
-  const handleImpersonate = async (username: string) => {
+  const handleImpersonate = async (username: string, reason: string) => {
     setImpersonatingUsername(username);
     try {
       const res = await fetch('/api/admin/impersonate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
+        body: JSON.stringify({ username, reason }),
       });
       if (res.ok) {
         clearTenantCachedData(localStorage);
@@ -481,9 +558,7 @@ export default function MasterAdminPortal({
     }
   };
 
-  const handleInspectOrg = async (orgId: string) => {
-    if (inspectingOrgId === orgId) { setInspectingOrgId(null); setInspection(null); return; }
-    setInspectingOrgId(orgId);
+  const loadOrganizationInspection = async (orgId: string) => {
     setInspection(null);
     setInspectionLoading(true);
     try {
@@ -493,14 +568,28 @@ export default function MasterAdminPortal({
       } else {
         const err = await res.json().catch(() => ({}));
         setToastMessage(`⚠️ ${err.error || (isKa ? 'ინსპექცია ვერ მოხერხდა' : 'Inspection failed')}`);
-        setInspectingOrgId(null);
+        return false;
       }
     } catch {
       setToastMessage(isKa ? '⚠️ ინსპექცია ვერ მოხერხდა' : '⚠️ Inspection failed');
-      setInspectingOrgId(null);
+      return false;
     } finally {
       setInspectionLoading(false);
     }
+    return true;
+  };
+
+  const handleInspectOrg = async (orgId: string) => {
+    if (inspectingOrgId === orgId) { setInspectingOrgId(null); setInspection(null); return; }
+    setInspectingOrgId(orgId);
+    const loaded = await loadOrganizationInspection(orgId);
+    if (!loaded) setInspectingOrgId(null);
+  };
+
+  const refreshOrganizationWorkspace = async () => {
+    const orgId = inspectingOrgId;
+    await fetchData();
+    if (orgId) await loadOrganizationInspection(orgId);
   };
 
   const handleSaveUserEdit = async (e: React.FormEvent) => {
@@ -563,7 +652,15 @@ export default function MasterAdminPortal({
     }
   };
 
-  const handleDeleteUser = async () => {
+  /**
+   * Two-step by design. The first request carries no acknowledgement, so the
+   * server answers 409 with the wineries this deletion would destroy; the
+   * dialog shows them and the admin confirms against a named list.
+   *
+   * An account whose workspaces still have other members deletes in one step —
+   * the extra confirmation appears only when records would actually be lost.
+   */
+  const handleDeleteUser = async (confirmOrphanedOrganizations?: string[]) => {
     if (!deletingUsername) return;
     setIsDeletingUser(true);
 
@@ -571,17 +668,33 @@ export default function MasterAdminPortal({
       const res = await fetch('/api/admin/users/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: deletingUsername })
+        body: JSON.stringify({
+          username: deletingUsername,
+          ...(confirmOrphanedOrganizations ? { confirmOrphanedOrganizations } : {}),
+        })
       });
 
       if (res.ok) {
-        setToastMessage(isKa ? '✓ მომხმარებელი წარმატებით წაიშალა' : '✓ User deleted successfully');
+        const body = await res.json().catch(() => ({}));
+        const destroyed = Array.isArray(body.deletedOrganizations) ? body.deletedOrganizations.length : 0;
+        setToastMessage(destroyed
+          ? (isKa
+            ? `✓ მომხმარებელი და ${destroyed} სამუშაო სივრცე წაიშალა`
+            : `✓ User deleted, along with ${destroyed} winery workspace${destroyed === 1 ? '' : 's'}`)
+          : (isKa ? '✓ მომხმარებელი წარმატებით წაიშალა' : '✓ User deleted successfully'));
         setDeletingUsername(null);
+        setPendingOrphanedOrgs(null);
         fetchData();
-      } else {
-        const err = await res.json();
-        setToastMessage(`⚠️ ${err.error}`);
+        return;
       }
+
+      const err = await res.json().catch(() => ({} as any));
+      if (res.status === 409 && err.code === 'orphaned_organizations_require_confirmation') {
+        // Show what would be lost instead of deleting it.
+        setPendingOrphanedOrgs(err.organizations || []);
+        return;
+      }
+      setToastMessage(`⚠️ ${err.error || (isKa ? 'წაშლა ვერ მოხერხდა' : 'Delete failed')}`);
     } catch (err) {
       setToastMessage(isKa ? 'მომხმარებლის წაშლა ვერ მოხერხდა' : 'Failed to delete user');
     } finally {
@@ -589,17 +702,358 @@ export default function MasterAdminPortal({
     }
   };
 
-  // Filtering
-  const filteredUsers = users.filter(u =>
-    u.username.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.email.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.fullName.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  const handleCreateOrganization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newOrganizationName.trim() || !newOrganizationOwner || isCreatingOrganization) return;
+    setIsCreatingOrganization(true);
+    try {
+      const res = await fetch('/api/admin/orgs/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newOrganizationName, ownerUsername: newOrganizationOwner }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToastMessage(`⚠️ ${adminActionError(data, 'Organization could not be created', 'ორგანიზაცია ვერ შეიქმნა')}`);
+        return;
+      }
+      setToastMessage(isKa ? `✓ ორგანიზაცია „${data.organization.name}“ შეიქმნა` : `✓ ${data.organization.name} created`);
+      setCreatingOrganization(false);
+      setNewOrganizationName('');
+      setNewOrganizationOwner('');
+      await refreshOrganizationWorkspace();
+    } catch {
+      setToastMessage(isKa ? '⚠️ ორგანიზაცია ვერ შეიქმნა' : '⚠️ Organization could not be created');
+    } finally {
+      setIsCreatingOrganization(false);
+    }
+  };
 
-  const filteredOrgs = orgs.filter(o =>
-    o.name.toLowerCase().includes(orgSearch.toLowerCase()) ||
-    o.id.toLowerCase().includes(orgSearch.toLowerCase())
-  );
+  const openOrganizationManager = (organization: OrgRecord) => {
+    setManagingOrganizationId(organization.id);
+    setManagedOrganizationName(organization.name);
+    setOrganizationDeleteConfirmation('');
+  };
+
+  const copyManagedOrganizationId = async () => {
+    if (!managingOrganizationId) return;
+    try {
+      await navigator.clipboard.writeText(managingOrganizationId);
+      setToastMessage(isKa ? '✓ ორგანიზაციის ID დაკოპირდა' : '✓ Organization ID copied');
+    } catch {
+      setToastMessage(isKa ? '⚠️ ID ვერ დაკოპირდა' : '⚠️ Organization ID could not be copied');
+    }
+  };
+
+  const openManagedOrganizationWorkspace = async () => {
+    const organizationId = managingOrganizationId;
+    if (!organizationId) return;
+    setManagingOrganizationId(null);
+    setActiveTab('orgs');
+    if (inspectingOrgId !== organizationId || !inspection) {
+      setInspectingOrgId(organizationId);
+      await loadOrganizationInspection(organizationId);
+    }
+    window.setTimeout(() => document.getElementById('admin-organization-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
+
+  const handleRenameOrganization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!managingOrganizationId || !managedOrganizationName.trim() || isSavingOrganization) return;
+    setIsSavingOrganization(true);
+    try {
+      const res = await fetch('/api/admin/orgs/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organizationId: managingOrganizationId, name: managedOrganizationName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToastMessage(`⚠️ ${adminActionError(data, 'Name could not be updated', 'სახელი ვერ განახლდა')}`);
+        return;
+      }
+      setManagedOrganizationName(data.organization.name);
+      setToastMessage(isKa ? '✓ ორგანიზაციის სახელი განახლდა' : '✓ Organization name updated');
+      await refreshOrganizationWorkspace();
+    } catch {
+      setToastMessage(isKa ? '⚠️ სახელი ვერ განახლდა' : '⚠️ Name could not be updated');
+    } finally {
+      setIsSavingOrganization(false);
+    }
+  };
+
+  const handleDeleteOrganization = async () => {
+    const organization = orgs.find(org => org.id === managingOrganizationId);
+    if (!organization || organizationDeleteConfirmation !== organization.name || isDeletingOrganization) return;
+    setIsDeletingOrganization(true);
+    try {
+      const res = await fetch('/api/admin/orgs/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizationId: organization.id,
+          confirmationName: organizationDeleteConfirmation,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToastMessage(`⚠️ ${adminActionError(data, 'Organization could not be deleted', 'ორგანიზაცია ვერ წაიშალა')}`);
+        return;
+      }
+      setManagingOrganizationId(null);
+      setInspectingOrgId(current => current === organization.id ? null : current);
+      setInspection(current => inspectingOrgId === organization.id ? null : current);
+      setToastMessage(isKa
+        ? `✓ ორგანიზაცია და ${data.membersRemoved || 0} წევრობა წაიშალა`
+        : `✓ Organization deleted; ${data.membersRemoved || 0} membership${data.membersRemoved === 1 ? '' : 's'} removed`);
+      await fetchData();
+    } catch {
+      setToastMessage(isKa ? '⚠️ ორგანიზაცია ვერ წაიშალა' : '⚠️ Organization could not be deleted');
+    } finally {
+      setIsDeletingOrganization(false);
+    }
+  };
+
+  const openMembershipManager = (user: UserRecord) => {
+    const firstAvailable = orgs.find(org => !user.organizations.some(membership => membership.id === org.id));
+    setManagingUsername(user.username);
+    setMembershipOrganizationId(firstAvailable?.id || '');
+    setMembershipRole('Winemaker');
+    setMembershipMakeActive(false);
+  };
+
+  const handleUpsertMembership = async (
+    username: string,
+    organizationId: string,
+    role: string,
+    makeActive = false,
+  ) => {
+    if (!organizationId || membershipAction) return;
+    const actionKey = `${username}:${organizationId}:upsert`;
+    setMembershipAction(actionKey);
+    try {
+      const res = await fetch('/api/admin/memberships/upsert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, organizationId, role, makeActive }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToastMessage(`⚠️ ${adminActionError(data, 'Membership could not be updated', 'წევრობა ვერ განახლდა')}`);
+        return;
+      }
+      setToastMessage(data.sessionRevoked
+        ? (isKa ? `✓ წევრობა განახლდა · @${username}-ს ხელახლა შესვლა დასჭირდება` : `✓ Membership updated · @${username} will need to sign in again`)
+        : (isKa ? '✓ წევრობა განახლდა' : '✓ Membership updated'));
+      setMembershipMakeActive(false);
+      await refreshOrganizationWorkspace();
+    } catch {
+      setToastMessage(isKa ? '⚠️ წევრობა ვერ განახლდა' : '⚠️ Membership could not be updated');
+    } finally {
+      setMembershipAction(null);
+    }
+  };
+
+  const handleRemoveMembership = async (username: string, organizationId: string) => {
+    if (membershipAction) return;
+    const actionKey = `${username}:${organizationId}:remove`;
+    setMembershipAction(actionKey);
+    try {
+      const res = await fetch('/api/admin/memberships/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, organizationId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToastMessage(`⚠️ ${adminActionError(data, 'Membership could not be removed', 'წევრობა ვერ წაიშალა')}`);
+        return;
+      }
+      setToastMessage(data.sessionRevoked
+        ? (isKa ? `✓ წევრობა წაიშალა · @${username}-ს ხელახლა შესვლა დასჭირდება` : `✓ Membership removed · @${username} will need to sign in again`)
+        : (isKa ? '✓ წევრობა წაიშალა' : '✓ Membership removed'));
+      await refreshOrganizationWorkspace();
+    } catch {
+      setToastMessage(isKa ? '⚠️ წევრობა ვერ წაიშალა' : '⚠️ Membership could not be removed');
+    } finally {
+      setMembershipAction(null);
+    }
+  };
+
+  const toggleUserSelection = (username: string, selected?: boolean) => {
+    setSelectedUsernames(current => {
+      const next = new Set(current);
+      const shouldSelect = selected ?? !next.has(username);
+      if (shouldSelect) next.add(username); else next.delete(username);
+      return next;
+    });
+  };
+
+  const handleBulkUsers = async () => {
+    if (!selectedUsernames.size || bulkWorking) return;
+    if (bulkUserAction === 'assign' && !bulkOrganizationId) {
+      setToastMessage(isKa ? 'აირჩიეთ ორგანიზაცია' : 'Choose an organization');
+      return;
+    }
+    setBulkWorking(true);
+    try {
+      const response = await fetch('/api/admin/users/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          usernames: [...selectedUsernames],
+          action: bulkUserAction,
+          ...(bulkUserAction === 'assign' ? { organizationId: bulkOrganizationId, role: bulkRole } : {}),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Bulk action failed');
+      setToastMessage(isKa
+        ? `✓ ${data.changed} მომხმარებელი განახლდა`
+        : `✓ ${data.changed} user${data.changed === 1 ? '' : 's'} updated`);
+      setSelectedUsernames(new Set());
+      await refreshOrganizationWorkspace();
+    } catch (error) {
+      setToastMessage(error instanceof Error ? error.message : (isKa ? 'მასობრივი ქმედება ვერ შესრულდა' : 'Bulk action failed'));
+    } finally {
+      setBulkWorking(false);
+    }
+  };
+
+  const handleUserSecurityAction = async (username: string, action: 'unlock' | 'revoke_sessions' | 'force_password_reset') => {
+    if (membershipAction) return;
+    const actionKey = `security:${username}:${action}`;
+    setMembershipAction(actionKey);
+    try {
+      const response = await fetch('/api/admin/users/security-action', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, action }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Security action failed');
+      const messages = {
+        unlock: isKa ? '✓ ანგარიშის ბლოკირება მოხსნილია' : '✓ Account lockouts cleared',
+        revoke_sessions: isKa ? '✓ ყველა სესია გაუქმებულია' : '✓ All sessions revoked',
+        force_password_reset: isKa ? '✓ პაროლის აღდგენის წერილი გაიგზავნა' : '✓ Password-reset email sent',
+      };
+      setToastMessage(messages[action]);
+      await fetchData();
+    } catch (error) {
+      setToastMessage(error instanceof Error ? error.message : (isKa ? 'უსაფრთხოების ქმედება ვერ შესრულდა' : 'Security action failed'));
+    } finally {
+      setMembershipAction(null);
+    }
+  };
+
+  const toggleOrganizationSelection = (organizationId: string, selected?: boolean) => {
+    setSelectedOrganizationIds(current => {
+      const next = new Set(current);
+      const shouldSelect = selected ?? !next.has(organizationId);
+      if (shouldSelect) next.add(organizationId); else next.delete(organizationId);
+      return next;
+    });
+  };
+
+  const handleBulkOrganizations = async () => {
+    if (!selectedOrganizationIds.size || bulkOrganizationWorking) return;
+    setBulkOrganizationWorking(true);
+    try {
+      const response = await fetch('/api/admin/orgs/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          organizationIds: [...selectedOrganizationIds],
+          status: bulkOrganizationStatus,
+          reason: bulkOrganizationReason.trim(),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Bulk organization action failed');
+      setToastMessage(isKa
+        ? `✓ ${data.changed} ორგანიზაცია განახლდა`
+        : `✓ ${data.changed} organization${data.changed === 1 ? '' : 's'} updated`);
+      setSelectedOrganizationIds(new Set());
+      setBulkOrganizationReason('');
+      await refreshOrganizationWorkspace();
+    } catch (error) {
+      setToastMessage(error instanceof Error ? error.message : (isKa ? 'მასობრივი ქმედება ვერ შესრულდა' : 'Bulk organization action failed'));
+    } finally {
+      setBulkOrganizationWorking(false);
+    }
+  };
+
+  useEffect(() => {
+    if (creatingOrganization && !newOrganizationOwner && users.length > 0) {
+      setNewOrganizationOwner(users[0].username);
+    }
+  }, [creatingOrganization, newOrganizationOwner, users]);
+
+  useEffect(() => {
+    if (!managingUsername) return;
+    const user = users.find(candidate => candidate.username === managingUsername);
+    if (!user) {
+      setManagingUsername(null);
+      return;
+    }
+    const available = orgs.filter(org => !user.organizations.some(membership => membership.id === org.id));
+    if (!available.some(org => org.id === membershipOrganizationId)) {
+      setMembershipOrganizationId(available[0]?.id || '');
+    }
+  }, [managingUsername, membershipOrganizationId, orgs, users]);
+
+  useEffect(() => {
+    if (!bulkOrganizationId && orgs.length) setBulkOrganizationId(orgs[0].id);
+    setSelectedUsernames(current => new Set([...current].filter(username => users.some(user => user.username === username))));
+    setSelectedOrganizationIds(current => new Set([...current].filter(organizationId => orgs.some(org => org.id === organizationId))));
+  }, [bulkOrganizationId, orgs, users]);
+
+  useEffect(() => {
+    void import('../lib/adminViewPreferences').then(module => {
+      const saved = module.readAdminViews();
+      if (saved.userView) setUserView(saved.userView);
+      if (saved.orgView) setOrgView(saved.orgView);
+    });
+  }, []);
+
+  useEffect(() => {
+    void import('../lib/adminViewPreferences').then(module => module.saveAdminViews(userView, orgView));
+  }, [orgView, userView]);
+
+  // Filtering
+  const filteredUsers = users.filter(u => {
+    const query = userSearch.toLowerCase();
+    const matchesSearch = !query
+      || u.username.toLowerCase().includes(query)
+      || u.email.toLowerCase().includes(query)
+      || u.fullName.toLowerCase().includes(query)
+      || u.role.toLowerCase().includes(query)
+      || u.organizations.some(org => org.name.toLowerCase().includes(query) || org.role.toLowerCase().includes(query));
+    const matchesView = userView === 'all'
+      || (userView === 'online' && u.isOnline)
+      || (userView === 'offline' && !u.isOnline)
+      || (userView === 'unassigned' && u.organizations.length === 0)
+      || (userView === 'disabled' && u.accountEnabled === false)
+      || (userView === 'pending' && u.approvalStatus === 'pending');
+    return matchesSearch && matchesView;
+  });
+
+  const filteredOrgs = orgs.filter(o => {
+    const query = orgSearch.toLowerCase();
+    const matchesSearch = !query
+      || o.name.toLowerCase().includes(query)
+      || o.id.toLowerCase().includes(query)
+      || o.internalTags.some(tag => tag.toLowerCase().includes(query));
+    const matchesView = orgView === 'all'
+      || o.status === orgView
+      || (orgView === 'attention' && o.health.level !== 'healthy');
+    return matchesSearch && matchesView;
+  });
+  const managedOrganization = orgs.find(org => org.id === managingOrganizationId) || null;
+  const managedMembershipUser = users.find(user => user.username === managingUsername) || null;
+  const assignableOrganizations = managedMembershipUser
+    ? orgs.filter(org => !managedMembershipUser.organizations.some(membership => membership.id === org.id))
+    : [];
 
   const formatDateTime = (value: string | null | undefined) => {
     if (!value) return isKa ? 'არ არის ჩაწერილი' : 'Not recorded';
@@ -608,6 +1062,12 @@ export default function MasterAdminPortal({
     } catch {
       return value;
     }
+  };
+
+  const formatDateOnly = (value: string | null | undefined) => {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : '—';
   };
 
   const formatTelemetryUrl = (value: string | null | undefined) => {
@@ -659,26 +1119,46 @@ export default function MasterAdminPortal({
   ];
 
   return (
-    <div className="fixed inset-0 bg-[#070506] z-50 flex flex-col text-stone-100 font-mono select-none">
-      {/* Retro scanline overlay */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,6px_100%] pointer-events-none z-50 opacity-40" />
+    <div style={{ colorScheme: adminTheme }} className={`admin-portal admin-theme-${adminTheme} admin-density-${adminDensity} fixed inset-0 z-50 flex flex-col font-sans selection:bg-cyan-500/25`}>
+      <div className="admin-scanlines pointer-events-none absolute inset-0 z-50 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.18)_50%),linear-gradient(90deg,rgba(255,0,0,0.03),rgba(0,255,0,0.01),rgba(0,0,255,0.03))] bg-[length:100%_4px,6px_100%] opacity-15" />
 
       {/* Cyber Grid Header */}
-      <header className="border-b border-cyan-900/40 bg-[#0c090a] px-6 py-4 flex items-center justify-between shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.8)] relative">
-        <div className="flex items-center gap-3">
+      <header className="relative flex shrink-0 items-center justify-between gap-3 border-b border-cyan-900/35 bg-[#0c090a]/95 px-3 py-3.5 shadow-[0_4px_30px_rgba(0,0,0,0.55)] backdrop-blur-sm sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-cyan-950 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.15)]">
             <Server className="w-5 h-5 animate-pulse" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-black tracking-widest text-cyan-400 uppercase">{isKa ? 'VinOS ქსელის მართვა' : 'VinOS Network Control'}</h1>
-              <span className="px-1.5 py-0.5 text-[8px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/20 rounded uppercase tracking-widest animate-pulse">{isKa ? 'მთავარი ადმინი' : 'Master Admin'}</span>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-xs font-black uppercase tracking-[0.18em] text-cyan-400 sm:text-sm">{isKa ? 'VinOS ქსელის მართვა' : 'VinOS Network Control'}</h1>
+              <span className="hidden rounded border border-emerald-500/20 bg-emerald-950 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-emerald-400 sm:inline">{isKa ? 'მთავარი ადმინი' : 'Master Admin'}</span>
             </div>
-            <p className="text-[10px] text-cyan-700 uppercase tracking-wider mt-0.5">{isKa ? 'სისტემის ადმინისტრირებისა და დიაგნოსტიკის კონსოლი' : 'System Administration & Diagnostics Console'}</p>
+            <p className="mt-0.5 hidden text-[10px] uppercase tracking-wider text-cyan-700 sm:block">{isKa ? 'სისტემის ადმინისტრირებისა და დიაგნოსტიკის კონსოლი' : 'System Administration & Diagnostics Console'}</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+          <button
+            type="button"
+            onClick={() => setAdminTheme(current => current === 'light' ? 'dark' : 'light')}
+            className="flex items-center gap-2 rounded-lg border border-stone-800 bg-stone-900 p-2 text-stone-400 transition-all hover:border-cyan-500/40 hover:text-cyan-400 sm:px-3"
+            title={adminTheme === 'light' ? (isKa ? 'მუქი თემის ჩართვა' : 'Switch to dark theme') : (isKa ? 'ნათელი თემის ჩართვა' : 'Switch to light theme')}
+            aria-label={adminTheme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+            aria-pressed={adminTheme === 'dark'}
+          >
+            {adminTheme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+            <span className="hidden text-[10px] font-bold sm:inline">{adminTheme === 'light' ? (isKa ? 'მუქი' : 'Dark') : (isKa ? 'ნათელი' : 'Light')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdminDensity(current => current === 'comfortable' ? 'compact' : 'comfortable')}
+            className="flex items-center gap-2 rounded-lg border border-stone-800 bg-stone-900 p-2 text-stone-400 transition-all hover:border-cyan-500/40 hover:text-cyan-400 sm:px-3"
+            title={adminDensity === 'comfortable' ? (isKa ? 'კომპაქტური ხედი' : 'Use compact density') : (isKa ? 'კომფორტული ხედი' : 'Use comfortable density')}
+            aria-label={adminDensity === 'comfortable' ? 'Use compact density' : 'Use comfortable density'}
+          >
+            <Rows3 className="h-4 w-4" />
+            <span className="hidden text-[10px] font-bold xl:inline">{adminDensity === 'comfortable' ? (isKa ? 'კომფორტული' : 'Comfortable') : (isKa ? 'კომპაქტური' : 'Compact')}</span>
+          </button>
           <button
             onClick={fetchData}
             className="p-2 bg-stone-900 border border-stone-800 rounded-lg hover:border-cyan-500/40 text-stone-400 hover:text-cyan-400 transition-all cursor-pointer"
@@ -688,9 +1168,9 @@ export default function MasterAdminPortal({
           </button>
           <button
             onClick={onClose}
-            className="px-4 py-1.5 bg-stone-900 border border-stone-800 rounded-lg hover:border-red-500/40 text-stone-400 hover:text-red-400 transition-all text-xs cursor-pointer tracking-wider font-bold"
+            className="rounded-lg border border-stone-800 bg-stone-900 px-3 py-2 text-[10px] font-bold tracking-wider text-stone-400 transition-all hover:border-red-500/40 hover:text-red-400 sm:px-4 sm:text-xs"
           >
-            {isKa ? 'გასვლა' : 'LOG OUT'} ✕
+            <span className="hidden sm:inline">{isKa ? 'გასვლა' : 'EXIT ADMIN'}</span> ✕
           </button>
         </div>
       </header>
@@ -698,14 +1178,15 @@ export default function MasterAdminPortal({
       {/* Main Grid Layout */}
       <div className="flex-1 flex overflow-hidden">
         {/* Navigation Sidebar */}
-        <nav className="w-56 border-r border-cyan-900/20 bg-[#090708] p-4 flex flex-col gap-2 shrink-0">
-          <span className="text-[9px] uppercase text-cyan-800 font-bold tracking-widest mb-2 block">{isKa ? 'ინტერფეისები' : 'Interfaces'}</span>
+        <nav className="flex w-[4.5rem] shrink-0 flex-col gap-2 overflow-y-auto border-r border-cyan-900/20 bg-[#090708] p-2 lg:w-64 lg:p-4">
+          <span className="mb-2 hidden text-[9px] font-bold uppercase tracking-widest text-cyan-800 lg:block">{isKa ? 'ინტერფეისები' : 'Interfaces'}</span>
           {[
             { id: 'ai-ops', label: isKa ? 'AI ოპერაციები' : 'AI Operations', icon: Cpu },
             { id: 'billing', label: isKa ? 'გამოწერები და ფასები' : 'Subscriptions', icon: CreditCard },
             { id: 'stats', label: isKa ? 'სისტემის მდგომარეობა' : 'System Health', icon: Activity },
             { id: 'users', label: isKa ? 'მომხმარებლები' : 'User Accounts', icon: User },
             { id: 'orgs', label: isKa ? 'მარნები / ორგანიზაციები' : 'Wineries / Orgs', icon: Users },
+            { id: 'access', label: isKa ? 'როლები და უფლებები' : 'Roles & Access', icon: ShieldCheck },
             { id: 'ops', label: isKa ? 'ოპერაციები და უსაფრთხოება' : 'Ops & Security', icon: Wrench },
             { id: 'audit', label: isKa ? 'ადმინის ისტორია' : 'Admin Trail', icon: ScrollText },
             { id: 'client-errors', label: isKa ? 'კლიენტის შეცდომები' : 'Client Errors', icon: ShieldAlert },
@@ -717,19 +1198,21 @@ export default function MasterAdminPortal({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-xs font-bold tracking-wider transition-all cursor-pointer text-left ${
+                title={tab.label}
+                aria-label={tab.label}
+                className={`flex w-full items-center justify-center gap-3 rounded-xl border px-2 py-3 text-left text-xs font-bold tracking-wider transition-all lg:justify-start lg:px-4 ${
                   active
                     ? 'bg-cyan-950/20 border-cyan-500/40 text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.08)]'
                     : 'bg-transparent border-transparent text-stone-500 hover:text-stone-300 hover:bg-stone-900/40'
                 }`}
               >
                 <Icon className={`w-4 h-4 ${active ? 'text-cyan-400' : 'text-stone-650'}`} />
-                {tab.label}
+                <span className="hidden lg:inline">{tab.label}</span>
               </button>
             );
           })}
 
-          <div className="mt-auto p-3.5 bg-stone-950/50 border border-cyan-900/10 rounded-2xl text-[9px] text-cyan-700/80 space-y-2">
+          <div className="mt-auto hidden space-y-2 rounded-2xl border border-cyan-900/10 bg-stone-950/50 p-3.5 text-[9px] text-cyan-700/80 lg:block">
             <div>
               <span className="block font-bold">{isKa ? 'შენახვის ძრავი:' : 'Persistence Engine:'}</span>
               <span className="font-mono text-stone-400">{stats?.persistenceMode || (isKa ? 'იტვირთება...' : 'Resolving...')}</span>
@@ -742,7 +1225,7 @@ export default function MasterAdminPortal({
         </nav>
 
         {/* Console Viewport */}
-        <main className="flex-1 bg-[#090607] p-6 overflow-y-auto relative">
+        <main className="relative flex-1 overflow-y-auto bg-[#090607] bg-[radial-gradient(circle_at_top_right,rgba(8,145,178,0.055),transparent_34rem)] p-3 sm:p-5 lg:p-6">
           {isLoading && !stats ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-cyan-500">
               <RefreshCw className="w-8 h-8 animate-spin" />
@@ -759,6 +1242,21 @@ export default function MasterAdminPortal({
                   exit={{ opacity: 0, y: -10 }}
                   className="space-y-6"
                 >
+                  <AdminControlSnapshot
+                    isKa={isKa}
+                    onlineUsers={users.filter(user => user.isOnline).length}
+                    activeOrganizations={orgs.filter(org => org.status === 'active').length}
+                    totalOrganizations={orgs.length}
+                    organizationsNeedingAttention={orgs.filter(org => org.health.level !== 'healthy').length}
+                    pendingInvitations={orgs.reduce((sum, org) => sum + org.pendingInvitationsCount, 0)}
+                    pendingAccess={pendingRegistrations.length}
+                    onOnlineUsers={() => { setUserView('online'); setActiveTab('users'); }}
+                    onActiveOrganizations={() => { setOrgView('active'); setActiveTab('orgs'); }}
+                    onAttention={() => { setOrgView('attention'); setActiveTab('orgs'); }}
+                    onInvitations={() => setActiveTab('orgs')}
+                    onPendingAccess={() => { setUserView('pending'); setActiveTab('users'); }}
+                  />
+
                   {/* Telemetry Dashboard Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                     {/* Event-loop responsiveness (real, sampled server-side) */}
@@ -1201,15 +1699,52 @@ export default function MasterAdminPortal({
                   exit={{ opacity: 0, y: -10 }}
                   className="space-y-4 text-left"
                 >
-                  <div className="flex items-center justify-between gap-4">
-                    <h2 className="text-xs uppercase font-bold text-cyan-400 tracking-wider">{isKa ? 'მომხმარებელთა რეესტრი' : 'User Directory Registry'}</h2>
-                    <input
-                      type="text"
-                      placeholder={isKa ? 'ძებნა სახელით, მომხმარებლის სახელით ან ელფოსტით...' : 'Search accounts by name, username, or email...'}
-                      value={userSearch}
-                      onChange={e => setUserSearch(e.target.value)}
-                      className="w-80 bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs outline-none focus:border-cyan-500/40 text-stone-200 transition-colors"
-                    />
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-xs font-bold uppercase tracking-wider text-cyan-400">{isKa ? 'მომხმარებელთა რეესტრი' : 'User Directory Registry'}</h2>
+                      <p className="mt-1 text-[10px] text-stone-600">{filteredUsers.length} / {users.length} {isKa ? 'მომხმარებელი ნაჩვენებია' : 'accounts shown'}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <AdminCsvExportButton kind="users" rows={filteredUsers} isKa={isKa} />
+                      <select value={userView} onChange={event => setUserView(event.target.value as typeof userView)} className="bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs text-stone-300 outline-none focus:border-cyan-500/40">
+                        <option value="all">{isKa ? 'ყველა მომხმარებელი' : 'All users'}</option>
+                        <option value="online">{isKa ? 'ონლაინ' : 'Online now'}</option>
+                        <option value="offline">{isKa ? 'ოფლაინ' : 'Offline'}</option>
+                        <option value="unassigned">{isKa ? 'ორგანიზაციის გარეშე' : 'Unassigned'}</option>
+                        <option value="disabled">{isKa ? 'გამორთული' : 'Disabled'}</option>
+                        <option value="pending">{isKa ? 'დასამტკიცებელი' : 'Pending approval'}</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder={isKa ? 'ძებნა სახელით, როლით, ორგანიზაციით...' : 'Search name, role, organization...'}
+                        value={userSearch}
+                        onChange={e => setUserSearch(e.target.value)}
+                        className="w-80 bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs outline-none focus:border-cyan-500/40 text-stone-200 transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-cyan-900/25 bg-[#0c090a] p-3">
+                    <span className="mr-auto text-[10px] font-bold text-stone-400">
+                      {selectedUsernames.size} {isKa ? 'მონიშნული' : 'selected'}
+                    </span>
+                    <select value={bulkUserAction} onChange={event => setBulkUserAction(event.target.value)} className="rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-[10px] text-stone-300">
+                      <option value="assign">{isKa ? 'ორგანიზაციაში მინიჭება' : 'Assign to organization'}</option>
+                      <option value="enable">{isKa ? 'ანგარიშების ჩართვა' : 'Enable accounts'}</option>
+                      <option value="disable">{isKa ? 'ანგარიშების გამორთვა' : 'Disable accounts'}</option>
+                      <option value="revoke_sessions">{isKa ? 'სესიების გაუქმება' : 'Revoke sessions'}</option>
+                    </select>
+                    {bulkUserAction === 'assign' && <>
+                      <select value={bulkOrganizationId} onChange={event => setBulkOrganizationId(event.target.value)} className="max-w-52 rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-[10px] text-stone-300">
+                        {orgs.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
+                      </select>
+                      <select value={bulkRole} onChange={event => setBulkRole(event.target.value)} className="rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-[10px] text-stone-300">
+                        {ORGANIZATION_ROLES.map(role => <option key={role}>{role}</option>)}
+                      </select>
+                    </>}
+                    <button type="button" disabled={!selectedUsernames.size || bulkWorking} onClick={() => void handleBulkUsers()} className="flex items-center gap-2 rounded-lg border border-cyan-500/25 bg-cyan-950/30 px-4 py-2 text-[10px] font-bold text-cyan-300 disabled:opacity-35">
+                      {bulkWorking && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}{isKa ? 'გამოყენება' : 'Apply bulk action'}
+                    </button>
                   </div>
 
                   <section className="bg-[#0c090a] border border-amber-900/30 rounded-2xl p-5 space-y-4">
@@ -1250,13 +1785,20 @@ export default function MasterAdminPortal({
                                   request.requestedAt ? formatDateTime(request.requestedAt) : '',
                                 ].filter(Boolean).join(' • ')}
                               </div>
+                              {request.approvalBlockedReasons && request.approvalBlockedReasons.length > 0 && (
+                                <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-950/25 px-2.5 py-2 text-[10px] font-semibold leading-4 text-amber-300">
+                                  {isKa ? 'დამტკიცებამდე საჭიროა: ' : 'Required before approval: '}
+                                  {request.approvalBlockedReasons.join(', ')}
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleRegistrationDecision(request.username, 'approve')}
-                                disabled={decidingUsername !== null}
-                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase tracking-wide transition-colors hover:bg-emerald-900/40 disabled:opacity-40 disabled:cursor-wait cursor-pointer"
+                                disabled={decidingUsername !== null || Boolean(request.approvalBlockedReasons?.length)}
+                                title={request.approvalBlockedReasons?.length ? (isKa ? 'ჯერ შეავსეთ სავალდებულო მონაცემები' : 'Required registration details are missing') : undefined}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase tracking-wide transition-colors hover:bg-emerald-900/40 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                               >
                                 {decidingUsername === request.username
                                   ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1279,10 +1821,13 @@ export default function MasterAdminPortal({
                     )}
                   </section>
 
-                  <div className="bg-[#0c090a] border border-cyan-900/20 rounded-2xl overflow-hidden">
-                    <table className="w-full text-xs text-left border-collapse">
-                      <thead>
+                  <div className="overflow-x-auto rounded-2xl border border-cyan-900/20 bg-[#0c090a] shadow-[0_18px_50px_rgba(0,0,0,0.22)]">
+                    <table className="w-full min-w-[1140px] text-xs text-left border-collapse">
+                      <thead className="sticky top-0 z-10">
                         <tr className="border-b border-stone-900 bg-stone-950/80 text-stone-400 uppercase text-[9px] font-bold tracking-widest">
+                          <th className="w-10 px-4 py-3">
+                            <input type="checkbox" aria-label={isKa ? 'ყველა ნაჩვენები მომხმარებლის მონიშვნა' : 'Select all visible users'} checked={filteredUsers.length > 0 && filteredUsers.every(user => selectedUsernames.has(user.username))} onChange={event => setSelectedUsernames(current => { const next = new Set(current); filteredUsers.forEach(user => event.target.checked ? next.add(user.username) : next.delete(user.username)); return next; })} className="accent-cyan-500" />
+                          </th>
                           <th className="px-5 py-3">{isKa ? 'ანგარიში' : 'Winemaker Account'}</th>
                           <th className="px-5 py-3">{isKa ? 'ელფოსტა' : 'Email Address'}</th>
                           <th className="px-5 py-3">{isKa ? 'პლატფორმის როლი' : 'Platform Role'}</th>
@@ -1296,9 +1841,18 @@ export default function MasterAdminPortal({
                           const isMaster = u.username.toLowerCase() === currentUser.username.toLowerCase();
                           return (
                             <tr key={u.id} className="hover:bg-stone-900/30 transition-colors">
+                              <td className="px-4 py-3.5">
+                                <input type="checkbox" aria-label={`${u.username} ${isKa ? 'მონიშვნა' : 'select'}`} checked={selectedUsernames.has(u.username)} onChange={() => toggleUserSelection(u.username)} className="accent-cyan-500" />
+                              </td>
                               <td className="px-5 py-3.5">
-                                <div className="font-bold text-stone-200">@{u.username}</div>
+                                <div className="flex items-center gap-2 font-bold text-stone-200">
+                                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${u.isOnline ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.85)]' : 'bg-stone-700'}`} title={u.isOnline ? (isKa ? 'ონლაინ' : 'Online now') : (isKa ? 'ოფლაინ' : 'Offline')} />
+                                  @{u.username}
+                                </div>
                                 <div className="text-[10px] text-stone-500 mt-0.5">{u.fullName}</div>
+                                <div className={`mt-1 text-[9px] ${u.isOnline ? 'text-emerald-500' : 'text-stone-650'}`}>
+                                  {u.isOnline ? (isKa ? 'ონლაინ ახლა' : 'Online now') : `${isKa ? 'ბოლო აქტივობა' : 'Last seen'}: ${formatDateTime(u.lastSeenAt)}`}
+                                </div>
                               </td>
                               <td className="px-5 py-3.5 text-stone-300 font-mono">{u.email}</td>
                               <td className="px-5 py-3.5">
@@ -1313,8 +1867,12 @@ export default function MasterAdminPortal({
                               <td className="px-5 py-3.5">
                                 <div className="flex flex-wrap gap-1">
                                   {u.organizations.map(o => (
-                                    <span key={o.id} className="px-1.5 py-0.5 bg-stone-900 text-stone-400 border border-stone-850 rounded text-[9px]">
-                                      {o.name} ({o.role})
+                                    <span key={o.id} className={`px-1.5 py-0.5 border rounded text-[9px] ${
+                                      u.activeOrganizationId === o.id
+                                        ? 'bg-cyan-950/35 text-cyan-300 border-cyan-500/30'
+                                        : 'bg-stone-900 text-stone-400 border-stone-850'
+                                    }`}>
+                                      {o.name} ({o.role}){u.activeOrganizationId === o.id ? (isKa ? ' · აქტიური' : ' · active') : ''}
                                     </span>
                                   ))}
                                   {u.organizations.length === 0 && (
@@ -1361,7 +1919,15 @@ export default function MasterAdminPortal({
                               <td className="px-5 py-3.5 text-right">
                                 <div className="flex items-center justify-end gap-2">
                                   <button
-                                    onClick={() => handleImpersonate(u.username)}
+                                    onClick={() => {
+                                      const reason = window.prompt(isKa ? 'მიუთითეთ მხარდაჭერის სესიის მიზეზი' : 'Enter a reason for this support session');
+                                      if (!reason) return;
+                                      if (reason.trim().length < 5) {
+                                        setToastMessage(isKa ? 'მიზეზი მინიმუმ 5 სიმბოლო უნდა იყოს' : 'Reason must be at least 5 characters');
+                                        return;
+                                      }
+                                      void handleImpersonate(u.username, reason.trim());
+                                    }}
                                     disabled={isMaster || u.accountEnabled === false || impersonatingUsername !== null}
                                     className={`p-1.5 bg-stone-900 border border-stone-850 rounded-lg transition-colors ${
                                       isMaster || u.accountEnabled === false || impersonatingUsername !== null
@@ -1375,6 +1941,13 @@ export default function MasterAdminPortal({
                                     {impersonatingUsername === u.username
                                       ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                       : <Eye className="w-3.5 h-3.5" />}
+                                  </button>
+                                  <button
+                                    onClick={() => openMembershipManager(u)}
+                                    className="p-1.5 bg-stone-900 border border-stone-850 hover:border-purple-500/30 text-stone-450 hover:text-purple-400 rounded-lg cursor-pointer transition-colors"
+                                    title={isKa ? 'ორგანიზაციებისა და როლების მართვა' : 'Manage organizations and roles'}
+                                  >
+                                    <Users className="w-3.5 h-3.5" />
                                   </button>
                                   <button
                                     onClick={() => {
@@ -1423,21 +1996,57 @@ export default function MasterAdminPortal({
                   exit={{ opacity: 0, y: -10 }}
                   className="space-y-4 text-left"
                 >
-                  <div className="flex items-center justify-between gap-4">
-                    <h2 className="text-xs uppercase font-bold text-cyan-400 tracking-wider">{isKa ? 'მარნების (ორგანიზაციების) რეესტრი' : 'Winery Organizations Registry'}</h2>
-                    <input
-                      type="text"
-                      placeholder={isKa ? 'ძებნა სახელით ან ID-ით...' : 'Search organizations by name or ID...'}
-                      value={orgSearch}
-                      onChange={e => setOrgSearch(e.target.value)}
-                      className="w-80 bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs outline-none focus:border-cyan-500/40 text-stone-200 transition-colors"
-                    />
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-xs font-bold uppercase tracking-wider text-cyan-400">{isKa ? 'მარნების (ორგანიზაციების) რეესტრი' : 'Winery Organizations Registry'}</h2>
+                      <p className="mt-1 text-[10px] text-stone-600">{filteredOrgs.length} / {orgs.length} {isKa ? 'ორგანიზაცია ნაჩვენებია' : 'organizations shown'}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <AdminCsvExportButton kind="organizations" rows={filteredOrgs} isKa={isKa} />
+                      <select value={orgView} onChange={event => setOrgView(event.target.value as typeof orgView)} className="bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs text-stone-300 outline-none focus:border-cyan-500/40">
+                        <option value="all">{isKa ? 'ყველა ორგანიზაცია' : 'All organizations'}</option>
+                        <option value="active">{isKa ? 'აქტიური' : 'Active'}</option>
+                        <option value="suspended">{isKa ? 'შეჩერებული' : 'Suspended'}</option>
+                        <option value="archived">{isKa ? 'არქივირებული' : 'Archived'}</option>
+                        <option value="attention">{isKa ? 'საჭიროებს ყურადღებას' : 'Needs attention'}</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder={isKa ? 'ძებნა სახელით, ID-ით ან ტეგით...' : 'Search by name, ID, or internal tag...'}
+                        value={orgSearch}
+                        onChange={e => setOrgSearch(e.target.value)}
+                        className="w-72 bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs outline-none focus:border-cyan-500/40 text-stone-200 transition-colors"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCreatingOrganization(true)}
+                        disabled={users.length === 0}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-cyan-950/35 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-950/60 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={users.length === 0 ? (isKa ? 'ჯერ შექმენით მომხმარებელი' : 'Create a user first') : undefined}
+                      >
+                        <Plus className="w-3.5 h-3.5" /> {isKa ? 'ახალი ორგანიზაცია' : 'New organization'}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="bg-[#0c090a] border border-cyan-900/20 rounded-2xl overflow-hidden">
-                    <table className="w-full text-xs text-left border-collapse">
-                      <thead>
+                  <AdminOrganizationBulkBar
+                    isKa={isKa}
+                    selectedCount={selectedOrganizationIds.size}
+                    status={bulkOrganizationStatus}
+                    reason={bulkOrganizationReason}
+                    working={bulkOrganizationWorking}
+                    onStatusChange={setBulkOrganizationStatus}
+                    onReasonChange={setBulkOrganizationReason}
+                    onApply={() => void handleBulkOrganizations()}
+                  />
+
+                  <div className="overflow-x-auto rounded-2xl border border-cyan-900/20 bg-[#0c090a] shadow-[0_18px_50px_rgba(0,0,0,0.22)]">
+                    <table className="w-full min-w-[1020px] text-xs text-left border-collapse">
+                      <thead className="sticky top-0 z-10">
                         <tr className="border-b border-stone-900 bg-stone-950/80 text-stone-400 uppercase text-[9px] font-bold tracking-widest">
+                          <th className="w-10 px-4 py-3">
+                            <input type="checkbox" aria-label={isKa ? 'ყველა ნაჩვენები ორგანიზაციის მონიშვნა' : 'Select all visible organizations'} checked={filteredOrgs.length > 0 && filteredOrgs.every(org => selectedOrganizationIds.has(org.id))} onChange={event => setSelectedOrganizationIds(current => { const next = new Set(current); filteredOrgs.forEach(org => event.target.checked ? next.add(org.id) : next.delete(org.id)); return next; })} className="accent-cyan-500" />
+                          </th>
                           <th className="px-5 py-3">{isKa ? 'მარნის სახელი / ID' : 'Winery Name / ID'}</th>
                           <th className="px-5 py-3">{isKa ? 'რეგისტრაციის თარიღი' : 'Date Registered'}</th>
                           <th className="px-5 py-3">{isKa ? 'წევრები' : 'Members Count'}</th>
@@ -1450,31 +2059,60 @@ export default function MasterAdminPortal({
                       <tbody className="divide-y divide-stone-900/50">
                         {filteredOrgs.map(o => (
                           <tr key={o.id} className={`transition-colors ${inspectingOrgId === o.id ? 'bg-cyan-950/15' : 'hover:bg-stone-900/30'}`}>
+                            <td className="px-4 py-3.5">
+                              <input type="checkbox" aria-label={`${o.name} ${isKa ? 'მონიშვნა' : 'select'}`} checked={selectedOrganizationIds.has(o.id)} onChange={() => toggleOrganizationSelection(o.id)} className="accent-cyan-500" />
+                            </td>
                             <td className="px-5 py-3.5">
-                              <div className="font-bold text-stone-200">{o.name}</div>
+                              <div className="flex flex-wrap items-center gap-2 font-bold text-stone-200">
+                                {o.name}
+                                <span className={`rounded-full border px-2 py-0.5 text-[8px] uppercase ${o.status === 'active' ? 'border-emerald-500/25 bg-emerald-950/30 text-emerald-400' : o.status === 'suspended' ? 'border-amber-500/25 bg-amber-950/30 text-amber-400' : 'border-stone-700 bg-stone-900 text-stone-400'}`}>{o.status}</span>
+                                {o.health.level !== 'healthy' && <span className="rounded-full border border-red-500/25 bg-red-950/20 px-2 py-0.5 text-[8px] uppercase text-red-400" title={o.health.issues.join(', ')}>{isKa ? 'ყურადღება' : 'attention'}</span>}
+                              </div>
                               <div className="text-[9.5px] text-stone-500 font-mono mt-0.5">{o.id}</div>
+                              {o.internalTags.length > 0 && <div className="mt-2 flex flex-wrap gap-1">
+                                {o.internalTags.slice(0, 3).map(tag => <span key={tag} className="rounded-md border border-violet-500/15 bg-violet-950/20 px-1.5 py-0.5 text-[8px] font-medium text-violet-300/80">{tag}</span>)}
+                                {o.internalTags.length > 3 && <span className="px-1 py-0.5 text-[8px] text-stone-600">+{o.internalTags.length - 3}</span>}
+                              </div>}
                             </td>
                             <td className="px-5 py-3.5 text-stone-400 font-mono">
-                              {new Date(o.createdAt).toISOString().split('T')[0]}
+                              {formatDateOnly(o.createdAt)}
                             </td>
-                            <td className="px-5 py-3.5 text-stone-300 font-bold">{o.membersCount}</td>
+                            <td className="px-5 py-3.5 text-stone-300 font-bold">
+                              {o.membersCount}
+                              <span className="block text-[9px] font-normal text-stone-600">
+                                {o.ownersCount} {isKa ? 'მფლობელი' : `owner${o.ownersCount === 1 ? '' : 's'}`}
+                              </span>
+                              <span className="mt-1 flex items-center gap-1 text-[9px] font-normal text-emerald-500">
+                                <span className={`h-2 w-2 rounded-full ${o.onlineMembersCount > 0 ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,.8)]' : 'bg-stone-700 shadow-none'}`} />
+                                {o.onlineMembersCount} {isKa ? 'ონლაინ' : 'online'}
+                              </span>
+                            </td>
                             <td className="px-5 py-3.5 text-stone-300 font-bold">{o.tanksCount}</td>
                             <td className="px-5 py-3.5 text-stone-300 font-bold">{o.lotsCount}</td>
                             <td className="px-5 py-3.5 text-right font-mono text-cyan-400">
                               {o.dataSize.toLocaleString()} B
                             </td>
                             <td className="px-5 py-3.5 text-right">
-                              <button
-                                onClick={() => handleInspectOrg(o.id)}
-                                className={`p-1.5 bg-stone-900 border rounded-lg cursor-pointer transition-colors ${
-                                  inspectingOrgId === o.id
-                                    ? 'border-cyan-500/40 text-cyan-400'
-                                    : 'border-stone-850 hover:border-cyan-500/30 text-stone-450 hover:text-cyan-400'
-                                }`}
-                                title={isKa ? 'ჩანაწერების რაოდენობა და სიახლე კოლექციების მიხედვით' : 'Per-collection record counts & freshness'}
-                              >
-                                <SearchCode className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => handleInspectOrg(o.id)}
+                                  className={`p-1.5 bg-stone-900 border rounded-lg cursor-pointer transition-colors ${
+                                    inspectingOrgId === o.id
+                                      ? 'border-cyan-500/40 text-cyan-400'
+                                      : 'border-stone-850 hover:border-cyan-500/30 text-stone-450 hover:text-cyan-400'
+                                  }`}
+                                  title={isKa ? 'ჩანაწერების რაოდენობა და სიახლე კოლექციების მიხედვით' : 'Per-collection record counts & freshness'}
+                                >
+                                  <SearchCode className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => openOrganizationManager(o)}
+                                  className="p-1.5 bg-stone-900 border border-stone-850 hover:border-purple-500/30 text-stone-450 hover:text-purple-400 rounded-lg cursor-pointer transition-colors"
+                                  title={isKa ? 'ორგანიზაციის სწრაფი ქმედებები' : 'Open organization quick actions'}
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -1482,44 +2120,31 @@ export default function MasterAdminPortal({
                     </table>
                   </div>
 
-                  {/* Data inspector panel */}
+                  {/* Full organization workspace */}
                   {inspectingOrgId && (
-                    <div className="bg-[#0c090a] border border-cyan-500/25 rounded-2xl p-5 space-y-4">
-                      {inspectionLoading ? (
-                        <div className="flex items-center gap-2 text-cyan-500 text-xs font-bold">
-                          <RefreshCw className="w-4 h-4 animate-spin" /> {isKa ? 'მონაცემთა პროფილის ინსპექცია...' : 'INSPECTING DATA PROFILE...'}
+                    <div id="admin-organization-workspace" className="scroll-mt-5">
+                      {inspection && !inspectionLoading ? (
+                        <AdminOrganizationWorkspace
+                          detail={inspection}
+                          isKa={isKa}
+                          loading={inspectionLoading}
+                          onClose={() => { setInspectingOrgId(null); setInspection(null); }}
+                          onMessage={setToastMessage}
+                          onRefresh={refreshOrganizationWorkspace}
+                          onManageUser={username => {
+                            const user = users.find(candidate => candidate.username === username);
+                            if (user) openMembershipManager(user);
+                          }}
+                          onOpenBilling={organizationId => {
+                            setInitialBillingOrgId(organizationId);
+                            setActiveTab('billing');
+                          }}
+                        />
+                      ) : (
+                        <div className="flex items-center gap-2 rounded-2xl border border-cyan-500/25 bg-[#0c090a] p-5 text-xs font-bold text-cyan-500">
+                          <RefreshCw className="w-4 h-4 animate-spin" /> {isKa ? 'ორგანიზაციის სამუშაო სივრცე იტვირთება...' : 'LOADING ORGANIZATION WORKSPACE...'}
                         </div>
-                      ) : inspection ? (
-                        <>
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                              <h3 className="text-xs uppercase font-bold text-cyan-400 tracking-wider flex items-center gap-2">
-                                <SearchCode className="w-4 h-4" /> {inspection.organization.name}
-                                {inspection.wineryName && <span className="text-stone-500 normal-case font-mono">· {inspection.wineryName}</span>}
-                              </h3>
-                              <p className="text-[10px] text-stone-500 mt-1">
-                                {formatBytes(inspection.dataSizeBytes)} · {isKa ? 'ბოლო აქტივობა' : 'last activity'} {inspection.lastActivity ? formatDateTime(inspection.lastActivity) : '—'} ·
-                                {isKa ? ' წევრები:' : ' members:'} {inspection.members.map(m => ` @${m.username} (${m.role})`).join(',') || (isKa ? ' არავინ' : ' none')}
-                              </p>
-                            </div>
-                            <button onClick={() => { setInspectingOrgId(null); setInspection(null); }}
-                              className="p-1.5 text-stone-500 hover:text-stone-300 cursor-pointer">
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                            {inspection.collections.map(c => (
-                              <div key={c.key} className={`p-3 rounded-xl border ${c.count > 0 ? 'bg-stone-950/60 border-cyan-900/30' : 'bg-stone-950/30 border-stone-900'}`}>
-                                <span className="text-[9px] uppercase font-bold text-stone-500 block truncate" title={c.key}>{c.key}</span>
-                                <span className={`text-lg font-mono font-bold ${c.count > 0 ? 'text-cyan-400' : 'text-stone-700'}`}>{c.count}</span>
-                                <span className="block text-[8.5px] text-stone-600 font-mono truncate">
-                                  {c.lastModified ? c.lastModified.slice(0, 10) : (isKa ? 'ჩანაწერები არ არის' : 'no records')}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      ) : null}
+                      )}
                     </div>
                   )}
                 </motion.div>
@@ -1797,7 +2422,18 @@ export default function MasterAdminPortal({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                 >
-                  <MasterBillingAdmin isKa={isKa} onMessage={setToastMessage} />
+                  <MasterBillingAdmin isKa={isKa} onMessage={setToastMessage} initialOrganizationId={initialBillingOrgId} />
+                </motion.div>
+              )}
+
+              {activeTab === 'access' && (
+                <motion.div
+                  key="access"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <AdminRoleExplorer isKa={isKa} onMessage={setToastMessage} />
                 </motion.div>
               )}
 
@@ -1867,6 +2503,250 @@ export default function MasterAdminPortal({
         </main>
       </div>
 
+      {/* Create Organization Dialog */}
+      <AnimatePresence>
+        {creatingOrganization && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setCreatingOrganization(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-55"
+            />
+            <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
+              <motion.div
+                ref={createOrganizationDialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="master-admin-create-org-title"
+                tabIndex={-1}
+                initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-[#0c090a] border border-cyan-500/30 rounded-2xl p-6 max-w-md w-full space-y-5 text-left shadow-2xl"
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-stone-900">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-500/25 flex items-center justify-center">
+                      <Building2 className="w-4 h-4 text-cyan-400" />
+                    </div>
+                    <div>
+                      <h3 id="master-admin-create-org-title" className="text-xs uppercase font-bold text-cyan-400 tracking-wider">
+                        {isKa ? 'ახალი ორგანიზაცია' : 'Create organization'}
+                      </h3>
+                      <p className="text-[9px] text-stone-600 mt-0.5">{isKa ? 'ცარიელი, უსაფრთხო სამუშაო სივრცე' : 'A clean, secured winery workspace'}</p>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setCreatingOrganization(false)} aria-label={isKa ? 'ფანჯრის დახურვა' : 'Close dialog'} className="text-stone-500 hover:text-stone-200 cursor-pointer">✕</button>
+                </div>
+
+                <form onSubmit={handleCreateOrganization} className="space-y-4">
+                  <div>
+                    <label className="block text-[9px] uppercase text-stone-500 font-bold mb-1">{isKa ? 'ორგანიზაციის სახელი' : 'Organization name'}</label>
+                    <input
+                      value={newOrganizationName}
+                      onChange={event => setNewOrganizationName(event.target.value)}
+                      minLength={2}
+                      maxLength={120}
+                      autoFocus
+                      required
+                      placeholder={isKa ? 'მაგ. ყვარლის მარანი' : 'e.g. Kvareli Cellars'}
+                      className="w-full bg-stone-900 border border-stone-850 px-3 py-2.5 rounded-xl text-xs text-stone-200 outline-none focus:border-cyan-500/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] uppercase text-stone-500 font-bold mb-1">{isKa ? 'საწყისი მფლობელი' : 'Initial owner'}</label>
+                    <select
+                      value={newOrganizationOwner}
+                      onChange={event => setNewOrganizationOwner(event.target.value)}
+                      required
+                      className="w-full bg-stone-900 border border-stone-850 px-3 py-2.5 rounded-xl text-xs text-stone-200 outline-none focus:border-cyan-500/40"
+                    >
+                      {users.map(user => (
+                        <option key={user.username} value={user.username}>
+                          @{user.username} — {user.fullName}{user.accountEnabled === false ? ' (disabled)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1.5 text-[9px] leading-relaxed text-stone-600">
+                      {isKa ? 'მფლობელი მიიღებს Owner/Admin როლს. შემდეგ შეგიძლიათ სხვა წევრების დამატება.' : 'The initial owner receives Owner/Admin access. You can add more members afterward.'}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button type="button" onClick={() => setCreatingOrganization(false)} className="flex-1 py-2.5 bg-stone-900 border border-stone-800 text-stone-400 rounded-xl text-xs font-bold hover:border-stone-700 cursor-pointer">
+                      {isKa ? 'გაუქმება' : 'Cancel'}
+                    </button>
+                    <button type="submit" disabled={isCreatingOrganization || !newOrganizationName.trim() || !newOrganizationOwner} className="flex-1 py-2.5 bg-cyan-950/45 border border-cyan-500/30 text-cyan-300 rounded-xl text-xs font-bold hover:bg-cyan-950/70 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                      {isCreatingOrganization ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                      {isKa ? 'შექმნა' : 'Create workspace'}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Organization Settings Dialog */}
+      <AnimatePresence>
+        {managedOrganization && (
+          <AdminOrganizationQuickActions
+            organization={managedOrganization}
+            isKa={isKa}
+            name={managedOrganizationName}
+            deleteConfirmation={organizationDeleteConfirmation}
+            saving={isSavingOrganization}
+            deleting={isDeletingOrganization}
+            onNameChange={setManagedOrganizationName}
+            onDeleteConfirmationChange={setOrganizationDeleteConfirmation}
+            onRename={handleRenameOrganization}
+            onDelete={() => void handleDeleteOrganization()}
+            onClose={() => setManagingOrganizationId(null)}
+            onCopyId={() => void copyManagedOrganizationId()}
+            onOpenControlCenter={() => void openManagedOrganizationWorkspace()}
+            onOpenBilling={() => {
+              setManagingOrganizationId(null);
+              setInitialBillingOrgId(managedOrganization.id);
+              setActiveTab('billing');
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* User Memberships Dialog */}
+      <AnimatePresence>
+        {managedMembershipUser && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setManagingUsername(null)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-55"
+            />
+            <div className="fixed inset-0 z-55 flex items-center justify-center p-4">
+              <motion.div
+                ref={manageMembershipDialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="master-admin-memberships-title"
+                tabIndex={-1}
+                initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-[#0c090a] border border-purple-500/30 rounded-2xl p-6 max-w-2xl w-full max-h-[85vh] overflow-y-auto space-y-5 text-left shadow-2xl"
+              >
+                <div className="flex items-start justify-between pb-3 border-b border-stone-900">
+                  <div>
+                    <h3 id="master-admin-memberships-title" className="text-xs uppercase font-bold text-purple-400 tracking-wider flex items-center gap-2"><Users className="w-4 h-4" /> {isKa ? 'ორგანიზაციები და როლები' : 'Organizations & roles'}</h3>
+                    <p className="text-[10px] text-stone-500 mt-1">@{managedMembershipUser.username} · {managedMembershipUser.fullName}</p>
+                  </div>
+                  <button type="button" onClick={() => setManagingUsername(null)} aria-label={isKa ? 'ფანჯრის დახურვა' : 'Close dialog'} className="text-stone-500 hover:text-stone-200 cursor-pointer">✕</button>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-[9px] uppercase tracking-widest font-bold text-stone-500">{isKa ? 'მიმდინარე წევრობები' : 'Current memberships'}</h4>
+                  {managedMembershipUser.organizations.length === 0 ? (
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-950/15 p-4 text-[10px] text-amber-300">
+                      {isKa ? 'ამ მომხმარებელს არც ერთ ორგანიზაციაზე არ აქვს წვდომა.' : 'This user is not assigned to an organization.'}
+                    </div>
+                  ) : managedMembershipUser.organizations.map(membership => {
+                    const isActive = managedMembershipUser.activeOrganizationId === membership.id;
+                    const actionPrefix = `${managedMembershipUser.username}:${membership.id}`;
+                    return (
+                      <div key={membership.id} className={`rounded-xl border p-3 flex flex-col md:flex-row md:items-center gap-3 ${isActive ? 'bg-cyan-950/15 border-cyan-500/25' : 'bg-stone-950/50 border-stone-900'}`}>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <strong className="text-xs text-stone-200 truncate">{membership.name}</strong>
+                            {isActive && <span className="px-1.5 py-0.5 rounded bg-cyan-950/50 border border-cyan-500/25 text-[8px] uppercase font-bold text-cyan-300">{isKa ? 'აქტიური' : 'Active'}</span>}
+                          </div>
+                          <span className="text-[9px] font-mono text-stone-600">{membership.id}</span>
+                        </div>
+                        <select
+                          value={membership.role}
+                          disabled={membershipAction !== null}
+                          onChange={event => handleUpsertMembership(managedMembershipUser.username, membership.id, event.target.value)}
+                          className="bg-stone-900 border border-stone-800 px-2.5 py-2 rounded-lg text-[10px] text-stone-300 outline-none focus:border-purple-500/40 disabled:opacity-50"
+                          aria-label={isKa ? `${membership.name}-ში როლი` : `Role in ${membership.name}`}
+                        >
+                          {ORGANIZATION_ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                        </select>
+                        {!isActive && (
+                          <button
+                            type="button"
+                            disabled={membershipAction !== null}
+                            onClick={() => handleUpsertMembership(managedMembershipUser.username, membership.id, membership.role, true)}
+                            className="px-3 py-2 rounded-lg bg-cyan-950/25 border border-cyan-500/20 text-[9px] font-bold text-cyan-300 hover:bg-cyan-950/45 cursor-pointer disabled:opacity-40"
+                          >
+                            {membershipAction === `${actionPrefix}:upsert` ? <RefreshCw className="w-3 h-3 animate-spin" /> : (isKa ? 'აქტიურად დაყენება' : 'Make active')}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={membershipAction !== null}
+                          onClick={() => handleRemoveMembership(managedMembershipUser.username, membership.id)}
+                          className="p-2 rounded-lg bg-stone-900 border border-stone-800 text-stone-500 hover:text-red-400 hover:border-red-500/25 cursor-pointer disabled:opacity-40"
+                          title={isKa ? 'წევრობის წაშლა' : 'Remove membership'}
+                        >
+                          {membershipAction === `${actionPrefix}:remove` ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <form
+                  onSubmit={event => {
+                    event.preventDefault();
+                    handleUpsertMembership(managedMembershipUser.username, membershipOrganizationId, membershipRole, membershipMakeActive);
+                  }}
+                  className="rounded-xl border border-purple-500/20 bg-purple-950/10 p-4 space-y-3"
+                >
+                  <h4 className="text-[9px] uppercase tracking-widest font-bold text-purple-400 flex items-center gap-2"><UserPlus className="w-3.5 h-3.5" /> {isKa ? 'ორგანიზაციაში დამატება' : 'Assign to organization'}</h4>
+                  {assignableOrganizations.length === 0 ? (
+                    <p className="text-[10px] text-stone-600">{isKa ? 'მომხმარებელი უკვე ყველა ორგანიზაციის წევრია.' : 'This user is already assigned to every organization.'}</p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <select value={membershipOrganizationId} onChange={event => setMembershipOrganizationId(event.target.value)} className="bg-stone-900 border border-stone-800 px-3 py-2.5 rounded-xl text-xs text-stone-300 outline-none focus:border-purple-500/40">
+                          {assignableOrganizations.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
+                        </select>
+                        <select value={membershipRole} onChange={event => setMembershipRole(event.target.value)} className="bg-stone-900 border border-stone-800 px-3 py-2.5 rounded-xl text-xs text-stone-300 outline-none focus:border-purple-500/40">
+                          {ORGANIZATION_ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                        </select>
+                      </div>
+                      <label className="flex items-center gap-2 text-[10px] text-stone-500 cursor-pointer">
+                        <input type="checkbox" checked={membershipMakeActive} onChange={event => setMembershipMakeActive(event.target.checked)} className="accent-cyan-500" />
+                        {isKa ? 'ეს ორგანიზაცია მომხმარებლის აქტიურ სამუშაო სივრცედ დაყენდეს' : 'Make this the user’s active workspace'}
+                      </label>
+                      <button type="submit" disabled={!membershipOrganizationId || membershipAction !== null} className="w-full py-2.5 rounded-xl bg-purple-950/30 border border-purple-500/25 text-purple-300 text-xs font-bold hover:bg-purple-950/50 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                        {membershipAction ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+                        {isKa ? 'წევრობის დამატება' : 'Add membership'}
+                      </button>
+                    </>
+                  )}
+                </form>
+
+                <section className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4 space-y-3">
+                  <div>
+                    <h4 className="text-[9px] uppercase tracking-widest font-bold text-amber-400 flex items-center gap-2"><KeyRound className="w-3.5 h-3.5" /> {isKa ? 'ანგარიშის უსაფრთხოება' : 'Account security'}</h4>
+                    <p className="mt-1 text-[9px] leading-relaxed text-stone-600">{isKa ? 'ქმედებები იწერება უსაფრთხოების აუდიტში.' : 'Every action is recorded in the persistent security audit.'}</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <button type="button" disabled={membershipAction !== null} onClick={() => void handleUserSecurityAction(managedMembershipUser.username, 'unlock')} className="flex items-center justify-center gap-2 rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-[9px] font-bold text-stone-300 hover:border-emerald-500/25 hover:text-emerald-400 disabled:opacity-40">
+                      {membershipAction === `security:${managedMembershipUser.username}:unlock` ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Unlock className="h-3.5 w-3.5" />}{isKa ? 'ბლოკის მოხსნა' : 'Clear lockout'}
+                    </button>
+                    <button type="button" disabled={membershipAction !== null} onClick={() => void handleUserSecurityAction(managedMembershipUser.username, 'revoke_sessions')} className="flex items-center justify-center gap-2 rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-[9px] font-bold text-stone-300 hover:border-amber-500/25 hover:text-amber-400 disabled:opacity-40">
+                      {membershipAction === `security:${managedMembershipUser.username}:revoke_sessions` ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5" />}{isKa ? 'სესიების გაუქმება' : 'Revoke sessions'}
+                    </button>
+                    <button type="button" disabled={membershipAction !== null} onClick={() => void handleUserSecurityAction(managedMembershipUser.username, 'force_password_reset')} className="flex items-center justify-center gap-2 rounded-lg border border-stone-800 bg-stone-950 px-3 py-2 text-[9px] font-bold text-stone-300 hover:border-cyan-500/25 hover:text-cyan-400 disabled:opacity-40">
+                      {membershipAction === `security:${managedMembershipUser.username}:force_password_reset` ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}{isKa ? 'პაროლის აღდგენა' : 'Force password reset'}
+                    </button>
+                  </div>
+                </section>
+                <p className="text-[9px] text-stone-600 leading-relaxed">
+                  {isKa ? 'აქტიური სამუშაო სივრცის ან აქტიური როლის ცვლილება უსაფრთხოების მიზნით მომხმარებლის მიმდინარე სესიას ასრულებს.' : 'Changing the active workspace or its role ends the user’s current session for safety.'}
+                </p>
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Edit User Modal Dialog */}
       <AnimatePresence>
         {editingUser && (
@@ -1915,7 +2795,7 @@ export default function MasterAdminPortal({
                       onChange={e => setEditRole(e.target.value)}
                       className="w-full bg-stone-900 border border-stone-850 px-3 py-2 rounded-xl text-xs text-stone-200 outline-none focus:border-cyan-500/30"
                     >
-                      {(['Owner/Admin', 'Winemaker', 'Lab Technician', 'Cellar Worker', 'Read-Only'] as const).map(role => (
+                      {ORGANIZATION_ROLES.map(role => (
                         <option key={role} value={role}>{isKa ? localizedRoleLabel(role, lang) : role}</option>
                       ))}
                     </select>
@@ -2037,24 +2917,63 @@ export default function MasterAdminPortal({
                       ? '⚠️ ეს ქმედება შეუქცევადია. ამ ანგარიშთან დაკავშირებული ყველა წევრობა, აქტიური სესია და წვდომის გასაღები სამუდამოდ გაუქმდება.'
                       : '⚠️ This action is irreversible. All memberships, active logins, and access keys associated with this account will be permanently revoked.'}
                   </p>
+
+                  {/* The server refuses the first attempt and reports the wineries
+                      that would be left with no members. Naming them — with their
+                      record counts — is the difference between an informed decision
+                      and an accident. */}
+                  {pendingOrphanedOrgs && pendingOrphanedOrgs.length > 0 && (
+                    <div className="bg-red-950/40 border border-red-500/50 p-2.5 rounded-xl space-y-2">
+                      <p className="text-red-300 font-bold leading-normal">
+                        {isKa
+                          ? '🛑 ამ ანგარიშის წაშლა გაანადგურებს შემდეგ მარნებს და მათ სრულ ისტორიას:'
+                          : '🛑 Deleting this account will also destroy these wineries and their entire history:'}
+                      </p>
+                      <ul className="space-y-1">
+                        {pendingOrphanedOrgs.map(org => (
+                          <li key={org.id} className="text-red-200 leading-normal">
+                            <strong>{org.name}</strong>
+                            <span className="text-red-300/80">
+                              {' — '}
+                              {org.lotsCount} {isKa ? 'პარტია' : 'lots'}
+                              {', '}
+                              {org.tanksCount} {isKa ? 'ჭურჭელი' : 'vessels'}
+                              {', '}
+                              {Math.max(1, Math.round(org.dataSize / 1024))} KB
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="text-red-300/90 leading-normal">
+                        {isKa
+                          ? 'ამ მონაცემების აღდგენა შეუძლებელია. თუ ისტორია უნდა შენარჩუნდეს, ჯერ დაამატეთ სხვა წევრი მარანში.'
+                          : 'This data cannot be recovered. To keep the history, add another member to the winery first.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 pt-2">
                   <button
                     type="button"
-                    onClick={() => setDeletingUsername(null)}
+                    onClick={() => { setDeletingUsername(null); setPendingOrphanedOrgs(null); }}
                     className="flex-1 py-2 bg-stone-900 border border-stone-800 hover:border-stone-700 text-stone-400 rounded-xl text-xs font-bold cursor-pointer"
                   >
                     {isKa ? 'გაუქმება' : 'Cancel'}
                   </button>
                   <button
                     type="button"
-                    onClick={handleDeleteUser}
+                    onClick={() => handleDeleteUser(
+                      pendingOrphanedOrgs ? pendingOrphanedOrgs.map(org => org.id) : undefined,
+                    )}
                     disabled={isDeletingUser}
                     className="flex-1 py-2 bg-red-950/45 hover:bg-red-950 border border-red-500/30 hover:border-red-500/60 text-red-400 rounded-xl text-xs font-bold cursor-pointer transition-colors flex justify-center items-center gap-1.5"
                   >
                     {isDeletingUser ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : pendingOrphanedOrgs && pendingOrphanedOrgs.length > 0 ? (
+                      // Label the second click for what it actually does.
+                      isKa ? 'წაშლა მონაცემებთან ერთად' : 'Delete account and data'
                     ) : (
                       isKa ? 'ანგარიშის წაშლა' : 'Terminate Account'
                     )}

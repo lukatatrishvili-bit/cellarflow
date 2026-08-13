@@ -63,6 +63,28 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
     ka: 'შენახვის დროს სხვა მარანზე გადახვედით. არასწორ მარანში არაფერი ჩაწერილა.',
   },
 
+  // --- Destructive administration ------------------------------------------
+  orphaned_organizations_require_confirmation: {
+    en: 'Deleting this account would leave one or more wineries with no members, and their records would be destroyed with it. Review the listed wineries and confirm, or add another member first to keep the history.',
+    ka: 'ამ ანგარიშის წაშლის შემდეგ ერთ ან რამდენიმე მარანს წევრი აღარ დარჩება და მათი ჩანაწერებიც განადგურდება. გადახედეთ ჩამონათვალს და დაადასტურეთ, ან ჯერ დაამატეთ სხვა წევრი, რომ ისტორია შენარჩუნდეს.',
+  },
+  last_organization_member: {
+    en: 'The last member cannot be removed. Assign another user first, or delete the organization from its settings.',
+    ka: 'ბოლო წევრის წაშლა შეუძლებელია. ჯერ დაამატეთ სხვა მომხმარებელი, ან ორგანიზაცია მისი პარამეტრებიდან წაშალეთ.',
+  },
+  organization_deletion_requires_confirmation: {
+    en: 'Type the organization name exactly as shown before permanently deleting its records and memberships.',
+    ka: 'ჩანაწერებისა და წევრობების სამუდამოდ წაშლამდე ორგანიზაციის სახელი ზუსტად ისე აკრიფეთ, როგორც ნაჩვენებია.',
+  },
+  organization_suspended: {
+    en: 'This organization is suspended. Ask the master administrator to restore access.',
+    ka: 'ეს ორგანიზაცია შეჩერებულია. წვდომის აღსადგენად მიმართეთ მთავარ ადმინისტრატორს.',
+  },
+  organization_archived: {
+    en: 'This organization is archived. Ask the master administrator to restore it.',
+    ka: 'ეს ორგანიზაცია დაარქივებულია. აღსადგენად მიმართეთ მთავარ ადმინისტრატორს.',
+  },
+
   // --- Access and account --------------------------------------------------
   subscription_feature_required: {
     en: 'This feature is not included in the current plan.',
@@ -79,6 +101,66 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
   approval_rejected: {
     en: 'This registration request was declined.',
     ka: 'ეს სარეგისტრაციო მოთხოვნა უარყოფილია.',
+  },
+  workflow_approval_required: {
+    en: 'This command is waiting for an owner to approve it. Its exact details are saved; retry the same command after approval.',
+    ka: 'ეს ბრძანება მფლობელის დამტკიცებას ელოდება. ზუსტი დეტალები შენახულია; დამტკიცების შემდეგ იგივე ბრძანება ხელახლა გააგზავნეთ.',
+  },
+  workflow_approval_payload_changed: {
+    en: 'The command details changed after review. Cancel this request and submit the revised command for a new approval.',
+    ka: 'განხილვის შემდეგ ბრძანების დეტალები შეიცვალა. გააუქმეთ ეს მოთხოვნა და შეცვლილი ბრძანება ახალი დამტკიცებისთვის გაგზავნეთ.',
+  },
+  workflow_approval_retry_required: {
+    en: 'The approval queue changed while saving. Your command is still pending; retry it with the same details.',
+    ka: 'შენახვისას დამტკიცების რიგი შეიცვალა. ბრძანება კვლავ მოლოდინშია; იგივე დეტალებით ხელახლა სცადეთ.',
+  },
+  workflow_approval_rejected: {
+    en: 'An owner rejected this command. Review the decision note before creating a new command.',
+    ka: 'მფლობელმა ეს ბრძანება უარყო. ახალი ბრძანების შექმნამდე გადაწყვეტილების შენიშვნა წაიკითხეთ.',
+  },
+  workflow_approval_cancelled: {
+    en: 'This approval request was cancelled. Create a new command if the work is still required.',
+    ka: 'დამტკიცების მოთხოვნა გაუქმებულია. თუ სამუშაო კვლავ საჭიროა, შექმენით ახალი ბრძანება.',
+  },
+  first_name_required: {
+    en: 'Enter your first name.',
+    ka: 'შეიყვანეთ თქვენი სახელი.',
+  },
+  last_name_required: {
+    en: 'Enter your last name.',
+    ka: 'შეიყვანეთ თქვენი გვარი.',
+  },
+  first_name_invalid: {
+    en: 'Enter a valid first name using letters.',
+    ka: 'შეიყვანეთ სწორი სახელი ასოებით.',
+  },
+  last_name_invalid: {
+    en: 'Enter a valid last name using letters.',
+    ka: 'შეიყვანეთ სწორი გვარი ასოებით.',
+  },
+  phone_required: {
+    en: 'Enter a reachable phone number.',
+    ka: 'შეიყვანეთ მოქმედი ტელეფონის ნომერი.',
+  },
+  phone_invalid: {
+    en: 'Enter a valid phone number with country code, for example +995 555 12 34 56.',
+    ka: 'შეიყვანეთ სწორი ნომერი ქვეყნის კოდით, მაგალითად +995 555 12 34 56.',
+  },
+  company_name_required: {
+    en: 'Enter the company or estate name.',
+    ka: 'შეიყვანეთ კომპანიის ან მამულის სახელი.',
+  },
+  google_registration_expired: {
+    en: 'Your Google registration session expired. Continue with Google again.',
+    ka: 'Google-ის რეგისტრაციის სესიას ვადა გაუვიდა. თავიდან გააგრძელეთ Google-ით.',
+  },
+  account_exists: {
+    en: 'An account with this email already exists. Return to sign in with Google.',
+    ka: 'ამ ელფოსტით ანგარიში უკვე არსებობს. დაბრუნდით და შედით Google-ით.',
+  },
+  registration_profile_incomplete: {
+    en: 'This request is missing required identity or contact details and cannot be approved yet.',
+    ka: 'ამ მოთხოვნას აკლია სავალდებულო პირადი ან საკონტაქტო მონაცემები და ჯერ ვერ დამტკიცდება.',
   },
   email_delivery_failed: {
     en: 'The message could not be sent. Check the address and try again.',

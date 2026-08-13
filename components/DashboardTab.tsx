@@ -730,7 +730,10 @@ export function DashboardTab({
       <header className="rounded-3xl border border-[#e8dfd5] bg-white/92 p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900/92 lg:p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-stone-500 dark:text-stone-400">
+            {/* stone-600, not stone-500: at 11px on the near-white header card
+                stone-500 measures 3.92:1 against WCAG AA's 4.5:1, which the
+                release gate's axe scan fails. */}
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-stone-600 dark:text-stone-400">
               <span className="inline-flex items-center gap-1.5">
                 <CalendarDays className="h-3.5 w-3.5 text-[#5b1320] dark:text-amber-300" />
                 {readableToday}

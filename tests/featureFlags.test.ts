@@ -14,6 +14,6 @@ describe('feature flags', () => {
     expect(isFeatureEnabled('offline_field_mode', biz)).toBe(true);
     expect(isFeatureEnabled('advanced_reports', biz)).toBe(true);
     expect(isFeatureEnabled('multi_company', biz)).toBe(false);
-    expect(isFeatureEnabled('multi_company', 'enterprise')).toBe(true);
+    expect(isFeatureEnabled('multi_company', 'enterprise')).toBe(false);
   });
 });

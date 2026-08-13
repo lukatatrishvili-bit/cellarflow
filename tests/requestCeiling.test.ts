@@ -21,6 +21,10 @@ beforeAll(async () => {
   // A second mount with its own name must not share the first one's counter.
   app.use('/other', requestCeiling({ name: 'test-other', max: 3, windowMs: 60_000 }), handler);
   app.use('/brief', requestCeiling({ name: 'test-brief', max: 1, windowMs: 150 }), handler);
+  // A deliberately tiny caller table so the eviction path runs for real.
+  app.use('/crowded', requestCeiling({
+    name: 'test-crowded', max: 3, windowMs: 60_000, maxTrackedCallers: 8,
+  }), handler);
 
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', () => resolve()); });
   const address = server.address();
@@ -110,5 +114,23 @@ describe('requestCeiling', () => {
 
     await new Promise(resolve => setTimeout(resolve, 200));
     expect((await call('/brief', { cookie })).status).toBe(200);
+  });
+
+  it('does not hand a throttled caller a fresh allowance when new callers arrive', async () => {
+    // The map is bounded, and it used to be bounded by clearing it outright —
+    // which reset every tracked caller at once. That made the ceiling weakest
+    // exactly when the service was busiest, and it was reachable without any
+    // privilege: keep arriving as new callers until the throttled one is wiped.
+    // Expired windows are swept instead, so a live counter survives.
+    const throttled = cookieFor('throttled-user');
+    for (let i = 0; i < 4; i += 1) await call('/crowded', { cookie: throttled });
+    expect((await call('/crowded', { cookie: throttled })).status).toBe(429);
+
+    // Well past the 8-caller table, so eviction runs repeatedly.
+    for (let i = 0; i < 40; i += 1) {
+      await call('/crowded', { cookie: cookieFor(`transient-${i}`) });
+    }
+
+    expect((await call('/crowded', { cookie: throttled })).status).toBe(429);
   });
 });

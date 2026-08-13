@@ -31,6 +31,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { buildAuditHashChain, signAuditEntries } from '../lib/auditHash';
 import { applyInvoiceReceiptCommand } from '../lib/commands/invoiceReceipt';
+import { getSeederData } from '../server/seedTestUser';
+import crypto from 'crypto';
 import type { MaraniOSAuditLog } from '../lib/wineryState';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -45,6 +47,15 @@ const WINEMAKER = 'ლუკა თათრიშვილი';
 const OENOLOGIST = 'ნინო მაისურაძე';
 const VITICULTURIST = 'გიორგი კობახიძე';
 const AGRONOMIST = 'მარიამ ყიფიანი';
+
+/**
+ * Stand-in for the hash of the scanned invoice file. The command requires a
+ * real SHA-256 digest — it uses it to detect the same document being posted
+ * twice — so a placeholder string is rejected. Deriving it from the receipt id
+ * keeps the value stable, which is what makes re-running the seeder a no-op.
+ */
+const demoDocumentChecksum = (receiptId: string): string =>
+  crypto.createHash('sha256').update(`vinos-demo-invoice:${receiptId}`).digest('hex');
 
 /** Replace records with the same id, keep everything else, newest first. */
 function upsert<T extends { id: string }>(existing: T[] | undefined, incoming: T[]): T[] {
@@ -233,6 +244,548 @@ const costEntries2026 = [
 ];
 
 // ---------------------------------------------------------------------------
+// Filling out the thinner modules
+// ---------------------------------------------------------------------------
+
+/**
+ * Bring every collection up to a usable size.
+ *
+ * The scenario above tells one coherent story, but several modules only had two
+ * or three records — a screen with three rows reads as unfinished rather than
+ * as a working system. These are generated from the reference data already in
+ * the workspace (blocks, lots, vessels) so the additions stay internally
+ * consistent instead of pointing at ids that do not exist.
+ *
+ * Anything already at the target is left alone: the hand-written records above
+ * carry the narrative, and these only pad out what is behind them.
+ */
+const TARGET_PER_COLLECTION = 10;
+
+function topUp<T extends { id: string }>(
+  existing: T[] | undefined,
+  make: (index: number) => T,
+  target = TARGET_PER_COLLECTION,
+): T[] {
+  const current = existing || [];
+  if (current.length >= target) return current;
+  const added: T[] = [];
+  for (let i = current.length; i < target; i += 1) added.push(make(i));
+  return [...current, ...added];
+}
+
+/** Deterministic pseudo-variation, so re-runs produce identical records. */
+const vary = (seed: number, spread: number, base: number, decimals = 1): number => {
+  const wave = Math.sin(seed * 12.9898) * 43758.5453;
+  const offset = (wave - Math.floor(wave)) * spread - spread / 2;
+  return Number((base + offset).toFixed(decimals));
+};
+
+const dayOffset = (from: string, days: number): string =>
+  new Date(new Date(`${from}T00:00:00.000Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
+
+function topUpWorkspace(d: any): void {
+  const blockIds: string[] = (d.blocks || []).map((b: any) => b.id);
+  const pickBlock = (i: number) => blockIds[i % Math.max(1, blockIds.length)] || 'B-01';
+
+  // --- Vineyard observations ------------------------------------------------
+  d.scoutings = topUp(d.scoutings, (i) => ({
+    id: `SC-2026-${String(i + 1).padStart(2, '0')}`,
+    blockId: pickBlock(i),
+    date: dayOffset('2026-05-12', i * 9),
+    locationDetails: i % 2 ? 'ჩრდილოეთი რიგები, მტევნის ზონა' : 'შუა რიგები და ქვედა ფოთლოვანი ზონა',
+    problemType: ['Powdery mildew', 'Downy mildew', 'Grape moth', 'Esca', 'Botrytis'][i % 5],
+    severity: (['low', 'low', 'moderate', 'low', 'moderate'] as const)[i % 5],
+    notes: 'დათვალიერება ჩატარდა დილით; მტევნები ჯანმრთელია, ზიანი ეკონომიკურ ზღვარს ქვემოთ.',
+    recommendedAction: 'მონიტორინგის გაგრძელება და საჭიროებისამებრ პროფილაქტიკური დამუშავება.',
+    lastModified: MODIFIED,
+  }));
+
+  d.soilRecords = topUp(d.soilRecords, (i) => ({
+    id: `SOIL-2026-${String(i + 1).padStart(2, '0')}`,
+    blockId: pickBlock(i),
+    date: dayOffset('2026-03-04', i * 4),
+    pH: vary(i + 1, 0.8, 7.2),
+    organicMatterPct: vary(i + 2, 1.2, 2.6),
+    nitrogenMgKg: Math.round(vary(i + 3, 16, 38, 0)),
+    phosphorusMgKg: Math.round(vary(i + 4, 12, 24, 0)),
+    potassiumMgKg: Math.round(vary(i + 5, 90, 280, 0)),
+    calciumMgKg: Math.round(vary(i + 6, 700, 3100, 0)),
+    magnesiumMgKg: Math.round(vary(i + 7, 90, 360, 0)),
+    salinityDsm: vary(i + 8, 0.2, 0.42, 2),
+    notes: 'გაზაფხულის ნიადაგის ანალიზი — კირქვიანი ჰორიზონტი, კალციუმი მაღალი.',
+    lastModified: MODIFIED,
+  }));
+
+  d.irrigationLogs = topUp(d.irrigationLogs, (i) => ({
+    id: `IR-2026-${String(i + 1).padStart(2, '0')}`,
+    blockId: pickBlock(i),
+    date: dayOffset('2026-06-08', i * 6),
+    durationHours: vary(i + 1, 2, 3.5),
+    waterVolumeLiters: Math.round(vary(i + 2, 4000, 13440, 0)),
+    soilMoistureBeforePct: Math.round(vary(i + 3, 6, 18, 0)),
+    soilMoistureAfterPct: Math.round(vary(i + 4, 6, 27, 0)),
+    weatherConditions: i % 2 ? 'მშრალი და თბილი დღე' : 'ნაწილობრივ მოღრუბლული',
+    notes: 'ზომიერი მორწყვა — მიზანია სტრესის თავიდან აცილება შაქრიანობის შენარჩუნებით.',
+    lastModified: MODIFIED,
+  }));
+
+  d.fertilizerLogs = topUp(d.fertilizerLogs, (i) => ({
+    id: `FR-2026-${String(i + 1).padStart(2, '0')}`,
+    blockId: pickBlock(i),
+    date: dayOffset('2026-03-18', i * 11),
+    productName: ['ორგანული კომპოსტი', 'კალიუმის სულფატი', 'მაგნიუმის სულფატი', 'ბიოჰუმუსი'][i % 4],
+    dosePerHa: vary(i + 1, 1.2, 1.8, 2),
+    totalAmountUsed: vary(i + 2, 3, 4.5, 2),
+    applicationMethod: i % 2 ? 'ფოთლოვანი შესხურება' : 'რიგებში შეტანა',
+    operator: VITICULTURIST,
+    notes: 'სეზონური კვება ნიადაგის ანალიზის საფუძველზე.',
+    lastModified: MODIFIED,
+  }));
+
+  d.phenologyLogs = topUp(d.phenologyLogs, (i) => ({
+    id: `PH-2026-EXTRA-${String(i + 1).padStart(2, '0')}`,
+    blockId: pickBlock(i),
+    date: dayOffset('2026-04-06', i * 12),
+    stage: ['კვირტის გაშლა', 'ფოთლის გაშლა', 'ყვავილობის დასაწყისი', 'სრული ყვავილობა', 'მარცვლის შეკვრა'][i % 5],
+    gdd: Math.round(vary(i + 1, 160, 620, 0)),
+    confidence: Math.round(vary(i + 2, 12, 90, 0)),
+    status: 'confirmed',
+    notes: 'სეზონის ფენოლოგიური ეტაპი დაფიქსირდა ნაკვეთის დათვალიერებით.',
+    observer: AGRONOMIST,
+    lastModified: MODIFIED,
+  }));
+
+  d.sprays = topUp(d.sprays, (i) => ({
+    id: `SP-2026-EXTRA-${String(i + 1).padStart(2, '0')}`,
+    blockId: pickBlock(i),
+    date: dayOffset('2026-04-28', i * 8),
+    targetProblem: ['ჭრაქის პრევენცია', 'ნაცრის პრევენცია', 'ტკიპის კონტროლი'][i % 3],
+    productName: ['ბორდოს ხსნარი', 'გოგირდი 80 WG', 'ორგანული ზეთოვანი ხსნარი'][i % 3],
+    activeIngredient: ['სპილენძი', 'გოგირდი', 'მცენარეული ზეთი'][i % 3],
+    dosePerHa: vary(i + 1, 1.4, 2.4, 2),
+    waterVolumePerHa: 600,
+    totalProductUsed: vary(i + 2, 4, 6.2, 2),
+    totalWaterUsed: Math.round(vary(i + 3, 500, 1600, 0)),
+    operator: VITICULTURIST,
+    machineryUsed: 'ვენახის მისაბმელი შემასხურებელი',
+    windSpeed: Math.round(vary(i + 4, 4, 5, 0)),
+    temperature: Math.round(vary(i + 5, 8, 24, 0)),
+    humidity: Math.round(vary(i + 6, 16, 60, 0)),
+    preHarvestIntervalDays: 35,
+    reEntryIntervalHours: 24,
+    notes: 'დამუშავება დილით, ქარის დაბალი სიჩქარისას; ლოდინის ვადა დაცულია.',
+    lastModified: MODIFIED,
+  }));
+
+  // --- Documents and planning ----------------------------------------------
+  d.vineyardProjects = topUp(d.vineyardProjects, (i) => ({
+    id: `VP-KV-2026-${String(i + 2).padStart(2, '0')}`,
+    projectName: `ახალი ნარგაობის პროექტი ${i + 2} — ${['ყვარელი', 'ახმეტა', 'გურჯაანი', 'თელავი'][i % 4]}`,
+    landOwnershipDocumentName: `land-rights-plot-${i + 2}.pdf`,
+    cadastralMapDocumentName: `cadastre-map-plot-${i + 2}.pdf`,
+    soilAnalysisDocumentName: `soil-analysis-plot-${i + 2}.pdf`,
+    agrotechnicalQuestionnaireName: `agro-questionnaire-plot-${i + 2}.pdf`,
+    plannedVarieties: [['Saperavi'], ['Rkatsiteli', 'Mtsvane'], ['Kisi'], ['Khikhvi', 'Saperavi']][i % 4],
+    rootstock: ['5C / SO4', 'R110', 'Kober 5BB'][i % 3],
+    spacing: '2.4m x 1.1m',
+    rowDirection: i % 2 ? 'East-West' : 'North-South',
+    irrigationPlan: 'წვეთოვანი მორწყვა რეზერვუარიდან, ნიადაგის ტენიანობის კონტროლით.',
+    nurseryInvoiceDocumentName: `nursery-intent-plot-${i + 2}.pdf`,
+    applicationStatus: (['draft', 'ready', 'submitted', 'approved'] as const)[i % 4],
+    approvalDate: '',
+    approvalValidUntil: '',
+    soilDepth: Math.round(vary(i + 1, 30, 82, 0)),
+    pH: vary(i + 2, 0.9, 7.1),
+    organicMatter: vary(i + 3, 1.1, 2.3),
+    caco3: vary(i + 4, 4, 8.4),
+    texture: 'თიხნარი კირქვის ხრეშით',
+    ec: vary(i + 5, 0.2, 0.36, 2),
+    exchangeableCa: vary(i + 6, 6, 18.5),
+    exchangeableMg: vary(i + 7, 2, 4.6),
+    exchangeableNa: vary(i + 8, 0.15, 0.24, 2),
+    hygroscopicWater: vary(i + 9, 2, 5.2),
+    lastModified: MODIFIED,
+  }));
+
+  // External links rather than inline bytes: inline attachments live in the
+  // synced state and count against the org's attachment budget.
+  const attachmentModules = ['certification', 'official_docs', 'lab', 'cadastre', 'qvevri', 'crm', 'vineyard_project'];
+  d.attachments = topUp(d.attachments, (i) => ({
+    id: `att-demo-${String(i + 1).padStart(2, '0')}`,
+    fileName: [
+      'analysis-report.pdf', 'pdo-certificate.pdf', 'cadastre-extract.pdf', 'lab-protocol.pdf',
+      'qvevri-passport.pdf', 'export-contract.pdf', 'soil-survey.pdf', 'harvest-declaration.pdf',
+      'invoice-scan.pdf', 'label-approval.pdf',
+    ][i % 10],
+    mimeType: 'application/pdf',
+    sizeBytes: Math.round(vary(i + 1, 180_000, 320_000, 0)),
+    uploadedAt: stamp(dayOffset('2026-02-10', i * 17), '10:00:00'),
+    uploadedBy: i % 2 ? OENOLOGIST : WINEMAKER,
+    module: attachmentModules[i % attachmentModules.length],
+    description: 'სადემონსტრაციო დოკუმენტი — ინახება გარე ბმულით.',
+    storage: { kind: 'external', url: `https://docs.example.invalid/vinos/demo-${i + 1}.pdf` },
+    lastModified: MODIFIED,
+  }));
+
+  // --- Storage and finance --------------------------------------------------
+  d.storageLocations = topUp(d.storageLocations, (i) => ({
+    id: `SL-EXTRA-${String(i + 1).padStart(2, '0')}`,
+    name: [
+      'ჩრდილოეთი დამატებითი საწყობი', 'ქვევრის დარბაზი II', 'კასრების დარბაზი',
+      'ექსპორტის მოსამზადებელი ზონა', 'სადეგუსტაციო მარაგი', 'დროებითი კარანტინი',
+      'არქივის საწყობი',
+    ][i % 7],
+    type: (['warehouse', 'cellar', 'cellar', 'warehouse', 'tasting_room', 'warehouse', 'warehouse'] as const)[i % 7],
+    capacityBottles: Math.round(vary(i + 1, 3000, 6000, 0)),
+    targetTempC: Math.round(vary(i + 2, 4, 15, 0)),
+    targetHumidity: Math.round(vary(i + 3, 10, 68, 0)),
+    notes: 'დამატებითი შენახვის ზონა სეზონური მარაგისთვის.',
+    lastModified: MODIFIED,
+  }));
+
+  d.supplierPayments = topUp(d.supplierPayments, (i) => ({
+    id: `PAY-2026-${String(i + 1).padStart(2, '0')}`,
+    date: dayOffset('2026-01-20', i * 21),
+    supplierName: [
+      'ქართული შესაფუთი მასალები', 'Enology Supply Europe', 'ყვარლის სატრანსპორტო სერვისი',
+      'ლაბორატორია ტესტი', 'მუხის კასრები — ბათუმი', 'ეტიკეტების ბეჭდვა',
+    ][i % 6],
+    amount: Math.round(vary(i + 1, 3000, 4200, 0)),
+    currency: 'GEL',
+    method: (['bank', 'bank', 'cash', 'bank'] as const)[i % 4],
+    note: 'მიმწოდებლის ანგარიშსწორება — სადემონსტრაციო ჩანაწერი.',
+    operator: WINEMAKER,
+    lastModified: MODIFIED,
+  }));
+
+  // --- Bottling, stock, and sales ------------------------------------------
+  /**
+   * These four collections form one chain and cannot be padded independently.
+   * `server/routes/sync.ts` rejects a stock movement whose lot was never
+   * bottled ("no bottling provenance"), and a sales order that references a
+   * missing lot or storage location. So each addition here creates the whole
+   * line: a bottling run, the movement that puts those bottles into a store,
+   * and only then an order and dispatch drawing them back out.
+   *
+   * Volumes stay well inside what each lot actually produced, so the ledger
+   * still balances afterwards.
+   */
+  /**
+   * Only lots that have actually been bottled.
+   *
+   * `server/routes/sync.ts` accepts an inbound movement whose `sourceRef` points
+   * at a bottling run in the same payload, but an OUTBOUND one — a sale — needs
+   * the lot itself to be `bottled` or `sold`. Generating sales against a lot
+   * still ageing in qvevri is rejected, and rightly so: those bottles do not
+   * exist yet.
+   *
+   * There are fewer bottled lots than lines needed, so the same wine is bottled
+   * and sold across several runs. That is ordinary for a winery — a lot goes out
+   * in batches — and it keeps every generated record legal.
+   */
+  const bottlingLots: any[] = (d.lots || [])
+    .filter((lot: any) => ['bottled', 'sold'].includes(lot.stage));
+  /**
+   * Spread the generated stock across stores. The sync route enforces each
+   * location's bottle capacity, and the main warehouse is already carrying the
+   * 2025 Saperavi bottling — putting every extra run there breaches it.
+   */
+  const generatedStores: any[] = (d.storageLocations || []).filter((s: any) => String(s.id).startsWith('SL-EXTRA'));
+  const storePool: any[] = generatedStores.length ? generatedStores : (d.storageLocations || []);
+
+  const extraRuns: any[] = [];
+  const extraStock: any[] = [];
+  const extraOrders: any[] = [];
+  const extraDispatches: any[] = [];
+
+  const runsNeeded = Math.max(0, TARGET_PER_COLLECTION - (d.bottlingRuns || []).length);
+  const salesNeeded = Math.max(
+    TARGET_PER_COLLECTION - (d.salesOrders || []).length,
+    TARGET_PER_COLLECTION - (d.salesDispatches || []).length,
+  );
+  // A sale needs stock, and stock needs a bottling run, so the loop runs as
+  // many times as the hungriest of the three collections requires.
+  const lines = bottlingLots.length ? Math.max(runsNeeded, salesNeeded) : 0;
+
+  for (let i = 0; i < lines; i += 1) {
+    const lot = bottlingLots[i % bottlingLots.length];
+    const store = storePool[i % Math.max(1, storePool.length)] || { id: 'SL-MAIN', name: 'მთავარი ბოთლების საწყობი' };
+    const storeId = store.id;
+    const storeName = store.name;
+    const bottles = 400 + i * 40;
+    const date = dayOffset('2026-02-06', i * 16);
+    const runId = `bot-demo-${String(i + 1).padStart(2, '0')}`;
+    const movementId = `sm-demo-in-${String(i + 1).padStart(2, '0')}`;
+
+    extraRuns.push({
+      id: runId,
+      lotId: lot.id,
+      lotName: lot.name,
+      date,
+      lotNumber: `KV-${lot.id}-D${String(i + 1).padStart(2, '0')}`,
+      operator: WINEMAKER,
+      formats: { '750ml': bottles },
+      totalBottles: bottles,
+      totalCeramic: 0,
+      volumeBottledL: Math.round(bottles * 0.75),
+      packagingMaterialIds: { bottle: 'INV-BOTTLE-750', closure: 'INV-CORK', label: 'INV-LABEL', box: 'INV-BOX' },
+      packagingDeductions: {},
+      bottlesPerBox: 6,
+      packagingCostTotal: Math.round(bottles * 1.75),
+      bottlingServiceCost: Math.round(bottles * 0.7),
+      storageLocationId: storeId,
+      storageMovementId: movementId,
+      placedInStorageBottles: bottles,
+      lastModified: MODIFIED,
+    });
+
+    extraStock.push({
+      id: movementId,
+      date,
+      lotId: lot.id,
+      locationId: storeId,
+      direction: 'in',
+      bottles,
+      reason: 'bottling',
+      sourceRef: runId,
+      note: 'ჩამოსხმის მიღება საწყობში.',
+      lastModified: MODIFIED,
+    });
+
+    // Sell part of the run, so orders and dispatches fill out too. Orders and
+    // dispatches start from different counts, so drive this from whichever is
+    // furthest behind rather than from orders alone.
+    if (extraOrders.length < Math.max(0, salesNeeded)) {
+      const sold = Math.round(bottles * 0.4);
+      const price = 24 + i;
+      const cost = 8.2;
+      const revenue = sold * price;
+      const cogs = Math.round(sold * cost);
+      const orderId = `ord-demo-${String(i + 1).padStart(2, '0')}`;
+      const dispatchId = `disp-demo-${String(i + 1).padStart(2, '0')}`;
+      const outMovementId = `sm-demo-out-${String(i + 1).padStart(2, '0')}`;
+      const shipDate = dayOffset(date, 21);
+      const customer = ['ღვინის სახლი თბილისი', 'Kaukasus Weinhandel GmbH', 'ბათუმის ღვინის ბარი', 'Nordic Wine Import'][i % 4];
+
+      extraOrders.push({
+        id: orderId,
+        orderNumber: `ORD-2026-1${String(i + 1).padStart(2, '0')}`,
+        orderDate: dayOffset(date, 14),
+        createdAt: stamp(dayOffset(date, 14)),
+        requestedDispatchDate: shipDate,
+        customerName: customer,
+        lotId: lot.id,
+        lotName: lot.name,
+        locationId: storeId,
+        locationName: storeName,
+        bottles: sold,
+        pricePerBottle: price,
+        currency: 'GEL',
+        revenue,
+        costPerBottle: cost,
+        cogs,
+        grossProfit: revenue - cogs,
+        marginPct: Number((((revenue - cogs) / revenue) * 100).toFixed(1)),
+        status: 'fulfilled',
+        dispatchId,
+        fulfilledAt: stamp(shipDate),
+        operator: WINEMAKER,
+        notes: 'სადემონსტრაციო შეკვეთა, შესრულებულია.',
+        lastModified: MODIFIED,
+      });
+
+      extraDispatches.push({
+        id: dispatchId,
+        date: shipDate,
+        customerName: customer,
+        lotId: lot.id,
+        lotName: lot.name,
+        locationId: storeId,
+        locationName: storeName,
+        bottles: sold,
+        pricePerBottle: price,
+        currency: 'GEL',
+        revenue,
+        costPerBottle: cost,
+        cogs,
+        grossProfit: revenue - cogs,
+        marginPct: Number((((revenue - cogs) / revenue) * 100).toFixed(1)),
+        stockMovementId: outMovementId,
+        salesOrderId: orderId,
+        operator: WINEMAKER,
+        notes: 'მიწოდება დასრულდა.',
+        lastModified: MODIFIED,
+      });
+
+      extraStock.push({
+        id: outMovementId,
+        date: shipDate,
+        lotId: lot.id,
+        locationId: storeId,
+        direction: 'out',
+        bottles: sold,
+        reason: 'sale',
+        sourceRef: dispatchId,
+        note: 'გაცემა შეკვეთაზე.',
+        lastModified: MODIFIED,
+      });
+    }
+  }
+
+  d.bottlingRuns = [...(d.bottlingRuns || []), ...extraRuns];
+  d.stockMovements = [...(d.stockMovements || []), ...extraStock];
+  d.salesOrders = [...(d.salesOrders || []), ...extraOrders];
+  d.salesDispatches = [...(d.salesDispatches || []), ...extraDispatches];
+
+  // --- Cellar notes and AI suggestions --------------------------------------
+  const lotRefs: any[] = (d.lots || []).slice(0, 10);
+  d.notes = topUp(d.notes, (i) => {
+    const lot = lotRefs[i % Math.max(1, lotRefs.length)];
+    return {
+      id: `note-demo-${String(i + 1).padStart(2, '0')}`,
+      title: ['დეგუსტაციის ჩანაწერი', 'ტემპერატურის რეჟიმი', 'სანიტარიის შემოწმება', 'ტანინის განვითარება'][i % 4],
+      date: dayOffset('2026-04-02', i * 13),
+      author: i % 2 ? OENOLOGIST : WINEMAKER,
+      category: (['Tasting', 'Enology', 'Sanitation', 'General'] as const)[i % 4],
+      ...(lot ? { relatedLotId: lot.id } : {}),
+      content: 'რეგულარული შეფასება — არომატიკა სუფთაა, გადახრები არ დაფიქსირებულა. კონტროლი გრძელდება გრაფიკით.',
+      lastModified: MODIFIED,
+    };
+  });
+
+  // --- Vineyard blocks ------------------------------------------------------
+  d.blocks = topUp(d.blocks, (i) => {
+    const names = [
+      { name: 'ახმეტის რქაწითელი', variety: 'Rkatsiteli / რქაწითელი', area: 2.1 },
+      { name: 'გურჯაანის საფერავი', variety: 'Saperavi / საფერავი', area: 1.6 },
+      { name: 'თელავის ქისი — ახალი ნარგაობა', variety: 'Kisi / ქისი', area: 0.8 },
+      { name: 'მთისპირა მწვანე', variety: 'Mtsvane / მწვანე კახური', area: 1.3 },
+      { name: 'ხიხვის საცდელი ნაკვეთი', variety: 'Khikhvi / ხიხვი', area: 0.7 },
+    ][i % 5];
+    return {
+      id: `B-${String(i + 1).padStart(2, '0')}`,
+      name: names.name,
+      vineyardName: 'კვარლის მარანი',
+      locationName: 'კახეთი, საქართველო',
+      latitude: vary(i + 1, 0.25, 41.95, 4),
+      longitude: vary(i + 2, 0.35, 45.81, 4),
+      area: names.area,
+      elevation: Math.round(vary(i + 3, 160, 430, 0)),
+      slope: i % 2 ? 'მსუბუქი დახრა' : 'ზომიერი დახრა',
+      aspect: ['სამხრეთ-აღმოსავლეთი', 'სამხრეთი', 'სამხრეთ-დასავლეთი'][i % 3],
+      soilType: 'კირქვიანი თიხნარი',
+      grapeVariety: names.variety,
+      clone: 'ადგილობრივი კლონი',
+      rootstock: ['R110', '5C', 'Kober 5BB'][i % 3],
+      plantingYear: 2004 + (i % 15),
+      spacing: '2.5m x 1.2m',
+      rowsCount: Math.round(vary(i + 4, 30, 68, 0)),
+      vinesCount: Math.round(vary(i + 5, 2200, 5200, 0)),
+      trainingSystem: 'ორმაგი გუიო',
+      pruningSystem: 'ქართული მოკლე სხვლა',
+      irrigationEnabled: i % 3 === 0,
+      farmingStatus: (['organic', 'conventional', 'in_conversion'] as const)[i % 3],
+      currentPhenology: 'შეთვალება (ვერაისონი)',
+      estimatedHarvestDate: dayOffset('2026-09-14', i * 3),
+      notes: 'სადემონსტრაციო ნაკვეთი სრული აგროტექნიკური ჩანაწერებით.',
+      lastModified: MODIFIED,
+    };
+  });
+
+  // --- Certification --------------------------------------------------------
+  d.certificationRecords = topUp(d.certificationRecords, (i) => {
+    const lot = lotRefs[i % Math.max(1, lotRefs.length)];
+    const statuses = ['draft', 'ready', 'submitted', 'approved'] as const;
+    const status = statuses[i % statuses.length];
+    const approved = status === 'approved';
+    return {
+      id: `cert-demo-${String(i + 1).padStart(2, '0')}`,
+      ...(lot ? { lotId: lot.id } : {}),
+      productType: (['wine', 'wine', 'sparkling_wine', 'chacha_spirit'] as const)[i % 4],
+      samplePrepared: true,
+      sampleDate: dayOffset('2026-02-16', i * 15),
+      sampleQuantity: 3,
+      labProtocolUploaded: status !== 'draft',
+      labProtocolFileName: `lab-protocol-${i + 1}.pdf`,
+      organolepticCheckRequired: true,
+      organolepticResult: approved ? 'passed' : 'pending',
+      applicationStatus: status,
+      balanceCheckStatus: 'passed',
+      ...(approved ? {
+        certificateNumber: `PDO-KV-2026-${String(200 + i)}`,
+        issueDate: dayOffset('2026-03-20', i * 15),
+        expiryDate: dayOffset('2029-03-20', i * 15),
+      } : {}),
+      purpose: (['export', 'local_market'] as const)[i % 2],
+      notes: 'სადემონსტრაციო სერტიფიკაციის განაცხადი.',
+      lastModified: MODIFIED,
+    };
+  });
+
+  // --- CRM ------------------------------------------------------------------
+  d.crmLeads = topUp(d.crmLeads, (i) => {
+    const people = [
+      { name: 'Elena Rossi', company: 'Vini del Caucaso SRL', region: 'Lazio', city: 'Roma', mail: 'elena@vinicaucaso.it' },
+      { name: 'James Whitfield', company: 'Caucasus Cellars Ltd', region: 'England', city: 'London', mail: 'james@caucasuscellars.co.uk' },
+      { name: 'Anna Kowalczyk', company: 'Kaukaz Wina', region: 'Małopolskie', city: 'Kraków', mail: 'anna@kaukazwina.pl' },
+      { name: 'Lars Andersen', company: 'Nordic Wine Import', region: 'Hovedstaden', city: 'København', mail: 'lars@nordicwine.dk' },
+      { name: 'დავით ხარაძე', company: 'ბათუმის ღვინის ბარი', region: 'აჭარა', city: 'ბათუმი', mail: 'davit@batumiwine.ge' },
+      { name: 'Marie Dubois', company: 'Caves du Caucase', region: 'Île-de-France', city: 'Paris', mail: 'marie@cavescaucase.fr' },
+    ][i % 6];
+    return {
+      id: `lead-demo-${String(i + 1).padStart(2, '0')}`,
+      displayName: people.name,
+      companyName: people.company,
+      wineryName: 'კვარლის მარანი',
+      region: people.region,
+      municipality: people.city,
+      contactEmail: people.mail,
+      source: ['ProWein 2026', 'ვებგვერდის ფორმა', 'რეკომენდაცია', 'Wine Expo Tbilisi'][i % 4],
+      tags: [['export'], ['export', 'horeca'], ['retail'], ['export', 'organic']][i % 4],
+      notes: 'სადემონსტრაციო კონტაქტი — ინტერესი ქვევრის ღვინოებზე.',
+      status: (['new', 'contacted', 'qualified', 'customer', 'archived'] as const)[i % 5],
+      createdAt: stamp(dayOffset('2026-01-15', i * 19)),
+      updatedAt: stamp(dayOffset('2026-05-15', i * 7)),
+      owner: WINEMAKER,
+      lastContactedAt: stamp(dayOffset('2026-05-15', i * 7)),
+      lastModified: MODIFIED,
+    };
+  });
+
+  d.aiDrafts = topUp(d.aiDrafts, (i) => {
+    const lot = lotRefs[i % Math.max(1, lotRefs.length)];
+    // Only the types `server/routes/sync.ts` accepts. That list is narrower than
+    // the client's own `AiDraftActionType` — `inventory_restock` and several
+    // others are declared client-side but rejected on sync.
+    const types = ['lab_check', 'cellar_operation', 'so2_calculation', 'compliance_warning', 'spray_recommendation'] as const;
+    const targets = ['labs', 'operations', 'lots', 'inventory', 'vazi'] as const;
+    return {
+      id: `aidraft-demo-${String(i + 1).padStart(2, '0')}`,
+      type: types[i % types.length],
+      title: [
+        'შეამოწმეთ თავისუფალი SO₂',
+        'დაგეგმეთ გადაღება',
+        'SO₂ კორექციის გაანგარიშება',
+        'შეავსეთ შესაფუთი მასალის მარაგი',
+        'პრევენციული შეწამვლის რეკომენდაცია',
+      ][i % 5],
+      priority: (['high', 'medium', 'low', 'medium', 'high'] as const)[i % 5],
+      description: lot
+        ? `რეკომენდაცია ეხება პარტიას ${lot.name || lot.id}. შემოთავაზება საჭიროებს ადამიანის დადასტურებას.`
+        : 'შემოთავაზება საჭიროებს ადამიანის დადასტურებას.',
+      reviewOnly: true as const,
+      targetModule: targets[i % targets.length],
+      warnings: [],
+      status: (['draft', 'draft', 'converted_to_task', 'dismissed', 'draft'] as const)[i % 5],
+      createdAt: stamp(dayOffset('2026-07-06', i * 3), '08:30:00'),
+      createdBy: 'Winery Intelligence',
+      sourceModule: 'gvino',
+      lastModified: MODIFIED,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Supplier invoices — posted through the real command
 // ---------------------------------------------------------------------------
 
@@ -253,7 +806,10 @@ const costEntries2026 = [
  */
 function seedInvoiceReceipts(d: any): void {
   // Re-running must not stack receipts, and the command rejects a duplicate id.
-  const seededIds = new Set(['rcpt-2026-07-eu', 'rcpt-2026-07-ge']);
+  const seededIds = new Set([
+    'rcpt-2026-07-eu', 'rcpt-2026-07-ge',
+    ...Array.from({ length: 8 }, (_, i) => `rcpt-2026-r${String(i + 1).padStart(2, '0')}`),
+  ]);
   d.invoiceReceipts = (d.invoiceReceipts || []).filter((r: any) => !seededIds.has(r.id));
   d.inventoryMovements = (d.inventoryMovements || [])
     .filter((m: any) => !seededIds.has(m.invoiceReceiptId));
@@ -264,10 +820,13 @@ function seedInvoiceReceipts(d: any): void {
   // result becomes deterministic however many times this runs.
   const PRE_INVOICE_LEVELS: Record<string, { stock: number; costPerUnit: number }> = {
     'INV-YEAST': { stock: 4.5, costPerUnit: 95 },
+    'INV-RED-YEAST': { stock: 3.2, costPerUnit: 105 },
     'INV-DAP': { stock: 12, costPerUnit: 8 },
     'INV-KMBS': { stock: 26, costPerUnit: 12 },
+    'INV-BENT': { stock: 30, costPerUnit: 6 },
     'INV-CORK': { stock: 2400, costPerUnit: 0.42 },
     'INV-LABEL': { stock: 3100, costPerUnit: 0.18 },
+    'INV-BOX': { stock: 700, costPerUnit: 2.5 },
   };
   const baselineInventory = (d.inventory || []).map((item: any) => {
     const level = PRE_INVOICE_LEVELS[item.id];
@@ -285,7 +844,7 @@ function seedInvoiceReceipts(d: any): void {
   const importedInvoice = {
     receiptId: 'rcpt-2026-07-eu',
     analysisId: 'analysis-2026-07-eu',
-    documentChecksum: 'demo-eu-2026-07',
+    documentChecksum: demoDocumentChecksum('rcpt-2026-07-eu'),
     invoice: {
       supplierName: 'Enology Supply Europe',
       supplierCompanyId: 'EU-9988',
@@ -347,7 +906,7 @@ function seedInvoiceReceipts(d: any): void {
   const localInvoice = {
     receiptId: 'rcpt-2026-07-ge',
     analysisId: 'analysis-2026-07-ge',
-    documentChecksum: 'demo-ge-2026-07',
+    documentChecksum: demoDocumentChecksum('rcpt-2026-07-ge'),
     invoice: {
       supplierName: 'ქართული შესაფუთი მასალები',
       supplierCompanyId: '404512345',
@@ -396,9 +955,91 @@ function seedInvoiceReceipts(d: any): void {
     ],
   };
 
+  /**
+   * Routine local invoices, so the receiving module shows a real ledger rather
+   * than two entries. Each goes through the command like the two above, which
+   * is what keeps stock levels and weighted costs consistent — the numbers are
+   * computed, never written by hand.
+   *
+   * The supplier, number, and date all vary: the command fingerprints an
+   * invoice and rejects one that looks like a document already posted.
+   */
+  const routineSuppliers = [
+    { name: 'ყვარლის აგროსერვისი', id: '404100011' },
+    { name: 'კახეთის ლაბორატორიული მომარაგება', id: '404100022' },
+    { name: 'თბილისის ენოლოგიური ცენტრი', id: '404100033' },
+    { name: 'ბათუმის შესაფუთი კომპანია', id: '404100044' },
+  ];
+  const routineItems = [
+    { id: 'INV-BENT', name: 'ბენტონიტი', category: 'additives', unit: 'კგ', qty: 40, cost: 6.5 },
+    { id: 'INV-DAP', name: 'საფუარის საკვები DAP', category: 'nutritions', unit: 'კგ', qty: 25, cost: 8.4 },
+    { id: 'INV-RED-YEAST', name: 'საფუარი RC212', category: 'yeasts', unit: 'კგ', qty: 6, cost: 98 },
+    { id: 'INV-BOX', name: '6-ბოთლიანი ყუთი', category: 'boxes', unit: 'ცალი', qty: 500, cost: 2.4 },
+    { id: 'INV-KMBS', name: 'კალიუმის მეტაბისულფიტი', category: 'additives', unit: 'კგ', qty: 30, cost: 11.5 },
+  ];
+
+  const routineInvoices = Array.from({ length: 8 }, (_, i) => {
+    const supplier = routineSuppliers[i % routineSuppliers.length];
+    const item = routineItems[i % routineItems.length];
+    const receiptId = `rcpt-2026-r${String(i + 1).padStart(2, '0')}`;
+    const net = Number((item.qty * item.cost).toFixed(2));
+    const invoiceDate = dayOffset('2026-01-14', i * 23);
+    return {
+      receiptId,
+      analysisId: `analysis-${receiptId}`,
+      documentChecksum: demoDocumentChecksum(receiptId),
+      invoice: {
+        supplierName: supplier.name,
+        supplierCompanyId: supplier.id,
+        invoiceNumber: `${supplier.id}-2026-${String(i + 101)}`,
+        invoiceDate,
+        currency: 'GEL' as const,
+        subtotal: net,
+        taxAmount: Number((net * 0.18).toFixed(2)),
+        total: Number((net * 1.18).toFixed(2)),
+      },
+      accountingCurrency: 'GEL' as const,
+      exchangeRate: {
+        fromCurrency: 'GEL' as const,
+        toCurrency: 'GEL' as const,
+        rate: 1,
+        requestedDate: invoiceDate,
+        rateDate: invoiceDate,
+        source: 'identity' as const,
+        sourceLabel: 'ერთი ვალუტა — კონვერტაცია არ საჭიროებს',
+        retrievedAt: stamp(invoiceDate, '09:30:00'),
+      },
+      costBasis: 'net' as const,
+      additionalCostsSource: 0,
+      sources: [{ id: `src-${receiptId}`, title: 'მიმწოდებლის ზედნადები', url: `https://example.invalid/${receiptId}`, official: true }],
+      lines: [{
+        lineId: `line-${receiptId}`,
+        movementId: `mv-${receiptId}`,
+        mode: 'receive' as const,
+        inventoryItemId: item.id,
+        productName: item.name,
+        category: item.category,
+        supplierName: supplier.name,
+        invoiceDescription: `${item.qty} ${item.unit} ${item.name}`,
+        invoiceQuantity: item.qty,
+        invoiceUnit: item.unit,
+        stockQuantity: item.qty,
+        stockUnit: item.unit,
+        conversionFactor: 1,
+        conversionConfirmed: true,
+        sourceCostPerStockUnit: item.cost,
+        lineNetAmount: net,
+        lineTotal: Number((net * 1.18).toFixed(2)),
+        activeIngredients: [],
+        sourceIds: [`src-${receiptId}`],
+      }],
+    };
+  });
+
   for (const [invoice, at] of [
     [importedInvoice, stamp('2026-07-09', '10:15:00')],
     [localInvoice, stamp('2026-07-24', '11:45:00')],
+    ...routineInvoices.map(inv => [inv, stamp(inv.invoice.invoiceDate, '09:45:00')] as const),
   ] as const) {
     const outcome = applyInvoiceReceiptCommand(state as any, invoice, {
       commandId: `cmd-${invoice.receiptId}`,
@@ -421,16 +1062,38 @@ function main() {
   const orgArg = process.argv[2];
   const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
 
+  const memberships: any[] = db.memberships || [];
+  const organizations: any[] = db.organizations || [];
+
   let orgId = orgArg;
   if (!orgId) {
     const user = db.users?.find((u: any) => u.username === 'testuser1');
     orgId = user?.activeOrganizationId
-      || db.memberships?.find((m: any) => m.userId === 'testuser1')?.organizationId;
+      || memberships.find((m: any) => m.userId === 'testuser1')?.organizationId
+      // Any single organization is unambiguous, so do not make the caller look
+      // up an id the database already determines.
+      || (organizations.length === 1 ? organizations[0].id : undefined);
   }
-  if (!orgId || !db.orgData?.[orgId]) {
-    console.error(`No workspace data found for organization "${orgId}".`);
+
+  if (!orgId) {
+    console.error('Could not decide which workspace to seed.\n');
+    if (!organizations.length) {
+      console.error('This database has no organizations at all. Register an account in the app first,');
+      console.error('then re-run this script — it will fill that new workspace.');
+    } else {
+      console.error('Pass one of these organization ids as an argument:');
+      for (const org of organizations) {
+        const owner = memberships.find((m: any) => m.organizationId === org.id);
+        console.error(`  ${org.id}   ${org.name}${owner ? `   (${owner.userId})` : ''}`);
+      }
+    }
     process.exit(1);
   }
+
+  // A freshly registered organization has a membership but no state document
+  // yet. That is a workspace waiting to be filled, not an error.
+  db.orgData = db.orgData || {};
+  if (!db.orgData[orgId]) db.orgData[orgId] = {};
 
   const d = db.orgData[orgId];
 
@@ -442,20 +1105,28 @@ function main() {
   const BASE_COLLECTIONS = ['blocks', 'vessels', 'inventory', 'storageLocations'] as const;
   const needsFoundation = BASE_COLLECTIONS.some(key => !(d[key] || []).length);
   if (needsFoundation) {
-    const template = Object.values(db.orgData).find((candidate: any) =>
-      BASE_COLLECTIONS.every(key => (candidate?.[key] || []).length)) as any;
-    if (!template) {
-      console.error('This workspace has no vineyard blocks or vessels, and no seeded workspace exists to copy them from.');
-      console.error('Run the baseline seeder first: GET /api/dev/seed-testuser1');
-      process.exit(1);
-    }
+    // Prefer an existing seeded workspace, so a second organization matches the
+    // first. With none — a freshly reset database, which is exactly when this
+    // script is most needed — build the baseline from `getSeederData`, the same
+    // function `/api/dev/seed-testuser1` uses. Depending on another workspace
+    // already existing made this unusable on an empty database.
+    const template = (Object.values(db.orgData).find((candidate: any) =>
+      BASE_COLLECTIONS.every(key => (candidate?.[key] || []).length)) as any)
+      || getSeederData(orgId);
+
     for (const key of BASE_COLLECTIONS) {
       if (!(d[key] || []).length) d[key] = JSON.parse(JSON.stringify(template[key]));
     }
-    if (!d.companyProfile?.companyName && template.companyProfile) {
-      d.companyProfile = JSON.parse(JSON.stringify(template.companyProfile));
+    // The rest of the baseline (2023/2024 vintages and their history) is what
+    // gives the demo depth behind the current season, so bring it along too.
+    for (const key of Object.keys(template)) {
+      if (BASE_COLLECTIONS.includes(key as any)) continue;
+      const existing = d[key];
+      const isEmpty = existing === undefined
+        || (Array.isArray(existing) && existing.length === 0);
+      if (isEmpty) d[key] = JSON.parse(JSON.stringify(template[key]));
     }
-    console.log(`  (copied vineyard/cellar foundation into an empty workspace)`);
+    console.log('  (built the vineyard/cellar baseline into an empty workspace)');
   }
 
   seedInvoiceReceipts(d);
@@ -546,6 +1217,10 @@ function main() {
       : item
   ));
 
+  // Everything above is the narrative. This fills the modules that would
+  // otherwise show two or three rows, using the ids that now exist.
+  topUpWorkspace(d);
+
   // Audit entries are hash-chained; sign them against the existing chain so the
   // audit view shows a verified trail rather than unsigned rows.
   const newAuditEntries = [
@@ -555,10 +1230,26 @@ function main() {
     { id: 'AUD-2026-004', timestamp: stamp('2026-08-03', '09:10:00'), user: OENOLOGIST, module: 'GVINO', actionType: 'Lab Analysis', changedItem: 'LAB-RK-25-08', oldValue: '', newValue: 'SO2 თავისუფალი 22 მგ/ლ', notes: 'RK-25 კონტროლი — საჭიროა კორექცია.' },
   ] as MaraniOSAuditLog[];
 
+  // Pad the trail out to a usable length. These go through the same signing as
+  // the entries above — an unsigned row would show as unverified in the audit
+  // view, which is worse than having fewer rows.
+  const routineAuditEntries: MaraniOSAuditLog[] = Array.from({ length: 6 }, (_, i) => ({
+    id: `AUD-2026-1${String(i + 1).padStart(2, '0')}`,
+    timestamp: stamp(dayOffset('2026-05-04', i * 12), '11:20:00'),
+    user: i % 2 ? OENOLOGIST : WINEMAKER,
+    module: (['GVINO', 'VAZI', 'MARANIOS'] as const)[i % 3],
+    actionType: ['Update Vessel', 'Record Spray', 'Create Task', 'Update Lot', 'Record Lab Analysis', 'Update Inventory'][i % 6],
+    changedItem: ['Q-02', 'B-02', 'task-2026-03', 'RK-25', 'LAB-KIS-25-07', 'INV-KMBS'][i % 6],
+    oldValue: '',
+    newValue: 'განახლებულია',
+    notes: 'ყოველდღიური ოპერაციული ჩანაწერი.',
+  })) as MaraniOSAuditLog[];
+
+  const allNewAudit = [...newAuditEntries, ...routineAuditEntries];
   const existingAudit = (d.auditLogs || []) as MaraniOSAuditLog[];
-  const alreadySeeded = new Set(newAuditEntries.map(e => e.id));
+  const alreadySeeded = new Set(allNewAudit.map(e => e.id));
   const priorChain = existingAudit.filter(e => !alreadySeeded.has(e.id));
-  d.auditLogs = [...priorChain, ...signAuditEntries(newAuditEntries, priorChain)];
+  d.auditLogs = [...priorChain, ...signAuditEntries(allNewAudit, priorChain)];
 
   // Keep the previous state next to the file before overwriting it. The local
   // store is a single JSON document with no history, and several things rewrite

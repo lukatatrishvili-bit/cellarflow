@@ -1,9 +1,11 @@
+import crypto from 'crypto';
 import express from 'express';
 import {
   parseCookies,
   sessionCookie,
   clearSessionCookie,
   checkWineryScope,
+  liveSessionRole,
 
   accountRecoveryLimiter,
   invitationLimiter,
@@ -63,6 +65,7 @@ import {
   updateEnvFile,
   appBaseUrl,
   clientIp,
+  COOKIE_SECURE,
   demoAccountConfig,
 } from '../config';
 import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from '../oauthConfigPolicy';
@@ -70,6 +73,11 @@ import { isKnownRole, type Role } from '../permissions';
 import { auditSecurityEvent } from '../securityAudit';
 import type { SharedLoginLimiter } from '../loginLimiter';
 import { normalizeInternationalPhone } from '../phone';
+import {
+  registrationApprovalBlockers,
+  validateRegistrationIdentity,
+  validateRegistrationPhone,
+} from '../registrationProfile';
 import {
   getAiNotificationAccountStatus,
   getAiNotificationPreference,
@@ -91,6 +99,49 @@ const WIDGET_MODULES: Record<string, 'vazi' | 'gvino' | null> = {
   tasks: null,
   audit: null,
 };
+const GOOGLE_OAUTH_STATE_COOKIE = 'vinos_google_oauth_state';
+const GOOGLE_REGISTRATION_COOKIE = 'vinos_google_registration';
+const GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS = 10 * 60;
+const GOOGLE_REGISTRATION_MAX_AGE_SECONDS = 30 * 60;
+
+function temporaryCookie(name: string, value: string, maxAgeSeconds: number): string {
+  const parts = [
+    `${name}=${value}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (COOKIE_SECURE) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function clearTemporaryCookie(name: string): string {
+  return temporaryCookie(name, '', 0);
+}
+
+function appendSetCookie(res: express.Response, cookie: string): void {
+  const current = res.getHeader('Set-Cookie');
+  if (!current) {
+    res.setHeader('Set-Cookie', cookie);
+  } else if (Array.isArray(current)) {
+    res.setHeader('Set-Cookie', [...current.map(String), cookie]);
+  } else {
+    res.setHeader('Set-Cookie', [String(current), cookie]);
+  }
+}
+
+function secureEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function googleRegistrationSession(req: express.Request): any | null {
+  const token = parseCookies(req.headers.cookie)[GOOGLE_REGISTRATION_COOKIE];
+  const session = verifySessionToken(token);
+  return session?.purpose === 'google_registration' ? session : null;
+}
 
 function rateLimitKey(scope: string, req: express.Request, subject = ''): string {
   return `rate:${scope}:${hashToken(`${clientIp(req)}:${subject.trim().toLowerCase()}`)}`;
@@ -314,7 +365,7 @@ function approvalBlockResponse(res: express.Response, status: 'pending' | 'rejec
 // ── Authentication Endpoints ──────────────────────────────────────────
 
 authRouter.post('/register', async (req, res) => {
-  const { username, email, fullName, language, passcode, companyProfile } = req.body;
+  const { username, email, firstName, lastName, fullName, language, passcode, companyProfile } = req.body;
 
   if (!passcode) {
     return res.status(400).json({ error: 'A password is required' });
@@ -326,9 +377,13 @@ authRouter.post('/register', async (req, res) => {
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'A valid email address is required' });
   }
-  const cleanFullName = cleanText(fullName);
-  if (!cleanFullName) {
-    return res.status(400).json({ error: 'Full name is required' });
+  const identity = validateRegistrationIdentity({ firstName, lastName, fullName });
+  if (!identity.ok) {
+    return res.status(400).json(identity.issue);
+  }
+  const phone = validateRegistrationPhone(companyProfile?.phone);
+  if (!phone.ok) {
+    return res.status(400).json(phone.issue);
   }
   const enabledModules = selectedModules(req.body?.enabledModules, DEFAULT_MODULES);
 
@@ -342,8 +397,9 @@ authRouter.post('/register', async (req, res) => {
   );
   const normalizedCompanyProfile = normalizeCompanyProfile(companyProfile, cleanEmail);
   if (!normalizedCompanyProfile.companyName) {
-    return res.status(400).json({ error: 'Company or estate name is required' });
+    return res.status(400).json({ error: 'Company or estate name is required', code: 'company_name_required' });
   }
+  normalizedCompanyProfile.phone = phone.value;
   const enabledWidgets = selectedWidgets(req.body?.enabledWidgets, enabledModules);
 
   if (db.users.find(u => u.username === cleanUsername)) {
@@ -369,10 +425,10 @@ authRouter.post('/register', async (req, res) => {
   const user: any = {
     username: cleanUsername,
     email: cleanEmail,
-    fullName: cleanFullName,
+    fullName: identity.value.fullName,
     role: 'Owner/Admin',
     language: normalizeLanguage(language),
-    phone: normalizeInternationalPhone(normalizedCompanyProfile.phone) || '',
+    phone: phone.value,
     passwordHash: hashPassword(passcode || 'vinea2026'),
     enabledModules,
     enabledWidgets,
@@ -516,6 +572,7 @@ authRouter.get('/registration-approval', async (req, res) => {
   const data = await getUserData(user.username);
   res.type('html').send(renderApprovalReviewPage({
     details: describeApprovalRequest(user, data?.companyProfile),
+    blockingIssues: registrationApprovalBlockers(user, data?.companyProfile),
     token,
     actionPath: APPROVAL_REVIEW_PATH,
   }));
@@ -551,6 +608,17 @@ authRouter.post('/registration-approval', async (req, res) => {
   }
 
   const approved = decision === 'approve';
+  if (approved) {
+    const data = await getUserData(user.username);
+    const blockers = registrationApprovalBlockers(user, data?.companyProfile);
+    if (blockers.length > 0) {
+      return res.status(422).type('html').send(renderApprovalResultPage({
+        title: 'Required registration details are missing',
+        message: `This request cannot be approved yet. Missing: ${blockers.join(', ')}. Ask the applicant to complete their profile and submit it again.`,
+        appUrl: appBaseUrl(req),
+      }));
+    }
+  }
   applyApprovalDecision(user, decision, 'email-review-link');
   if (!approved) {
     // Cut any session the account might already hold.
@@ -952,12 +1020,19 @@ authRouter.get('/google/login', (req, res) => {
     return;
   }
 
+  const oauthState = crypto.randomBytes(24).toString('hex');
+  appendSetCookie(res, temporaryCookie(
+    GOOGLE_OAUTH_STATE_COOKIE,
+    oauthState,
+    GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS,
+  ));
+
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
     `response_type=code` +
     `&client_id=${encodeURIComponent(clientId)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=openid%20email%20profile` +
-    `&state=google_auth`;
+    `&state=${encodeURIComponent(oauthState)}`;
 
   res.redirect(authUrl);
 });
@@ -1003,6 +1078,18 @@ authRouter.get('/google/callback', async (req, res) => {
     return res.status(400).send('Authorization code missing');
   }
 
+  const oauthState = cleanText(req.query.state);
+  const expectedState = parseCookies(req.headers.cookie)[GOOGLE_OAUTH_STATE_COOKIE] || '';
+  appendSetCookie(res, clearTemporaryCookie(GOOGLE_OAUTH_STATE_COOKIE));
+  if (!oauthState || !expectedState || !secureEqual(oauthState, expectedState)) {
+    await auditSecurityEvent({
+      eventType: 'oauth.callback_failed',
+      ip: clientIp(req),
+      metadata: { stage: 'state_validation' },
+    });
+    return res.status(400).send('OAuth request expired or could not be verified. Please start again.');
+  }
+
   const db = getDB() as any;
   const { clientId, clientSecret } = getGoogleOAuthCreds(db);
   const redirectUri = getRedirectUri(req);
@@ -1016,8 +1103,8 @@ authRouter.get('/google/callback', async (req, res) => {
         client_id: clientId || '',
         client_secret: clientSecret || '',
         redirect_uri: redirectUri,
-        grant_type: 'authorization_code'
-      }).toString()
+        grant_type: 'authorization_code',
+      }).toString(),
     });
 
     if (!tokenRes.ok) {
@@ -1031,10 +1118,8 @@ authRouter.get('/google/callback', async (req, res) => {
     }
 
     const tokenData = await tokenRes.json() as any;
-    const accessToken = tokenData.access_token;
-
     const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` }
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
 
     if (!userinfoRes.ok) {
@@ -1048,17 +1133,14 @@ authRouter.get('/google/callback', async (req, res) => {
     }
 
     const userinfo = await userinfoRes.json() as any;
-    const email = userinfo.email;
-    const fullName = userinfo.name || 'Google User';
-
-    if (!email) {
-      return res.status(400).send('Email not returned by Google');
+    const cleanEmail = cleanText(userinfo.email).toLowerCase();
+    if (!cleanEmail || !isValidEmail(cleanEmail)) {
+      return res.status(400).send('A valid email was not returned by Google');
     }
 
     await refreshCoreMetadataFromPostgres();
     const dbData = getDB();
-    const cleanEmail = email.toLowerCase().trim();
-    let user = dbData.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail);
+    const user = dbData.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail) as any;
     if (user && !userAccountIsEnabled(user)) {
       await auditSecurityEvent({
         eventType: 'oauth.login_rejected',
@@ -1070,62 +1152,35 @@ authRouter.get('/google/callback', async (req, res) => {
       return res.status(403).send('This account is unavailable');
     }
 
-    let username = '';
-    if (user) {
-      username = user.username;
-    } else {
-      username = uniqueUsernameForEmail(cleanEmail, dbData.users.map(existingUser => existingUser.username));
-
-      user = {
-        username,
-        email: cleanEmail,
-        fullName,
-        role: 'Owner/Admin',
-        language: 'en',
-        phone: '',
-        passwordHash: '',
-        enabledModules: ['vazi', 'gvino'],
-        enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
-        registrationComplete: false,
-        emailVerified: true,
-        accountEnabled: true,
-        sessionVersion: 1,
-        approvalStatus: 'approved',
-      };
-      const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
-      const org = { id: orgId, name: `${fullName || username}'s Estate` };
-      const membership = { id: 'mem_' + Math.random().toString(36).substr(2, 9), userId: username, organizationId: orgId, role: 'Owner/Admin' };
-      user.activeOrganizationId = orgId;
-
-      // A Google identity proves the address, not that this person belongs here.
-      const approvalRequired = registrationApprovalRequired();
-      const approvalToken = generateApprovalToken();
-      if (approvalRequired) markAwaitingApproval(user, approvalToken);
-
-      ensureDbCollections(dbData);
-      dbData.organizations.push(org);
-      dbData.memberships.push(membership);
-      dbData.orgData[orgId] = createEmptyUserData();
-      dbData.orgData[orgId].companyProfile.companyName = org.name;
-      dbData.orgData[orgId].companyProfile.contactEmail = cleanEmail;
-      dbData.users.push(user);
-      await saveCoreMetadata('auth-google-register');
-      await saveUserData(username, dbData.orgData[orgId]);
-      await startOrganizationTrial(orgId, username);
-
-      if (approvalRequired) {
-        await notifyApprovalReviewer(req, user, dbData.orgData[orgId].companyProfile, approvalReviewLink(req, approvalToken));
-        await auditSecurityEvent({
-          eventType: 'account.approval_requested',
-          username,
-          organizationId: orgId,
-          ip: clientIp(req),
-          metadata: { provider: 'google' },
-        });
-      }
+    const approval = user ? approvalStatusForUser(user) : 'approved';
+    if (approval === 'rejected') {
+      return res.redirect('/login?approval=rejected');
     }
 
-    const approval = approvalStatusForUser(user);
+    const userData = user ? await getUserData(user.username) : null;
+    const needsRequiredProfile = !user || (
+      !user.passwordHash
+      && registrationApprovalBlockers(user, userData?.companyProfile).length > 0
+    );
+
+    if (needsRequiredProfile) {
+      const registrationToken = createSessionToken({
+        purpose: 'google_registration',
+        email: cleanEmail,
+        firstName: cleanText(userinfo.given_name),
+        lastName: cleanText(userinfo.family_name),
+        googleSubject: cleanText(userinfo.sub),
+        ...(user ? { existingUsername: user.username } : {}),
+      });
+      appendSetCookie(res, temporaryCookie(
+        GOOGLE_REGISTRATION_COOKIE,
+        registrationToken,
+        GOOGLE_REGISTRATION_MAX_AGE_SECONDS,
+      ));
+      await oauthCallbackLimiter.clear(callbackRateKey);
+      return res.redirect('/login?google_registration=1');
+    }
+
     if (approval !== 'approved') {
       await auditSecurityEvent({
         eventType: 'oauth.login_rejected',
@@ -1134,12 +1189,12 @@ authRouter.get('/google/callback', async (req, res) => {
         ip: clientIp(req),
         metadata: { reason: `approval_${approval}`, provider: 'google' },
       });
-      return res.redirect(`/?approval=${approval}`);
+      return res.redirect(`/login?approval=${approval}`);
     }
 
     const effectiveRole = activeMembershipRole(dbData, user);
     const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), true);
-    res.setHeader('Set-Cookie', sessionCookie(token, 2592000));
+    appendSetCookie(res, sessionCookie(token, 2592000));
 
     await oauthCallbackLimiter.clear(callbackRateKey);
     await auditSecurityEvent({
@@ -1150,7 +1205,7 @@ authRouter.get('/google/callback', async (req, res) => {
       metadata: { provider: 'google' },
     });
 
-    res.redirect((user as any).registrationComplete === false ? '/?complete_registration=1' : '/');
+    res.redirect((user as any).registrationComplete === false ? '/dashboard?complete_registration=1' : '/dashboard');
   } catch (err) {
     console.error(`[auth] OAuth callback failed (${err instanceof Error ? err.name : 'unknown_error'}).`);
     await auditSecurityEvent({
@@ -1160,6 +1215,168 @@ authRouter.get('/google/callback', async (req, res) => {
     });
     res.status(500).send('OAuth2 flow failed');
   }
+});
+
+authRouter.get('/google/registration', (req, res) => {
+  const session = googleRegistrationSession(req);
+  if (!session?.email) {
+    return res.status(401).json({
+      error: 'Your Google registration session expired. Please continue with Google again.',
+      code: 'google_registration_expired',
+    });
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({
+    email: session.email,
+    firstName: cleanText(session.firstName),
+    lastName: cleanText(session.lastName),
+  });
+});
+
+authRouter.post('/google/registration/cancel', (req, res) => {
+  appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+  res.json({ ok: true });
+});
+
+authRouter.post('/google/registration', async (req, res) => {
+  const session = googleRegistrationSession(req);
+  if (!session?.email) {
+    return res.status(401).json({
+      error: 'Your Google registration session expired. Please continue with Google again.',
+      code: 'google_registration_expired',
+    });
+  }
+
+  const identity = validateRegistrationIdentity({
+    firstName: req.body?.firstName,
+    lastName: req.body?.lastName,
+  });
+  if (!identity.ok) return res.status(400).json(identity.issue);
+
+  const phone = validateRegistrationPhone(req.body?.phone);
+  if (!phone.ok) return res.status(400).json(phone.issue);
+
+  const companyName = cleanText(req.body?.companyName);
+  if (!companyName) {
+    return res.status(400).json({ error: 'Company or estate name is required', code: 'company_name_required' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const dbData = getDB();
+  ensureDbCollections(dbData);
+  const cleanEmail = String(session.email).toLowerCase().trim();
+  let user = dbData.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail) as any;
+  if (session.existingUsername && user?.username !== session.existingUsername) {
+    return res.status(409).json({ error: 'This account changed while registration was open. Please start again.' });
+  }
+  if (user && !session.existingUsername) {
+    appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+    return res.status(409).json({
+      error: 'An account with this email already exists. Return to sign in with Google.',
+      code: 'account_exists',
+    });
+  }
+  if (user && approvalStatusForUser(user) === 'rejected') {
+    appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+    return res.status(403).json({
+      error: 'This account was not approved for access. Contact the workspace administrator.',
+      code: 'approval_rejected',
+    });
+  }
+
+  const language = normalizeLanguage(req.body?.language);
+  let data;
+  let isNewUser = false;
+  if (!user) {
+    isNewUser = true;
+    const username = uniqueUsernameForEmail(cleanEmail, dbData.users.map(existingUser => existingUser.username));
+    const orgId = 'org_' + Math.random().toString(36).slice(2, 11);
+    user = {
+      username,
+      email: cleanEmail,
+      fullName: identity.value.fullName,
+      role: 'Owner/Admin',
+      language,
+      phone: phone.value,
+      passwordHash: '',
+      enabledModules: [...DEFAULT_MODULES],
+      enabledWidgets: [...DEFAULT_WIDGETS],
+      registrationComplete: false,
+      emailVerified: true,
+      accountEnabled: true,
+      sessionVersion: 1,
+      approvalStatus: 'approved',
+      activeOrganizationId: orgId,
+    };
+    dbData.users.push(user);
+    dbData.organizations.push({ id: orgId, name: companyName });
+    dbData.memberships.push({
+      id: 'mem_' + Math.random().toString(36).slice(2, 11),
+      userId: username,
+      organizationId: orgId,
+      role: 'Owner/Admin',
+    });
+    data = createEmptyUserData();
+    dbData.orgData[orgId] = data;
+  } else {
+    data = await getUserData(user.username) || createEmptyUserData();
+    user.fullName = identity.value.fullName;
+    user.phone = phone.value;
+    user.language = language;
+    user.emailVerified = true;
+  }
+
+  data.companyProfile = {
+    ...createEmptyUserData().companyProfile,
+    ...data.companyProfile,
+    companyName,
+    contactEmail: cleanEmail,
+    phone: phone.value,
+  };
+  const org = dbData.organizations.find(item => item.id === user.activeOrganizationId);
+  if (org) org.name = companyName;
+
+  const wasAlreadyApproved = !isNewUser && approvalStatusForUser(user) === 'approved';
+  const requiresApproval = registrationApprovalRequired() && !wasAlreadyApproved;
+  const approvalToken = generateApprovalToken();
+  if (requiresApproval) markAwaitingApproval(user, approvalToken);
+
+  await saveCoreMetadata('auth-google-register');
+  await saveUserData(user.username, data, { updatedBy: 'auth-google-register' });
+  if (isNewUser) await startOrganizationTrial(user.activeOrganizationId, user.username);
+
+  if (requiresApproval) {
+    await notifyApprovalReviewer(req, user, data.companyProfile, approvalReviewLink(req, approvalToken));
+    await auditSecurityEvent({
+      eventType: 'account.approval_requested',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { provider: 'google' },
+    });
+  }
+  await auditSecurityEvent({
+    eventType: isNewUser ? 'account.registered' : 'account.registration_profile_completed',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+    metadata: { provider: 'google' },
+  });
+
+  appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+  if (!requiresApproval) {
+    const effectiveRole = activeMembershipRole(dbData, user);
+    const authToken = createSessionToken(sessionPayloadForUser(user, effectiveRole), true);
+    appendSetCookie(res, sessionCookie(authToken, 2592000));
+  }
+
+  res.json({
+    ok: true,
+    username: user.username,
+    email: user.email,
+    requiresApproval,
+    authenticated: !requiresApproval,
+  });
 });
 
 /**
@@ -1245,6 +1462,14 @@ authRouter.get('/me', async (req, res) => {
   }));
 });
 
+// Lightweight heartbeat used for the master-admin online indicator. Presence
+// writes are throttled in liveSessionRole/touchUserPresence.
+authRouter.post('/presence', async (req, res) => {
+  const auth = await liveSessionRole(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ ok: true, at: new Date().toISOString() });
+});
+
 authRouter.post('/complete_registration', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
@@ -1265,9 +1490,9 @@ authRouter.post('/complete_registration', async (req, res) => {
     return res.status(409).json({ error: 'Registration is already complete' });
   }
 
-  const cleanFullName = cleanText(req.body?.fullName || user.fullName);
-  if (!cleanFullName) {
-    return res.status(400).json({ error: 'Full name is required' });
+  const identity = validateRegistrationIdentity({ fullName: req.body?.fullName || user.fullName });
+  if (!identity.ok) {
+    return res.status(400).json(identity.issue);
   }
   const enabledModules = selectedModules(
     req.body?.enabledModules,
@@ -1282,16 +1507,17 @@ authRouter.post('/complete_registration', async (req, res) => {
       : {}),
   }, user.email);
   if (!companyProfile.companyName) {
-    return res.status(400).json({ error: 'Company or estate name is required' });
+    return res.status(400).json({ error: 'Company or estate name is required', code: 'company_name_required' });
   }
+  const phone = validateRegistrationPhone(companyProfile.phone || user.phone);
+  if (!phone.ok) return res.status(400).json(phone.issue);
+  companyProfile.phone = phone.value;
 
-  user.fullName = cleanFullName;
+  user.fullName = identity.value.fullName;
   user.role = activeMembershipRole(db, user);
   user.sessionVersion = sessionVersionForUser(user) + 1;
   user.language = normalizeLanguage(req.body?.language || user.language);
-  if (!user.phone && companyProfile.phone) {
-    user.phone = normalizeInternationalPhone(companyProfile.phone) || '';
-  }
+  user.phone = phone.value;
   user.enabledModules = enabledModules;
   user.enabledWidgets = selectedWidgets(req.body?.enabledWidgets, enabledModules);
   user.registrationComplete = true;
@@ -1527,6 +1753,7 @@ orgRouter.post('/accept-invite', async (req, res) => {
   const result = await acceptInvitationAtomically(hashToken(String(token)), user.username);
   if (result.status === 'not_found') return res.status(404).json({ error: 'Invitation not found' });
   if (result.status === 'already_accepted') return res.status(400).json({ error: 'Invitation has already been accepted' });
+  if (result.status === 'revoked') return res.status(400).json({ error: 'Invitation has been revoked' });
   if (result.status === 'expired') return res.status(400).json({ error: 'Invitation has expired' });
   if (result.status === 'email_mismatch') {
     return res.status(403).json({ error: 'This invitation was issued to a different email address' });

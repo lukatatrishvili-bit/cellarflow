@@ -29,13 +29,21 @@ interface AdminOverview {
 }
 
 const negotiableFeatures: BillingFeature[] = [
-  'production_cost_tracking', 'advanced_reports', 'workflow_approvals', 'multi_site',
-  'advanced_roles', 'priority_support', 'sso', 'api_access', 'custom_integrations',
-  'sla', 'dedicated_success', 'multi_company',
+  'data_import_export', 'production_cost_tracking', 'advanced_reports', 'workflow_approvals',
+  'advanced_roles', 'audit_dashboards', 'priority_support', 'custom_integrations',
+  'sla', 'dedicated_success',
 ];
 const statuses = ['trialing', 'active', 'past_due', 'grace_period', 'paused', 'canceled', 'expired'];
 
-export default function MasterBillingAdmin({ isKa, onMessage }: { isKa: boolean; onMessage: (message: string) => void }) {
+export default function MasterBillingAdmin({
+  isKa,
+  onMessage,
+  initialOrganizationId = '',
+}: {
+  isKa: boolean;
+  onMessage: (message: string) => void;
+  initialOrganizationId?: string;
+}) {
   const [overview, setOverview] = React.useState<AdminOverview | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -56,15 +64,19 @@ export default function MasterBillingAdmin({ isKa, onMessage }: { isKa: boolean;
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to load billing admin data.');
       setOverview(data);
-      setSelectedOrgId(current => current || data.organizations?.[0]?.id || '');
+      setSelectedOrgId(current => initialOrganizationId || current || data.organizations?.[0]?.id || '');
     } catch (error) {
       onMessage(error instanceof Error ? error.message : 'Unable to load billing admin data.');
     } finally {
       setLoading(false);
     }
-  }, [onMessage]);
+  }, [initialOrganizationId, onMessage]);
 
   React.useEffect(() => { void load(); }, [load]);
+
+  React.useEffect(() => {
+    if (initialOrganizationId) setSelectedOrgId(initialOrganizationId);
+  }, [initialOrganizationId]);
 
   React.useEffect(() => {
     if (!overview || !selectedOrgId) return;

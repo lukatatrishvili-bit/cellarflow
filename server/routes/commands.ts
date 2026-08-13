@@ -70,6 +70,7 @@ import {
 import { canAccess } from '../permissions';
 import { getOfficialExchangeRate } from '../exchangeRates';
 import { normalizeInvoiceCurrency } from '../../lib/currency';
+import { workflowApprovalGate } from '../workflowApprovals';
 
 const router = express.Router();
 
@@ -360,7 +361,7 @@ router.post('/cellar.harvest-intake.reverse', checkWineryScope('write'), async (
 
 // Lot history, vessel state, material stock, derived cost, operation ledger,
 // and signed audit evidence share one row lock and idempotency claim.
-router.post('/cellar.operation', checkWineryScope('write'), async (req, res) => {
+router.post('/cellar.operation', checkWineryScope('write'), workflowApprovalGate('cellar.operation'), async (req, res) => {
   const session = (req as any).wineryContext;
   const permissions = cellarWorkflowPermissions(session.role).operations;
   if (!permissions.canLogCellarOperation) {
@@ -455,7 +456,7 @@ router.post('/cellar.operation', checkWineryScope('write'), async (req, res) => 
 
 // Operation corrections restore the captured before-state and append cost and
 // signed audit compensation without deleting the original treatment record.
-router.post('/cellar.operation.reverse', checkWineryScope('write'), async (req, res) => {
+router.post('/cellar.operation.reverse', checkWineryScope('write'), workflowApprovalGate('cellar.operation.reverse'), async (req, res) => {
   const session = (req as any).wineryContext;
   const permissions = cellarWorkflowPermissions(session.role).operations;
   if (!permissions.canReverseCellarOperation) {
@@ -660,7 +661,7 @@ router.post('/cellar.fermentation-complete.reverse', checkWineryScope('write'), 
 // Execute one transfer as an organization-state transaction. The row lock
 // serializes distinct commands for the same winery, while the durable command
 // claim makes retries and concurrent duplicates return the original result.
-router.post('/cellar.transfer', checkWineryScope('write'), async (req, res) => {
+router.post('/cellar.transfer', checkWineryScope('write'), workflowApprovalGate('cellar.transfer'), async (req, res) => {
   const session = (req as any).wineryContext;
   if (!cellarWorkflowPermissions(session.role).transfers.canExecuteTransfer) {
     return commandError(
@@ -732,7 +733,7 @@ router.post('/cellar.transfer', checkWineryScope('write'), async (req, res) => {
 
 // Reversal is a second immutable command: it restores the captured business
 // state only when no dependent vessel or lot work has happened since transfer.
-router.post('/cellar.transfer.reverse', checkWineryScope('write'), async (req, res) => {
+router.post('/cellar.transfer.reverse', checkWineryScope('write'), workflowApprovalGate('cellar.transfer.reverse'), async (req, res) => {
   const session = (req as any).wineryContext;
   if (!cellarWorkflowPermissions(session.role).transfers.canReverseTransfer) {
     return commandError(
@@ -800,7 +801,7 @@ router.post('/cellar.transfer.reverse', checkWineryScope('write'), async (req, r
 
 // Lot volume, packaging stock, costing, the bottling ledger, and optional
 // finished-goods placement commit together under the same organization lock.
-router.post('/cellar.bottling', checkWineryScope('write'), async (req, res) => {
+router.post('/cellar.bottling', checkWineryScope('write'), workflowApprovalGate('cellar.bottling'), async (req, res) => {
   const session = (req as any).wineryContext;
   const permissions = cellarWorkflowPermissions(session.role).bottling;
   if (!permissions.canCreateBottling) {
@@ -906,7 +907,7 @@ router.post('/cellar.bottling', checkWineryScope('write'), async (req, res) => {
 
 // Bottling corrections append compensating lot, packaging, cost, and storage
 // facts under the same organization lock; the original run remains auditable.
-router.post('/cellar.bottling.reverse', checkWineryScope('write'), async (req, res) => {
+router.post('/cellar.bottling.reverse', checkWineryScope('write'), workflowApprovalGate('cellar.bottling.reverse'), async (req, res) => {
   const session = (req as any).wineryContext;
   const permissions = cellarWorkflowPermissions(session.role).bottling;
   if (!permissions.canReverseBottling) {
@@ -973,7 +974,7 @@ router.post('/cellar.bottling.reverse', checkWineryScope('write'), async (req, r
 
 // Reservations, physical dispatches, fulfillment, and cancellation all use the
 // same authoritative availability calculation under the organization row lock.
-router.post('/sales.stock', checkWineryScope('write'), async (req, res) => {
+router.post('/sales.stock', checkWineryScope('write'), workflowApprovalGate('sales.stock'), async (req, res) => {
   const session = (req as any).wineryContext;
   const permissions = salesWorkflowPermissions(session.role);
   const action = typeof req.body?.payload?.action === 'string' ? req.body.payload.action : '';
@@ -1051,7 +1052,7 @@ router.post('/sales.stock', checkWineryScope('write'), async (req, res) => {
 
 // Sales corrections preserve the outbound dispatch and append a capacity-checked
 // inbound return plus a compensating financial record.
-router.post('/sales.stock.reverse', checkWineryScope('write'), async (req, res) => {
+router.post('/sales.stock.reverse', checkWineryScope('write'), workflowApprovalGate('sales.stock.reverse'), async (req, res) => {
   const session = (req as any).wineryContext;
   const permissions = salesWorkflowPermissions(session.role);
   if (!permissions.canReverseDispatch) {
