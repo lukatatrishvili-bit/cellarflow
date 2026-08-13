@@ -1974,11 +1974,31 @@ describe('sync payload validation', () => {
     const line = { id: 'po-line-1', inventoryItemId: 'item-1', productName: 'Yeast', quantity: 2, receivedQuantity: 0, unit: 'kg', unitCost: 10 };
     const order = { id: 'po-1', orderNumber: 'PO-1', supplierName: 'Supplier', status: 'ordered', currency: 'GEL', lines: [line] };
     const db = operationalDb({ inventory, purchaseOrders: [order] });
-    expect(() => validateSyncPayload(db, { purchaseOrders: [{ ...order, status: 'received', lines: [{ ...line, receivedQuantity: 2 }] }] }, undefined)).toThrow(/receipt evidence/i);
+    expect(() => validateSyncPayload(db, { purchaseOrders: [{ ...order, status: 'received', lines: [{ ...line, receivedQuantity: 2 }] }] }, undefined)).toThrow(/evidence/i);
     expect(() => validateSyncPayload(db, { purchaseOrders: [{
       ...order, status: 'received', receivedAt: '2026-08-13T10:00:00.000Z', receiptCommandId: 'cmd-receipt-1',
+      receiptHistory: [{
+        id: 'po-receipt-1', commandId: 'cmd-receipt-1', receivedAt: '2026-08-13T10:00:00.000Z', receivedBy: 'ana',
+        lines: [{ purchaseOrderLineId: 'po-line-1', quantity: 2 }],
+      }],
       lines: [{ ...line, receivedQuantity: 2 }],
     }] }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, { purchaseOrders: [{
+      ...order, status: 'partially_received', receiptCommandId: 'cmd-receipt-partial',
+      receiptHistory: [{
+        id: 'po-receipt-partial', commandId: 'cmd-receipt-partial', receivedAt: '2026-08-13T09:00:00.000Z', receivedBy: 'ana',
+        lines: [{ purchaseOrderLineId: 'po-line-1', quantity: 1 }],
+      }],
+      lines: [{ ...line, receivedQuantity: 1 }],
+    }] }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(db, { purchaseOrders: [{
+      ...order, status: 'partially_received', receiptCommandId: 'cmd-receipt-forged',
+      receiptHistory: [{
+        id: 'po-receipt-forged', commandId: 'cmd-receipt-forged', receivedAt: '2026-08-13T09:00:00.000Z', receivedBy: 'ana',
+        lines: [{ purchaseOrderLineId: 'po-line-1', quantity: 0.5 }],
+      }],
+      lines: [{ ...line, receivedQuantity: 1 }],
+    }] }, undefined)).toThrow(/lacks matching evidence/i);
   });
 
   it('rejects impossible production dates and unknown dependencies', () => {
@@ -1989,21 +2009,35 @@ describe('sync payload validation', () => {
     const db = operationalDb({ productionPlans: [] });
     expect(() => validateSyncPayload(db, { productionPlans: [{ ...base, endDate: '2026-08-13' }] }, undefined)).toThrow(/cannot end before/i);
     expect(() => validateSyncPayload(db, { productionPlans: [{ ...base, dependencyIds: ['missing'] }] }, undefined)).toThrow(/unknown dependency/i);
+    const cyclic = operationalDb({ productionPlans: [
+      { ...base, id: 'plan-1', dependencyIds: ['plan-2'] },
+      { ...base, id: 'plan-2', dependencyIds: ['plan-1'] },
+    ] });
+    expect(() => validateSyncPayload(cyclic, { productionPlans: cyclic.productionPlans }, undefined)).toThrow(/dependency cycle/i);
   });
 
   it('freezes recall exposure and makes closure terminal', () => {
     const recall = {
       id: 'recall-1', lotId: 'lot-1', title: 'Recall lot-1', reason: 'Cork issue', status: 'active',
       openedAt: '2026-08-13T10:00:00.000Z', openedBy: 'ana', affectedBottlingRunIds: [],
-      affectedOrderIds: [], affectedDispatchIds: [], containmentTaskIds: [], notes: '',
+      affectedOrderIds: [], affectedDispatchIds: [], containmentTaskIds: ['task-1'], notes: '',
     };
-    const db = operationalDb({ lots: [{ id: 'lot-1' }], recallCases: [recall] });
-    expect(() => validateSyncPayload(db, { recallCases: [{ ...recall, status: 'closed' }] }, undefined)).toThrow(/closure evidence/i);
-    const closed = { ...recall, status: 'closed', closedAt: '2026-08-13T11:00:00.000Z', closedBy: 'ana' };
-    expect(() => validateSyncPayload(db, { recallCases: [closed] }, undefined)).not.toThrow();
-    expect(() => validateSyncPayload(operationalDb({ lots: [{ id: 'lot-1' }], recallCases: [closed] }), {
+    const task = { id: 'task-1', title: 'Quarantine', priority: 'high', dueDate: '2026-08-13', assignedTo: 'Ana', status: 'completed', description: '' };
+    expect(() => validateSyncPayload(operationalDb({ lots: [{ id: 'lot-1' }] }), {
+      tasks: [task],
+      recallCases: [recall],
+    }, undefined)).not.toThrow();
+    const db = operationalDb({ lots: [{ id: 'lot-1' }], tasks: [task], recallCases: [recall] });
+    expect(() => validateSyncPayload(db, { recallCases: [{ ...recall, status: 'closed' }] }, undefined)).toThrow(/cannot move/i);
+    const contained = { ...recall, status: 'contained', containedAt: '2026-08-13T10:30:00.000Z', containedBy: 'ana' };
+    expect(() => validateSyncPayload(db, { recallCases: [contained] }, undefined)).not.toThrow();
+    const pendingDb = operationalDb({ lots: [{ id: 'lot-1' }], tasks: [{ ...task, status: 'pending' }], recallCases: [recall] });
+    expect(() => validateSyncPayload(pendingDb, { recallCases: [contained] }, undefined)).toThrow(/every containment task/i);
+    const closed = { ...contained, status: 'closed', closedAt: '2026-08-13T11:00:00.000Z', closedBy: 'ana' };
+    expect(() => validateSyncPayload(operationalDb({ lots: [{ id: 'lot-1' }], tasks: [task], recallCases: [contained] }), { recallCases: [closed] }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(operationalDb({ lots: [{ id: 'lot-1' }], tasks: [task], recallCases: [closed] }), {
       recallCases: [{ ...closed, status: 'active' }],
-    }, undefined)).toThrow(/cannot be reopened/i);
+    }, undefined)).toThrow(/cannot move/i);
     expect(() => validateSyncPayload(db, { recallCases: [{ ...recall, reason: 'Changed' }] }, undefined)).toThrow(/exposure evidence/i);
   });
 });

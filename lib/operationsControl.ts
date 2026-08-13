@@ -90,6 +90,19 @@ export interface PurchaseOrderLine {
   unitCost: number;
 }
 
+export interface PurchaseOrderReceiptLine {
+  purchaseOrderLineId: string;
+  quantity: number;
+}
+
+export interface PurchaseOrderReceipt {
+  id: string;
+  commandId: string;
+  receivedAt: string;
+  receivedBy: string;
+  lines: PurchaseOrderReceiptLine[];
+}
+
 export interface PurchaseOrder {
   id: string;
   orderNumber: string;
@@ -106,6 +119,7 @@ export interface PurchaseOrder {
   orderedAt?: string;
   receivedAt?: string;
   receiptCommandId?: string;
+  receiptHistory?: PurchaseOrderReceipt[];
   lastModified?: string;
 }
 
@@ -146,9 +160,49 @@ export interface RecallCase {
   affectedDispatchIds: string[];
   containmentTaskIds: string[];
   notes: string;
+  containedAt?: string;
+  containedBy?: string;
   closedAt?: string;
   closedBy?: string;
   lastModified?: string;
+}
+
+export function recallContainmentProgress(recall: RecallCase, tasks: Task[]): { completed: number; total: number; ready: boolean } {
+  const byId = new Map(tasks.map(task => [task.id, task]));
+  const completed = recall.containmentTaskIds.filter(id => byId.get(id)?.status === 'completed').length;
+  return {
+    completed,
+    total: recall.containmentTaskIds.length,
+    ready: recall.containmentTaskIds.length > 0 && completed === recall.containmentTaskIds.length,
+  };
+}
+
+export function advanceRecallCase(
+  recall: RecallCase,
+  targetStatus: RecallCaseStatus,
+  input: { actor: string; tasks: Task[]; changedAt?: string },
+): RecallCase {
+  const changedAt = input.changedAt || new Date().toISOString();
+  const allowed: Record<RecallCaseStatus, RecallCaseStatus[]> = {
+    draft: ['active'],
+    active: ['contained'],
+    contained: ['closed'],
+    closed: [],
+  };
+  if (!allowed[recall.status].includes(targetStatus)) {
+    throw new Error(`Recall case cannot move from ${recall.status} to ${targetStatus}.`);
+  }
+  const progress = recallContainmentProgress(recall, input.tasks);
+  if ((targetStatus === 'contained' || targetStatus === 'closed') && !progress.ready) {
+    throw new Error(`Complete all containment tasks first (${progress.completed}/${progress.total}).`);
+  }
+  return {
+    ...recall,
+    status: targetStatus,
+    ...(targetStatus === 'contained' ? { containedAt: changedAt, containedBy: input.actor } : {}),
+    ...(targetStatus === 'closed' ? { closedAt: changedAt, closedBy: input.actor } : {}),
+    lastModified: changedAt,
+  };
 }
 
 function calendarDate(value: string): Date {
@@ -211,6 +265,80 @@ export function purchaseOrderTotal(order: PurchaseOrder): number {
   return order.lines.reduce((sum, line) => sum + Math.max(0, line.quantity) * Math.max(0, line.unitCost), 0);
 }
 
+export function purchaseOrderOutstandingTotal(order: PurchaseOrder): number {
+  return order.lines.reduce((sum, line) => (
+    sum + Math.max(0, line.quantity - line.receivedQuantity) * Math.max(0, line.unitCost)
+  ), 0);
+}
+
+export function nextPurchaseOrderReceiptReference(order: PurchaseOrder): string {
+  return `${order.orderNumber}-R${(order.receiptHistory?.length || 0) + 1}`;
+}
+
+const purchaseOrderStatusTransitions: Record<PurchaseOrderStatus, PurchaseOrderStatus[]> = {
+  draft: ['draft', 'submitted', 'cancelled'],
+  submitted: ['submitted', 'ordered', 'cancelled'],
+  ordered: ['ordered', 'cancelled'],
+  partially_received: ['partially_received', 'cancelled'],
+  received: ['received'],
+  cancelled: ['cancelled'],
+};
+
+export function allowedPurchaseOrderStatuses(status: PurchaseOrderStatus): PurchaseOrderStatus[] {
+  return [...purchaseOrderStatusTransitions[status]];
+}
+
+export function applyPurchaseOrderReceipt(
+  order: PurchaseOrder,
+  input: {
+    quantities: Record<string, number>;
+    commandId: string;
+    receivedBy: string;
+    receivedAt?: string;
+    receiptId?: string;
+  },
+): PurchaseOrder {
+  if (!['submitted', 'ordered', 'partially_received'].includes(order.status)) {
+    throw new Error('Only submitted or ordered purchase orders can be received.');
+  }
+  const receivedAt = input.receivedAt || new Date().toISOString();
+  if (!input.commandId.trim() || !input.receivedBy.trim() || Number.isNaN(Date.parse(receivedAt))) {
+    throw new Error('Purchase order receipt evidence is incomplete.');
+  }
+  const receiptLines: PurchaseOrderReceiptLine[] = [];
+  const lines = order.lines.map(line => {
+    const quantity = Number(input.quantities[line.id] || 0);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      throw new Error(`Receipt quantity for ${line.productName} is invalid.`);
+    }
+    const outstanding = Math.max(0, line.quantity - line.receivedQuantity);
+    if (quantity > outstanding) {
+      throw new Error(`Receipt quantity for ${line.productName} exceeds ${outstanding} ${line.unit} outstanding.`);
+    }
+    if (quantity === 0) return line;
+    receiptLines.push({ purchaseOrderLineId: line.id, quantity });
+    return { ...line, receivedQuantity: line.receivedQuantity + quantity };
+  });
+  if (!receiptLines.length) throw new Error('Enter a receipt quantity for at least one purchase-order line.');
+  const complete = lines.every(line => line.receivedQuantity === line.quantity);
+  const receipt: PurchaseOrderReceipt = {
+    id: input.receiptId || `por-${input.commandId}`,
+    commandId: input.commandId,
+    receivedAt,
+    receivedBy: input.receivedBy.trim(),
+    lines: receiptLines,
+  };
+  return {
+    ...order,
+    status: complete ? 'received' : 'partially_received',
+    lines,
+    receiptHistory: [receipt, ...(order.receiptHistory || [])].slice(0, 1_000),
+    receiptCommandId: input.commandId,
+    ...(complete ? { receivedAt } : {}),
+    lastModified: receivedAt,
+  };
+}
+
 export function createReorderPurchaseOrder(
   items: InventoryItem[],
   input: { supplierName: string; createdBy: string; orderDate: string; currency?: PurchaseOrder['currency']; id?: string },
@@ -237,6 +365,7 @@ export function createReorderPurchaseOrder(
       unitCost: item.costPerUnit,
     })),
     notes: '',
+    receiptHistory: [],
     createdAt: new Date().toISOString(),
     createdBy: input.createdBy,
   };
@@ -341,7 +470,7 @@ export function buildRecallTrace(input: {
 export interface ProductionPlanConflict {
   itemId: string;
   severity: 'warning' | 'critical';
-  code: 'date_order' | 'vessel_overlap' | 'vessel_capacity' | 'missing_dependency';
+  code: 'date_order' | 'vessel_overlap' | 'vessel_capacity' | 'missing_dependency' | 'dependency_timing' | 'dependency_cycle';
   message: string;
 }
 
@@ -352,14 +481,17 @@ function overlaps(a: ProductionPlanItem, b: ProductionPlanItem): boolean {
 export function detectProductionPlanConflicts(items: ProductionPlanItem[], vessels: Vessel[]): ProductionPlanConflict[] {
   const conflicts: ProductionPlanConflict[] = [];
   const active = items.filter(item => !['completed', 'cancelled'].includes(item.status));
-  const ids = new Set(items.map(item => item.id));
+  const byId = new Map(items.map(item => [item.id, item]));
   for (const item of active) {
     if (item.endDate < item.startDate) {
       conflicts.push({ itemId: item.id, severity: 'critical', code: 'date_order', message: 'End date is before start date.' });
     }
     for (const dependencyId of item.dependencyIds) {
-      if (!ids.has(dependencyId)) {
+      const dependency = byId.get(dependencyId);
+      if (!dependency) {
         conflicts.push({ itemId: item.id, severity: 'warning', code: 'missing_dependency', message: `Dependency ${dependencyId} no longer exists.` });
+      } else if (item.startDate < dependency.endDate) {
+        conflicts.push({ itemId: item.id, severity: 'warning', code: 'dependency_timing', message: `Starts before dependency “${dependency.title}” finishes on ${dependency.endDate}.` });
       }
     }
     if (item.quantityLiters && item.vesselIds.length) {
@@ -374,6 +506,21 @@ export function detectProductionPlanConflicts(items: ProductionPlanItem[], vesse
           message: `${item.quantityLiters.toLocaleString()} L is planned against ${available.toLocaleString()} L of current vessel headroom.`,
         });
       }
+    }
+  }
+  for (const item of active) {
+    const dependencyQueue = [...item.dependencyIds];
+    const traversed = new Set<string>();
+    while (dependencyQueue.length) {
+      const dependencyId = dependencyQueue.shift()!;
+      if (dependencyId === item.id) {
+        conflicts.push({ itemId: item.id, severity: 'critical', code: 'dependency_cycle', message: 'Dependency chain contains a cycle.' });
+        break;
+      }
+      if (traversed.has(dependencyId)) continue;
+      traversed.add(dependencyId);
+      const dependency = byId.get(dependencyId);
+      if (dependency) dependencyQueue.push(...dependency.dependencyIds);
     }
   }
   for (let left = 0; left < active.length; left += 1) {
@@ -396,12 +543,13 @@ export function detectProductionPlanConflicts(items: ProductionPlanItem[], vesse
 
 export interface TodayQueueItem {
   id: string;
-  source: 'task' | 'sop' | 'purchase_order' | 'production_plan' | 'approval';
+  source: 'task' | 'sop' | 'purchase_order' | 'production_plan' | 'approval' | 'recall';
   title: string;
   detail: string;
   dueDate: string;
   priority: 'critical' | 'high' | 'medium' | 'low';
   targetTab: string;
+  targetId?: string;
 }
 
 export function buildTodayQueue(input: {
@@ -411,6 +559,7 @@ export function buildTodayQueue(input: {
   purchaseOrders: PurchaseOrder[];
   productionPlans: ProductionPlanItem[];
   approvals: WorkflowApprovalRecord[];
+  recallCases?: RecallCase[];
   currentUsername?: string;
 }): TodayQueueItem[] {
   const items: TodayQueueItem[] = [];
@@ -471,6 +620,22 @@ export function buildTodayQueue(input: {
       targetTab: 'control',
     });
   }
+  for (const recall of (input.recallCases || []).filter(item => ['active', 'contained'].includes(item.status))) {
+    items.push({
+      id: `recall:${recall.id}`,
+      source: 'recall',
+      title: recall.title,
+      detail: `${recall.status} · ${recall.containmentTaskIds.length} containment task${recall.containmentTaskIds.length === 1 ? '' : 's'}`,
+      dueDate: recall.openedAt.slice(0, 10),
+      priority: recall.status === 'active' ? 'critical' : 'high',
+      targetTab: 'recall',
+      targetId: recall.id,
+    });
+  }
   const rank = { critical: 0, high: 1, medium: 2, low: 3 } as const;
-  return items.sort((a, b) => rank[a.priority] - rank[b.priority] || a.dueDate.localeCompare(b.dueDate));
+  return items.sort((a, b) => (
+    Number(b.source === 'recall' && b.priority === 'critical') - Number(a.source === 'recall' && a.priority === 'critical')
+    || rank[a.priority] - rank[b.priority]
+    || a.dueDate.localeCompare(b.dueDate)
+  ));
 }

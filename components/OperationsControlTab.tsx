@@ -19,6 +19,7 @@ import {
   type ProductionPlanItem,
   type PurchaseOrder,
   type QualitySop,
+  type RecallCase,
   type WorkflowApprovalPolicy,
   type WorkflowApprovalRecord,
 } from '../lib/operationsControl';
@@ -31,7 +32,8 @@ interface OperationsControlTabProps {
   qualitySops: QualitySop[];
   purchaseOrders: PurchaseOrder[];
   productionPlans: ProductionPlanItem[];
-  onNavigate: (tab: string) => void;
+  recallCases: RecallCase[];
+  onNavigate: (tab: string, targetId?: string) => void;
   setToastMessage?: (message: string | null) => void;
 }
 
@@ -66,6 +68,7 @@ export default function OperationsControlTab({
   qualitySops,
   purchaseOrders,
   productionPlans,
+  recallCases,
   onNavigate,
   setToastMessage,
 }: OperationsControlTabProps) {
@@ -108,8 +111,9 @@ export default function OperationsControlTab({
     purchaseOrders,
     productionPlans,
     approvals: data.approvals,
+    recallCases,
     currentUsername,
-  }), [currentUsername, data.approvals, productionPlans, purchaseOrders, qualitySops, tasks, today]);
+  }), [currentUsername, data.approvals, productionPlans, purchaseOrders, qualitySops, recallCases, tasks, today]);
 
   const updatePolicy = async () => {
     setWorking('policy');
@@ -171,8 +175,8 @@ export default function OperationsControlTab({
           </h2>
           <p className="mt-2 max-w-3xl text-sm text-stone-600 dark:text-stone-400">
             {ka
-              ? 'ერთი რიგი აერთიანებს დაგვიანებულ დავალებებს, SOP-ს, შესყიდვებს, გეგმას და დასამტკიცებელ ოპერაციებს.'
-              : 'One queue combines overdue work, SOPs, purchasing, the production plan, and commands awaiting review.'}
+              ? 'ერთი რიგი აერთიანებს აქტიურ გაწვევებს, დაგვიანებულ დავალებებს, SOP-ს, შესყიდვებს, გეგმას და დასამტკიცებელ ოპერაციებს.'
+              : 'One queue combines active recalls, overdue work, SOPs, purchasing, the production plan, and commands awaiting review.'}
           </p>
         </div>
         <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 text-xs font-bold text-stone-700 shadow-sm disabled:opacity-50 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-200">
@@ -205,7 +209,7 @@ export default function OperationsControlTab({
               <CheckCircle2 className="mx-auto mb-2 h-6 w-6" /> {ka ? 'დღევანდელი რიგი ცარიელია.' : 'The operational queue is clear.'}
             </div>
           ) : queue.map(item => (
-            <button key={item.id} type="button" onClick={() => onNavigate(item.targetTab)} className={`flex w-full min-h-16 items-center gap-3 rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${priorityClass(item.priority)}`}>
+            <button key={item.id} type="button" onClick={() => onNavigate(item.targetTab, item.targetId)} className={`flex w-full min-h-16 items-center gap-3 rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${priorityClass(item.priority)}`}>
               <span className="min-w-0 flex-1">
                 <strong className="block truncate text-sm">{item.title}</strong>
                 <span className="mt-1 block truncate text-[11px] opacity-75">{item.detail}</span>

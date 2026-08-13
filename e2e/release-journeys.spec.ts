@@ -111,6 +111,24 @@ test('dashboard initialization does not lock module navigation', async ({ page }
   await expect(today).toHaveAttribute('aria-current', 'page');
 });
 
+test('owner can open the operations control workflows', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto('/');
+  await signIn(page, fixture.owner);
+
+  const navigation = page.getByRole('navigation', { name: 'Module navigation' });
+  await navigation.getByRole('button', { name: 'Cellar' }).click();
+
+  await page.getByRole('button', { name: 'Recall', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Lot containment cockpit' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Purchasing', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Purchasing and receiving' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Planner', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Visual production schedule' })).toBeVisible();
+});
+
 test('unfinished task draft survives a browser refresh', async ({ page }) => {
   const fixture = await resetFixture(page);
   await page.goto(`/tasks?task=${fixture.task.id}`);

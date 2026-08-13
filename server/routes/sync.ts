@@ -2212,17 +2212,33 @@ export function validateSyncPayload(
             if (!['draft', 'submitted', 'ordered', 'partially_received', 'received', 'cancelled'].includes(item.status)) {
               throw new Error(`Purchase order ${item.id} has invalid status.`);
             }
+            if (existingItem) {
+              const transitions: Record<string, string[]> = {
+                draft: ['draft', 'submitted', 'cancelled'],
+                submitted: ['submitted', 'ordered', 'partially_received', 'received', 'cancelled'],
+                ordered: ['ordered', 'partially_received', 'received', 'cancelled'],
+                partially_received: ['partially_received', 'received', 'cancelled'],
+                received: ['received'],
+                cancelled: ['cancelled'],
+              };
+              if (!transitions[existingItem.status]?.includes(item.status)) {
+                throw new Error(`Purchase order ${item.id} cannot move from ${existingItem.status} to ${item.status}.`);
+              }
+            }
             if (!['GEL', 'EUR', 'USD'].includes(item.currency)) {
               throw new Error(`Purchase order ${item.id} has unsupported currency.`);
             }
             if (!Array.isArray(item.lines) || item.lines.length === 0 || item.lines.length > 200) {
               throw new Error(`Purchase order ${item.id} requires 1-200 lines.`);
             }
+            const lineIds = new Set<string>();
+            const previousLines = new Map<string, any>((existingItem?.lines || []).map((line: any) => [line.id, line]));
             for (const line of item.lines) {
               if (!line || typeof line !== 'object' || !isValidId(line.id)
-                || !isValidId(line.inventoryItemId) || !effectiveRecord('inventory', line.inventoryItemId)) {
+                || lineIds.has(line.id) || !isValidId(line.inventoryItemId) || !effectiveRecord('inventory', line.inventoryItemId)) {
                 throw new Error(`Purchase order ${item.id} has an invalid inventory line.`);
               }
+              lineIds.add(line.id);
               for (const field of ['quantity', 'receivedQuantity', 'unitCost']) {
                 if (typeof line[field] !== 'number' || !Number.isFinite(line[field]) || line[field] < 0
                   || (field === 'quantity' && line[field] === 0)) {
@@ -2232,16 +2248,87 @@ export function validateSyncPayload(
               if (line.receivedQuantity > line.quantity) {
                 throw new Error(`Purchase order ${item.id} line ${line.id} received quantity exceeds the order.`);
               }
+              const previousLine = previousLines.get(line.id);
+              if (existingItem && !previousLine) {
+                throw new Error(`Purchase order ${item.id} lines cannot be replaced after creation.`);
+              }
+              if (previousLine && ['inventoryItemId', 'productName', 'quantity', 'unit', 'unitCost']
+                .some(field => JSON.stringify(line[field]) !== JSON.stringify(previousLine[field]))) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} ordering evidence is immutable.`);
+              }
+              if (previousLine && line.receivedQuantity < previousLine.receivedQuantity) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} received quantity cannot decrease.`);
+              }
               const inventoryItem = effectiveRecord('inventory', line.inventoryItemId);
               if (typeof line.unit !== 'string' || !line.unit.trim() || line.unit !== inventoryItem.unit
                 || typeof line.productName !== 'string' || !line.productName.trim() || line.productName.length > 240) {
                 throw new Error(`Purchase order ${item.id} line ${line.id} does not match its inventory item.`);
               }
             }
+            if (existingItem && previousLines.size !== item.lines.length) {
+              throw new Error(`Purchase order ${item.id} lines cannot be added or removed after creation.`);
+            }
+
+            const receiptHistory = item.receiptHistory === undefined ? [] : item.receiptHistory;
+            if (!Array.isArray(receiptHistory) || receiptHistory.length > 1_000) {
+              throw new Error(`Purchase order ${item.id} has invalid receipt history.`);
+            }
+            const receiptIds = new Set<string>();
+            const receiptCommandIds = new Set<string>();
+            for (const receipt of receiptHistory) {
+              if (!receipt || typeof receipt !== 'object' || !isValidId(receipt.id) || receiptIds.has(receipt.id)
+                || !isValidId(receipt.commandId) || receiptCommandIds.has(receipt.commandId)
+                || typeof receipt.receivedAt !== 'string' || Number.isNaN(Date.parse(receipt.receivedAt))
+                || typeof receipt.receivedBy !== 'string' || !receipt.receivedBy.trim() || receipt.receivedBy.length > 160
+                || !Array.isArray(receipt.lines) || receipt.lines.length === 0 || receipt.lines.length > 200) {
+                throw new Error(`Purchase order ${item.id} has invalid receipt evidence.`);
+              }
+              receiptIds.add(receipt.id);
+              receiptCommandIds.add(receipt.commandId);
+              const receiptLineIds = new Set<string>();
+              for (const receiptLine of receipt.lines) {
+                if (!receiptLine || typeof receiptLine !== 'object' || !isValidId(receiptLine.purchaseOrderLineId)
+                  || receiptLineIds.has(receiptLine.purchaseOrderLineId) || !lineIds.has(receiptLine.purchaseOrderLineId)
+                  || typeof receiptLine.quantity !== 'number' || !Number.isFinite(receiptLine.quantity) || receiptLine.quantity <= 0) {
+                  throw new Error(`Purchase order ${item.id} has invalid receipt line evidence.`);
+                }
+                receiptLineIds.add(receiptLine.purchaseOrderLineId);
+              }
+            }
+            const previousReceipts = Array.isArray(existingItem?.receiptHistory) ? existingItem.receiptHistory : [];
+            const previousReceiptIds = new Set(previousReceipts.map((receipt: any) => receipt.id));
+            const firstRetainedReceipt = receiptHistory.findIndex((receipt: any) => previousReceiptIds.has(receipt.id));
+            const addedReceiptCount = firstRetainedReceipt < 0 ? receiptHistory.length : firstRetainedReceipt;
+            const retainedReceipts = firstRetainedReceipt < 0 ? [] : receiptHistory.slice(firstRetainedReceipt);
+            const expectedRetainedReceipts = previousReceipts.slice(0, Math.max(0, 1_000 - addedReceiptCount));
+            if (JSON.stringify(retainedReceipts) !== JSON.stringify(expectedRetainedReceipts)) {
+              throw new Error(`Purchase order ${item.id} receipt evidence is append-only.`);
+            }
+            const addedReceipts = receiptHistory.slice(0, addedReceiptCount);
+            for (const line of item.lines) {
+              const previousReceived = previousLines.get(line.id)?.receivedQuantity || 0;
+              const documentedIncrease = addedReceipts.reduce((sum: number, receipt: any) => (
+                sum + (receipt.lines.find((entry: any) => entry.purchaseOrderLineId === line.id)?.quantity || 0)
+              ), 0);
+              if (line.receivedQuantity - previousReceived !== documentedIncrease) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} receipt quantity lacks matching evidence.`);
+              }
+            }
+            if (receiptHistory.length && item.receiptCommandId !== receiptHistory[0].commandId) {
+              throw new Error(`Purchase order ${item.id} latest receipt command does not match its evidence.`);
+            }
+            const hasReceived = item.lines.some((line: any) => line.receivedQuantity > 0);
+            const fullyReceived = item.lines.every((line: any) => line.receivedQuantity === line.quantity);
+            if (item.status === 'partially_received' && (!hasReceived || fullyReceived)) {
+              throw new Error(`Purchase order ${item.id} partial status does not match its received quantities.`);
+            }
+            if (['draft', 'submitted', 'ordered'].includes(item.status) && hasReceived) {
+              throw new Error(`Purchase order ${item.id} requires a receipt-controlled status.`);
+            }
             if (item.status === 'received' && (
               typeof item.receivedAt !== 'string' || Number.isNaN(Date.parse(item.receivedAt))
               || !isValidId(item.receiptCommandId)
-              || item.lines.some((line: any) => line.receivedQuantity !== line.quantity)
+              || !fullyReceived
             )) {
               throw new Error(`Purchase order ${item.id} requires receipt evidence before it can be closed.`);
             }
@@ -2271,10 +2358,24 @@ export function validateSyncPayload(
                 throw new Error(`Production plan ${item.id} references unknown vessel ${vesselId}.`);
               }
             }
+            const dependencyIds = new Set<string>();
             for (const dependencyId of item.dependencyIds) {
-              if (!isValidId(dependencyId) || dependencyId === item.id || !effectiveRecord('productionPlans', dependencyId)) {
+              if (!isValidId(dependencyId) || dependencyIds.has(dependencyId) || dependencyId === item.id || !effectiveRecord('productionPlans', dependencyId)) {
                 throw new Error(`Production plan ${item.id} references unknown dependency ${dependencyId}.`);
               }
+              dependencyIds.add(dependencyId);
+            }
+            const dependencyQueue = [...item.dependencyIds];
+            const traversedDependencies = new Set<string>();
+            while (dependencyQueue.length) {
+              const dependencyId = dependencyQueue.shift()!;
+              if (dependencyId === item.id) {
+                throw new Error(`Production plan ${item.id} contains a dependency cycle.`);
+              }
+              if (traversedDependencies.has(dependencyId)) continue;
+              traversedDependencies.add(dependencyId);
+              const dependency = effectiveRecord('productionPlans', dependencyId);
+              if (Array.isArray(dependency?.dependencyIds)) dependencyQueue.push(...dependency.dependencyIds);
             }
             if (item.lotId && !effectiveRecord('lots', item.lotId)) {
               throw new Error(`Production plan ${item.id} references an unknown lot.`);
@@ -2297,14 +2398,31 @@ export function validateSyncPayload(
               throw new Error(`Recall case ${item.id} has invalid status.`);
             }
             if (existingItem) {
+              const transitions: Record<string, string[]> = {
+                draft: ['draft', 'active'],
+                active: ['active', 'contained'],
+                contained: ['contained', 'closed'],
+                closed: ['closed'],
+              };
+              if (!transitions[existingItem.status]?.includes(item.status)) {
+                throw new Error(`Recall case ${item.id} cannot move from ${existingItem.status} to ${item.status}.`);
+              }
               for (const field of ['lotId', 'title', 'reason', 'openedAt', 'openedBy', 'affectedBottlingRunIds', 'affectedOrderIds', 'affectedDispatchIds', 'containmentTaskIds']) {
                 if (JSON.stringify(item[field]) !== JSON.stringify(existingItem[field])) {
                   throw new Error(`Recall case ${item.id} exposure evidence cannot be modified.`);
                 }
               }
-              if (existingItem.status === 'closed' && item.status !== 'closed') {
-                throw new Error(`Recall case ${item.id} is closed and cannot be reopened.`);
+              for (const field of ['containedAt', 'containedBy', 'closedAt', 'closedBy']) {
+                if (existingItem[field] !== undefined && JSON.stringify(item[field]) !== JSON.stringify(existingItem[field])) {
+                  throw new Error(`Recall case ${item.id} lifecycle evidence is immutable.`);
+                }
               }
+            }
+            if (item.status === 'contained' && existingItem?.status !== 'contained' && (
+              typeof item.containedAt !== 'string' || Number.isNaN(Date.parse(item.containedAt))
+              || typeof item.containedBy !== 'string' || !item.containedBy.trim()
+            )) {
+              throw new Error(`Recall case ${item.id} requires containment evidence.`);
             }
             if (item.status === 'closed' && (
               typeof item.closedAt !== 'string' || Number.isNaN(Date.parse(item.closedAt))
@@ -2326,6 +2444,17 @@ export function validateSyncPayload(
                 if (!isValidId(recordId) || !effectiveRecord(collection, recordId)) {
                   throw new Error(`Recall case ${item.id} references unknown ${collection} record ${recordId}.`);
                 }
+              }
+            }
+            if (!existingItem && item.status !== 'draft' && item.containmentTaskIds.length === 0) {
+              throw new Error(`Recall case ${item.id} requires containment tasks before activation.`);
+            }
+            if (['contained', 'closed'].includes(item.status)) {
+              const incompleteTaskIds = item.containmentTaskIds.filter((taskId: string) => (
+                effectiveRecord('tasks', taskId)?.status !== 'completed'
+              ));
+              if (item.containmentTaskIds.length === 0 || incompleteTaskIds.length > 0) {
+                throw new Error(`Recall case ${item.id} cannot advance until every containment task is completed.`);
               }
             }
           }

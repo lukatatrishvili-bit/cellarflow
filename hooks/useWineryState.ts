@@ -2341,6 +2341,14 @@ export function useWineryState() {
   };
 
   const handleToggleTaskStatus = (taskId: string) => {
+    const lockedRecall = recallCases.find(recall => (
+      ['contained', 'closed'].includes(recall.status) && recall.containmentTaskIds.includes(taskId)
+    ));
+    const task = tasks.find(item => item.id === taskId);
+    if (lockedRecall && task?.status === 'completed') {
+      setToastMessage(lang === 'ka' ? 'შეკავებული ან დახურული გაწვევის დავალება ვეღარ გაიხსნება.' : 'A task evidenced by a contained or closed recall cannot be reopened.');
+      return;
+    }
     setTasks(prev => prev.map(tk => {
       if (tk.id === taskId) {
         return {
@@ -2607,6 +2615,11 @@ export function useWineryState() {
   };
 
   const handleDeleteTask = (taskId: string) => {
+    const linkedRecall = recallCases.find(recall => recall.containmentTaskIds.includes(taskId));
+    if (linkedRecall) {
+      setToastMessage(lang === 'ka' ? 'გაწვევასთან დაკავშირებული დავალება აუდიტის მტკიცებულებაა და ვერ წაიშლება.' : 'A recall containment task is audit evidence and cannot be deleted.');
+      return;
+    }
     if (!recordDeletion(taskId, 'tasks')) return;
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setToastMessage(lang === 'ka' ? 'დავალება წაიშალა!' : 'Task deleted successfully!');

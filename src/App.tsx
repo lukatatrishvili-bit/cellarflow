@@ -328,6 +328,7 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
+  const [recallFocusCaseId, setRecallFocusCaseId] = useState<string>('');
   const [focusedAiFindingId, setFocusedAiFindingId] = useState<string | null>(null);
   const locallyReadAiNotificationEvents = useRef<Set<string>>(new Set());
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -2493,7 +2494,11 @@ export default function App() {
                 qualitySops={state.qualitySops}
                 purchaseOrders={state.purchaseOrders}
                 productionPlans={state.productionPlans}
-                onNavigate={state.setActiveTab}
+                recallCases={state.recallCases}
+                onNavigate={(tab, targetId) => {
+                  if (tab === 'recall') setRecallFocusCaseId(targetId || '');
+                  state.setActiveTab(tab);
+                }}
                 setToastMessage={state.setToastMessage}
               />
             )}
@@ -2609,7 +2614,9 @@ export default function App() {
                 stockMovements={state.stockMovements}
                 salesOrders={state.salesOrders}
                 salesDispatches={state.salesDispatches}
+                tasks={state.tasks}
                 recallCases={state.recallCases}
+                focusCaseId={recallFocusCaseId}
                 onUpdateRecallCases={state.setRecallCases}
                 onAddTask={state.handleAddNewTask}
                 canManage={canAccess(state.currentUser.role, 'lots', 'update')}

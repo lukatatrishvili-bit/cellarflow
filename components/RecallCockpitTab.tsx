@@ -16,7 +16,13 @@ import type {
   WineLot,
 } from '../lib/wineryState';
 import type { StockMovement, StorageLocation } from '../lib/storage';
-import { buildRecallTrace, type RecallCase, type RecallCaseStatus } from '../lib/operationsControl';
+import {
+  advanceRecallCase,
+  buildRecallTrace,
+  recallContainmentProgress,
+  type RecallCase,
+  type RecallCaseStatus,
+} from '../lib/operationsControl';
 
 interface RecallCockpitTabProps {
   lang: Language;
@@ -33,7 +39,9 @@ interface RecallCockpitTabProps {
   stockMovements: StockMovement[];
   salesOrders: SalesOrderRecord[];
   salesDispatches: SalesDispatchRecord[];
+  tasks: Task[];
   recallCases: RecallCase[];
+  focusCaseId?: string;
   onUpdateRecallCases: React.Dispatch<React.SetStateAction<RecallCase[]>>;
   onAddTask: (
     title: string,
@@ -77,14 +85,27 @@ export default function RecallCockpitTab(props: RecallCockpitTabProps) {
   }), [lotId, props.bottlingRuns, props.cellarOps, props.grapeIntakes, props.harvests, props.lots, props.salesDispatches, props.salesOrders, props.stockMovements, props.storageLocations, props.transfers, props.vessels]);
   const selectedCase = props.recallCases.find(item => item.id === selectedCaseId)
     || props.recallCases.find(item => item.lotId === lotId && item.status !== 'closed');
+  const containmentProgress = selectedCase ? recallContainmentProgress(selectedCase, props.tasks) : null;
 
   React.useEffect(() => {
     if (!lotId && props.lots[0]) setLotId(props.lots[0].id);
   }, [lotId, props.lots]);
 
+  React.useEffect(() => {
+    if (!props.focusCaseId) return;
+    const focused = props.recallCases.find(item => item.id === props.focusCaseId);
+    if (!focused) return;
+    setSelectedCaseId(focused.id);
+    setLotId(focused.lotId);
+  }, [props.focusCaseId, props.recallCases]);
+
   const openCase = () => {
     if (!trace || !reason.trim()) {
       props.setToastMessage?.(ka ? 'აირჩიეთ პარტია და მიუთითეთ მიზეზი.' : 'Select a lot and enter the recall reason.');
+      return;
+    }
+    if (!props.canCreateTasks) {
+      props.setToastMessage?.(ka ? 'გაწვევის საქმისთვის შეკავების დავალებების შექმნის უფლებაა საჭირო.' : 'Opening a recall requires permission to create its containment tasks.');
       return;
     }
     const openedAt = now();
@@ -127,13 +148,16 @@ export default function RecallCockpitTab(props: RecallCockpitTabProps) {
 
   const updateCaseStatus = (status: RecallCaseStatus) => {
     if (!selectedCase || selectedCase.status === 'closed') return;
-    const changedAt = now();
-    props.onUpdateRecallCases(current => current.map(item => item.id === selectedCase.id ? {
-      ...item,
-      status,
-      ...(status === 'closed' ? { closedAt: changedAt, closedBy: props.currentUsername } : {}),
-      lastModified: changedAt,
-    } : item));
+    try {
+      const updated = advanceRecallCase(selectedCase, status, {
+        actor: props.currentUsername,
+        tasks: props.tasks,
+      });
+      props.onUpdateRecallCases(current => current.map(item => item.id === selectedCase.id ? updated : item));
+      props.setToastMessage?.(status === 'closed' ? 'Recall case closed with completed containment evidence.' : 'Recall exposure is contained; closure is now available.');
+    } catch (error) {
+      props.setToastMessage?.(error instanceof Error ? error.message : 'Recall status could not be changed.');
+    }
   };
 
   return (
@@ -170,7 +194,14 @@ export default function RecallCockpitTab(props: RecallCockpitTabProps) {
             </div>
           </>}
 
-          {selectedCase ? <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-5 dark:border-rose-900 dark:bg-rose-950/20"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-black uppercase text-rose-700 dark:text-rose-300">{selectedCase.status}</div><h3 className="mt-1 text-lg font-bold">{selectedCase.title}</h3><p className="mt-1 text-xs text-stone-600 dark:text-stone-300">{selectedCase.reason}</p></div><CheckCircle2 className="h-7 w-7 text-rose-700" /></div><div className="mt-4 grid gap-2 sm:grid-cols-3">{(['active', 'contained', 'closed'] as RecallCaseStatus[]).map(status => <button key={status} type="button" disabled={!props.canManage || selectedCase.status === status || selectedCase.status === 'closed'} onClick={() => updateCaseStatus(status)} className="min-h-10 rounded-xl border border-rose-200 bg-white text-xs font-bold capitalize disabled:opacity-40 dark:border-rose-900 dark:bg-stone-900">{status}</button>)}</div><p className="mt-3 text-[10px] text-stone-500">{selectedCase.containmentTaskIds.length} containment task(s) · opened {new Date(selectedCase.openedAt).toLocaleString()}</p></div> : props.canManage && trace && <div className="rounded-2xl border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900"><h3 className="text-sm font-black">{ka ? 'შეკავების დაწყება' : 'Launch containment'}</h3><div className="mt-4 grid gap-3"><input value={reason} onChange={event => setReason(event.target.value)} maxLength={300} placeholder={ka ? 'გაწვევის მიზეზი' : 'Recall reason'} className="min-h-11 rounded-xl border border-stone-200 bg-stone-50 px-3 text-sm outline-none dark:border-stone-700 dark:bg-stone-950" /><textarea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} placeholder={ka ? 'დამატებითი შენიშვნები' : 'Containment notes (optional)'} className="min-h-24 rounded-xl border border-stone-200 bg-stone-50 p-3 text-sm outline-none dark:border-stone-700 dark:bg-stone-950" /><button type="button" onClick={openCase} className="min-h-12 rounded-xl bg-rose-700 px-4 text-sm font-black text-white">{ka ? 'გაწვევის საქმის გახსნა' : 'Open recall case'}</button></div></div>}
+          {selectedCase && containmentProgress && <div className="rounded-2xl border border-stone-200 bg-white p-4 text-xs dark:border-stone-800 dark:bg-stone-900"><div className="flex items-center justify-between gap-3"><strong>{ka ? 'შეკავების მზადყოფნა' : 'Containment readiness'}</strong><span className={containmentProgress.ready ? 'font-black text-emerald-700 dark:text-emerald-300' : 'font-black text-amber-700 dark:text-amber-300'}>{containmentProgress.completed}/{containmentProgress.total}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: `${containmentProgress.total ? (containmentProgress.completed / containmentProgress.total) * 100 : 0}%` }} /></div><p className="mt-2 text-stone-500">{containmentProgress.ready ? (ka ? 'ყველა შეკავების დავალება დასრულებულია.' : 'All containment tasks are complete; advance the case in order.') : (ka ? 'საქმის შეკავებამდე და დახურვამდე დაასრულეთ ყველა დავალება.' : 'Complete every containment task before containing or closing the case.')}</p></div>}
+
+          {selectedCase ? <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-5 dark:border-rose-900 dark:bg-rose-950/20">
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-black uppercase text-rose-700 dark:text-rose-300">{selectedCase.status}</div><h3 className="mt-1 text-lg font-bold">{selectedCase.title}</h3><p className="mt-1 text-xs text-stone-600 dark:text-stone-300">{selectedCase.reason}</p></div><CheckCircle2 className="h-7 w-7 text-rose-700" /></div>
+            {selectedCase.status === 'active' && <button type="button" disabled={!props.canManage || !containmentProgress?.ready} onClick={() => updateCaseStatus('contained')} className="mt-4 min-h-11 w-full rounded-xl bg-amber-700 px-4 text-xs font-black text-white disabled:opacity-40">{ka ? 'საქმის შეკავებულად მონიშვნა' : 'Mark exposure contained'}</button>}
+            {selectedCase.status === 'contained' && <button type="button" disabled={!props.canManage || !containmentProgress?.ready} onClick={() => updateCaseStatus('closed')} className="mt-4 min-h-11 w-full rounded-xl bg-emerald-700 px-4 text-xs font-black text-white disabled:opacity-40">{ka ? 'საქმის დახურვა' : 'Close recall case'}</button>}
+            <p className="mt-3 text-[10px] text-stone-500">{selectedCase.containmentTaskIds.length} containment task(s) · opened {new Date(selectedCase.openedAt).toLocaleString()}</p>
+          </div> : props.canManage && trace && <div className="rounded-2xl border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900"><h3 className="text-sm font-black">{ka ? 'შეკავების დაწყება' : 'Launch containment'}</h3><div className="mt-4 grid gap-3"><input value={reason} onChange={event => setReason(event.target.value)} maxLength={300} placeholder={ka ? 'გაწვევის მიზეზი' : 'Recall reason'} className="min-h-11 rounded-xl border border-stone-200 bg-stone-50 px-3 text-sm outline-none dark:border-stone-700 dark:bg-stone-950" /><textarea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} placeholder={ka ? 'დამატებითი შენიშვნები' : 'Containment notes (optional)'} className="min-h-24 rounded-xl border border-stone-200 bg-stone-50 p-3 text-sm outline-none dark:border-stone-700 dark:bg-stone-950" />{!props.canCreateTasks && <p className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{ka ? 'საქმის გასახსნელად საჭიროა დავალებების შექმნის უფლება.' : 'Task-creation permission is required to open a recall case.'}</p>}<button type="button" disabled={!props.canCreateTasks} onClick={openCase} className="min-h-12 rounded-xl bg-rose-700 px-4 text-sm font-black text-white disabled:opacity-40">{ka ? 'გაწვევის საქმის გახსნა' : 'Open recall case'}</button></div></div>}
         </div>
       </section>
     </div>

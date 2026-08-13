@@ -10,10 +10,12 @@ state and idempotent command ledger.
 
 ## Today and workflow approvals
 
-The Cellar **Today** tab merges open tasks, due SOPs, expected purchase orders,
-started production-plan items, and approval requests. Overdue work sorts ahead
-of current work. Non-admin users only receive approval requests they submitted;
-owners see the organization queue.
+The Cellar **Today** tab merges active recalls, open tasks, due SOPs, expected
+purchase orders, started production-plan items, and approval requests. Active
+recalls are critical and remain at the top; overdue work then sorts ahead of
+current work. Non-admin users only receive approval requests they submitted;
+owners see the organization queue. Selecting a recall queue item opens that
+exact case rather than the first lot in the cockpit.
 
 Workflow approvals are a Professional-plan feature and are disabled by
 default. An owner can enable them for any combination of cellar operations,
@@ -56,8 +58,10 @@ the original intake and harvest evidence. Reversed dispatches are excluded.
 Opening a recall freezes the calculated exposure ids and creates three high
 priority containment tasks when the operator can create tasks: quarantine,
 stock reconciliation, and customer contact. Cases move through active,
-contained, and closed. Closure requires actor/time evidence and is terminal;
-the server rejects later exposure edits or reopening.
+contained, and closed in that order. Containment and closure are blocked until
+every linked task is complete. Each transition retains actor/time evidence;
+the server rejects skipped or reversed states, later exposure edits, and
+lifecycle-evidence rewrites.
 
 ## Quality SOPs
 
@@ -79,11 +83,17 @@ partially received, received, or cancelled.
 
 Receiving uses the existing `invoice.receipt` idempotent command. Inventory
 quantity, weighted unit cost, movement ledger, receipt evidence, and replay
-result therefore update atomically. The purchase order closes only after that
-command succeeds and retains its command id. The initial receiving flow requires
-the purchase-order currency to match the winery accounting currency; foreign
-currency orders should continue through invoice import so an official or
-manually confirmed exchange-rate quote is retained.
+result therefore update atomically. Each delivery can receive any positive
+quantity up to the outstanding amount on each line. Partial deliveries keep the
+order open and prepend immutable per-command receipt evidence; the order closes
+only when every line is fully received. Manual status jumps, received-quantity
+reductions, line rewrites, and receipt-history edits fail at the sync boundary.
+Each delivery uses a sequenced order receipt reference (`PO-…-R1`, `R2`, and so
+on), so invoice duplicate protection remains effective without blocking a
+legitimate later delivery.
+The receiving flow requires the purchase-order currency to match the winery
+accounting currency; foreign-currency orders should continue through invoice
+import so an official or manually confirmed exchange-rate quote is retained.
 
 AI invoice analysis is a Small-plan data-import feature. Its server endpoint
 now enforces that entitlement; purchase-order receiving remains part of core
@@ -93,12 +103,17 @@ inventory operations and does not require AI.
 
 The **Planner** displays a rolling 14-day schedule and supports harvest, intake,
 transfer, fermentation, lab, bottling, sanitation, procurement, dispatch, and
-other work. Harvest records can generate plan items once. Conflict checks flag:
+other work. Harvest records can generate plan items once, and operators can
+select prerequisite work when creating a plan item. Conflict checks flag:
 
 - overlapping reservations for the same vessel;
 - planned liquid above current selected-vessel headroom;
-- missing dependencies; and
+- missing dependencies;
+- dependency timing or cycles; and
 - invalid date order (also rejected by sync).
+
+Dependency cycles and duplicate references are rejected by the sync boundary,
+even if concurrent edits produce a graph the client did not previously see.
 
 Planning has its own permission module: owners and winemakers can edit;
 viticulturists, lab technicians, and cellar workers can view; read-only users
