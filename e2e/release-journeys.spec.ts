@@ -32,6 +32,12 @@ async function signIn(
 
 test('owner signs in and reaches the operational overview', async ({ page }) => {
   const fixture = await resetFixture(page);
+  let backgroundSyncRequests = 0;
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/sync') {
+      backgroundSyncRequests += 1;
+    }
+  });
 
   // The root path serves the public marketing page rather than bouncing to the
   // login screen; signing in is reached from there.
@@ -42,8 +48,12 @@ test('owner signs in and reaches the operational overview', async ({ page }) => 
   await signIn(page, fixture.owner);
   await expect(page).toHaveURL(/\/dashboard$/);
 
-  await expect(page.getByRole('heading', { name: /Today at Release Gate Estate/ })).toBeVisible();
+  const dashboard = page.getByRole('region', { name: 'Customizable dashboard' });
+  await expect(dashboard.getByText('Release Gate Estate', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Today at Release Gate Estate/ })).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Module navigation' })).toBeVisible();
+  await page.waitForTimeout(750);
+  expect(backgroundSyncRequests).toBe(0);
 
   const accessibility = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa'])

@@ -1611,6 +1611,19 @@ export function useWineryState() {
       processedValue = value.map(item => {
         if (item && typeof item === 'object' && 'id' in item) {
           const prevItem = prevMap.get(item.id);
+          // Audit entries are append-only records whose integrity metadata is
+          // owned by the server. In particular, the server deliberately does
+          // not persist the client's generic `lastModified` stamp. Adding one
+          // here made every sync response look locally modified again, causing
+          // an endless auditLogs POST loop until the rate limiter fired.
+          // Track genuinely new entries so delta sync can still send them, but
+          // leave established audit records byte-for-byte as hydrated.
+          if (key === 'auditLogs') {
+            if (!prevItem || !recordContentEquals(item, prevItem)) {
+              modifiedOrAddedItems.push({ item });
+            }
+            return item;
+          }
           if (!prevItem) {
             // New item
             const newItem = { ...item, lastModified: nowStr };
