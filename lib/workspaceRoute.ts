@@ -94,6 +94,82 @@ export function applyWorkspaceRoute(search: string, module: string, tab: string)
   return query ? `?${query}` : '';
 }
 
+export const LOT_PARAM = 'lot';
+export const TANK_PARAM = 'tank';
+/** Marks a cellar QR label that opens the quick-operation form for a vessel. */
+export const OPERATION_PARAM = 'op';
+
+/**
+ * Record ids as the server defines them in `isValidId` (`server/sync.ts`).
+ *
+ * Unicode-aware on purpose, and the reason is not cosmetic: vessel and lot ids
+ * here are frequently Georgian — "ქვევრი 1" is a real qvevri id — so an
+ * ASCII-only pattern would silently refuse to put half this product's records
+ * in a URL.
+ */
+const RECORD_ID_PATTERN = /^[\p{L}\p{N}_\- ]{1,128}$/u;
+
+export interface RecordRoute {
+  lot: string | null;
+  tank: string | null;
+}
+
+const readRecordId = (value: string | null): string | null =>
+  typeof value === 'string' && RECORD_ID_PATTERN.test(value) ? value : null;
+
+/** Read the record a URL points at, if any. */
+export function parseRecordRoute(search: string): RecordRoute {
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(search || '');
+  } catch {
+    return { lot: null, tank: null };
+  }
+  return {
+    lot: readRecordId(params.get(LOT_PARAM)),
+    tank: readRecordId(params.get(TANK_PARAM)),
+  };
+}
+
+/**
+ * Whether the URL is a one-shot instruction rather than a view to mirror.
+ *
+ * `?tank=…&op=1` comes from a QR label stuck to a tank: it means "open the
+ * quick-operation form for this vessel", and it deliberately does not select
+ * the vessel. Mirroring view state over it would delete the `tank` parameter
+ * the moment the page loaded and break the label.
+ */
+export function routeCarriesOneShotAction(search: string): boolean {
+  try {
+    return new URLSearchParams(search || '').get(OPERATION_PARAM) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Write the open record into the URL, clearing it when nothing is open. */
+export function applyRecordRoute(search: string, record: RecordRoute): string {
+  const params = new URLSearchParams(search || '');
+
+  const lot = readRecordId(record.lot);
+  if (lot) params.set(LOT_PARAM, lot);
+  else params.delete(LOT_PARAM);
+
+  const tank = readRecordId(record.tank);
+  if (tank) params.set(TANK_PARAM, tank);
+  else params.delete(TANK_PARAM);
+
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+/** Whether the URL already names this record selection. */
+export function recordRouteMatches(search: string, record: RecordRoute): boolean {
+  const current = parseRecordRoute(search);
+  return current.lot === readRecordId(record.lot)
+    && current.tank === readRecordId(record.tank);
+}
+
 /** Remove only the generic workspace destination while preserving deep links. */
 export function clearWorkspaceRoute(search: string): string {
   const params = new URLSearchParams(search || '');

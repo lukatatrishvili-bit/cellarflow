@@ -720,27 +720,21 @@ export default function IpmPhenoscheme({
   return (
     <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-md p-5 space-y-6 text-stone-700">
 
-      {/* 1. Header Banner */}
-      <div className="bg-gradient-to-br from-[#1e2f23] to-[#0d1510] text-white p-5 rounded-xl border border-emerald-900 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <span className="text-[9px] uppercase font-mono tracking-widest bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded-sm font-bold">
+      {/* Compact module context */}
+      <div className="flex flex-col gap-3 border-b border-stone-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-emerald-700">
             {isKa ? 'ინტეგრირებული დაცვა (IPM)' : 'Integrated Pest Management (IPM)'}
           </span>
-          <h3 className="text-xl font-serif font-black text-amber-100 mt-1">
+          <h3 className="mt-1 font-serif text-base font-black text-[#4e0e15]">
             {isKa ? 'ბრენდების გარეშე ვაზის ფენოსქემის მოდული' : 'Brand-Free Vine Phenoscheme & IPM'}
           </h3>
-          <p className="text-[11px] text-emerald-200/80 mt-1 max-w-xl leading-relaxed">
-            {isKa
-              ? 'ეს პანელი იყენებს მხოლოდ მოქმედ ნივთიერებებსა და MoA (FRAC/IRAC) კოდებს რეზისტენტობის პრევენციისთვის, რეკომენდაციები დამოკიდებულია ნაკვეთის მიკროკლიმატსა და ფაზებზე.'
-              : 'This interface uses only active chemical groups and MoA (FRAC/IRAC) rotation rules to prevent pathogen resistance. Spray directives are dynamically generated.'}
-          </p>
         </div>
 
-        {/* Selected Block Info */}
-        <div className="bg-[#FAF8F5]/10 border border-white/10 px-4 py-2.5 rounded-lg text-right shrink-0">
-          <span className="text-[9px] font-mono text-emerald-300 block uppercase font-bold">{isKa ? 'აქტიური ნაკვეთი' : 'Selected Block'}</span>
-          <span className="text-sm font-serif font-bold text-white block mt-0.5">{selectedBlock.name}</span>
-          <span className="text-[10px] font-mono text-amber-200 block font-semibold">{selectedBlock.grapeVariety} • {daysToHarvest} {isKa ? 'დღე მოსავლამდე' : 'days to harvest'}</span>
+        <div className="shrink-0 text-left sm:text-right">
+          <span className="block text-[9px] font-mono font-bold uppercase text-stone-500">{isKa ? 'აქტიური ნაკვეთი' : 'Selected Block'}</span>
+          <span className="mt-0.5 block font-serif text-sm font-bold text-stone-800">{selectedBlock.name}</span>
+          <span className="block text-[10px] font-mono font-semibold text-amber-700">{selectedBlock.grapeVariety} • {daysToHarvest} {isKa ? 'დღე მოსავლამდე' : 'days to harvest'}</span>
         </div>
       </div>
 

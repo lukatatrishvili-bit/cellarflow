@@ -7,6 +7,7 @@ import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
 import { canAccess, type Role } from '../server/permissions';
 import TankCapacityChart from './TankCapacityChart';
 import FermentationCurveChart from './FermentationCurveChart';
+import DashboardLayout, { type DashboardWidgetSpec } from './DashboardLayout';
 import {
   Activity,
   AlertTriangle,
@@ -45,6 +46,7 @@ interface WineryDashboardTabProps {
   onToggleTaskStatus: (taskId: string) => void;
   role?: Role;
   canUpdateTasks?: boolean;
+  layoutOwner?: string;
   setActiveTab?: (tab: string) => void;
   setCalculatorLotId?: (lotId: string) => void;
   setPrefilledTaskTitle?: (title: string) => void;
@@ -88,6 +90,7 @@ export function WineryDashboardTab({
   onToggleTaskStatus,
   role = 'Owner/Admin',
   canUpdateTasks = true,
+  layoutOwner,
   setActiveTab,
   setCalculatorLotId,
   setPrefilledTaskTitle,
@@ -232,7 +235,16 @@ export function WineryDashboardTab({
         )}
       />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <DashboardLayout
+        dashboardId={`cellar:${layoutOwner || role}`}
+        lang={lang}
+        items={[
+          {
+            id: 'metrics',
+            label: isKa ? 'მარნის მაჩვენებლები' : 'Cellar metrics',
+            defaultSpan: 12,
+            content: (
+              <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {canViewLots && (
           <MetricCard
             label={t.total_volume || 'Wine volume'}
@@ -277,10 +289,15 @@ export function WineryDashboardTab({
             onClick={go('vessels')}
           />
         )}
-      </div>
-
-      <div className={`grid grid-cols-1 gap-5 ${showCellarHealth ? 'xl:grid-cols-[1.25fr_0.75fr]' : ''}`}>
-        <SectionCard
+              </div>
+            ),
+          },
+          {
+            id: 'priority-queue',
+            label: isKa ? 'დღის განრიგი' : 'Today’s cellar queue',
+            defaultSpan: showCellarHealth ? 8 : 12,
+            content: (
+              <SectionCard
           title={isKa ? 'დღის განრიგი' : 'Today’s cellar queue'}
           subtitle={isKa
             ? 'ჯერ ქიმიის რისკები, გამოტოვებული დუღილის ჩანაწერები და ვადაგადაცილებული სამუშაო.'
@@ -322,10 +339,15 @@ export function WineryDashboardTab({
               ))}
             </div>
           )}
-        </SectionCard>
-
-        {showCellarHealth && (
-          <SectionCard
+              </SectionCard>
+            ),
+          },
+          ...(showCellarHealth ? [{
+            id: 'cellar-health',
+            label: isKa ? 'მარნის მდგომარეობა' : 'Cellar health',
+            defaultSpan: 4 as const,
+            content: (
+              <SectionCard
             title={isKa ? 'მარნის მდგომარეობა' : 'Cellar health'}
             subtitle={isKa
               ? 'თქვენი როლისთვის ხელმისაწვდომი მარნის სიგნალების სწრაფი მიმოხილვა.'
@@ -386,14 +408,16 @@ export function WineryDashboardTab({
                 </div>
               )}
             </div>
-          </SectionCard>
-        )}
-      </div>
+              </SectionCard>
+            ),
+          }] : []),
 
-      {(canViewVessels || canViewFermentation) && (vessels.length > 0 || chartableLotIds.length > 0) && (
-      <div className={`grid grid-cols-1 gap-5 ${canViewVessels && canViewFermentation ? 'xl:grid-cols-2' : ''}`}>
-        {canViewVessels && (
-        <SectionCard
+          ...(canViewVessels && vessels.length > 0 ? [{
+            id: 'vessel-utilization',
+            label: isKa ? 'ჭურჭლის გამოყენება' : 'Vessel utilization',
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
           title={isKa ? 'მარნის ჭურჭლის გამოყენება' : 'Cellar vessel utilization'}
           subtitle={isKa ? 'ტევადობა აქტიური სითხის მოცულობასთან.' : 'Capacity vs active liquid volume.'}
           icon={Container}
@@ -404,11 +428,16 @@ export function WineryDashboardTab({
           ) : (
             <TankCapacityChart tanks={mappedTanks} onSelectTank={setSelectedTankId} selectedTankId={selectedTankId} />
           )}
-        </SectionCard>
-        )}
+              </SectionCard>
+            ),
+          }] : []),
 
-        {canViewFermentation && (
-        <SectionCard
+          ...(canViewFermentation && chartableLotIds.length > 0 ? [{
+            id: 'fermentation-kinetics',
+            label: isKa ? 'დუღილის კინეტიკა' : 'Fermentation kinetics',
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
           title={isKa ? 'კინეტიკა და შაქრის დაშლა' : 'Kinetics & sugar degradation'}
           subtitle={isKa ? 'დუღილის ტრენდი არჩეული პარტიისთვის.' : 'Fermentation trend for the selected lot.'}
           icon={Activity}
@@ -434,15 +463,16 @@ export function WineryDashboardTab({
           ) : (
             <FermentationCurveChart logs={physicalFermLogs} selectedLotId={selectedChartLotId} lang={lang} />
           )}
-        </SectionCard>
-        )}
-      </div>
-      )}
+              </SectionCard>
+            ),
+          }] : []),
 
-      {((canViewTasks && recentTasks.length > 0) || (canViewFermentation && recentFermLogs.length > 0)) && (
-      <div className={`grid grid-cols-1 gap-5 ${canViewTasks && recentTasks.length > 0 && canViewFermentation && recentFermLogs.length > 0 ? 'xl:grid-cols-2' : ''}`}>
-        {canViewTasks && recentTasks.length > 0 && (
-        <SectionCard
+          ...(canViewTasks && recentTasks.length > 0 ? [{
+            id: 'upcoming-tasks',
+            label: t.upcoming_tasks || 'Upcoming tasks',
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
           title={t.upcoming_tasks || 'Upcoming tasks'}
           subtitle={canUpdateTasks
             ? (isKa ? 'მოკლე სამუშაო რიგი, არა უსასრულო ჟურნალი.' : 'A short work queue, not an endless ledger.')
@@ -476,11 +506,16 @@ export function WineryDashboardTab({
               ))}
             </div>
           )}
-        </SectionCard>
-        )}
+              </SectionCard>
+            ),
+          }] : []),
 
-        {canViewFermentation && recentFermLogs.length > 0 && (
-        <SectionCard
+          ...(canViewFermentation && recentFermLogs.length > 0 ? [{
+            id: 'recent-fermentation',
+            label: isKa ? 'ბოლო დუღილის ჩანაწერები' : 'Recent fermentation logs',
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
           title={isKa ? 'ბოლო დუღილის ჩანაწერები' : 'Recent fermentation logs'}
           subtitle={isKa ? 'ბოლო მაჩვენებლები პარტიების მიხედვით.' : 'Latest cellar readings across lots.'}
           icon={TestTube}
@@ -508,10 +543,11 @@ export function WineryDashboardTab({
               })}
             </div>
           )}
-        </SectionCard>
-        )}
-      </div>
-      )}
+              </SectionCard>
+            ),
+          }] : []),
+        ] satisfies DashboardWidgetSpec[]}
+      />
     </div>
   );
 }

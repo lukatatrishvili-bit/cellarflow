@@ -18,6 +18,7 @@ import LocationPicker from './LocationPicker';
 import DateInput from './ui/DateInput';
 import IpmPhenoscheme from './IpmPhenoscheme';
 import VineyardProjectsTab from './VineyardProjectsTab';
+import DashboardLayout, { type DashboardWidgetSpec } from './DashboardLayout';
 import { useFocusTrap } from './useFocusTrap';
 import { calculateCadastreCompleteness, cadastreBadgeLabel } from '../lib/cadastre';
 import { calculateVaziRisk, vaziRiskColor } from '../lib/vaziRisk';
@@ -882,8 +883,6 @@ export function VaziModule({
   }, [canUpdateVineyardRecord]);
 
   // Compute stats
-  const totalArea = useMemo(() => blocks.reduce((acc, b) => acc + b.area, 0), [blocks]);
-  const totalVines = useMemo(() => blocks.reduce((acc, b) => acc + b.vinesCount, 0), [blocks]);
 
   const weatherTargets = useMemo(() => (
     blocks.map(block => ({
@@ -1054,30 +1053,6 @@ export function VaziModule({
           <option key={name} value={name} />
         ))}
       </datalist>
-
-      {/* Module Title bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between bg-emerald-950/95 text-white p-5 rounded-2xl border border-emerald-900 shadow-md gap-4">
-        <div>
-          <span className="text-[10px] uppercase font-mono tracking-widest bg-emerald-800 text-emerald-100 px-2.5 py-1 rounded-full font-bold">{lang === 'ka' ? 'ვაზის მოდული' : 'VINEA VAZI MODULE'}</span>
-          <h2 className="text-2xl font-serif font-black flex items-center gap-2 mt-2">
-            <Sprout className="h-6 w-6 text-emerald-400 animate-pulse" />
-            {label.title}
-          </h2>
-          <p className="text-xs text-emerald-250/90 mt-1 font-medium">{label.tagline}</p>
-        </div>
-
-        {/* Unit & Area Stats Badge */}
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="px-3.5 py-2 bg-emerald-900/50 rounded-xl border border-emerald-850 text-center">
-            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">{lang === 'ka' ? 'ვენახის საერთო ფართობი' : 'Total Vineyard Area'}</span>
-            <span className="text-lg font-serif font-black text-amber-300 block mt-0.5">{totalArea.toFixed(1)} ha</span>
-          </div>
-          <div className="px-3.5 py-2 bg-emerald-900/50 rounded-xl border border-emerald-850 text-center">
-            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">{lang === 'ka' ? 'აქტიური ვაზები' : 'Active Vines'}</span>
-            <span className="text-lg font-serif font-bold text-emerald-200 block mt-0.5">{totalVines.toLocaleString()} {lang === 'ka' ? 'ვაზი' : 'vines'}</span>
-          </div>
-        </div>
-      </div>
 
       {(!canCreateVineyardRecord || !canUpdateVineyardRecord || !canDeleteVineyardRecord
         || !canCreateVineyardProject || !canUpdateVineyardProject || !canDispatchHarvestToGvino || !canCreateTask) && (
@@ -1291,12 +1266,16 @@ export function VaziModule({
           TAB 1: PORTAL DASHBOARD
           ========================================== */}
       {vaziTab === 'dashboard' && (
-        <div className="space-y-6">
-          {/* Quick Info Alerts */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            {/* Quick Summary list of Blocks */}
-            <div className="lg:col-span-1 bg-white border border-[#e8dfd5] rounded-xl p-5 space-y-4 shadow-sm">
+        <DashboardLayout
+          dashboardId={`vazi:${currentUser.username}`}
+          lang={lang}
+          items={[
+            {
+              id: 'canopy-radar',
+              label: lang === 'ka' ? 'კანოპის მონიტორინგი' : 'Canopy status',
+              defaultSpan: 4,
+              content: (
+                <div className="h-full bg-white border border-[#e8dfd5] rounded-xl p-5 space-y-4 shadow-sm">
               <h3 className="font-serif font-bold text-sm text-emerald-950 border-b border-stone-100 pb-2">
                 {{
                   en: 'Canopy Status Radar',
@@ -1344,10 +1323,17 @@ export function VaziModule({
                   </div>
                 )}
               </div>
-            </div>
+                </div>
+              ),
+            },
 
-            {/* GIS block map & Weather Station Forecast */}
-            <div className="lg:col-span-2 bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
+            /* GIS block map & Weather Station Forecast */
+            {
+              id: 'estate-map',
+              label: lang === 'ka' ? 'ვენახის რუკა და მიკროკლიმატი' : 'Estate map & microclimate',
+              defaultSpan: 8,
+              content: (
+                <div className="h-full bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-stone-150 pb-2.5 gap-2">
                 <div>
                   <h3 className="text-sm font-serif font-black text-emerald-950 flex items-center gap-1.5">
@@ -1384,9 +1370,9 @@ export function VaziModule({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
+              <div className="grid grid-cols-1 2xl:grid-cols-12 gap-5 items-stretch">
                 {/* Interactive vineyard map */}
-                <div className="md:col-span-5 bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col justify-between relative overflow-hidden h-60">
+                <div className="2xl:col-span-7 min-h-[430px] bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col relative overflow-hidden">
                   <div className="flex items-center justify-between gap-2 text-[9px] font-mono font-bold uppercase tracking-widest text-emerald-800">
                     <span>🗺️ {lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate Block Map'}</span>
                     <span className="rounded-full bg-emerald-100 px-2 py-0.5 normal-case tracking-normal text-emerald-900">
@@ -1396,7 +1382,7 @@ export function VaziModule({
                     </span>
                   </div>
 
-                  <div className="w-full h-40 mt-2 rounded-lg overflow-hidden border border-stone-200 relative z-0">
+                  <div className="mt-2 h-[320px] w-full flex-1 rounded-lg overflow-hidden border border-stone-200 relative z-0 sm:h-[380px] 2xl:h-[350px]">
                     <Suspense fallback={<VineyardMapLoading lang={lang} />}>
                       <VineyardMap
                         lang={lang}
@@ -1406,14 +1392,14 @@ export function VaziModule({
                         onSelectBlock={setSelectedBlockId}
                         getBlockColor={getBlockColor}
                         getBlockTooltipLines={getBlockTooltipLines}
-                        heightClassName="h-full min-h-[160px]"
+                        heightClassName="h-full min-h-[300px]"
                         ariaLabel={lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate vineyard block map'}
                       />
                     </Suspense>
                   </div>
 
                   {/* Micro legend */}
-                  <div className="flex items-center gap-3 text-[9px] font-mono text-stone-500 border-t border-stone-200/60 pt-1.5 mt-1 shrink-0">
+                  <div className="flex flex-wrap items-center gap-3 text-[9px] font-mono text-stone-500 border-t border-stone-200/60 pt-1.5 mt-2 shrink-0">
                     <span className="font-bold uppercase tracking-wider">{lang === 'ka' ? 'ლეგენდა:' : 'Legend:'}</span>
                     {mapOverlay === 'mildew' && (
                       <div className="flex gap-2">
@@ -1440,7 +1426,7 @@ export function VaziModule({
                 </div>
 
                 {/* Weather Station Forecast Column */}
-                <div className="md:col-span-7 bg-stone-50/70 border border-[#e8dfd5] rounded-xl p-4 shadow-inner flex flex-col justify-between h-60">
+                <div className="2xl:col-span-5 min-h-[330px] bg-stone-50/70 border border-[#e8dfd5] rounded-xl p-4 shadow-inner flex flex-col justify-between 2xl:min-h-[430px]">
                   {(() => {
                     const block = blocks.find(x => x.id === selectedBlockId) || blocks[0];
                     if (!block) return null;
@@ -1530,12 +1516,17 @@ export function VaziModule({
                   })()}
                 </div>
               </div>
-            </div>
+                </div>
+              ),
+            },
 
-          </div>
-
-          {/* Vineyard Activities Card log */}
-          <div className="bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-xs space-y-4">
+            /* Vineyard Activities Card log */
+            {
+              id: 'field-logs',
+              label: lang === 'ka' ? 'საველე სამუშაოების ლოგები' : 'Field management logs',
+              defaultSpan: 12,
+              content: (
+                <div className="bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-xs space-y-4">
             <h3 className="font-serif font-bold text-sm text-emerald-950">
               {{
                 en: 'Latest Field Management Logs',
@@ -1586,8 +1577,11 @@ export function VaziModule({
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
+                </div>
+              ),
+            },
+          ] satisfies DashboardWidgetSpec[]}
+        />
       )}
 
       {/* ==========================================
@@ -2016,10 +2010,10 @@ export function VaziModule({
                   <>
 
                 {/* Sub-Tabs of Block detail */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-stone-700">
+                <div className="grid grid-cols-1 gap-5 text-stone-700 xl:grid-cols-12">
 
                   {selectedCadastre && (
-                    <div className="space-y-3 p-4 bg-amber-50/45 rounded-xl border border-amber-100 md:col-span-2">
+                    <div className="space-y-3 rounded-xl border border-amber-100 bg-amber-50/45 p-4 xl:col-span-12">
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between gap-2 border-b border-dashed border-amber-200 pb-1.5">
                         <span className="flex items-center gap-1.5">
                           <FileText className="w-3.5 h-3.5" />
@@ -2064,7 +2058,7 @@ export function VaziModule({
                   )}
 
                   {/* Block Terrain & Soil */}
-                  <div className="space-y-3 p-4 bg-stone-50 rounded-xl border border-stone-100">
+                  <div className="space-y-3 rounded-xl border border-stone-100 bg-stone-50 p-4 xl:col-span-4">
                     <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center gap-1.5 border-b border-dashed border-stone-200 pb-1.5">
                       <Mountain className="w-3.5 h-3.5" />
                       {lang === 'ka' ? 'ნაკვეთის რელიეფი და ნიადაგი' : 'Block Terrain & Vineyard Soil Specs'}
@@ -2102,7 +2096,7 @@ export function VaziModule({
                   </div>
 
                   {/* Coordinates & Custom Area Mapping Draw widget */}
-                  <div className="space-y-3 p-4 bg-stone-50 rounded-xl border border-stone-100 flex flex-col justify-between">
+                  <div className="flex min-w-0 flex-col justify-between space-y-3 rounded-xl border border-stone-100 bg-stone-50 p-4 xl:col-span-8">
                     <div>
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between border-b border-dashed border-stone-200 pb-1.5 w-full">
                         <span className="flex items-center gap-1.5">
@@ -2131,7 +2125,7 @@ export function VaziModule({
                     </div>
 
                     <div className="space-y-2">
-                      <div className="h-40 bg-stone-100/80 rounded-lg border border-stone-200 relative overflow-hidden">
+                      <div className="relative h-[320px] overflow-hidden rounded-lg border border-stone-200 bg-stone-100/80 sm:h-[380px] xl:h-[430px]">
                         <Suspense fallback={<VineyardMapLoading lang={lang} />}>
                           <VineyardMap
                             lang={lang}
@@ -2150,7 +2144,7 @@ export function VaziModule({
                             onRemoveDrawingPoint={isEditingBlockBoundary
                               ? index => setEditingBoundaryPoints(previous => removeBoundaryPoint(previous, index))
                               : undefined}
-                            heightClassName="h-full min-h-[160px]"
+                            heightClassName="h-full min-h-[300px]"
                             ariaLabel={lang === 'ka' ? `${selectedBlock.name} საზღვრის რუკა` : `${selectedBlock.name} boundary map`}
                             showEmptyState={false}
                           />

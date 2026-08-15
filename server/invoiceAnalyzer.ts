@@ -4,6 +4,7 @@ import { CORE_INVENTORY_CATEGORIES } from '../lib/inventoryCategories';
 import {
   findBestInvoiceInventoryMatch,
   invoiceConfidenceLabel,
+  invoiceUnitsCompatible,
   type InvoiceAnalysisDraft,
   type InvoiceHeaderDraft,
   type InvoiceLineDraft,
@@ -322,11 +323,14 @@ function sanitizeLines(
       confidenceLabel: invoiceConfidenceLabel(confidence(row.confidence)),
       warnings: stringList(row.warnings, 8, 280),
     };
-    const proposedId = stringValue(row.existing_inventory_id, 160);
-    const proposed = inventoryById.get(proposedId);
-    if (proposed) {
+    const deterministicMatch = findBestInvoiceInventoryMatch(line, inventory);
+    if (deterministicMatch) {
+      line.match = deterministicMatch;
+    } else {
+      const proposedId = stringValue(row.existing_inventory_id, 160);
+      const proposed = inventoryById.get(proposedId);
       const proposedConfidence = confidence(row.match_confidence);
-      if (proposedConfidence >= 0.65) {
+      if (proposed && proposedConfidence >= 0.85 && invoiceUnitsCompatible(proposed.unit, line.stockUnit)) {
         line.match = {
           inventoryItemId: proposed.id,
           inventoryItemName: proposed.name,
@@ -335,10 +339,9 @@ function sanitizeLines(
         };
       }
     }
-    line.match ||= findBestInvoiceInventoryMatch(line, inventory);
     if (line.match) {
       const matched = inventoryById.get(line.match.inventoryItemId);
-      if (matched && unitValue(matched.unit) !== line.stockUnit) {
+      if (matched && !invoiceUnitsCompatible(matched.unit, line.stockUnit)) {
         line.warnings.push(`Matched inventory uses ${matched.unit}; confirm conversion before receiving ${line.stockUnit}.`);
       }
     }

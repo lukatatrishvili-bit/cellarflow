@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+  applyRecordRoute,
   applyWorkspaceRoute,
   clearWorkspaceRoute,
   isWorkspaceModule,
+  parseRecordRoute,
   parseWorkspaceRoute,
+  recordRouteMatches,
+  routeCarriesOneShotAction,
   workspaceRouteMatches,
   WORKSPACE_MODULES,
 } from '../lib/workspaceRoute';
@@ -110,6 +114,59 @@ describe('comparing the URL with the current destination', () => {
     // Otherwise every arrival with a deep link would rewrite the URL and push a
     // spurious history entry.
     expect(workspaceRouteMatches('?lot=L-1&module=gvino&tab=lots', 'gvino', 'lots')).toBe(true);
+  });
+});
+
+describe('addressing an open record', () => {
+  it('reads a lot or vessel from the URL', () => {
+    expect(parseRecordRoute('?lot=LOT-2026-001')).toEqual({ lot: 'LOT-2026-001', tank: null });
+    expect(parseRecordRoute('?tank=T-101')).toEqual({ lot: null, tank: 'T-101' });
+  });
+
+  it('round-trips a Georgian vessel id', () => {
+    // Qvevri are routinely named in Georgian, and the server's own isValidId
+    // accepts Unicode. An ASCII-only rule here would quietly refuse to put half
+    // this product's records in a URL.
+    const search = applyRecordRoute('', { lot: null, tank: 'ქვევრი 1' });
+
+    expect(parseRecordRoute(search).tank).toBe('ქვევრი 1');
+    expect(recordRouteMatches(search, { lot: null, tank: 'ქვევრი 1' })).toBe(true);
+  });
+
+  it('rejects an id the server would refuse', () => {
+    expect(parseRecordRoute('?lot=../../etc/passwd').lot).toBeNull();
+    expect(parseRecordRoute('?lot=a?b=1').lot).toBeNull();
+    expect(parseRecordRoute(`?lot=${'a'.repeat(129)}`).lot).toBeNull();
+  });
+
+  it('clears the parameter when nothing is open', () => {
+    const search = applyRecordRoute('?module=gvino&tab=lots&lot=LOT-1', { lot: null, tank: null });
+
+    expect(search).toBe('?module=gvino&tab=lots');
+  });
+
+  it('keeps the workspace destination when writing a record', () => {
+    const search = applyRecordRoute('?module=gvino&tab=lots', { lot: 'LOT-1', tank: null });
+
+    expect(search).toContain('module=gvino');
+    expect(search).toContain('tab=lots');
+    expect(search).toContain('lot=LOT-1');
+  });
+
+  it('treats a cellar QR action link as an instruction, not a view', () => {
+    // ?tank=…&op=1 opens the quick-operation form and deliberately does not
+    // select the vessel, so mirroring view state over it would delete the tank
+    // parameter on load and break the label stuck to the tank.
+    expect(routeCarriesOneShotAction('?tank=T-101&op=1')).toBe(true);
+    expect(routeCarriesOneShotAction('?tank=T-101')).toBe(false);
+    expect(routeCarriesOneShotAction('?tank=T-101&op=0')).toBe(false);
+  });
+
+  it('matches only when the URL names the same selection', () => {
+    expect(recordRouteMatches('?lot=LOT-1', { lot: 'LOT-1', tank: null })).toBe(true);
+    expect(recordRouteMatches('?lot=LOT-1', { lot: 'LOT-2', tank: null })).toBe(false);
+    expect(recordRouteMatches('', { lot: null, tank: null })).toBe(true);
+    expect(recordRouteMatches('?lot=LOT-1', { lot: null, tank: null })).toBe(false);
   });
 });
 

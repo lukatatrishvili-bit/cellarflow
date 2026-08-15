@@ -2447,6 +2447,7 @@ export default function App() {
                 setSelectedTankId={state.setSelectedTankId}
                 onToggleTaskStatus={state.handleToggleTaskStatus}
                 role={state.currentUser.role}
+                layoutOwner={state.currentUser.username}
                 canUpdateTasks={canAccess(state.currentUser.role, 'tasks', 'update')}
                 setActiveTab={state.setActiveTab}
                 setCalculatorLotId={state.setCalculatorLotId}

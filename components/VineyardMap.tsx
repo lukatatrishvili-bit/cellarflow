@@ -111,6 +111,40 @@ function MapViewportController({
   return null;
 }
 
+/**
+ * Leaflet measures its canvas only when it mounts. Dashboard cards can change
+ * width without a window resize, so keep the canvas synchronized with its
+ * actual card dimensions after organizer changes and responsive reflows.
+ */
+function MapResizeController() {
+  const map = useMap();
+
+  useEffect(() => {
+    let frameId = 0;
+    const invalidate = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(() => map.invalidateSize({ animate: false }));
+    };
+    const container = map.getContainer();
+    const observedElement = container.parentElement || container;
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(invalidate);
+
+    observer?.observe(observedElement);
+    window.addEventListener('resize', invalidate);
+    invalidate();
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', invalidate);
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [map]);
+
+  return null;
+}
+
 export default function VineyardMap({
   lang,
   center,
@@ -185,6 +219,7 @@ export default function VineyardMap({
           viewCommand={viewCommand}
           selectedBlockId={selectedBlockId}
         />
+        <MapResizeController />
         <MapClickController enabled={Boolean(onMapClick)} onMapClick={onMapClick} />
 
         {blocks.map((block) => {

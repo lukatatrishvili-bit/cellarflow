@@ -1695,6 +1695,18 @@ export function useWineryState() {
       // previously only terminated when two passes landed on the same
       // millisecond. The re-run becomes a no-op and handles dirty-marking.
       localStorage.setItem(localKey, serializedProcessed);
+      // For the same reason offline mutations are queued here, the changed
+      // record ids are staged here: the re-run that marks the collection dirty
+      // no longer sees which records moved, and without them the push widens
+      // back to the whole collection.
+      if (hasHydrated.current && modifiedOrAddedItems.length > 0) {
+        SyncQueueManager.noteChangedRecords(
+          key,
+          modifiedOrAddedItems
+            .map(({ item }) => item?.id)
+            .filter((id): id is string => typeof id === 'string' && !!id),
+        );
+      }
       // The re-run sees no modified items, so offline mutations (which carry
       // the conflict baselines) must be queued on this first pass.
       if (hasHydrated.current && !SyncQueueManager.isOnline()) {
@@ -1715,7 +1727,17 @@ export function useWineryState() {
     localStorage.setItem(localKey, serializedProcessed);
 
     if (hasHydrated.current && serializedProcessed !== lastServerState.current[key]) {
-      SyncQueueManager.markDirty(key);
+      // The mapping above already worked out exactly which records changed, so
+      // the push can carry those instead of the whole collection. A non-array
+      // collection (companyProfile, winePricing) has no records to name and is
+      // still sent whole.
+      // Passed even when empty: this effect re-runs once the local mirror has
+      // been written, and that second pass has nothing new to name rather than
+      // no idea what changed. `markDirty` relies on the difference.
+      const changedIds = Array.isArray(processedValue)
+        ? modifiedOrAddedItems.map(({ item }) => item?.id).filter((id): id is string => typeof id === 'string' && !!id)
+        : undefined;
+      SyncQueueManager.markDirty(key, changedIds);
 
       // If offline, queue specific mutations in IndexedDB!
       if (!SyncQueueManager.isOnline()) {
@@ -1805,6 +1827,10 @@ export function useWineryState() {
     activeTab,
     setActiveModule,
     setActiveTab,
+    passportLotId,
+    setPassportLotId,
+    selectedTankId,
+    setSelectedTankId,
   });
 
   // Input Sanitizer/Validator Helper for ID poisoning prevention

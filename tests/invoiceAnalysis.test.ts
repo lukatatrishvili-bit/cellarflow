@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyInvoiceImport,
+  assessInvoiceLineReview,
   findBestInvoiceInventoryMatch,
+  invoiceUnitsCompatible,
+  reconcileInvoiceTotals,
   type InvoiceHeaderDraft,
   type InvoiceLineDraft,
 } from '../lib/invoiceAnalysis';
@@ -63,7 +66,41 @@ describe('invoice inventory analysis helpers', () => {
       inventoryItemId: 'inv-yeast-1',
       inventoryItemName: 'Lalvin ICV D254',
       confidence: 1,
-      reason: 'Exact SKU match',
+      reason: 'Exact SKU and unit match',
+    });
+  });
+
+  it('normalizes punctuation in SKUs and common stock-unit aliases', () => {
+    expect(findBestInvoiceInventoryMatch(line({ sku: 'D254 1KG' }), inventory)?.inventoryItemId).toBe('inv-yeast-1');
+    expect(invoiceUnitsCompatible('litre', 'L')).toBe(true);
+    expect(invoiceUnitsCompatible('pcs', 'units')).toBe(true);
+    expect(invoiceUnitsCompatible('კგ', 'kg')).toBe(true);
+    expect(invoiceUnitsCompatible('kg', 'g')).toBe(false);
+  });
+
+  it('leaves equally plausible duplicate inventory matches for a human to resolve', () => {
+    const duplicateInventory: InventoryItem[] = [
+      { ...inventory[0], id: 'duplicate-a', sku: undefined },
+      { ...inventory[0], id: 'duplicate-b', sku: undefined },
+    ];
+    expect(findBestInvoiceInventoryMatch(line({ sku: undefined }), duplicateInventory)).toBeUndefined();
+  });
+
+  it('matches distinctive product codes across translated inventory names', () => {
+    expect(findBestInvoiceInventoryMatch(line({
+      productName: 'Lalvin QA23 wine yeast',
+      invoiceDescription: 'Lalvin QA23 wine yeast 1 kg',
+      sku: undefined,
+      manufacturerName: undefined,
+    }), [{
+      ...inventory[0],
+      id: 'translated-qa23',
+      name: 'საფუარი QA23',
+      sku: undefined,
+      unit: 'კგ',
+    }])).toMatchObject({
+      inventoryItemId: 'translated-qa23',
+      reason: 'Product code and unit match',
     });
   });
 
@@ -136,5 +173,87 @@ describe('invoice inventory analysis helpers', () => {
     expect(result).toMatchObject({ created: 0, updated: 0, skipped: 1 });
     expect(result.inventory[0].stock).toBe(10);
   });
-});
 
+  it('classifies safe, blocked, and excluded lines for the review queue', () => {
+    expect(assessInvoiceLineReview(line(), {
+      mode: 'receive',
+      targetSelected: true,
+      targetUnitCompatible: true,
+      conversionConfirmed: true,
+    })).toEqual({ status: 'ready', blockers: [], cautions: [], postable: true });
+
+    expect(assessInvoiceLineReview(line({
+      stockQuantity: 0,
+      invoiceUnit: 'bags',
+      stockUnit: 'kg',
+      lineNetAmount: 150,
+      confidence: 0.7,
+      confidenceLabel: 'medium',
+    }), {
+      mode: 'receive',
+      targetSelected: false,
+      conversionConfirmed: false,
+    })).toMatchObject({
+      status: 'needs_review',
+      blockers: ['missing_quantity', 'missing_target', 'conversion_unconfirmed'],
+      cautions: ['low_confidence', 'amount_mismatch'],
+      postable: false,
+    });
+
+    expect(assessInvoiceLineReview(line({ category: 'freight' }), {
+      mode: 'create',
+    })).toEqual({ status: 'excluded', blockers: [], cautions: [], postable: false });
+  });
+
+  it('reconciles extracted line arithmetic with the invoice header', () => {
+    const balanced = reconcileInvoiceTotals({
+      ...invoice,
+      subtotal: 150,
+      taxAmount: 30,
+      total: 180,
+    }, [line({ lineNetAmount: 150, taxAmount: 30, lineTotal: 180 })]);
+    expect(balanced).toMatchObject({
+      calculatedSubtotal: 150,
+      calculatedTax: 30,
+      calculatedTotal: 180,
+      comparedFields: 3,
+      balanced: true,
+    });
+
+    const mismatched = reconcileInvoiceTotals({ ...invoice, subtotal: 150, taxAmount: 30, total: 200 }, [
+      line({ lineNetAmount: 150, taxAmount: 30, lineTotal: 180 }),
+    ]);
+    expect(mismatched.balanced).toBe(false);
+    expect(mismatched.totalDifference).toBe(-20);
+  });
+
+  it('uses header-level tax when invoice lines only contain net totals', () => {
+    expect(reconcileInvoiceTotals({
+      ...invoice,
+      subtotal: 150,
+      taxAmount: 27,
+      total: 177,
+    }, [line({ lineNetAmount: 150, taxAmount: undefined, lineTotal: 150 })])).toMatchObject({
+      calculatedSubtotal: 150,
+      calculatedTax: 27,
+      calculatedTotal: 177,
+      comparedFields: 2,
+      balanced: true,
+    });
+  });
+
+  it('adds extracted line tax when line-total fields still contain net amounts', () => {
+    expect(reconcileInvoiceTotals({
+      ...invoice,
+      subtotal: 150,
+      taxAmount: 27,
+      total: 177,
+    }, [line({ lineNetAmount: 150, taxAmount: 27, lineTotal: 150 })])).toMatchObject({
+      calculatedSubtotal: 150,
+      calculatedTax: 27,
+      calculatedTotal: 177,
+      comparedFields: 3,
+      balanced: true,
+    });
+  });
+});

@@ -168,7 +168,9 @@ describe('DashboardTab role-aware actions', () => {
       React.createElement(DashboardTab, props),
     );
 
-    expect(markup).toContain('Complete the next setup step to bring your live operation into view.');
+    expect(markup).toContain('Workspace context');
+    expect(markup).toContain('Example Estate');
+    expect(markup).not.toContain('Complete the next setup step to bring your live operation into view.');
     expect(markup).toContain('Start here');
     expect(markup).not.toContain('Today metrics');
     expect(markup).not.toContain('Today’s priority queue');
@@ -206,7 +208,10 @@ describe('DashboardTab role-aware actions', () => {
       React.createElement(DashboardTab, props),
     );
 
-    expect(markup).toContain('Today at Example Estate');
+    expect(markup).toContain('Workspace context');
+    expect(markup).toContain('Example Estate');
+    expect(markup).toContain('Personalize');
+    expect(markup).not.toContain('Today at Example Estate');
     expect(markup).toContain('Active fermentations');
     expect(markup).toContain('Cellar capacity');
     expect(markup).toContain('My tasks');

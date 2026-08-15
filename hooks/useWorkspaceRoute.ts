@@ -1,8 +1,12 @@
 import { useEffect, useRef } from 'react';
 import {
+  applyRecordRoute,
   applyWorkspaceRoute,
   clearWorkspaceRoute,
+  parseRecordRoute,
   parseWorkspaceRoute,
+  recordRouteMatches,
+  routeCarriesOneShotAction,
   workspaceRouteMatches,
 } from '../lib/workspaceRoute';
 
@@ -13,6 +17,12 @@ interface WorkspaceRouteOptions {
   activeTab: string;
   setActiveModule: (module: any) => void;
   setActiveTab: (tab: string) => void;
+  /** Lot whose passport is open, if any. */
+  passportLotId: string | null;
+  setPassportLotId: (lotId: string | null) => void;
+  /** Vessel selected on the vessels tab, if any. */
+  selectedTankId: string | null;
+  setSelectedTankId: (tankId: string | null) => void;
 }
 
 /**
@@ -48,6 +58,10 @@ export function useWorkspaceRoute({
   activeTab,
   setActiveModule,
   setActiveTab,
+  passportLotId,
+  setPassportLotId,
+  selectedTankId,
+  setSelectedTankId,
 }: WorkspaceRouteOptions): void {
   const hasSyncedInitialRoute = useRef(false);
 
@@ -91,6 +105,51 @@ export function useWorkspaceRoute({
       hasSyncedInitialRoute.current = true;
     }
   }, [isActive, activeModule, activeTab]);
+
+  // Follow Back/Forward for the open record, so returning to an entry that
+  // named a lot reopens its passport rather than leaving the URL lying.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isActive) return;
+    if (!workspaceRouteCanMirrorPath(window.location.pathname)) return;
+
+    const applyRecordFromUrl = () => {
+      if (routeCarriesOneShotAction(window.location.search)) return;
+      const record = parseRecordRoute(window.location.search);
+      setPassportLotId(record.lot);
+      setSelectedTankId(record.tank);
+    };
+
+    window.addEventListener('popstate', applyRecordFromUrl);
+    return () => window.removeEventListener('popstate', applyRecordFromUrl);
+  }, [isActive, setPassportLotId, setSelectedTankId]);
+
+  /**
+   * Mirror the open record into the URL, so the address bar of an open passport
+   * can be copied to a colleague.
+   *
+   * `replaceState`, unlike the destination above. Opening a record is closer to
+   * focusing something on the current screen than to travelling to a new one:
+   * pushing would make Back close a passport while the on-screen close button
+   * does something different, and would leave a history entry behind every lot
+   * a user merely glanced at. The URL stays copyable either way, which is the
+   * point.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isActive) return;
+    if (!workspaceRouteCanMirrorPath(window.location.pathname)) return;
+    // A QR action link is an instruction, not a view; leave it exactly as sent.
+    if (routeCarriesOneShotAction(window.location.search)) return;
+
+    const record = { lot: passportLotId, tank: selectedTankId };
+    if (recordRouteMatches(window.location.search, record)) return;
+
+    const search = applyRecordRoute(window.location.search, record);
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${window.location.pathname}${search}${window.location.hash}`,
+    );
+  }, [isActive, passportLotId, selectedTankId]);
 
   // A sign-out returns the app to a clean slate; the next sign-in should not
   // inherit the previous session's first-write behaviour.

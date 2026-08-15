@@ -4,20 +4,31 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleAlert,
   ExternalLink,
   FileText,
   Loader2,
+  PencilLine,
   RotateCcw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Upload,
   X,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import {
+  assessInvoiceLineReview,
+  invoiceUnitsCompatible,
+  reconcileInvoiceTotals,
   type InvoiceAnalysisDraft,
   type InvoiceLineDraft,
+  type InvoiceReviewIssueCode,
+  type InvoiceReviewStatus,
 } from '../lib/invoiceAnalysis';
 import { CORE_INVENTORY_CATEGORIES } from '../lib/inventoryCategories';
 import type { InventoryItem } from '../lib/wineryState';
@@ -50,6 +61,7 @@ interface Props {
 }
 
 type ImportMode = 'create' | 'receive';
+type ReviewFilter = 'all' | InvoiceReviewStatus;
 
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -80,10 +92,6 @@ function money(value: number | undefined, currency: string): string {
   }
 }
 
-function sameUnit(left: string, right: string): boolean {
-  return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
-}
-
 function sourceCost(line: InvoiceLineDraft, basis: InvoiceCostBasis): number {
   const fallbackNet = line.stockQuantity * line.unitCost;
   if (basis === 'gross') return Math.max(0, line.lineTotal ?? ((line.lineNetAmount ?? fallbackNet) + (line.taxAmount ?? 0)));
@@ -101,6 +109,29 @@ function sourceLabel(status: InvoiceLineDraft['sourceStatus'], ka: boolean): str
   if (status === 'grounded') return ka ? 'ონლაინ წყარო' : 'Grounded source';
   if (status === 'not_applicable') return ka ? 'არ გამოიყენება' : 'Not applicable';
   return ka ? 'წყარო ვერ მოიძებნა' : 'No verified source';
+}
+
+function reviewStatusLabel(status: InvoiceReviewStatus, ka: boolean): string {
+  if (status === 'ready') return ka ? 'მზადაა' : 'Ready';
+  if (status === 'excluded') return ka ? 'გამორიცხულია' : 'Excluded';
+  return ka ? 'შესამოწმებელია' : 'Needs review';
+}
+
+function reviewIssueLabel(issue: InvoiceReviewIssueCode, ka: boolean): string {
+  const labels: Record<InvoiceReviewIssueCode, [string, string]> = {
+    missing_product: ['Missing product name', 'პროდუქტის სახელი აკლია'],
+    missing_quantity: ['Confirm received quantity', 'დაადასტურეთ მიღებული რაოდენობა'],
+    missing_unit: ['Confirm stock unit', 'დაადასტურეთ მარაგის ერთეული'],
+    missing_cost: ['Confirm zero or missing unit cost', 'დაადასტურეთ ნულოვანი ან გამოტოვებული ფასი'],
+    missing_target: ['Choose the existing inventory item', 'აირჩიეთ არსებული მარაგის პროდუქტი'],
+    target_unit_mismatch: ['Existing item uses a different unit', 'არსებული პროდუქტი სხვა ერთეულს იყენებს'],
+    conversion_unconfirmed: ['Confirm package conversion', 'დაადასტურეთ შეფუთვის კონვერსია'],
+    low_confidence: ['Low-confidence extraction', 'დაბალი სანდოობის ამოცნობა'],
+    line_warning: ['AI added a review note', 'AI-მ დაამატა შესამოწმებელი შენიშვნა'],
+    amount_mismatch: ['Quantity × unit cost does not match line net', 'რაოდენობა × ფასი ხაზის თანხას არ ემთხვევა'],
+    unverified_enrichment: ['Product research is not from a confirmed official source', 'პროდუქტის კვლევა ოფიციალური წყაროდან არ არის დადასტურებული'],
+  };
+  return labels[issue][ka ? 1 : 0];
 }
 
 export default function InvoiceInventoryImporter({
@@ -134,6 +165,10 @@ export default function InvoiceInventoryImporter({
   const [costBasis, setCostBasis] = useState<InvoiceCostBasis>('net');
   const [additionalCostsSource, setAdditionalCostsSource] = useState(0);
   const [confirmedConversions, setConfirmedConversions] = useState<Set<string>>(new Set());
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('all');
+  const [lineSearch, setLineSearch] = useState('');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [headerEditing, setHeaderEditing] = useState(false);
 
   const categories = useMemo(() => Array.from(new Set([
     ...CORE_INVENTORY_CATEGORIES,
@@ -150,6 +185,40 @@ export default function InvoiceInventoryImporter({
   const chosenLines = useMemo(
     () => draft?.lines.filter((line) => selectedIds.has(line.id)) || [],
     [draft, selectedIds],
+  );
+
+  const reviewById = useMemo(() => new Map((draft?.lines || []).map((line) => {
+    const mode = modes[line.id] || (canCreate ? 'create' : 'receive');
+    const target = inventory.find((item) => item.id === targets[line.id]);
+    return [line.id, assessInvoiceLineReview(line, {
+      mode,
+      targetSelected: Boolean(target),
+      targetUnitCompatible: target ? invoiceUnitsCompatible(target.unit, line.stockUnit) : undefined,
+      conversionConfirmed: invoiceUnitsCompatible(line.invoiceUnit, line.stockUnit) || confirmedConversions.has(line.id),
+    })] as const;
+  })), [canCreate, confirmedConversions, draft, inventory, modes, targets]);
+
+  const reviewCounts = useMemo(() => {
+    const counts: Record<InvoiceReviewStatus, number> = { ready: 0, needs_review: 0, excluded: 0 };
+    reviewById.forEach((review) => { counts[review.status] += 1; });
+    return counts;
+  }, [reviewById]);
+
+  const filteredLines = useMemo(() => {
+    const query = lineSearch.trim().toLocaleLowerCase();
+    return (draft?.lines || []).filter((line) => {
+      const review = reviewById.get(line.id);
+      if (reviewFilter !== 'all' && review?.status !== reviewFilter) return false;
+      if (!query) return true;
+      return [line.productName, line.invoiceDescription, line.sku, line.brandName, line.manufacturerName]
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase().includes(query));
+    });
+  }, [draft, lineSearch, reviewById, reviewFilter]);
+
+  const totalsReconciliation = useMemo(
+    () => draft ? reconcileInvoiceTotals(draft.invoice, draft.lines) : null,
+    [draft],
   );
 
   const estimatedImportValue = chosenLines.reduce((sum, line) => sum + sourceCost(line, costBasis), 0)
@@ -218,31 +287,45 @@ export default function InvoiceInventoryImporter({
 
   const initializeReview = (result: InvoiceAnalysisDraft) => {
     const selected = new Set<string>();
+    const expanded = new Set<string>();
     const nextModes: Record<string, ImportMode> = {};
     const nextTargets: Record<string, string> = {};
     const conversions = new Set<string>();
     result.lines.forEach((line) => {
       const stockLine = !NON_INVENTORY_CATEGORIES.has(line.category) && line.stockQuantity > 0;
       const compatibleMatch = line.match
-        ? inventory.find((item) => item.id === line.match?.inventoryItemId && sameUnit(item.unit, line.stockUnit))
+        ? inventory.find((item) => item.id === line.match?.inventoryItemId && invoiceUnitsCompatible(item.unit, line.stockUnit))
         : undefined;
-      const firstCompatible = compatibleMatch || inventory.find((item) => sameUnit(item.unit, line.stockUnit));
-      if (stockLine && ((firstCompatible && canUpdate) || canCreate)) selected.add(line.id);
       if (compatibleMatch && canUpdate) {
         nextModes[line.id] = 'receive';
         nextTargets[line.id] = compatibleMatch.id;
-      } else if (!canCreate && canUpdate && firstCompatible) {
+      } else if (!canCreate && canUpdate) {
         nextModes[line.id] = 'receive';
-        nextTargets[line.id] = firstCompatible.id;
       } else {
         nextModes[line.id] = 'create';
       }
-      if (sameUnit(line.invoiceUnit, line.stockUnit)) conversions.add(line.id);
+      const conversionConfirmed = invoiceUnitsCompatible(line.invoiceUnit, line.stockUnit);
+      if (conversionConfirmed) conversions.add(line.id);
+      const mode = nextModes[line.id];
+      const target = nextTargets[line.id];
+      const review = assessInvoiceLineReview(line, {
+        mode,
+        targetSelected: Boolean(target),
+        targetUnitCompatible: target ? true : undefined,
+        conversionConfirmed,
+      });
+      const canImport = stockLine && (mode === 'create' ? canCreate : canUpdate && Boolean(target));
+      if (canImport && review.status === 'ready') selected.add(line.id);
+      if (review.status === 'needs_review') expanded.add(line.id);
     });
     setSelectedIds(selected);
+    setExpandedIds(expanded);
     setModes(nextModes);
     setTargets(nextTargets);
     setConfirmedConversions(conversions);
+    setReviewFilter('all');
+    setLineSearch('');
+    setHeaderEditing(false);
     const nextCurrency = normalizeInvoiceCurrency(result.invoice.currency) || normalizedAccountingCurrency;
     setInvoiceCurrency(nextCurrency);
     void loadOfficialRate(nextCurrency, result.invoice.invoiceDate);
@@ -296,13 +379,22 @@ export default function InvoiceInventoryImporter({
     } : current);
   };
 
+  const updateHeader = (patch: Partial<InvoiceAnalysisDraft['invoice']>) => {
+    setDraft((current) => current ? {
+      ...current,
+      invoice: { ...current.invoice, ...patch },
+    } : current);
+  };
+
   const setMode = (line: InvoiceLineDraft, mode: ImportMode) => {
     if (mode === 'create' && !canCreate) return;
     if (mode === 'receive' && !canUpdate) return;
     setModes((current) => ({ ...current, [line.id]: mode }));
     if (mode === 'receive' && !targets[line.id]) {
-      const compatible = inventory.find((item) => sameUnit(item.unit, line.stockUnit));
-      if (compatible) setTargets((current) => ({ ...current, [line.id]: compatible.id }));
+      const compatibleMatch = line.match
+        ? inventory.find((item) => item.id === line.match?.inventoryItemId && invoiceUnitsCompatible(item.unit, line.stockUnit))
+        : undefined;
+      if (compatibleMatch) setTargets((current) => ({ ...current, [line.id]: compatibleMatch.id }));
     }
   };
 
@@ -313,6 +405,24 @@ export default function InvoiceInventoryImporter({
       else next.add(id);
       return next;
     });
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectReadyLines = () => {
+    if (!draft) return;
+    setSelectedIds(new Set(draft.lines.filter((line) => {
+      const mode = modes[line.id] || (canCreate ? 'create' : 'receive');
+      const canImport = mode === 'create' ? canCreate : canUpdate && Boolean(targets[line.id]);
+      return canImport && reviewById.get(line.id)?.status === 'ready';
+    }).map((line) => line.id)));
   };
 
   const importLines = async () => {
@@ -326,12 +436,29 @@ export default function InvoiceInventoryImporter({
     const missingTarget = chosenLines.find(line => (modes[line.id] || 'create') === 'receive' && !targets[line.id]);
     if (missingTarget) {
       setError(`Choose an existing inventory item for ${missingTarget.productName}.`);
+      setExpandedIds((current) => new Set(current).add(missingTarget.id));
+      setReviewFilter('needs_review');
+      setLineSearch('');
       return;
     }
-    const unconfirmed = chosenLines.find(line => !sameUnit(line.invoiceUnit, line.stockUnit)
+    const unconfirmed = chosenLines.find(line => !invoiceUnitsCompatible(line.invoiceUnit, line.stockUnit)
       && !confirmedConversions.has(line.id));
     if (unconfirmed) {
       setError(`Confirm the package conversion for ${unconfirmed.productName} before posting.`);
+      setExpandedIds((current) => new Set(current).add(unconfirmed.id));
+      setReviewFilter('needs_review');
+      setLineSearch('');
+      return;
+    }
+    const blockedLine = chosenLines.find((line) => !reviewById.get(line.id)?.postable);
+    if (blockedLine) {
+      const blocker = reviewById.get(blockedLine.id)?.blockers[0];
+      setError(ka
+        ? `${blockedLine.productName || blockedLine.invoiceDescription}: ${blocker ? reviewIssueLabel(blocker, true) : 'ხაზი საჭიროებს შემოწმებას'}.`
+        : `${blockedLine.productName || blockedLine.invoiceDescription}: ${blocker ? reviewIssueLabel(blocker, false) : 'this line needs review'}.`);
+      setExpandedIds((current) => new Set(current).add(blockedLine.id));
+      setReviewFilter('needs_review');
+      setLineSearch('');
       return;
     }
     if (!Number.isFinite(activeRate) || activeRate <= 0) {
@@ -386,7 +513,7 @@ export default function InvoiceInventoryImporter({
           stockQuantity: line.stockQuantity,
           stockUnit: line.stockUnit,
           conversionFactor: line.stockQuantity / line.invoiceQuantity,
-          conversionConfirmed: sameUnit(line.invoiceUnit, line.stockUnit) || confirmedConversions.has(line.id),
+          conversionConfirmed: invoiceUnitsCompatible(line.invoiceUnit, line.stockUnit) || confirmedConversions.has(line.id),
           packageSize: line.packageSize,
           packageUnit: line.packageUnit,
           sourceCostPerStockUnit: line.unitCost,
@@ -433,6 +560,10 @@ export default function InvoiceInventoryImporter({
     setRateInput('1');
     setRateMode('identity');
     setConfirmedConversions(new Set());
+    setReviewFilter('all');
+    setLineSearch('');
+    setExpandedIds(new Set());
+    setHeaderEditing(false);
   };
 
   return (
@@ -557,27 +688,81 @@ export default function InvoiceInventoryImporter({
         </div>
       ) : (
         <div>
-          <div className="grid gap-3 border-b border-[#e8dfd5] bg-white px-5 py-4 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="lg:col-span-2">
-              <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'მომწოდებელი' : 'Supplier'}</span>
-              <div className="mt-0.5 truncate text-sm font-black text-stone-850">{draft.invoice.supplierName || '—'}</div>
-              <div className="mt-0.5 truncate text-[10px] text-stone-500">{draft.invoice.supplierAddress || draft.invoice.supplierCompanyId || ''}</div>
+          <div className="border-b border-[#e8dfd5] bg-white px-5 py-4">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-black text-stone-850">{ka ? 'ინვოისის დეტალები' : 'Invoice details'}</h4>
+                <p className="mt-0.5 text-[9px] text-stone-500">{ka ? 'AI-ის ამოღებული სათაური — საჭიროების შემთხვევაში შეასწორეთ.' : 'AI-extracted header — correct anything before posting.'}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHeaderEditing((current) => !current)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-stone-700 hover:bg-stone-50"
+              >
+                {headerEditing ? <Check className="h-3 w-3" /> : <PencilLine className="h-3 w-3" />}
+                {headerEditing ? (ka ? 'მზადაა' : 'Done') : (ka ? 'შესწორება' : 'Edit details')}
+              </button>
             </div>
-            <div>
-              <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'ინვოისი' : 'Invoice'}</span>
-              <div className="mt-0.5 text-xs font-bold text-stone-800">{draft.invoice.invoiceNumber || '—'}</div>
-              <div className="mt-0.5 text-[10px] text-stone-500">{draft.invoice.invoiceDate || '—'}</div>
-            </div>
-            <div>
-              <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'სულ' : 'Invoice total'}</span>
-              <div className="mt-0.5 font-mono text-sm font-black text-[#4e0e15]">{money(draft.invoice.total, draft.invoice.currency)}</div>
-              <div className="mt-0.5 text-[10px] text-stone-500">{draft.invoice.taxAmount ? `${ka ? 'გადასახადი' : 'Tax'} ${money(draft.invoice.taxAmount, draft.invoice.currency)}` : ''}</div>
-            </div>
-            <div>
-              <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'ანალიზი' : 'Analysis'}</span>
-              <div className="mt-0.5 text-xs font-bold text-stone-800">{draft.lines.length} {ka ? 'ხაზი' : 'lines'}</div>
-              <div className="mt-0.5 text-[10px] text-stone-500">{draft.sources.length} {ka ? 'ონლაინ წყარო' : 'online sources'}</div>
-            </div>
+
+            {headerEditing ? (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="lg:col-span-2">
+                  <span className="block text-[8px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'მომწოდებელი' : 'Supplier'}</span>
+                  <input value={draft.invoice.supplierName} onChange={(event) => updateHeader({ supplierName: event.target.value })} className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-xs font-bold outline-none focus:border-[#801323]" />
+                </label>
+                <label>
+                  <span className="block text-[8px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'ინვოისის ნომერი' : 'Invoice number'}</span>
+                  <input value={draft.invoice.invoiceNumber || ''} onChange={(event) => updateHeader({ invoiceNumber: event.target.value || undefined })} className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none focus:border-[#801323]" />
+                </label>
+                <label>
+                  <span className="block text-[8px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'ინვოისის თარიღი' : 'Invoice date'}</span>
+                  <input type="date" value={draft.invoice.invoiceDate || ''} onChange={(event) => updateHeader({ invoiceDate: event.target.value || undefined })} className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none focus:border-[#801323]" />
+                </label>
+                <label>
+                  <span className="block text-[8px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'გადახდის ვადა' : 'Due date'}</span>
+                  <input type="date" value={draft.invoice.dueDate || ''} onChange={(event) => updateHeader({ dueDate: event.target.value || undefined })} className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none focus:border-[#801323]" />
+                </label>
+                {([
+                  ['subtotal', ka ? 'ქვეჯამი' : 'Subtotal'],
+                  ['taxAmount', ka ? 'გადასახადი' : 'Tax'],
+                  ['total', ka ? 'სულ' : 'Total'],
+                ] as const).map(([field, label]) => (
+                  <label key={field}>
+                    <span className="block text-[8px] font-bold uppercase tracking-wider text-stone-400">{label} ({invoiceCurrency})</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={draft.invoice[field] ?? ''}
+                      onChange={(event) => updateHeader({ [field]: event.target.value === '' ? undefined : Number(event.target.value) })}
+                      className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 font-mono text-xs outline-none focus:border-[#801323]"
+                    />
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="lg:col-span-2">
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'მომწოდებელი' : 'Supplier'}</span>
+                  <div className="mt-0.5 truncate text-sm font-black text-stone-850">{draft.invoice.supplierName || '—'}</div>
+                  <div className="mt-0.5 truncate text-[10px] text-stone-500">{draft.invoice.supplierAddress || draft.invoice.supplierCompanyId || ''}</div>
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'ინვოისი' : 'Invoice'}</span>
+                  <div className="mt-0.5 text-xs font-bold text-stone-800">{draft.invoice.invoiceNumber || '—'}</div>
+                  <div className="mt-0.5 text-[10px] text-stone-500">{draft.invoice.invoiceDate || '—'}</div>
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'სულ' : 'Invoice total'}</span>
+                  <div className="mt-0.5 font-mono text-sm font-black text-[#4e0e15]">{money(draft.invoice.total, draft.invoice.currency)}</div>
+                  <div className="mt-0.5 text-[10px] text-stone-500">{draft.invoice.taxAmount ? `${ka ? 'გადასახადი' : 'Tax'} ${money(draft.invoice.taxAmount, draft.invoice.currency)}` : ''}</div>
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'ანალიზი' : 'Analysis'}</span>
+                  <div className="mt-0.5 text-xs font-bold text-stone-800">{draft.lines.length} {ka ? 'ხაზი' : 'lines'}</div>
+                  <div className="mt-0.5 text-[10px] text-stone-500">{draft.sources.length} {ka ? 'ონლაინ წყარო' : 'online sources'}</div>
+                </div>
+              </div>
+            )}
           </div>
 
           {(draft.warnings.length > 0 || error) && (
@@ -682,29 +867,103 @@ export default function InvoiceInventoryImporter({
             </div>
           </div>
 
+          <div className="border-b border-[#e8dfd5] bg-white px-5 py-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <SlidersHorizontal className="h-4 w-4 text-[#801323]" />
+                  <h4 className="text-xs font-black text-stone-850">{ka ? 'AI შემოწმების რიგი' : 'AI review queue'}</h4>
+                  {totalsReconciliation && totalsReconciliation.comparedFields > 0 && (
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[8px] font-black uppercase ${totalsReconciliation.balanced ? 'bg-emerald-50 text-emerald-750' : 'bg-amber-50 text-amber-800'}`}>
+                      {totalsReconciliation.balanced ? <CheckCircle2 className="h-3 w-3" /> : <CircleAlert className="h-3 w-3" />}
+                      {totalsReconciliation.balanced
+                        ? (ka ? 'ჯამები ემთხვევა' : 'Totals balanced')
+                        : `${ka ? 'შეამოწმეთ სხვაობა' : 'Check difference'} ${money(Math.abs(totalsReconciliation.totalDifference || totalsReconciliation.subtotalDifference || 0), invoiceCurrency)}`}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[9px] text-stone-500">
+                  {ka ? 'მზად ხაზებს AI უსაფრთხოდ არჩევს; გაურკვეველი ხაზები ღია რჩება შესამოწმებლად.' : 'Ready lines are safely preselected; uncertain lines stay open for your review.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button type="button" onClick={selectReadyLines} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-bold text-emerald-800 hover:bg-emerald-100">
+                  {ka ? 'მზადების არჩევა' : 'Select ready'}
+                </button>
+                <button type="button" onClick={() => setSelectedIds(new Set())} className="rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-stone-600 hover:bg-stone-50">
+                  {ka ? 'არჩევის გასუფთავება' : 'Clear selection'}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap gap-1 rounded-lg bg-stone-100 p-1">
+                {([
+                  ['all', ka ? 'ყველა' : 'All', draft.lines.length],
+                  ['needs_review', ka ? 'შესამოწმებელი' : 'Needs review', reviewCounts.needs_review],
+                  ['ready', ka ? 'მზადაა' : 'Ready', reviewCounts.ready],
+                  ['excluded', ka ? 'გამორიცხული' : 'Excluded', reviewCounts.excluded],
+                ] as const).map(([id, label, count]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setReviewFilter(id)}
+                    className={`rounded-md px-2.5 py-1.5 text-[9px] font-bold transition ${reviewFilter === id ? 'bg-white text-[#4e0e15] shadow-sm' : 'text-stone-500 hover:text-stone-800'}`}
+                  >
+                    {label} <span className="ml-1 font-mono">{count}</span>
+                  </button>
+                ))}
+              </div>
+              <label className="relative min-w-0 sm:w-64">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="search"
+                  value={lineSearch}
+                  onChange={(event) => setLineSearch(event.target.value)}
+                  placeholder={ka ? 'პროდუქტის ან SKU-ს ძებნა' : 'Search product or SKU'}
+                  aria-label={ka ? 'ინვოისის ხაზების ძებნა' : 'Search invoice lines'}
+                  className="w-full rounded-lg border border-stone-200 bg-white py-1.5 pl-8 pr-2 text-[10px] outline-none focus:border-[#801323]"
+                />
+              </label>
+            </div>
+          </div>
+
           <div className="space-y-3 bg-[#f8f4ef] p-4">
-            {draft.lines.map((line) => {
+            {filteredLines.map((line) => {
               const selected = selectedIds.has(line.id);
               const mode = modes[line.id] || (canCreate ? 'create' : 'receive');
-              const compatibleInventory = inventory.filter((item) => sameUnit(item.unit, line.stockUnit));
+              const compatibleInventory = inventory.filter((item) => invoiceUnitsCompatible(item.unit, line.stockUnit));
               const selectedTarget = inventory.find((item) => item.id === targets[line.id]);
               const lineSources = line.sourceIds.map((id) => sourcesById.get(id)).filter(Boolean);
               const stockLine = !NON_INVENTORY_CATEGORIES.has(line.category);
-              const canImportLine = stockLine && (canCreate || (canUpdate && compatibleInventory.length > 0));
+              const canImportLine = stockLine && (mode === 'create' ? canCreate : canUpdate && compatibleInventory.length > 0);
+              const review = reviewById.get(line.id) || { status: 'needs_review' as const, blockers: [], cautions: [], postable: false };
+              const expanded = expandedIds.has(line.id);
+              const reviewIssues = [...review.blockers, ...review.cautions];
               return (
-                <article key={line.id} className={`rounded-xl border bg-white transition ${selected ? 'border-[#a6735f] shadow-sm' : 'border-stone-200 opacity-75'}`}>
+                <article key={line.id} className={`rounded-xl border bg-white transition ${selected ? 'border-[#a6735f] shadow-sm' : review.status === 'excluded' ? 'border-stone-200 opacity-65' : 'border-stone-200'}`}>
                   <div className="flex flex-col gap-3 border-b border-stone-100 p-3 lg:flex-row lg:items-start">
                     <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
                       <input
                         type="checkbox"
                         checked={selected}
-                        disabled={!canImportLine}
+                        disabled={!canImportLine && !selected}
                         onChange={() => toggleSelected(line.id)}
                         className="mt-1 accent-[#801323]"
                       />
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-2">
                           <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400">#{line.lineNumber}</span>
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[8px] font-black uppercase ${
+                            review.status === 'ready'
+                              ? 'bg-emerald-50 text-emerald-750'
+                              : review.status === 'excluded'
+                                ? 'bg-stone-100 text-stone-500'
+                                : 'bg-amber-50 text-amber-800'
+                          }`}>
+                            {review.status === 'ready' ? <CheckCircle2 className="h-3 w-3" /> : review.status === 'needs_review' ? <CircleAlert className="h-3 w-3" /> : null}
+                            {reviewStatusLabel(review.status, ka)}
+                          </span>
                           <span className={`rounded-full px-2 py-0.5 text-[8px] font-black uppercase ${
                             line.confidenceLabel === 'high'
                               ? 'bg-emerald-50 text-emerald-750'
@@ -722,40 +981,88 @@ export default function InvoiceInventoryImporter({
                             {sourceLabel(line.sourceStatus, ka)}
                           </span>
                         </span>
-                        <span className="mt-1 block truncate text-[10px] text-stone-500">{line.invoiceDescription}</span>
+                        <strong className="mt-1 block truncate text-xs text-stone-850">{line.productName || line.invoiceDescription}</strong>
+                        <span className="mt-0.5 block truncate text-[9px] text-stone-500">
+                          {line.invoiceDescription} · {line.stockQuantity} {line.stockUnit} · {money(line.lineTotal ?? line.lineNetAmount, line.currency)}
+                        </span>
+                        {line.match && (
+                          <span className="mt-1 block truncate text-[8px] font-bold text-blue-700" title={line.match.reason}>
+                            {ka ? 'AI დამთხვევა' : 'AI match'}: {line.match.inventoryItemName} · {Math.round(line.match.confidence * 100)}%
+                          </span>
+                        )}
                       </span>
                     </label>
 
-                    {stockLine ? (
-                      <div className="flex flex-col gap-2 sm:flex-row lg:w-[430px]">
-                        <select
-                          value={mode}
-                          onChange={(event) => setMode(line, event.target.value as ImportMode)}
-                          className="rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 text-[10px] font-bold outline-none focus:border-[#801323]"
-                        >
-                          {canCreate && <option value="create">{ka ? 'ახალი პროდუქტი' : 'Create new item'}</option>}
-                          {canUpdate && <option value="receive">{ka ? 'არსებულში მიღება' : 'Receive into existing'}</option>}
-                        </select>
-                        {mode === 'receive' && (
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start lg:max-w-[520px]">
+                      {stockLine ? (
+                        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
                           <select
-                            value={targets[line.id] || ''}
-                            onChange={(event) => setTargets((current) => ({ ...current, [line.id]: event.target.value }))}
-                            className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[10px] outline-none focus:border-[#801323]"
+                            value={mode}
+                            onChange={(event) => setMode(line, event.target.value as ImportMode)}
+                            className="rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 text-[10px] font-bold outline-none focus:border-[#801323]"
                           >
-                            <option value="">{ka ? 'აირჩიეთ თავსებადი პროდუქტი' : 'Choose compatible item'}</option>
-                            {compatibleInventory.map((item) => (
-                              <option key={item.id} value={item.id}>{item.name} · {item.stock} {item.unit}</option>
-                            ))}
+                            {canCreate && <option value="create">{ka ? 'ახალი პროდუქტი' : 'Create new item'}</option>}
+                            {canUpdate && <option value="receive">{ka ? 'არსებულში მიღება' : 'Receive into existing'}</option>}
                           </select>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="rounded-lg bg-stone-100 px-3 py-1.5 text-[9px] font-bold uppercase text-stone-500">
-                        {ka ? 'მარაგში არ შევა' : 'Excluded from stock'}
-                      </span>
-                    )}
+                          {mode === 'receive' && (
+                            <select
+                              value={targets[line.id] || ''}
+                              onChange={(event) => setTargets((current) => ({ ...current, [line.id]: event.target.value }))}
+                              className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[10px] outline-none focus:border-[#801323]"
+                            >
+                              <option value="">{ka ? 'აირჩიეთ თავსებადი პროდუქტი' : 'Choose compatible item'}</option>
+                              {compatibleInventory.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name} · {item.stock} {item.unit}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="rounded-lg bg-stone-100 px-3 py-1.5 text-[9px] font-bold uppercase text-stone-500">
+                          {ka ? 'მარაგში არ შევა' : 'Excluded from stock'}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(line.id)}
+                        className="inline-flex shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-stone-600 hover:bg-stone-50"
+                        aria-expanded={expanded}
+                      >
+                        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        {expanded ? (ka ? 'დახურვა' : 'Close') : (ka ? 'შემოწმება' : 'Review')}
+                      </button>
+                    </div>
                   </div>
 
+                  {reviewIssues.length > 0 && (
+                    <div className={`flex flex-wrap items-center gap-1.5 border-b px-3 py-2 ${
+                      review.status === 'needs_review'
+                        ? 'border-amber-100 bg-amber-50/70'
+                        : 'border-stone-100 bg-stone-50/70'
+                    }`}>
+                      <span className="mr-1 text-[8px] font-black uppercase tracking-wider text-stone-400">
+                        {ka ? 'შესამოწმებელი' : 'Check'}
+                      </span>
+                      {reviewIssues.slice(0, 3).map((issue) => (
+                        <span
+                          key={issue}
+                          className={`rounded-full px-2 py-0.5 text-[8px] font-bold ${
+                            review.blockers.includes(issue)
+                              ? 'bg-amber-100 text-amber-900'
+                              : 'bg-white text-stone-600 ring-1 ring-inset ring-stone-200'
+                          }`}
+                        >
+                          {reviewIssueLabel(issue, ka)}
+                        </span>
+                      ))}
+                      {reviewIssues.length > 3 && (
+                        <span className="text-[8px] font-bold text-stone-500">+{reviewIssues.length - 3}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {expanded && (
+                    <>
                   <div className="grid gap-3 p-3 md:grid-cols-12">
                     <label className="md:col-span-4">
                       <span className="block text-[8px] font-bold uppercase tracking-wider text-stone-400">{ka ? 'პროდუქტი' : 'Product name'}</span>
@@ -810,7 +1117,7 @@ export default function InvoiceInventoryImporter({
                     </div>
 
                     <div className={`md:col-span-12 rounded-lg border px-3 py-2 ${
-                      sameUnit(line.invoiceUnit, line.stockUnit)
+                      invoiceUnitsCompatible(line.invoiceUnit, line.stockUnit)
                         ? 'border-stone-100 bg-stone-50'
                         : confirmedConversions.has(line.id)
                           ? 'border-emerald-200 bg-emerald-50/60'
@@ -823,7 +1130,7 @@ export default function InvoiceInventoryImporter({
                           Stock: <strong>{line.stockQuantity} {line.stockUnit}</strong> @ {money(line.unitCost, invoiceCurrency)} / {line.stockUnit}
                           <span className="ml-2 text-stone-500">({Number(line.stockQuantity / line.invoiceQuantity).toFixed(6)} {line.stockUnit} per {line.invoiceUnit})</span>
                         </p>
-                        {!sameUnit(line.invoiceUnit, line.stockUnit) && (
+                        {!invoiceUnitsCompatible(line.invoiceUnit, line.stockUnit) && (
                           <label className="flex cursor-pointer items-center gap-1.5 text-[9px] font-bold text-amber-900">
                             <input
                               type="checkbox"
@@ -914,9 +1221,19 @@ export default function InvoiceInventoryImporter({
                       </div>
                     </div>
                   )}
+                    </>
+                  )}
                 </article>
               );
             })}
+            {filteredLines.length === 0 && (
+              <div className="rounded-xl border border-dashed border-stone-250 bg-stone-50 px-5 py-8 text-center">
+                <SlidersHorizontal className="mx-auto h-5 w-5 text-stone-350" />
+                <p className="mt-2 text-[10px] font-bold text-stone-600">
+                  {ka ? 'ამ ფილტრს ან ძიებას არცერთი ხაზი არ შეესაბამება.' : 'No invoice lines match this filter or search.'}
+                </p>
+              </div>
+            )}
             <datalist id="invoice-inventory-categories">
               {categories.map((category) => <option key={category} value={category} />)}
             </datalist>

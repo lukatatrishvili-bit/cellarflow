@@ -138,4 +138,89 @@ describe('AI invoice online enrichment', () => {
     expect(draft.lines[0].recommendedDosage).toBeUndefined();
     expect(draft.warnings.join(' ')).toContain('no usable result');
   });
+
+  it('prefers deterministic SKU matching over a conflicting model suggestion', async () => {
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        ...EXTRACTION,
+        lines: [{
+          ...EXTRACTION.lines[0],
+          sku: 'EC1118-500G',
+          invoice_unit: 'kg',
+          stock_unit: 'kg',
+          existing_inventory_id: 'model-choice',
+          match_confidence: 1,
+          match_reason: 'Model chose a different item',
+        }],
+      }),
+    });
+    const matchingInventory: InventoryItem[] = [
+      {
+        id: 'deterministic-choice',
+        name: 'Lalvin EC-1118',
+        category: 'yeasts',
+        stock: 1,
+        minThreshold: 0,
+        unit: 'კგ',
+        costPerUnit: 80,
+        supplierName: 'Oenology Georgia',
+        sku: 'EC1118 500G',
+      },
+      {
+        id: 'model-choice',
+        name: 'Other yeast',
+        category: 'yeasts',
+        stock: 1,
+        minThreshold: 0,
+        unit: 'kg',
+        costPerUnit: 70,
+        supplierName: 'Oenology Georgia',
+      },
+    ];
+
+    const draft = await analyzeInvoiceDraft({
+      ...draftInput,
+      organizationId: `org-${Math.random()}`,
+      request: { ...draftInput.request, enrichOnline: false },
+      inventory: matchingInventory,
+    });
+
+    expect(draft.lines[0].match).toMatchObject({
+      inventoryItemId: 'deterministic-choice',
+      reason: 'Exact SKU and unit match',
+    });
+    expect(draft.lines[0].warnings.join(' ')).not.toContain('confirm conversion');
+  });
+
+  it('rejects a low-confidence model-only inventory suggestion', async () => {
+    generate.mockResolvedValue({
+      text: JSON.stringify({
+        ...EXTRACTION,
+        lines: [{
+          ...EXTRACTION.lines[0],
+          product_name: 'Unmatched cellar supply',
+          invoice_description: 'Unmatched cellar supply',
+          existing_inventory_id: 'suggested-item',
+          match_confidence: 0.7,
+        }],
+      }),
+    });
+    const draft = await analyzeInvoiceDraft({
+      ...draftInput,
+      organizationId: `org-${Math.random()}`,
+      request: { ...draftInput.request, enrichOnline: false },
+      inventory: [{
+        id: 'suggested-item',
+        name: 'Different product',
+        category: 'yeasts',
+        stock: 1,
+        minThreshold: 0,
+        unit: 'kg',
+        costPerUnit: 70,
+        supplierName: 'Oenology Georgia',
+      }],
+    });
+
+    expect(draft.lines[0].match).toBeUndefined();
+  });
 });

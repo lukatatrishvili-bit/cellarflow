@@ -300,6 +300,8 @@ describe('Vazi permission-aware workspace', () => {
 
     expect(markup).toContain('You have read-only IPM access');
     expect(markup).toContain('Brand-Free Vine Phenoscheme &amp; IPM');
+    expect(markup).toContain('Selected Block');
+    expect(markup).not.toContain('from-[#1e2f23]');
     expect(markup).not.toContain('Draft Spray Treatment');
     expect(markup).not.toContain('Delete trap log');
   });

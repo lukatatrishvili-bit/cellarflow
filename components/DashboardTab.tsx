@@ -45,7 +45,6 @@ import {
 } from '../lib/onboarding';
 import { computeAlerts, type Alert, type AlertSeverity } from '../lib/alerts';
 import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
-import { localizedRoleLabel } from '../lib/roleLabels';
 import { canAccess, type PermissionAction, type PermissionModule } from '../server/permissions';
 import { canViewAppDestination } from '../lib/navigationPermissions';
 import {
@@ -60,6 +59,7 @@ import {
   SectionCard,
   StatusBadge,
 } from './ui/primitives';
+import DashboardLayout, { type DashboardWidgetSpec } from './DashboardLayout';
 
 interface DashboardTabProps {
   lang: Language;
@@ -695,7 +695,6 @@ export function DashboardTab({
     && currentUser.role !== 'Lab Technician'
     && (lots.length > 0 || vessels.length > 0);
   const showVineyardPulse = canViewVineyard && blocks.length > 0;
-  const pulseColumnCount = Number(showLabPulse) + Number(showCellarPulse) + Number(showVineyardPulse);
   const queueSubtitle = currentUser.role === 'Viticulturist'
     ? copy(
         'Field risk, weather pressure, and overdue work first.',
@@ -727,66 +726,6 @@ export function DashboardTab({
 
   return (
     <main className="mx-auto flex w-full max-w-[1600px] flex-1 animate-fade-in flex-col gap-5 p-4 text-stone-900 dark:text-stone-200 lg:p-6 xl:p-8">
-      <header className="rounded-3xl border border-[#e8dfd5] bg-white/92 p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900/92 lg:p-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            {/* stone-600, not stone-500: at 11px on the near-white header card
-                stone-500 measures 3.92:1 against WCAG AA's 4.5:1, which the
-                release gate's axe scan fails. */}
-            <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-stone-600 dark:text-stone-400">
-              <span className="inline-flex items-center gap-1.5">
-                <CalendarDays className="h-3.5 w-3.5 text-[#5b1320] dark:text-amber-300" />
-                {readableToday}
-              </span>
-              <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1.5">
-                <MapPin className="h-3.5 w-3.5" />
-                {estateLocation}
-              </span>
-            </div>
-            <h1 className="mt-2 text-2xl font-black tracking-tight text-stone-950 dark:text-amber-50 sm:text-3xl">
-              {copy('Today at', 'დღეს —')} {estateName}
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-stone-500 dark:text-stone-400">
-              {attentionCount
-                ? copy(
-                    'Start with the few items that can change today’s work.',
-                    'დაიწყეთ იმ საკითხებით, რომლებიც დღევანდელ სამუშაოს ცვლის.',
-                  )
-                : isFreshWorkspace
-                  ? roleJourney.total > 0
-                    ? copy(
-                        'Complete the next setup step to bring your live operation into view.',
-                        'ცოცხალი ოპერაციის სანახავად დაასრულეთ გამართვის შემდეგი ნაბიჯი.',
-                      )
-                    : copy(
-                        'No operational records are available for this workspace yet.',
-                        'ამ სამუშაო სივრცეში ოპერაციული ჩანაწერები ჯერ არ არის.',
-                      )
-                : copy(
-                    'No urgent signals. The recorded operation is steady.',
-                    'გადაუდებელი სიგნალები არ არის. აღრიცხული ოპერაცია სტაბილურია.',
-                  )}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs font-semibold text-stone-600 dark:border-stone-800 dark:bg-stone-950/40 dark:text-stone-300">
-              <ShieldCheck className="h-4 w-4 text-emerald-600" />
-              {localizedRoleLabel(currentUser.role, lang)}
-            </span>
-            <button
-              type="button"
-              onClick={onOpenOnboarding}
-              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 text-xs font-bold text-stone-700 transition hover:border-[#5b1320]/30 hover:text-[#5b1320] dark:border-stone-800 dark:bg-stone-900 dark:text-stone-200 dark:hover:text-amber-200"
-            >
-              <Settings2 className="h-4 w-4" />
-              {copy('Personalize', 'მორგება')}
-            </button>
-          </div>
-        </div>
-      </header>
-
       {roleJourney.total > 0 && !roleJourney.complete && !journeyDismissed && roleJourney.nextStep && (
         <section
           aria-label="Winery setup journey"
@@ -845,8 +784,42 @@ export function DashboardTab({
         </button>
       )}
 
-      {showDashboardMetrics && (
-        <section
+      <DashboardLayout
+        dashboardId={`main:${currentUser.username}`}
+        lang={lang}
+        toolbar={(
+          <div
+            aria-label={copy('Workspace context', 'სამუშაო სივრცის კონტექსტი')}
+            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] font-bold text-stone-600 dark:text-stone-400"
+          >
+            <strong className="max-w-full truncate text-sm font-black text-stone-900 dark:text-stone-100">
+              {estateName}
+            </strong>
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays className="h-3.5 w-3.5 text-[#5b1320] dark:text-amber-300" />
+              {readableToday}
+            </span>
+            <span className="inline-flex min-w-0 items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{estateLocation}</span>
+            </span>
+            <button
+              type="button"
+              onClick={onOpenOnboarding}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-2.5 text-[10px] font-bold text-stone-700 transition hover:border-[#5b1320]/30 hover:text-[#5b1320] dark:border-stone-800 dark:bg-stone-900 dark:text-stone-200 dark:hover:text-amber-200"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {copy('Personalize', 'მორგება')}
+            </button>
+          </div>
+        )}
+        items={[
+          ...(showDashboardMetrics ? [{
+            id: 'metrics',
+            label: copy('Today’s metrics', 'დღევანდელი მაჩვენებლები'),
+            defaultSpan: 12 as const,
+            content: (
+              <section
           aria-label={copy('Today metrics', 'დღევანდელი მაჩვენებლები')}
           className={`grid grid-cols-2 gap-3 ${
             primaryMetrics.length === 3
@@ -857,14 +830,16 @@ export function DashboardTab({
           }`}
         >
           {primaryMetrics.map((metric) => <MetricTile key={metric.id} metric={metric} />)}
-        </section>
-      )}
+              </section>
+            ),
+          }] : []),
 
-      <div className={`grid grid-cols-1 gap-5 ${
-        showPriorityQueue ? 'xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.55fr)]' : ''
-      }`}>
-        {showPriorityQueue && (
-          <SectionCard
+          ...(showPriorityQueue ? [{
+            id: 'priority-queue',
+            label: copy('Priority queue', 'პრიორიტეტების რიგი'),
+            defaultSpan: 8 as const,
+            content: (
+              <SectionCard
           title={copy('Today’s priority queue', 'დღევანდელი პრიორიტეტები')}
           subtitle={queueSubtitle}
           icon={ListChecks}
@@ -895,10 +870,16 @@ export function DashboardTab({
               </div>
             </div>
           )}
-          </SectionCard>
-        )}
+              </SectionCard>
+            ),
+          }] : []),
 
-        <SectionCard
+          {
+            id: 'quick-actions',
+            label: copy('Quick actions', 'სწრაფი მოქმედებები'),
+            defaultSpan: showPriorityQueue ? 4 : 12,
+            content: (
+              <SectionCard
           title={isFreshWorkspace
             ? copy('Start here', 'დაიწყეთ აქ')
             : copy('Quick actions', 'სწრაფი მოქმედებები')}
@@ -950,13 +931,16 @@ export function DashboardTab({
               </p>
             )}
           </div>
-        </SectionCard>
-      </div>
+              </SectionCard>
+            ),
+          },
 
-      {(showLabPulse || showCellarPulse || showVineyardPulse) && (
-        <section aria-label={copy('Operational pulse', 'ოპერაციული მდგომარეობა')} className={`grid grid-cols-1 gap-5 ${pulseColumnCount > 1 ? 'xl:grid-cols-2' : ''}`}>
-          {showLabPulse && (
-            <SectionCard
+          ...(showLabPulse ? [{
+            id: 'laboratory-pulse',
+            label: copy('Laboratory pulse', 'ლაბორატორიის მდგომარეობა'),
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
               title={copy('Laboratory pulse', 'ლაბორატორიის მდგომარეობა')}
               subtitle={latestLabAnalysis
                 ? copy(
@@ -1028,11 +1012,16 @@ export function DashboardTab({
                   </div>
                 </div>
               )}
-            </SectionCard>
-          )}
+              </SectionCard>
+            ),
+          }] : []),
 
-          {showCellarPulse && (
-            <SectionCard
+          ...(showCellarPulse ? [{
+            id: 'cellar-pulse',
+            label: copy('Cellar pulse', 'მარნის მდგომარეობა'),
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
               title={copy('Cellar pulse', 'მარნის მდგომარეობა')}
               subtitle={copy('Live production, capacity, and chemistry.', 'წარმოება, ტევადობა და ქიმია ერთ ხედში.')}
               icon={Wine}
@@ -1093,11 +1082,16 @@ export function DashboardTab({
                   />
                 </div>
               )}
-            </SectionCard>
-          )}
+              </SectionCard>
+            ),
+          }] : []),
 
-          {showVineyardPulse && (
-            <SectionCard
+          ...(showVineyardPulse ? [{
+            id: 'vineyard-pulse',
+            label: copy('Vineyard pulse', 'ვენახის მდგომარეობა'),
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
               title={copy('Vineyard pulse', 'ვენახის მდგომარეობა')}
               subtitle={copy('Current field context beyond the headline metrics.', 'მიმდინარე საველე კონტექსტი ძირითადი მაჩვენებლების მიღმა.')}
               icon={Sprout}
@@ -1186,19 +1180,16 @@ export function DashboardTab({
                   </div>
                 </div>
               )}
-            </SectionCard>
-          )}
-        </section>
-      )}
+              </SectionCard>
+            ),
+          }] : []),
 
-      {((canViewTasks && pendingTasks.length > 0) || (canViewAudit && latestAuditLogs.length > 0)) && (
-        <div className={`grid grid-cols-1 gap-5 ${
-          canViewTasks && pendingTasks.length > 0 && canViewAudit && latestAuditLogs.length > 0
-            ? 'xl:grid-cols-2'
-            : ''
-        }`}>
-          {canViewTasks && pendingTasks.length > 0 && (
-            <SectionCard
+          ...(canViewTasks && pendingTasks.length > 0 ? [{
+            id: 'my-tasks',
+            label: copy('My tasks', 'ჩემი დავალებები'),
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
               title={copy('My tasks', 'ჩემი დავალებები')}
               subtitle={canUpdateTasks
                 ? copy('A short, actionable work list.', 'მოკლე და ქმედითი სამუშაო სია.')
@@ -1241,11 +1232,16 @@ export function DashboardTab({
                   <span className="text-xs font-semibold">{copy('No open tasks.', 'ღია დავალებები არ არის.')}</span>
                 </div>
               )}
-            </SectionCard>
-          )}
+              </SectionCard>
+            ),
+          }] : []),
 
-          {canViewAudit && latestAuditLogs.length > 0 && (
-            <SectionCard
+          ...(canViewAudit && latestAuditLogs.length > 0 ? [{
+            id: 'recent-activity',
+            label: copy('Recent activity', 'ბოლო აქტივობა'),
+            defaultSpan: 6 as const,
+            content: (
+              <SectionCard
               title={copy('Recent activity', 'ბოლო აქტივობა')}
               subtitle={copy('Latest recorded changes across the estate.', 'მეურნეობაში ბოლოს ჩაწერილი ცვლილებები.')}
               icon={ShieldCheck}
@@ -1281,10 +1277,11 @@ export function DashboardTab({
                   <span className="text-xs font-semibold">{copy('Activity will appear after the first recorded change.', 'აქტივობა გამოჩნდება პირველი ცვლილების ჩაწერის შემდეგ.')}</span>
                 </div>
               )}
-            </SectionCard>
-          )}
-        </div>
-      )}
+              </SectionCard>
+            ),
+          }] : []),
+        ] satisfies DashboardWidgetSpec[]}
+      />
     </main>
   );
 }

@@ -146,6 +146,7 @@ export class IndexedDBQueue {
 export class SyncQueueManager {
   private static DIRTY_KEY = 'vinea_dirty_collections';
   private static DIRTY_REVISION_KEY = 'vinea_dirty_collection_revisions';
+  private static DIRTY_RECORD_KEY = 'vinea_dirty_collection_records';
   private static operationTail: Promise<void> = Promise.resolve();
   private static ORG_STATE_KEYS = {
     orgId: 'cellarflow_org_state_org_id',
@@ -659,18 +660,127 @@ export class SyncQueueManager {
     }
   }
 
-  static markDirty(collectionName: string): void {
+  /**
+   * Which records within a dirty collection actually changed.
+   *
+   * A collection present in the dirty set but ABSENT here means "send the whole
+   * collection": some callers mark a collection dirty without knowing which
+   * records moved (a conflict retry, for instance), and sending everything is
+   * the safe reading of "something in here changed".
+   *
+   * Shape: `{ [collection]: string[] }`. A collection is removed from this map
+   * — not set to an empty array — when it must be sent whole.
+   */
+  private static getDirtyRecordIds(): Record<string, string[]> {
+    if (!this.hasLocalStorage()) return {};
+    try {
+      const parsed = JSON.parse(localStorage.getItem(this.DIRTY_RECORD_KEY) || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      return Object.fromEntries(
+        Object.entries(parsed)
+          .filter(([, value]) => Array.isArray(value) && value.every(id => typeof id === 'string'))
+      ) as Record<string, string[]>;
+    } catch {
+      return {};
+    }
+  }
+
+  private static writeDirtyRecordIds(map: Record<string, string[]>): void {
+    if (!this.hasLocalStorage()) return;
+    if (Object.keys(map).length === 0) localStorage.removeItem(this.DIRTY_RECORD_KEY);
+    else localStorage.setItem(this.DIRTY_RECORD_KEY, JSON.stringify(map));
+  }
+
+  /**
+   * Mark a collection as needing to be pushed.
+   *
+   * `recordIds` narrows the push to the records that actually changed. Sync
+   * previously sent every record of a dirty collection — editing one
+   * fermentation log uploaded every fermentation log the winery had — even
+   * though the server merges per record and leaves anything absent from the
+   * payload untouched (`mergeCollections` in `server/sync.ts`).
+   *
+   * Omitting `recordIds` means the caller cannot say which records moved, and
+   * the whole collection is sent. Once a collection is pending that way it
+   * stays that way until it is sent: a caller that knew only "something
+   * changed" must not be narrowed by a later caller that knew more.
+   *
+   * An EMPTY array is different from omitting it, and the distinction is
+   * load-bearing. The collection effect in `useWineryState` re-runs after the
+   * local mirror has been updated, so a second pass over the same edit finds no
+   * per-record difference and legitimately has nothing to add. Treating that as
+   * "cannot say" would widen the payload straight back to the whole collection
+   * and undo the narrowing on almost every edit — which is exactly what it did
+   * before this distinction existed. It only falls back to the whole collection
+   * when there is nothing pending to send, where sending too much is the safe
+   * failure.
+   */
+  static markDirty(collectionName: string, recordIds?: readonly string[]): void {
     const dirty = this.getDirtyCollections();
+    const records = this.getDirtyRecordIds();
+    // Captured before this call joins the set: a collection already pending
+    // without a record list is pending as a whole-collection push.
+    const pendingWholeCollection = dirty.has(collectionName) && !(collectionName in records);
+    const pendingIds = records[collectionName];
+
     const revisions = this.getDirtyRevisions();
     dirty.add(collectionName);
     revisions[collectionName] = (revisions[collectionName] || 0) + 1;
     localStorage.setItem(this.DIRTY_KEY, JSON.stringify(Array.from(dirty)));
     localStorage.setItem(this.DIRTY_REVISION_KEY, JSON.stringify(revisions));
+
+    const named = (recordIds || []).filter(id => typeof id === 'string' && !!id);
+    const cannotName = !recordIds || (named.length === 0 && !pendingIds);
+
+    if (cannotName) {
+      delete records[collectionName];
+      this.writeDirtyRecordIds(records);
+      return;
+    }
+    // Never narrow a pending whole-collection push: the caller that asked for
+    // one knew less than this one, not more.
+    if (pendingWholeCollection) return;
+
+    const merged = new Set(pendingIds || []);
+    for (const id of named) merged.add(id);
+    records[collectionName] = [...merged];
+    this.writeDirtyRecordIds(records);
+  }
+
+  /**
+   * Stage which records changed, without marking the collection dirty.
+   *
+   * `handleCollectionUpdate` writes the local mirror and returns before
+   * marking anything dirty; the effect then re-runs, finds storage already
+   * matching, and it is that second pass which calls `markDirty`. So the pass
+   * that knows which records moved is never the pass that marks the collection.
+   * This carries the ids from the first to the second.
+   */
+  static noteChangedRecords(collectionName: string, recordIds: readonly string[]): void {
+    if (!this.hasLocalStorage()) return;
+    const records = this.getDirtyRecordIds();
+    // A pending whole-collection push stays whole.
+    if (this.getDirtyCollections().has(collectionName) && !(collectionName in records)) return;
+
+    const merged = new Set(records[collectionName] || []);
+    for (const id of recordIds) if (typeof id === 'string' && id) merged.add(id);
+    if (merged.size === 0) return;
+    records[collectionName] = [...merged];
+    this.writeDirtyRecordIds(records);
+  }
+
+  /**
+   * The records to send for a dirty collection, or `null` to send it whole.
+   */
+  static dirtyRecordIdsFor(collectionName: string): Set<string> | null {
+    const records = this.getDirtyRecordIds();
+    return collectionName in records ? new Set(records[collectionName]) : null;
   }
 
   static clearDirty(): void {
     localStorage.removeItem(this.DIRTY_KEY);
     localStorage.removeItem(this.DIRTY_REVISION_KEY);
+    localStorage.removeItem(this.DIRTY_RECORD_KEY);
   }
 
   /**
@@ -680,11 +790,16 @@ export class SyncQueueManager {
   static clearDirtyKeys(keys: Iterable<string>, sentRevisions?: Record<string, number>): void {
     const dirty = this.getDirtyCollections();
     const currentRevisions = this.getDirtyRevisions();
+    const records = this.getDirtyRecordIds();
     for (const key of keys) {
+      // A collection edited again while the sync was in flight keeps both its
+      // flag and its pending record ids, or that edit would never be pushed.
       if (sentRevisions && (currentRevisions[key] || 0) !== (sentRevisions[key] || 0)) continue;
       dirty.delete(key);
       delete currentRevisions[key];
+      delete records[key];
     }
+    this.writeDirtyRecordIds(records);
     if (dirty.size === 0) {
       localStorage.removeItem(this.DIRTY_KEY);
       localStorage.removeItem(this.DIRTY_REVISION_KEY);
@@ -919,7 +1034,15 @@ export class SyncQueueManager {
         || currentState[clientKey] === undefined
       ) return;
 
-      payload[this.serverCollectionKey(clientKey)] = currentState[clientKey];
+      // Send only the records that changed. The server merges per record and
+      // leaves anything absent from the payload untouched — deletion travels
+      // separately as an explicit tombstone — so a narrowed payload is the same
+      // transaction, minus the records that were never edited.
+      const value = currentState[clientKey];
+      const changedIds = SyncQueueManager.dirtyRecordIdsFor(clientKey);
+      payload[this.serverCollectionKey(clientKey)] = Array.isArray(value) && changedIds
+        ? value.filter((record: any) => record?.id && changedIds.has(record.id))
+        : value;
       sentDirtyCollections.add(clientKey);
       sentDirtyRevisions[clientKey] = dirtyRevisions[clientKey] || 0;
     });
