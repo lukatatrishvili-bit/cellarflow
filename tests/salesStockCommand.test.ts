@@ -71,6 +71,7 @@ const reservePayload: ReserveSalesStockPayload = {
   requestedDispatchDate: '2026-07-22',
   reservedUntil: '2026-07-25',
   customerName: 'Tbilisi Wine Bar',
+  marketChannel: 'export',
   lotId: 'LOT-A',
   locationId: 'STORE-A',
   bottles: 40,
@@ -99,6 +100,7 @@ describe('sales.stock domain command', () => {
       cogs: 160,
       grossProfit: 640,
       marginPct: 80,
+      marketChannel: 'export',
       currency: 'GEL',
     });
     expect(applied.state.stockMovements).toHaveLength(1);
@@ -111,6 +113,7 @@ describe('sales.stock domain command', () => {
       dispatchId: 'sale-test-0001',
       date: '2026-07-20',
       customerName: 'Kakheti Distribution',
+      marketChannel: 'domestic',
       lotId: 'LOT-A',
       locationId: 'STORE-A',
       bottles: 30,
@@ -125,6 +128,7 @@ describe('sales.stock domain command', () => {
       stockMovementId: 'mov-dispatch-sale-test-0001',
       revenue: 600,
       cogs: 120,
+      marketChannel: 'domestic',
     });
     expect(applied.state.stockMovements[0]).toMatchObject({
       id: 'mov-dispatch-sale-test-0001',

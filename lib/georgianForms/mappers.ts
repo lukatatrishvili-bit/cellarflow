@@ -9,11 +9,13 @@
  */
 
 import type { ExportContext, DocRow, FormTemplate } from './types';
-import type { VineyardBlock, WineLot, CellarOperation } from '../wineryState';
+import type {
+  VineyardBlock, WineLot, CellarOperation, CellarTransferRecord, TransferEvent, LabAnalysis,
+} from '../wineryState';
 import { CELLAR_OPERATIONS } from '../wineryOperations';
 import { applyRunningBalance, litresToDal, round2 } from './balance';
 import { isActiveBottlingRun, isBottlingRunReversal } from '../bottlingIntegrity';
-import { harvestIntakeLedgerSign, isHarvestIntakeReversal } from '../harvestIntakeIntegrity';
+import { harvestIntakeLedgerSign, isActiveHarvestIntake, isHarvestIntakeReversal } from '../harvestIntakeIntegrity';
 
 type Mapper = (ctx: ExportContext) => DocRow[];
 
@@ -33,19 +35,12 @@ function parseSpacing(spacing: string | undefined): [string, string] {
   return [spacing, ''];
 }
 
-/** locationName is a free string ("Telavi, Kakheti, Georgia"); split best-effort. */
 function splitLocation(block: VineyardBlock): { municipality: string; community: string; village: string } {
-  if (block.municipality || block.community || block.village) {
-    return {
-      municipality: block.municipality || '',
-      community: block.community || '',
-      village: block.village || '',
-    };
-  }
-  const parts = (block.locationName || '').split(',').map(s => s.trim()).filter(Boolean);
-  // Heuristic: [village, municipality/region, country] — keep it transparent.
-  if (parts.length >= 2) return { municipality: parts[1] || '', community: '', village: parts[0] || '' };
-  return { municipality: parts[0] || '', community: '', village: '' };
+  return {
+    municipality: block.municipality || '',
+    community: block.community || '',
+    village: block.village || '',
+  };
 }
 
 function latestSugarForBlock(ctx: ExportContext, blockId: string): number | '' {
@@ -59,15 +54,49 @@ function selectedBlocks(ctx: ExportContext): VineyardBlock[] {
   return ctx.blockId ? ctx.blocks.filter(b => b.id === ctx.blockId) : ctx.blocks;
 }
 
+function sugarCategoryLabel(category: WineLot['sugarCategory'], lang: ExportContext['lang']): string {
+  if (!category) return '';
+  const labels = lang === 'ka'
+    ? { dry: 'მშრალი', semi_dry: 'ნახევრად მშრალი', semi_sweet: 'ნახევრად ტკბილი', sweet: 'ტკბილი' }
+    : { dry: 'Dry', semi_dry: 'Semi-dry', semi_sweet: 'Semi-sweet', sweet: 'Sweet' };
+  return labels[category];
+}
+
+type OfficialTransfer = CellarTransferRecord | TransferEvent;
+
+function isCurrentTransfer(transfer: OfficialTransfer): transfer is CellarTransferRecord {
+  return 'sourceId' in transfer;
+}
+
+function transferSourceId(transfer: OfficialTransfer): string {
+  return isCurrentTransfer(transfer) ? transfer.sourceId : transfer.sourceTankId;
+}
+
+function transferDestinationId(transfer: OfficialTransfer): string {
+  return isCurrentTransfer(transfer) ? transfer.destId : transfer.destTankId;
+}
+
+function transferNote(transfer: OfficialTransfer): string {
+  return isCurrentTransfer(transfer)
+    ? [transfer.category, transfer.details].filter(Boolean).join(' — ')
+    : transfer.reason || '';
+}
+
+function latestLabForLot(ctx: ExportContext, lotId: string, onOrBefore?: string): LabAnalysis | undefined {
+  return ctx.labLogs
+    .filter(log => log.lotId === lotId && (!onOrBefore || (log.date || '').slice(0, 10) <= onOrBefore.slice(0, 10)))
+    .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+}
+
 // ── Annex 1 / 16 — vineyard ──────────────────────────────────────────────────
 const mapVineyard: Mapper = (ctx) => selectedBlocks(ctx).map(b => {
   const loc = splitLocation(b);
   const [rowD, vineD] = parseSpacing(b.spacing);
   return {
-    parcelCadastral: b.cadastralCode || b.id || '',
+    parcelCadastral: b.cadastralCode || '',
     municipality: loc.municipality,
     community: loc.community,
-    village: loc.village || b.vineyardName || '',
+    village: loc.village,
     parcelName: b.parcelName || b.name || '',
     variety: b.grapeVariety || '',
     areaSqm: round2(((b.parcelArea ?? b.area) || 0) * 10000), // ha -> sq.m
@@ -82,25 +111,50 @@ const mapVineyard: Mapper = (ctx) => selectedBlocks(ctx).map(b => {
 
 // ── Annex 2 — harvest journal ────────────────────────────────────────────────
 const mapHarvest: Mapper = (ctx) => {
-  const rows = ctx.harvests
+  const harvestRows = ctx.harvests
     .filter(h => (!ctx.blockId || h.blockId === ctx.blockId))
-    .filter(h => inRange(h.actualHarvestDate || h.estimatedHarvestDate, ctx))
-    .sort((a, b) => ((a.actualHarvestDate || '') < (b.actualHarvestDate || '') ? -1 : 1))
+    .filter(h => Boolean(h.actualHarvestDate) && Number(h.actualHarvestedKg) > 0)
+    .filter(h => inRange(h.actualHarvestDate, ctx))
     .map((h): DocRow => {
       const block = ctx.blocks.find(b => b.id === h.blockId);
-      const area = block?.area || 0;
-      const tons = h.actualHarvestedKg != null ? round2(h.actualHarvestedKg / 1000) : round2(h.estimatedTons || 0);
+      const area = h.harvestedAreaHa || 0;
+      const tons = round2((h.actualHarvestedKg || 0) / 1000);
       return {
-        date: (h.actualHarvestDate || h.estimatedHarvestDate || '').slice(0, 10),
+        date: (h.actualHarvestDate || '').slice(0, 10),
         parcelName: block?.name || h.blockId,
         variety: h.variety || block?.grapeVariety || '',
-        areaHa: round2(area),
+        areaHa: area > 0 ? round2(area) : '',
         tons,
         yieldPerHa: area > 0 ? round2(tons / area) : '',
         note: h.notes || '',
       };
     });
-  return rows;
+
+  const linkedHarvestIds = new Set(ctx.harvests
+    .filter(h => Boolean(h.actualHarvestDate) && Number(h.actualHarvestedKg) > 0)
+    .map(h => h.id));
+  const intakeRows = (ctx.grapeIntakes || [])
+    .filter(isActiveHarvestIntake)
+    .filter(g => g.source === 'own' && (!g.harvestRecordId || !linkedHarvestIds.has(g.harvestRecordId)))
+    .filter(g => !ctx.blockId || g.blockId === ctx.blockId)
+    .filter(g => inRange(g.date, ctx))
+    .map((g): DocRow => {
+      const block = ctx.blocks.find(b => b.id === g.blockId);
+      const area = g.harvestedAreaHa || 0;
+      const tons = round2((g.netWeightKg || 0) / 1000);
+      return {
+        date: (g.date || '').slice(0, 10),
+        parcelName: g.blockName || block?.name || g.blockId || '',
+        variety: g.variety || block?.grapeVariety || '',
+        areaHa: area > 0 ? round2(area) : '',
+        tons,
+        yieldPerHa: area > 0 ? round2(tons / area) : '',
+        note: g.notes || '',
+      };
+    });
+
+  return [...harvestRows, ...intakeRows]
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 };
 
 // ── Annex 3 — grape reception ────────────────────────────────────────────────
@@ -207,16 +261,24 @@ const mapWineMovement: Mapper = (ctx) => {
   const lotIds = new Set(lots.map(l => l.id));
   const lotTanks = new Set(ctx.vessels.filter(v => v.assignedLotId && lotIds.has(v.assignedLotId)).map(v => v.id));
   for (const tr of ctx.transfers.filter(t => inRange(t.date, ctx))) {
-    const isOut = lotTanks.has(tr.sourceTankId);
-    const isIn = lotTanks.has(tr.destTankId);
+    const sourceId = transferSourceId(tr);
+    const destId = transferDestinationId(tr);
+    const isOut = isCurrentTransfer(tr) && tr.sourceLotId
+      ? lotIds.has(tr.sourceLotId)
+      : lotTanks.has(sourceId);
+    const isIn = isCurrentTransfer(tr) && (tr.resultLotId || tr.destinationLotId)
+      ? Boolean((tr.resultLotId && lotIds.has(tr.resultLotId)) || (tr.destinationLotId && lotIds.has(tr.destinationLotId)))
+      : lotTanks.has(destId);
     if (!isOut && !isIn) continue;
+    const outgoingL = isCurrentTransfer(tr) ? (tr.sourceContributionL ?? tr.volume) : tr.volume;
+    const incomingL = isCurrentTransfer(tr) ? (tr.arrivalVolumeL ?? Math.max(0, tr.volume - tr.loss)) : Math.max(0, tr.volume - tr.loss);
     rows.push({
       date: tr.date.slice(0, 10),
-      fromTo: `${tr.sourceTankId} → ${tr.destTankId}`,
-      incoming: isIn ? litresToDal(tr.volume) : 0,
-      outgoing: isOut ? litresToDal(tr.volume) : 0,
+      fromTo: `${sourceId} → ${destId}`,
+      incoming: isIn ? litresToDal(incomingL) : 0,
+      outgoing: isOut ? litresToDal(outgoingL) : 0,
       balance: 0,
-      note: tr.reason || '',
+      note: transferNote(tr),
     });
   }
 
@@ -250,10 +312,45 @@ const mapWineAging: Mapper = (ctx) => {
   });
 };
 
-// ── Annex 6 — wine blending act (best-effort from lot history) ───────────────
+// ── Annex 6 — wine blending act ──────────────────────────────────────────────
 const mapWineBlending: Mapper = (ctx) => {
   const lot = ctx.lotId ? ctx.lots.find(l => l.id === ctx.lotId) : undefined;
   if (!lot) return []; // blending requires a target lot; warn + blank otherwise
+  const blendTransfers = ctx.transfers
+    .filter(isCurrentTransfer)
+    .filter(tr => tr.recordKind !== 'reversal' && !tr.reversedByCommandId)
+    .filter(tr => tr.resultLotId === lot.id && Number(tr.destinationContributionL) > 0)
+    .filter(tr => inRange(tr.date, ctx));
+
+  if (blendTransfers.length > 0) {
+    const rows: DocRow[] = [];
+    for (const tr of blendTransfers) {
+      const components = [
+        { lotId: tr.destinationLotId, litres: tr.destinationContributionL || 0 },
+        { lotId: tr.sourceLotId, litres: tr.sourceContributionL ?? tr.volume },
+      ].filter((component): component is { lotId: string; litres: number } => Boolean(component.lotId) && component.litres > 0);
+      for (const component of components) {
+        const componentLot = ctx.lots.find(item => item.id === component.lotId);
+        const lab = latestLabForLot(ctx, component.lotId, tr.date);
+        const qty = litresToDal(component.litres);
+        const alcohol = lab && Number.isFinite(lab.alcoholPct) ? round2(lab.alcoholPct) : '';
+        const sugarPct = lab && Number.isFinite(lab.residualSugar) ? round2(lab.residualSugar / 10) : '';
+        rows.push({
+          no: rows.length + 1,
+          material: componentLot ? `${componentLot.name} (${componentLot.id})` : component.lotId,
+          qty,
+          analysisNo: lab?.id || '',
+          alc: alcohol,
+          sugar: sugarPct,
+          spirit: typeof alcohol === 'number' ? round2(qty * alcohol) : '',
+          sugarTotal: typeof sugarPct === 'number' ? round2(qty * sugarPct) : '',
+          note: `${tr.date.slice(0, 10)} · ${tr.sourceId} → ${tr.destId}`,
+        });
+      }
+    }
+    return rows;
+  }
+
   const blendEvents = (lot.history || []).filter(h => /blend|კუპაჟ|coupage/i.test(h.type + h.description));
   return blendEvents.map((h, i): DocRow => ({
     no: i + 1,
@@ -275,6 +372,19 @@ function bottlingRunsInRange(ctx: ExportContext, auditLedger = false) {
     .filter(r => (auditLedger || isActiveBottlingRun(r))
       && (!ctx.lotId || r.lotId === ctx.lotId) && inRange(r.date, ctx))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+function averagePackagedUnitLitres(ctx: ExportContext, lotId: string): number {
+  let litres = 0;
+  let units = 0;
+  for (const run of (ctx.bottlingRuns || [])) {
+    if (!isActiveBottlingRun(run) || run.lotId !== lotId) continue;
+    const runUnits = (run.totalBottles || 0) + (run.totalCeramic || 0);
+    if (runUnits <= 0 || !(run.volumeBottledL > 0)) continue;
+    litres += run.volumeBottledL;
+    units += runUnits;
+  }
+  return units > 0 ? litres / units : 0.75;
 }
 
 // ── Annex 7 — bottling act ───────────────────────────────────────────────────
@@ -397,10 +507,9 @@ function opLabel(op: CellarOperation, lang: ExportContext['lang']): string {
 }
 
 // ── Annex 13 — auxiliary materials movement journal ──────────────────────────
-// Real ledger reconstructed from cellar-operation usage: an opening-balance row
-// (current stock + in-range usage, assuming no in-range purchases) followed by
-// one outgoing row per additive use, with a running balance that closes at the
-// current stock. Materials with no recorded usage fall back to a stock snapshot.
+// Receipt/reversal movements come from Procurement; consumption/restoration
+// movements come from Cellar Operations. The opening row is reconstructed so
+// the ledger closes at the Inventory module's authoritative current stock.
 const mapMaterials: Mapper = (ctx) => {
   const items = ctx.inventory.filter(i =>
     /addit|yeast|nutri|bentonit|gelat|ferment|საფუარ|ბენტონ|ჟელატ|ფერმენ/i.test(i.category + i.name)
@@ -408,6 +517,9 @@ const mapMaterials: Mapper = (ctx) => {
 
   const usageAll = (ctx.cellarOps || []).filter(o =>
     o.materialId && typeof o.dose === 'number' && o.dose > 0 && inRange(o.date, ctx));
+  const inventoryMovements = (ctx.inventoryMovements || [])
+    .filter(m => inRange(m.occurredAt, ctx));
+  const receiptById = new Map((ctx.invoiceReceipts || []).map(receipt => [receipt.id, receipt]));
 
   const ka = ctx.lang === 'ka';
   const rows: DocRow[] = [];
@@ -416,8 +528,11 @@ const mapMaterials: Mapper = (ctx) => {
     const usage = usageAll
       .filter(o => o.materialId === i.id)
       .sort((a, b) => ((a.date || '') < (b.date || '') ? -1 : 1));
+    const procurement = inventoryMovements
+      .filter(movement => movement.inventoryItemId === i.id)
+      .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
 
-    if (usage.length === 0) {
+    if (usage.length === 0 && procurement.length === 0) {
       // No movements in range: present current stock as a standing balance.
       rows.push({
         date: ctx.dateRange.to,
@@ -430,13 +545,11 @@ const mapMaterials: Mapper = (ctx) => {
       continue;
     }
 
-    const totalOut = usage.reduce((acc, o) => (
-      acc + (o.recordKind === 'reversal' ? 0 : (o.dose || 0))
-    ), 0);
-    const totalIn = usage.reduce((acc, o) => (
-      acc + (o.recordKind === 'reversal' ? (o.dose || 0) : 0)
-    ), 0);
-    const opening = round2(i.stock + totalOut - totalIn); // assumes no purchases inside the range
+    const usageOut = usage.reduce((acc, o) => acc + (o.recordKind === 'reversal' ? 0 : (o.dose || 0)), 0);
+    const usageIn = usage.reduce((acc, o) => acc + (o.recordKind === 'reversal' ? (o.dose || 0) : 0), 0);
+    const procurementIn = procurement.reduce((acc, movement) => acc + (movement.direction === 'in' ? movement.quantity : 0), 0);
+    const procurementOut = procurement.reduce((acc, movement) => acc + (movement.direction === 'out' ? movement.quantity : 0), 0);
+    const opening = round2(i.stock - procurementIn + procurementOut + usageOut - usageIn);
     const block: DocRow[] = [{
       date: ctx.dateRange.from,
       docNo: '',
@@ -445,6 +558,20 @@ const mapMaterials: Mapper = (ctx) => {
       outgoing: 0,
       balance: 0,
     }];
+    for (const movement of procurement) {
+      const receipt = receiptById.get(movement.invoiceReceiptId);
+      const incoming = movement.direction === 'in';
+      block.push({
+        date: movement.occurredAt.slice(0, 10),
+        docNo: receipt?.invoice.invoiceNumber || movement.invoiceReceiptId,
+        fromTo: incoming
+          ? `${receipt?.invoice.supplierName || i.supplierName || (ka ? 'მომწოდებელი' : 'supplier')} — ${i.name}`
+          : `${i.name} — ${ka ? 'მიღების შესწორება' : 'receipt correction'}`,
+        incoming: incoming ? round2(movement.quantity) : 0,
+        outgoing: incoming ? 0 : round2(movement.quantity),
+        balance: 0,
+      });
+    }
     for (const o of usage) {
       const correction = o.recordKind === 'reversal';
       block.push({
@@ -456,6 +583,7 @@ const mapMaterials: Mapper = (ctx) => {
         balance: 0,
       });
     }
+    block.splice(1, block.length - 1, ...block.slice(1).sort((a, b) => String(a.date).localeCompare(String(b.date))));
     applyRunningBalance(block, { incoming: 'incoming', outgoing: 'outgoing', balance: 'balance' });
     rows.push(...block);
   }
@@ -466,31 +594,51 @@ const mapMaterials: Mapper = (ctx) => {
 // ── Annex 17 — grape processing summary (by variety) ─────────────────────────
 const mapProcessingSummary: Mapper = (ctx) => {
   const byVariety = new Map<string, { tons: number; sugars: number[]; wineDal: number }>();
-  for (const h of ctx.harvests.filter(h => inRange(h.actualHarvestDate || h.estimatedHarvestDate, ctx))) {
-    const v = h.variety || 'უცნობი';
-    const e = byVariety.get(v) || { tons: 0, sugars: [], wineDal: 0 };
-    e.tons += h.actualHarvestedKg != null ? h.actualHarvestedKg / 1000 : (h.estimatedTons || 0);
-    const s = latestSugarForBlock(ctx, h.blockId);
-    if (typeof s === 'number') e.sugars.push(s);
-    byVariety.set(v, e);
+  const processingLots = ctx.lots.filter(item => !item.voidedAt && (
+    (ctx.accountingYear && String(item.vintage) === ctx.accountingYear)
+    || inRange(item.createdAt, ctx)
+  ));
+  const received = (ctx.grapeIntakes || [])
+    .filter(isActiveHarvestIntake)
+    .filter(g => inRange(g.date, ctx));
+  if (received.length > 0) {
+    for (const g of received) {
+      const v = g.variety || 'უცნობი';
+      const e = byVariety.get(v) || { tons: 0, sugars: [], wineDal: 0 };
+      e.tons += (g.netWeightKg || 0) / 1000;
+      if (Number.isFinite(g.brix) && g.brix > 0) e.sugars.push(g.brix);
+      byVariety.set(v, e);
+    }
+  } else {
+    for (const h of ctx.harvests.filter(h => Boolean(h.actualHarvestDate) && Number(h.actualHarvestedKg) > 0 && inRange(h.actualHarvestDate, ctx))) {
+      const v = h.variety || 'უცნობი';
+      const e = byVariety.get(v) || { tons: 0, sugars: [], wineDal: 0 };
+      e.tons += (h.actualHarvestedKg || 0) / 1000;
+      const s = latestSugarForBlock(ctx, h.blockId);
+      if (typeof s === 'number') e.sugars.push(s);
+      byVariety.set(v, e);
+    }
   }
-  for (const lot of ctx.lots.filter(item => !item.voidedAt)) {
+  for (const lot of processingLots) {
     const v = lot.variety || 'უცნობი';
     const e = byVariety.get(v) || { tons: 0, sugars: [], wineDal: 0 };
     e.wineDal += litresToDal(lot.initialVolume || 0);
     byVariety.set(v, e);
   }
   return [...byVariety.entries()].map(([variety, e]): DocRow => {
-    const lots = ctx.lots.filter(l => (l.variety || '') === variety);
+    const lots = processingLots.filter(l => (l.variety || '') === variety);
     const pdoWine = lots.filter(l => l.classification === 'PDO').reduce((sum, l) => sum + litresToDal(l.initialVolume || 0), 0);
     const pgiWine = lots.filter(l => l.classification === 'PGI').reduce((sum, l) => sum + litresToDal(l.initialVolume || 0), 0);
     const otherWine = lots.filter(l => l.classification !== 'PDO' && l.classification !== 'PGI').reduce((sum, l) => sum + litresToDal(l.initialVolume || 0), 0);
-    const categories = [...new Set(lots.map(l => l.classification).filter(Boolean))];
+    const categoriesComplete = lots.length > 0 && lots.every(lot => Boolean(lot.sugarCategory));
+    const sugarCategories = categoriesComplete
+      ? [...new Set(lots.map(lot => sugarCategoryLabel(lot.sugarCategory, ctx.lang)).filter(Boolean))]
+      : [];
     return {
       variety,
       grapeTons: round2(e.tons),
       avgSugar: e.sugars.length ? round2(e.sugars.reduce((a, b) => a + b, 0) / e.sugars.length) : '',
-      wineCategory: categories.join(', '),
+      wineCategory: sugarCategories.join(', '),
       wineTotal: round2(e.wineDal),
       pdoWine: pdoWine ? round2(pdoWine) : '',
       pgiWine: pgiWine ? round2(pgiWine) : '',
@@ -502,20 +650,45 @@ const mapProcessingSummary: Mapper = (ctx) => {
 
 // ── Annex 18 — wine turnover notification (per lot) ──────────────────────────
 const mapWineTurnover: Mapper = (ctx) => {
-  return ctx.lots.map((lot): DocRow => {
+  return ctx.lots
+    .filter(lot => (lot.createdAt || '').slice(0, 10) <= ctx.dateRange.to
+      || ctx.salesDispatches.some(dispatch => dispatch.lotId === lot.id && inRange(dispatch.date, ctx)))
+    .map((lot): DocRow => {
     const produced = litresToDal(lot.initialVolume || 0);
-    const closing = litresToDal(lot.currentVolume || 0);
+    const unitLitres = averagePackagedUnitLitres(ctx, lot.id);
+    const dispatchDal = (dispatches: ExportContext['salesDispatches']): number => round2(dispatches.reduce((sum, dispatch) => {
+      const sign = dispatch.recordKind === 'reversal' ? -1 : 1;
+      return sum + sign * litresToDal((dispatch.bottles || 0) * unitLitres);
+    }, 0));
+    const allLotDispatches = ctx.salesDispatches.filter(dispatch => dispatch.lotId === lot.id);
+    const priorDispatches = allLotDispatches.filter(dispatch => (dispatch.date || '').slice(0, 10) < ctx.dateRange.from);
+    const periodDispatches = allLotDispatches.filter(dispatch => inRange(dispatch.date, ctx));
+    const outExport = dispatchDal(periodDispatches.filter(dispatch => dispatch.marketChannel === 'export'));
+    const outDomestic = dispatchDal(periodDispatches.filter(dispatch => dispatch.marketChannel === 'domestic'));
+    const blendOut = round2(ctx.transfers
+      .filter(isCurrentTransfer)
+      .filter(transfer => transfer.recordKind !== 'reversal' && !transfer.reversedByCommandId)
+      .filter(transfer => transfer.sourceLotId === lot.id && transfer.resultLotId !== lot.id && inRange(transfer.date, ctx))
+      .reduce((sum, transfer) => sum + litresToDal(transfer.sourceContributionL ?? transfer.volume), 0));
+    const createdInRange = inRange(lot.createdAt, ctx);
+    const openBalance = (lot.createdAt || '').slice(0, 10) < ctx.dateRange.from
+      ? Math.max(0, round2(produced - dispatchDal(priorDispatches)))
+      : 0;
+    const inOwn = createdInRange ? produced : 0;
+    const availableBeforeCategoryChange = Math.max(0, round2(openBalance + inOwn - outExport - outDomestic - blendOut));
+    const outCategory = lot.voidedAt && inRange(lot.voidedAt, ctx) ? availableBeforeCategoryChange : 0;
+    const closing = Math.max(0, round2(availableBeforeCategoryChange - outCategory));
     return {
       wineName: lot.name,
       typeColor: lot.wineClass,
       vintage: lot.vintage,
-      openBalance: 0, // TODO: period opening balance not snapshotted
-      inOwn: produced,
+      openBalance,
+      inOwn,
       inBought: 0, // TODO: purchases not tracked
-      outExport: 0, // TODO: sales channels not tracked
-      outDomestic: 0,
-      outBlend: 0,
-      outCategory: lot.voidedAt ? produced : 0,
+      outExport,
+      outDomestic,
+      outBlend: blendOut,
+      outCategory,
       outDistill: 0,
       closeBalance: closing,
     };

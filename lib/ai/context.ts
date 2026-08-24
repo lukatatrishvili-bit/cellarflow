@@ -2,7 +2,12 @@ import { molecularSO2 } from '../alerts';
 import { isPhysicalFermentationReading } from '../fermentationIntegrity';
 import { fermentationBaselineFor, stockCoverDays, type WineryBaselines } from './baselines';
 import { forecastFermentation } from './predictions';
-import { daysBetween, isLiveRecord, type WineryIntelligenceSnapshot } from './snapshot';
+import {
+  daysBetween,
+  isLiveRecord,
+  type AiWithheldArea,
+  type WineryIntelligenceSnapshot,
+} from './snapshot';
 import type { AiAgentKey, AiEntityType, AiWineryTargets } from './types';
 
 /**
@@ -189,6 +194,24 @@ export function collectContextEvidence(value: unknown): AiContextEvidenceRef[] {
   return [...evidence.values()];
 }
 
+/**
+ * Explains an empty collection truthfully.
+ *
+ * A role-filtered snapshot empties whole areas, so "no laboratory analysis has
+ * ever been recorded" would be asserted over analyses that exist and that the
+ * reader simply may not see. Say which one it is: the model is instructed to
+ * treat `unavailable` as absent data, and it obeys.
+ */
+function explainAbsence(
+  snapshot: WineryIntelligenceSnapshot,
+  area: AiWithheldArea,
+  absent: string,
+  withheldSubject: string,
+): string {
+  if (!snapshot.withheld?.includes(area)) return absent;
+  return `${withheldSubject} are outside this user's role and were removed from this context — they may well exist, so never state that none were recorded`;
+}
+
 function round(value: number | undefined | null, digits = 2): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   const factor = 10 ** digits;
@@ -257,7 +280,12 @@ function buildLotContext(
       soilTemperatureC: round(vessel.soilTemperature, 1),
     };
   } else {
-    unavailable.push('no vessel is currently assigned to this lot');
+    unavailable.push(explainAbsence(
+      snapshot,
+      'vessels',
+      'no vessel is currently assigned to this lot',
+      'vessel records',
+    ));
   }
 
   // --- Fermentation ---------------------------------------------------------
@@ -265,7 +293,12 @@ function buildLotContext(
     .filter((log) => log.lotId === lot.id && isPhysicalFermentationReading(log))
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   if (fermLogs.length === 0) {
-    unavailable.push('no fermentation readings have been recorded for this lot');
+    unavailable.push(explainAbsence(
+      snapshot,
+      'fermentation',
+      'no fermentation readings have been recorded for this lot',
+      'fermentation readings',
+    ));
   } else {
     if (fermLogs.length > MAX_FERM_READINGS) {
       omitted.push(`${fermLogs.length - MAX_FERM_READINGS} older fermentation readings`);
@@ -303,7 +336,12 @@ function buildLotContext(
     .filter((lab) => lab.lotId === lot.id)
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   if (labs.length === 0) {
-    unavailable.push('no laboratory analysis has ever been recorded for this lot');
+    unavailable.push(explainAbsence(
+      snapshot,
+      'laboratory',
+      'no laboratory analysis has ever been recorded for this lot',
+      'laboratory analyses',
+    ));
   } else {
     if (labs.length > MAX_LAB_ANALYSES) {
       omitted.push(`${labs.length - MAX_LAB_ANALYSES} older laboratory analyses`);
@@ -529,7 +567,14 @@ function buildInventoryContext(
     return pkg;
   }
   const consumption = baselines.inventoryConsumption[item.id];
-  if (!consumption) unavailable.push('no consumption of this item has been recorded against any operation');
+  if (!consumption) {
+    unavailable.push(explainAbsence(
+      snapshot,
+      'operations',
+      'no consumption of this item has been recorded against any operation',
+      'cellar operations, and so this item\'s consumption history,',
+    ));
+  }
 
   pkg.inventory = [{
     sourceRef: `inventory:${item.id}`,

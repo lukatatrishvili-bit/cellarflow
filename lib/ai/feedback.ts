@@ -20,6 +20,13 @@ export const AI_CALIBRATION_MIN_QUALITY_RESPONSES = 5;
 export const AI_CALIBRATION_MIN_FINDINGS = 3;
 export const AI_CALIBRATION_INCORRECT_RATE_THRESHOLD = 0.2;
 export const AI_CALIBRATION_NEGATIVE_RATE_THRESHOLD = 0.4;
+/**
+ * `already_handled` does not mean the detector is wrong — it means it fires
+ * after the winemaker has already acted. Past this share of all verdicts the
+ * alert has stopped carrying information, so it is muted for a different reason
+ * and a higher bar than an incorrect one.
+ */
+export const AI_CALIBRATION_ALREADY_HANDLED_RATE_THRESHOLD = 0.6;
 const VERDICT_SET = new Set<string>(AI_FEEDBACK_VERDICTS);
 
 export function isAiFeedbackVerdict(value: unknown): value is AiFeedbackVerdict {
@@ -94,7 +101,8 @@ interface DetectorAccumulator {
   counts: AiFeedbackCounts;
 }
 
-function detectorKey(
+/** Stable identity of "this kind of finding, from this producer, in this area". */
+export function detectorKey(
   finding: Pick<AiFindingRecord, 'findingType' | 'source' | 'area'>,
 ): string {
   return `${finding.source}\u0000${finding.area}\u0000${finding.findingType}`;
@@ -210,6 +218,88 @@ export function upsertFindingFeedback(
     feedbackEntries: entries.slice(-MAX_FEEDBACK_ENTRIES_PER_FINDING),
     lastModified: input.now,
   };
+}
+
+/** Per-detector rates for every detector that has any feedback at all. */
+function detectorRates(
+  findings: readonly AiFindingRecord[],
+): AiDetectorCalibrationCandidate[] {
+  const accumulators = new Map<string, DetectorAccumulator>();
+  for (const finding of findings) {
+    const entries = findingFeedbackEntries(finding);
+    if (entries.length === 0) continue;
+    const key = detectorKey(finding);
+    let detector = accumulators.get(key);
+    if (!detector) {
+      detector = {
+        findingType: finding.findingType,
+        source: finding.source,
+        area: finding.area,
+        findingsReviewed: 0,
+        totalResponses: 0,
+        qualityResponses: 0,
+        counts: emptyCounts(),
+      };
+      accumulators.set(key, detector);
+    }
+    detector.findingsReviewed += 1;
+    for (const entry of entries) {
+      detector.totalResponses += 1;
+      detector.counts[entry.verdict] += 1;
+      if (entry.verdict !== 'already_handled') detector.qualityResponses += 1;
+    }
+  }
+  return [...accumulators.values()].map(detectorCandidate);
+}
+
+export type AiDetectorMuteReason = 'incorrect' | 'unhelpful' | 'already_handled';
+
+export interface AiDetectorMute extends AiDetectorCalibrationCandidate {
+  reason: AiDetectorMuteReason;
+}
+
+/** Why this winery's own verdicts disqualify a detector, if they do. */
+function muteReason(
+  detector: AiDetectorCalibrationCandidate,
+): AiDetectorMuteReason | null {
+  if (detector.findingsReviewed < AI_CALIBRATION_MIN_FINDINGS) return null;
+  if (detector.qualityResponses >= AI_CALIBRATION_MIN_QUALITY_RESPONSES) {
+    if (detector.incorrectRate >= AI_CALIBRATION_INCORRECT_RATE_THRESHOLD) return 'incorrect';
+    if (detector.negativeRate >= AI_CALIBRATION_NEGATIVE_RATE_THRESHOLD) return 'unhelpful';
+  }
+  // Counted against every verdict, because a detector can be unanimously
+  // "already handled" and so have no quality responses at all.
+  if (
+    detector.totalResponses >= AI_CALIBRATION_MIN_QUALITY_RESPONSES
+    && detector.alreadyHandledRate >= AI_CALIBRATION_ALREADY_HANDLED_RATE_THRESHOLD
+  ) return 'already_handled';
+  return null;
+}
+
+/**
+ * Detectors this winery's reviewers have disqualified, keyed by `detectorKey`.
+ *
+ * Computed from one organization's own findings and used only within it: this
+ * is a winery calibrating its own alerts, never cross-tenant learning.
+ */
+export function mutedDetectors(
+  findings: readonly AiFindingRecord[],
+): Map<string, AiDetectorMute> {
+  const muted = new Map<string, AiDetectorMute>();
+  for (const detector of detectorRates(findings)) {
+    const reason = muteReason(detector);
+    if (reason) muted.set(detectorKey(detector), { ...detector, reason });
+  }
+  return muted;
+}
+
+/** The winery's own verdict history for one detector, for the ops view and prompts. */
+export function detectorTrackRecord(
+  findings: readonly AiFindingRecord[],
+  finding: Pick<AiFindingRecord, 'findingType' | 'source' | 'area'>,
+): AiDetectorCalibrationCandidate | undefined {
+  const key = detectorKey(finding);
+  return detectorRates(findings).find((detector) => detectorKey(detector) === key);
 }
 
 /**

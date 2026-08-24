@@ -73,7 +73,6 @@ export function NotesTab({
             <FileText className="h-5 w-5 text-[#801323]" />
             {t.notes}
           </h3>
-          <p className="text-xs text-slate-400 font-medium">{lang === 'ka' ? 'დააფიქსირეთ დეგუსტაციის დაკვირვებები, ქიმიური გადაწყვეტილებები და მარნის შენიშვნები' : 'Capture tasting observations, chemistry decisions, and cellar notes'}</p>
         </div>
 
         <div className="flex items-center gap-3">

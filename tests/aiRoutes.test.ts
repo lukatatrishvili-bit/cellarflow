@@ -8,6 +8,7 @@ import {
   getAiModelCallOperations,
 } from '../server/aiModelTelemetry';
 import { __resetInMemoryAiNotificationReadStates } from '../server/aiInAppNotificationState';
+import { __resetAiResponseCache } from '../server/aiResponseCache';
 import { __resetInMemoryAiKnowledge } from '../server/aiKnowledge';
 
 const mocks = vi.hoisted(() => ({
@@ -206,6 +207,9 @@ beforeEach(() => {
   mocks.role = 'Lab Technician';
   mocks.username = 'ai-user';
   mocks.emailVerified = true;
+  // Ask My Winery memoizes plans and answers per organization. Left warm, one
+  // test would silently answer the next one out of cache.
+  __resetAiResponseCache();
   mocks.data = wineryData();
   mocks.save.mockReset().mockImplementation(async (_username: string, data: any) => {
     mocks.data = data;
@@ -693,6 +697,118 @@ describe.sequential('AI route boundaries', () => {
     expect(body.rows[0]).toEqual(expect.objectContaining({ lotId: 'L1', ph: 3.6, freeSo2: 10 }));
   });
 
+  it('asks one question back instead of answering a different one', async () => {
+    mocks.generate.mockResolvedValueOnce({
+      text: JSON.stringify({
+        kind: 'winery_summary',
+        clarification: 'Which lot do you mean — there are two Saperavi batches?',
+      }),
+    });
+
+    const response = await fetch(`${baseUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'how is the saperavi doing?', lang: 'en' }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.needsClarification).toBe(true);
+    expect(body.answer).toContain('Which lot do you mean');
+    expect(body.rows).toEqual([]);
+    // No query ran and no second call was bought to narrate a guess.
+    expect(mocks.generate).toHaveBeenCalledOnce();
+  });
+
+  it('says so when the summary is not an answer to the question', async () => {
+    // The planner is the only thing that maps a question to a query. When it
+    // fails, the winery-wide summary is still returned — but as a summary.
+    mocks.role = 'Owner/Admin';
+    mocks.generate.mockRejectedValueOnce(new Error('planner unavailable'));
+
+    const response = await fetch(`${baseUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'which lots are ready to bottle?', lang: 'en' }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.answeredFromQuestion).toBe(false);
+    expect(body.fallbackReason).toBe('planner_failed');
+    expect(body.answer).toContain('could not work out which records');
+    expect(body.query.kind).toBe('winery_summary');
+    // Paying a model to write prose about the wrong query is the one thing
+    // worse than not answering: the explainer is skipped entirely.
+    expect(mocks.generate).toHaveBeenCalledOnce();
+  });
+
+  it('does not blame the caller\'s role for a planner that could not run', async () => {
+    // A lab technician cannot run `winery_summary`, the fallback plan. That is
+    // not a permission problem with their question, and must not read as one.
+    mocks.role = 'Lab Technician';
+    mocks.generate.mockRejectedValueOnce(new Error('planner unavailable'));
+
+    const response = await fetch(`${baseUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'which lots are ready to bottle?', lang: 'en' }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.answeredFromQuestion).toBe(false);
+    expect(body.answer).toContain('could not work out which records');
+    expect(body.answer).not.toContain('access');
+    expect(body.rows).toEqual([]);
+  });
+
+  it('answers a repeated question without spending anything', async () => {
+    mocks.generate
+      .mockResolvedValueOnce({ text: JSON.stringify({ kind: 'lots_filter', filters: [] }) })
+      .mockResolvedValueOnce({ text: 'Both batches are aging quietly.' });
+
+    const ask = () => fetch(`${baseUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'List every lot with its chemistry', lang: 'en' }),
+    });
+
+    const first = await (await ask()).json();
+    expect(first.modelCalls).toEqual({ plan: 'model', answer: 'model' });
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+
+    // Same question, same records: neither call has anything new to compute.
+    const second = await (await ask()).json();
+    expect(second.modelCalls).toEqual({ plan: 'cache', answer: 'cache' });
+    expect(second.answer).toBe(first.answer);
+    expect(second.rows).toEqual(first.rows);
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-answers a repeated question once the records move', async () => {
+    mocks.generate
+      .mockResolvedValueOnce({ text: JSON.stringify({ kind: 'lots_filter', filters: [] }) })
+      .mockResolvedValueOnce({ text: 'Both batches are aging quietly.' })
+      .mockResolvedValueOnce({ text: 'One batch has lost volume.' });
+
+    const ask = () => fetch(`${baseUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: 'List every lot with its chemistry', lang: 'en' }),
+    });
+
+    await ask();
+    mocks.data.lots[0].currentVolume = 400;
+    const second = await (await ask()).json();
+
+    // The plan still holds — the question did not change — but the rows did,
+    // so the previous prose no longer describes them.
+    expect(second.modelCalls).toEqual({ plan: 'cache', answer: 'model' });
+    expect(second.answer).toBe('One batch has lost volume.');
+    expect(mocks.generate).toHaveBeenCalledTimes(3);
+  });
+
   it('keeps reviewer feedback independent and never projects another reviewer', async () => {
     mocks.data.aiFindings = [storedFinding()];
 
@@ -771,5 +887,102 @@ describe.sequential('AI route boundaries', () => {
       body: JSON.stringify({ emailEnabled: true, minimumSeverity: 'warning' }),
     });
     expect(response.status).toBe(409);
+  });
+
+  it('spends the stronger model only on a cross-discipline pass', async () => {
+    // Volatile acidity over the winery ceiling is one of the few findings that
+    // fans out to several specialists, which is what earns the deep tier. Well
+    // over the ceiling so it outranks the other warnings this fixture raises.
+    // The finding cites the vessel holding the lot, so the caller needs a role
+    // that can open one.
+    mocks.role = 'Winemaker';
+    mocks.data.lablogs[0].volatileAcid = 1.5;
+    mocks.generate.mockResolvedValue({
+      text: JSON.stringify({ findings: [] }),
+    });
+
+    // Two findings, one of each tier: low SO₂ protection goes to the laboratory
+    // agent alone, high volatile acidity fans out to laboratory and winemaking.
+    const response = await fetch(`${baseUrl}/api/ai/analyze`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lang: 'en', maxAnalyses: 2 }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.modelCalls).toBe(3);
+    const models = mocks.generate.mock.calls.map((call: any[]) => call[0]?.model);
+    expect(models.filter((model: string) => model === 'gemini-2.5-pro')).toHaveLength(2);
+    expect(models.filter((model: string) => model === 'gemini-2.5-flash')).toHaveLength(1);
+
+    const telemetry = await getAiModelCallOperations(20);
+    expect(telemetry.byPurpose.analysis.total).toBe(3);
+  });
+
+  it('keeps a single-agent pass on the default model', async () => {
+    mocks.generate.mockResolvedValue({ text: JSON.stringify({ findings: [] }) });
+
+    const response = await fetch(`${baseUrl}/api/ai/analyze`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lang: 'en', maxAnalyses: 1 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.generate.mock.calls[0][0]?.model).toBe('gemini-2.5-flash');
+  });
+
+  it('reports what the winery\'s own reviews would mute, before it is switched on', async () => {
+    // Six verdicts across six findings, a third of them incorrect.
+    mocks.data.aiFindings = ['incorrect', 'incorrect', 'helpful', 'helpful', 'helpful', 'helpful']
+      .map((verdict, index) => ({
+        ...storedFinding(),
+        id: `calibration-${index}`,
+        dedupeKey: `lab_gap:CAL${index}`,
+        feedbackEntries: [{
+          verdict,
+          submittedBy: `reviewer-${index}`,
+          submittedAt: '2026-07-29T11:00:00.000Z',
+        }],
+      }));
+
+    const response = await fetch(`${baseUrl}/api/ai/calibration?lang=en`);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    // Off by default: the winery sees the consequence before accepting it.
+    expect(body.enabled).toBe(false);
+    expect(body.totalResponses).toBe(6);
+    expect(body.detectors).toEqual([expect.objectContaining({
+      findingType: 'lab_gap',
+      source: 'rule',
+      reason: 'incorrect',
+      totalResponses: 6,
+    })]);
+    // Aggregates only — no reviewer may be identifiable from this payload.
+    expect(JSON.stringify(body)).not.toContain('reviewer-0');
+  });
+
+  it('never reports a detector whose findings the caller cannot see', async () => {
+    mocks.role = 'Viticulturist';
+    mocks.data.aiFindings = ['incorrect', 'incorrect', 'helpful', 'helpful', 'helpful', 'helpful']
+      .map((verdict, index) => ({
+        ...storedFinding(),
+        id: `calibration-${index}`,
+        dedupeKey: `lab_gap:CAL${index}`,
+        feedbackEntries: [{
+          verdict,
+          submittedBy: `reviewer-${index}`,
+          submittedAt: '2026-07-29T11:00:00.000Z',
+        }],
+      }));
+
+    const response = await fetch(`${baseUrl}/api/ai/calibration?lang=en`);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.totalResponses).toBe(0);
+    expect(body.detectors).toEqual([]);
   });
 });

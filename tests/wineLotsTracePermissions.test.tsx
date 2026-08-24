@@ -94,7 +94,8 @@ describe('WineLotsTrace permissions', () => {
 
     expect(markup).toContain('Create Lot');
     expect(markup).toContain('Advance / Modify Stage');
-    expect(markup).toContain('Change stage from Aging to Stabilization');
+    expect(markup).toContain('Add an aging lab panel');
+    expect(markup).toContain('Needs data');
     expect(markup).toContain('Red wine workflow');
     expect(markup).toContain('>Qvevri</button>');
     expect(markup).not.toContain('Read-only wine lot access');

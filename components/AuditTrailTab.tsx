@@ -250,9 +250,6 @@ export function AuditTrailTab({ lang, auditLogs }: AuditTrailTabProps) {
               <ShieldCheck className="w-5 h-5 text-emerald-700" />
               {t.audit_title || 'SaaS Corporate Action Audit Trails'}
             </h3>
-            <p className="text-xs text-stone-400 font-semibold mt-0.5">
-              {t.audit_subtitle || 'Chronological action logs ledger strictly verifying viticultural and winemaking authenticity'}
-            </p>
           </div>
 
           <button

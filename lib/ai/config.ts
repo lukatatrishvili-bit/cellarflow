@@ -45,7 +45,11 @@ export const DEFAULT_AI_CONFIG: AiWineryConfig = {
   minimumSeverity: 'attention',
   areas: { ...DEFAULT_AI_AREAS },
   modelAnalysisEnabled: true,
+  // Off by default: acting on review feedback changes which alerts a winery
+  // receives, so it stays a decision an administrator makes deliberately.
+  feedbackCalibrationEnabled: false,
   maxModelCallsPerDay: 120,
+  maxEmbeddingCallsPerDay: 600,
   targets: { ...DEFAULT_AI_TARGETS },
 };
 
@@ -104,9 +108,20 @@ export function resolveAiConfig(stored: unknown): AiWineryConfig {
     minimumSeverity,
     areas,
     modelAnalysisEnabled: bool(raw.modelAnalysisEnabled, DEFAULT_AI_CONFIG.modelAnalysisEnabled),
+    feedbackCalibrationEnabled: bool(
+      raw.feedbackCalibrationEnabled,
+      DEFAULT_AI_CONFIG.feedbackCalibrationEnabled,
+    ),
     maxModelCallsPerDay: Math.min(
       10_000,
       Math.max(0, Math.round(num(raw.maxModelCallsPerDay, DEFAULT_AI_CONFIG.maxModelCallsPerDay))),
+    ),
+    maxEmbeddingCallsPerDay: Math.min(
+      100_000,
+      Math.max(
+        0,
+        Math.round(num(raw.maxEmbeddingCallsPerDay, DEFAULT_AI_CONFIG.maxEmbeddingCallsPerDay)),
+      ),
     ),
     targets,
   };

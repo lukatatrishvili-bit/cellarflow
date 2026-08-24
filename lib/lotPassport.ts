@@ -440,6 +440,7 @@ export function buildPassportHtml(data: PassportData): string {
       <div class="cell"><div class="k">Vineyard Block</div><div class="v">${esc(lot.vineyardBlock)}</div></div>
       <div class="cell"><div class="k">Region / PDO</div><div class="v">${esc(lot.intendedAppellation || lot.region)}</div></div>
       <div class="cell"><div class="k">Classification</div><div class="v">${esc(lot.classification || '-')}</div></div>
+      <div class="cell"><div class="k">Sugar Category</div><div class="v">${esc(lot.sugarCategory || '-')}</div></div>
       <div class="cell"><div class="k">Volume</div><div class="v">${esc(fmt(lot.currentVolume))} / ${esc(fmt(lot.initialVolume))} L</div></div>
       <div class="cell"><div class="k">Stage</div><div class="v">${esc(lot.stage.replace('_', ' '))}</div></div>
       <div class="cell"><div class="k">Origin Proof</div><div class="v">${esc(lot.originProofStatus || '-')}</div></div>
@@ -459,6 +460,8 @@ export function buildPassportHtml(data: PassportData): string {
     <h2 class="section">Vineyard, Harvest, and Receiving Evidence</h2>
     <div class="grid">
       <div class="cell"><div class="k">Cadastre</div><div class="v">${esc(primaryIntake?.cadastralCode || block?.cadastralCode || '-')}</div></div>
+      <div class="cell"><div class="k">Municipality</div><div class="v">${esc(primaryIntake?.municipality || block?.municipality || '-')}</div></div>
+      <div class="cell"><div class="k">Community</div><div class="v">${esc(primaryIntake?.community || block?.community || '-')}</div></div>
       <div class="cell"><div class="k">Village</div><div class="v">${esc(primaryIntake?.village || block?.village || '-')}</div></div>
       <div class="cell"><div class="k">Microzone</div><div class="v">${esc(primaryIntake?.microzone || block?.microzone || '-')}</div></div>
       <div class="cell"><div class="k">Transport</div><div class="v">${esc(primaryIntake?.transportNumber || primaryIntake?.transportName || '-')}</div></div>

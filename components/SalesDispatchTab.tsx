@@ -111,6 +111,8 @@ interface StockRow {
   available: number;
 }
 
+type MarketChannel = NonNullable<SalesDispatchRecord['marketChannel']>;
+
 const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
 export function SalesDispatchTab({
@@ -209,6 +211,7 @@ export function SalesDispatchTab({
 
   const [date, setDate] = useState(today);
   const [customerName, setCustomerName] = useState('');
+  const [marketChannel, setMarketChannel] = useState<MarketChannel>('domestic');
   const [locationId, setLocationId] = useState('');
   const [lotId, setLotId] = useState('');
   const [bottles, setBottles] = useState('');
@@ -218,6 +221,7 @@ export function SalesDispatchTab({
 
   const [orderDate, setOrderDate] = useState(today);
   const [orderCustomerName, setOrderCustomerName] = useState('');
+  const [orderMarketChannel, setOrderMarketChannel] = useState<MarketChannel>('domestic');
   const [orderLocationId, setOrderLocationId] = useState('');
   const [orderLotId, setOrderLotId] = useState('');
   const [orderBottles, setOrderBottles] = useState('');
@@ -234,6 +238,7 @@ export function SalesDispatchTab({
     if (payload.action === 'reserve') {
       setOrderDate(payload.orderDate);
       setOrderCustomerName(payload.customerName);
+      setOrderMarketChannel(payload.marketChannel || 'domestic');
       setOrderLocationId(payload.locationId);
       setOrderLotId(payload.lotId);
       setOrderBottles(String(payload.bottles));
@@ -244,6 +249,7 @@ export function SalesDispatchTab({
     } else if (payload.action === 'dispatch') {
       setDate(payload.date);
       setCustomerName(payload.customerName);
+      setMarketChannel(payload.marketChannel || 'domestic');
       setLocationId(payload.locationId);
       setLotId(payload.lotId);
       setBottles(String(payload.bottles));
@@ -413,11 +419,13 @@ export function SalesDispatchTab({
     setToastMessage?.(localizedCommandReceipt(applied.result));
     if (intent.payload.action === 'reserve') {
       setOrderCustomerName('');
+      setOrderMarketChannel('domestic');
       setOrderBottles('');
       setOrderNotes('');
     } else if (intent.payload.action === 'dispatch') {
       setBottles('');
       setCustomerName('');
+      setMarketChannel('domestic');
       setNotes('');
     }
     clearSalesCommand();
@@ -448,11 +456,13 @@ export function SalesDispatchTab({
       setToastMessage?.(localizedCommandReceipt(response.result));
       if (intent.payload.action === 'reserve') {
         setOrderCustomerName('');
+        setOrderMarketChannel('domestic');
         setOrderBottles('');
         setOrderNotes('');
       } else if (intent.payload.action === 'dispatch') {
         setBottles('');
         setCustomerName('');
+        setMarketChannel('domestic');
         setNotes('');
       }
       clearSalesCommand();
@@ -483,6 +493,7 @@ export function SalesDispatchTab({
       action: 'dispatch',
       date,
       customerName: customerName.trim(),
+      marketChannel,
       lotId,
       locationId,
       bottles: qty,
@@ -500,6 +511,7 @@ export function SalesDispatchTab({
       requestedDispatchDate,
       reservedUntil,
       customerName: orderCustomerName.trim(),
+      marketChannel: orderMarketChannel,
       lotId: orderLotId,
       locationId: orderLocationId,
       bottles: orderQty,
@@ -680,6 +692,12 @@ export function SalesDispatchTab({
     return 'bg-blue-100 text-blue-800 border-blue-200';
   };
 
+  const marketLabel = (channel: SalesDispatchRecord['marketChannel']) => channel === 'export'
+    ? (ka ? 'ექსპორტი' : 'Export')
+    : channel === 'domestic'
+      ? (ka ? 'შიდა ბაზარი' : 'Domestic')
+      : (ka ? 'ბაზარი აკლია' : 'Market missing');
+
   const availReservedHint = (r: StockRow) => ka
     ? `${r.available.toLocaleString()} ხელმისაწვდომი · ${r.reserved.toLocaleString()} დაჯავშნილი`
     : `${r.available.toLocaleString()} available · ${r.reserved.toLocaleString()} reserved`;
@@ -697,11 +715,6 @@ export function SalesDispatchTab({
           <Truck className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'გაყიდვის შეკვეთები და გატანა' : 'Sales Orders & Dispatch'}
         </h3>
-        <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5">
-          {ka
-            ? 'დაჯავშნეთ ჩამოსხმული მარაგი ფიზიკურ გატანამდე, შემდეგ შეასრულეთ შეკვეთები აუდიტირებად მოძრაობებად.'
-            : 'Reserve bottled stock before physical dispatch, then fulfill orders into auditable stock movements.'}
-        </p>
       </div>
 
       {!hasAllSalesAccess && (
@@ -795,6 +808,13 @@ export function SalesDispatchTab({
                 <div>
                   <label className={labelCls}>{ka ? 'მომხმარებელი' : 'Customer'}</label>
                   <input value={orderCustomerName} onChange={e => setOrderCustomerName(e.target.value)} placeholder={ka ? 'მაგ. თბილისის ღვინის ბარი' : 'e.g. Tbilisi Wine Bar'} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ბაზარი' : 'Market'}</label>
+                  <select value={orderMarketChannel} onChange={e => setOrderMarketChannel(e.target.value as MarketChannel)} className={inputCls}>
+                    <option value="domestic">{ka ? 'შიდა ბაზარი' : 'Domestic'}</option>
+                    <option value="export">{ka ? 'ექსპორტი' : 'Export'}</option>
+                  </select>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -895,6 +915,13 @@ export function SalesDispatchTab({
                 <div>
                   <label className={labelCls}>{ka ? 'მომხმარებელი' : 'Customer'}</label>
                   <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder={ka ? 'მაგ. თბილისის ღვინის ბარი' : 'e.g. Tbilisi Wine Bar'} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'ბაზარი' : 'Market'}</label>
+                  <select value={marketChannel} onChange={e => setMarketChannel(e.target.value as MarketChannel)} className={inputCls}>
+                    <option value="domestic">{ka ? 'შიდა ბაზარი' : 'Domestic'}</option>
+                    <option value="export">{ka ? 'ექსპორტი' : 'Export'}</option>
+                  </select>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -1026,6 +1053,7 @@ export function SalesDispatchTab({
                       <div className="min-w-0">
                         <p className="font-mono text-[10px] text-stone-500">{o.orderNumber || o.orderDate}</p>
                         <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{o.customerName}</h4>
+                        <p className="text-[10px] text-stone-500">{marketLabel(o.marketChannel)}</p>
                         {o.reservedUntil && <p className="text-[10px] text-stone-500 dark:text-stone-400">{ka ? 'დაჯავშნილია' : 'reserved until'} {o.reservedUntil}{ka ? '-მდე' : ''}</p>}
                       </div>
                       <span className={`shrink-0 inline-flex px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase ${statusClass(o)}`}>
@@ -1069,6 +1097,7 @@ export function SalesDispatchTab({
                         <td className="p-2.5">
                           <span className="font-mono text-stone-500">{o.orderNumber || o.orderDate}</span>
                           <span className="block font-bold text-stone-800 dark:text-amber-50">{o.customerName}</span>
+                          <span className="block text-[9px] text-stone-500">{marketLabel(o.marketChannel)}</span>
                           {o.reservedUntil && <span className="block text-[9px] text-stone-500 dark:text-stone-400">{ka ? 'დაჯავშნილია' : 'reserved until'} {o.reservedUntil}{ka ? '-მდე' : ''}</span>}
                         </td>
                         <td className="p-2.5">
@@ -1144,6 +1173,7 @@ export function SalesDispatchTab({
                       <div className="min-w-0">
                         <p className="font-mono text-[10px] text-stone-500">{d.date}</p>
                         <h4 className="text-sm font-bold text-stone-800 dark:text-amber-50 truncate">{d.customerName}</h4>
+                        <p className="text-[10px] text-stone-500">{marketLabel(d.marketChannel)}</p>
                         {d.salesOrderId && <p className="text-[10px] text-blue-500">{ka ? 'ჯავშნიდან' : 'from reservation'}</p>}
                         {d.recordKind === 'reversal' && <p className="text-[10px] font-bold text-amber-700">{ka ? 'კორექცია / დაბრუნება' : 'correction / return'}</p>}
                         {d.reversedByCommandId && <p className="text-[10px] font-bold text-stone-500">{ka ? 'კორექტირებული' : 'reversed'}</p>}
@@ -1184,6 +1214,7 @@ export function SalesDispatchTab({
                         <td className="p-2.5">
                           <span className="font-mono text-stone-500">{d.date}</span>
                           <span className="block font-bold text-stone-800 dark:text-amber-50">{d.customerName}</span>
+                          <span className="block text-[9px] text-stone-500">{marketLabel(d.marketChannel)}</span>
                           {d.salesOrderId && <span className="block text-[9px] text-blue-500">{ka ? 'ჯავშნიდან' : 'from reservation'}</span>}
                           {d.recordKind === 'reversal' && <span className="block text-[9px] font-bold text-amber-700">{ka ? 'კორექცია / დაბრუნება' : 'correction / return'}</span>}
                           {d.reversedByCommandId && <span className="block text-[9px] font-bold text-stone-500">{ka ? 'კორექტირებული' : 'reversed'}</span>}

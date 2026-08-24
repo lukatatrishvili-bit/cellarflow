@@ -5,6 +5,7 @@ export type LotClassification = 'PDO' | 'PGI' | 'table_wine' | 'other';
 export type CertificationStatus = 'not_started' | 'sample_prepared' | 'submitted' | 'approved' | 'rejected' | 'expired';
 export type OriginProofStatus = 'missing' | 'partial' | 'verified';
 export type MarketStatus = 'local' | 'export' | 'local_and_export' | 'unknown';
+export type WineSugarCategory = 'dry' | 'semi_dry' | 'semi_sweet' | 'sweet';
 
 export interface WineLot {
   id: string; // Lot Code
@@ -32,6 +33,8 @@ export interface WineLot {
   certificateFileName?: string;
   originProofStatus?: OriginProofStatus;
   marketStatus?: MarketStatus;
+  /** Declared product category by residual sugar for Wine Agency Annex 17. */
+  sugarCategory?: WineSugarCategory;
   history: Array<{
     date: string;
     type: string;
@@ -483,6 +486,8 @@ export interface SalesDispatchRecord {
   lastModified?: string;
   date: string;
   customerName: string;
+  /** Wine Agency turnover classification for Annex 18. */
+  marketChannel?: 'domestic' | 'export';
   lotId: string;
   lotName: string;
   locationId: string;
@@ -524,6 +529,8 @@ export interface SalesOrderRecord {
   requestedDispatchDate?: string;
   reservedUntil?: string;
   customerName: string;
+  /** Carried to the dispatch and Annex 18 when the order is fulfilled. */
+  marketChannel?: 'domestic' | 'export';
   lotId: string;
   lotName: string;
   locationId: string;
@@ -567,6 +574,7 @@ export interface HarvestIntakeReversalSnapshot {
     sentToGvino: boolean;
     actualHarvestedKg: number | null;
     actualHarvestDate: string | null;
+    harvestedAreaHa: number | null;
     associatedLotId: string | null;
   };
   vessel?: {
@@ -620,6 +628,8 @@ export interface GrapeIntakeRecord {
   community?: string;
   municipality?: string;
   microzone?: string;
+  /** Area actually harvested for this receipt; feeds official Annex 2. */
+  harvestedAreaHa?: number;
   variety: string;
   vintage: number;
   grossWeightKg: number;
@@ -1001,6 +1011,8 @@ export interface HarvestRecord {
   estimatedTons: number;
   actualHarvestDate?: string;
   actualHarvestedKg?: number;
+  /** Area actually harvested, not the vineyard block's total area. */
+  harvestedAreaHa?: number;
   pickingMethod: 'hand' | 'machine';
   crateQuantity?: number;
   grapeCondition: 'excellent' | 'good' | ' fair' | 'damaged';

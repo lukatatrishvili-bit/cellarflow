@@ -62,11 +62,41 @@ interface AskResult {
   truncated: boolean;
   query: { kind: string };
   modelUnavailableReason?: 'budget_exhausted';
+  /** False when the rows are the winery's position, not an answer to the question. */
+  answeredFromQuestion?: boolean;
+  fallbackReason?: 'model_disabled' | 'budget_exhausted' | 'planner_failed';
+  /** The assistant asked a question back instead of guessing at this one. */
+  needsClarification?: boolean;
 }
 
 interface AiNotificationPreferenceWire {
   minimumSeverity: AiSeverity;
   inAppMinimumSeverity: AiSeverity;
+}
+
+interface AiCalibrationWire {
+  enabled: boolean;
+  thresholds: {
+    minimumQualityResponses: number;
+    minimumFindings: number;
+    incorrectRate: number;
+    negativeRate: number;
+    alreadyHandledRate: number;
+  };
+  totalResponses: number;
+  findingsWithFeedback: number;
+  assessedDetectors: number;
+  detectors: Array<{
+    findingType: string;
+    source: 'rule' | 'model' | 'hybrid';
+    area: string;
+    reason: 'incorrect' | 'unhelpful' | 'already_handled';
+    findingsReviewed: number;
+    totalResponses: number;
+    incorrectRate: number;
+    negativeRate: number;
+    alreadyHandledRate: number;
+  }>;
 }
 
 interface AiKnowledgeDocumentWire {
@@ -552,12 +582,6 @@ export function AiIntelligenceTab({
             <BrainCircuit className="h-5 w-5 text-[#801323]" />
             {T('Winery Intelligence', 'მარნის ინტელექტი')}
           </h3>
-          <p className="text-xs text-slate-400">
-            {T(
-              'Continuous monitoring across vineyard, cellar, laboratory, inventory and compliance.',
-              'უწყვეტი მონიტორინგი ვენახზე, მარანში, ლაბორატორიაში, მარაგებსა და შესაბამისობაზე.',
-            )}
-          </p>
         </div>
         <div className="flex items-center gap-2">
           {canReview && (
@@ -670,10 +694,31 @@ export function AiIntelligenceTab({
 
         {askResult && (
           <div className="mt-3 space-y-3">
-            <p className="whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-xs leading-relaxed text-stone-700">
+            <p className={`whitespace-pre-wrap rounded-lg p-3 text-xs leading-relaxed ${
+              askResult.needsClarification
+                ? 'border border-amber-200 bg-amber-50 text-amber-900'
+                : 'bg-stone-50 text-stone-700'
+            }`}>
               {askResult.answer}
             </p>
-            {askResult.modelUnavailableReason === 'budget_exhausted' && (
+            {askResult.needsClarification && (
+              <p className="text-[10px] text-amber-700">
+                {T(
+                  'Rephrase with the lot, block or material you mean and ask again.',
+                  'დააზუსტეთ პარტია, ნაკვეთი ან მასალა და კვლავ იკითხეთ.',
+                )}
+              </p>
+            )}
+            {askResult.answeredFromQuestion === false && !askResult.needsClarification && (
+              <p className="text-[10px] text-amber-700">
+                {T(
+                  'This is the winery\'s overall position, not an answer to your question.',
+                  'ეს მარნის საერთო მდგომარეობაა და არა პასუხი თქვენს კითხვაზე.',
+                )}
+              </p>
+            )}
+            {askResult.modelUnavailableReason === 'budget_exhausted'
+              && askResult.answeredFromQuestion !== false && (
               <p className="text-[10px] text-amber-700">
                 {T(
                   'The daily model budget is exhausted; this answer uses the deterministic query summary.',
@@ -1106,6 +1151,25 @@ function AiSettingsPanel({
     inAppMinimumSeverity: 'info',
   });
   const [loadingPreference, setLoadingPreference] = useState(true);
+  const [calibration, setCalibration] = useState<AiCalibrationWire | null>(null);
+
+  useEffect(() => {
+    if (!canConfigure) return undefined;
+    let active = true;
+    fetch(`/api/ai/calibration?lang=${lang}`, { credentials: 'include' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((payload) => {
+        if (active) setCalibration(payload as AiCalibrationWire);
+      })
+      // A missing calibration read is not worth blocking the settings panel.
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [canConfigure, lang]);
 
   useEffect(() => {
     let active = true;
@@ -1299,6 +1363,72 @@ function AiSettingsPanel({
             />
             {T('Model-based deep analysis', 'მოდელზე დაფუძნებული ღრმა ანალიზი')}
           </label>
+          <label className="flex items-center gap-2 text-[11px] font-semibold text-stone-700">
+            <input
+              type="checkbox"
+              checked={draft.feedbackCalibrationEnabled}
+              onChange={(event) => setDraft({
+                ...draft,
+                feedbackCalibrationEnabled: event.target.checked,
+              })}
+            />
+            {T('Act on review feedback', 'გამოხმაურების გათვალისწინება')}
+          </label>
+          <p className="-mt-1 text-[10px] leading-snug text-stone-500">
+            {T(
+              'A detector your team keeps marking incorrect, unhelpful or already handled stops sending alerts and stops earning model calls. Its findings stay in the activity log, and a critical finding is never muted.',
+              'დეტექტორი, რომელსაც თქვენი გუნდი მუდმივად აღნიშნავს როგორც არასწორს, უსარგებლოს ან უკვე დამუშავებულს, წყვეტს შეტყობინებების გაგზავნას და მოდელის გამოძახებას. მისი მიგნებები რჩება აქტივობის ჟურნალში, ხოლო კრიტიკული მიგნება არასოდეს ითიშება.',
+            )}
+          </p>
+          {calibration && (
+            <div className="rounded-lg border border-[#e8dfd5] bg-[#fbf8f4] px-2.5 py-2">
+              {calibration.detectors.length === 0 ? (
+                <p className="text-[10px] leading-snug text-stone-500">
+                  {calibration.totalResponses === 0
+                    ? T(
+                      'No review feedback yet. Rate findings as you work through them and this list will fill in.',
+                      'გამოხმაურება ჯერ არ არის. შეაფასეთ მიგნებები მუშაობისას და ეს სია შეივსება.',
+                    )
+                    : T(
+                      `No detector has crossed a threshold yet (${calibration.totalResponses} verdicts so far).`,
+                      `ჯერ არცერთ დეტექტორს არ გადაუჭარბებია ზღვარი (${calibration.totalResponses} შეფასება).`,
+                    )}
+                </p>
+              ) : (
+                <>
+                  <p className="text-[10px] font-bold uppercase font-mono text-stone-500">
+                    {draft.feedbackCalibrationEnabled
+                      ? T('Currently muted', 'ამჟამად გათიშული')
+                      : T('Would be muted', 'გაითიშებოდა')}
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {calibration.detectors.map((detector) => (
+                      <li key={`${detector.source}-${detector.area}-${detector.findingType}`} className="text-[10px] text-stone-600">
+                        <span className="font-mono font-bold">{detector.findingType}</span>
+                        {' — '}
+                        {detector.reason === 'incorrect'
+                          ? T(
+                            `${Math.round(detector.incorrectRate * 100)}% marked incorrect`,
+                            `${Math.round(detector.incorrectRate * 100)}% არასწორად აღნიშნული`,
+                          )
+                          : detector.reason === 'unhelpful'
+                            ? T(
+                              `${Math.round(detector.negativeRate * 100)}% marked unhelpful or incorrect`,
+                              `${Math.round(detector.negativeRate * 100)}% უსარგებლო ან არასწორი`,
+                            )
+                            : T(
+                              `${Math.round(detector.alreadyHandledRate * 100)}% already handled before the alert`,
+                              `${Math.round(detector.alreadyHandledRate * 100)}% უკვე დამუშავებული შეტყობინებამდე`,
+                            )}
+                        {` (${detector.totalResponses}`}
+                        {T(' verdicts)', ' შეფასება)')}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
 
           <div>
             <label htmlFor="ai-min-severity" className="mb-1 block text-[10px] uppercase font-mono font-semibold text-stone-500">
@@ -1335,8 +1465,33 @@ function AiSettingsPanel({
             />
             <p className="mt-1 text-[9px] leading-relaxed text-stone-400">
               {T(
-                'Shared across every server instance; Ask My Winery and deep analysis both count.',
-                'ზღვარი საერთოა ყველა სერვერისთვის; ითვლება როგორც „ჰკითხე ჩემს მარანს“, ისე ღრმა ანალიზი.',
+                'Shared across every server instance; Ask My Winery, the copilot and deep analysis all count.',
+                'ზღვარი საერთოა ყველა სერვერისთვის; ითვლება „ჰკითხე ჩემს მარანს“, კოპილოტი და ღრმა ანალიზი.',
+              )}
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="ai-daily-embedding-limit" className="mb-1 block text-[10px] uppercase font-mono font-semibold text-stone-500">
+              {T('Daily embedding limit', 'ემბედინგების დღიური ზღვარი')}
+            </label>
+            <input
+              id="ai-daily-embedding-limit"
+              type="number"
+              min={0}
+              max={100_000}
+              step={1}
+              value={draft.maxEmbeddingCallsPerDay}
+              onChange={(event) => setDraft({
+                ...draft,
+                maxEmbeddingCallsPerDay: Math.max(0, Math.round(Number(event.target.value) || 0)),
+              })}
+              className="w-full rounded-lg border border-[#e8dfd5] bg-white px-2.5 py-1.5 text-[11px] text-stone-700"
+            />
+            <p className="mt-1 text-[9px] leading-relaxed text-stone-400">
+              {T(
+                'Knowledge-base retrieval and ingestion. Counted apart from model calls because an embedding costs a fraction of an analysis.',
+                'ცოდნის ბაზის ინდექსაცია და მოძიება. ითვლება ცალკე, რადგან ემბედინგი ანალიზზე გაცილებით იაფია.',
               )}
             </p>
           </div>

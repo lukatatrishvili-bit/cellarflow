@@ -124,6 +124,11 @@ function sameNumber(actual: unknown, expected: number): boolean {
   return typeof actual === 'number' && Number.isFinite(actual) && Math.abs(actual - expected) <= EPSILON;
 }
 
+function sameOptionalNumber(actual: unknown, expected: number | null | undefined): boolean {
+  if (expected === null || expected === undefined) return actual === null || actual === undefined;
+  return sameNumber(actual, expected);
+}
+
 function dependencyConflict(resource: string): never {
   throw new HarvestIntakeReversalCommandError(
     'harvest_intake_reversal_dependency_conflict',
@@ -219,6 +224,8 @@ function restoredHarvest(current: HarvestRecord, snapshot: NonNullable<HarvestIn
   else restored.actualHarvestedKg = snapshot.actualHarvestedKg;
   if (snapshot.actualHarvestDate === null) delete restored.actualHarvestDate;
   else restored.actualHarvestDate = snapshot.actualHarvestDate;
+  if (snapshot.harvestedAreaHa === null) delete restored.harvestedAreaHa;
+  else restored.harvestedAreaHa = snapshot.harvestedAreaHa;
   if (snapshot.associatedLotId === null) delete restored.associatedLotId;
   else restored.associatedLotId = snapshot.associatedLotId;
   return restored;
@@ -324,6 +331,10 @@ export function applyHarvestIntakeReversalCommand(
     }
     if (original.harvestRecordId !== harvest.id || harvest.sentToGvino !== true
       || harvest.associatedLotId !== lot.id || !sameNumber(harvest.actualHarvestedKg, original.netWeightKg)
+      || !sameOptionalNumber(
+        harvest.harvestedAreaHa,
+        original.harvestedAreaHa ?? snapshot.harvest.harvestedAreaHa,
+      )
       || harvest.actualHarvestDate !== original.date || harvest.lastCommandId !== original.commandId
       || harvest.lastModified !== original.lastModified) {
       dependencyConflict(`Harvest ${harvest.id}`);

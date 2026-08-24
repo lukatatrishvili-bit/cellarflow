@@ -141,6 +141,8 @@ describe('Vazi permission-aware workspace', () => {
     const markup = renderToStaticMarkup(React.createElement(VaziModule, vaziProps({ blocks: [] })));
 
     expect(markup).not.toContain('Read-only vineyard access');
+    expect(markup).toContain('aria-label="Vazi workspace"');
+    expect(markup).toContain('Field work');
     expect(markup).toContain(' Add block</button>');
     expect(markup).toContain('No vineyard blocks yet');
   });
@@ -194,7 +196,7 @@ describe('Vazi permission-aware workspace', () => {
     });
   });
 
-  it('renders an accessible, guided harvest-plan editor with the selected block defaults', () => {
+  it('renders an accessible harvest-plan editor with the selected block defaults', () => {
     const markup = renderToStaticMarkup(React.createElement(HarvestPlanForm, {
       lang: 'en',
       block,
@@ -203,7 +205,7 @@ describe('Vazi permission-aware workspace', () => {
     }));
 
     expect(markup).toContain('New harvest plan');
-    expect(markup).toContain(`Set a target date and expected yield for ${block.name}`);
+    expect(markup).not.toContain(`Set a target date and expected yield for ${block.name}`);
     expect(markup).toContain('Target harvest date');
     expect(markup).toContain('value="15/09/2026"');
     expect(markup).toContain('Estimated yield (tons)');
@@ -318,6 +320,8 @@ describe('Vazi permission-aware workspace', () => {
     })));
 
     expect(markup).toContain('ვენახზე მხოლოდ ნახვის წვდომა');
+    expect(markup).toContain('aria-label="ვაზის სამუშაო სივრცე"');
+    expect(markup).toContain('საველე სამუშაო');
     expect(markup).not.toContain('Read-only vineyard access');
   });
 });

@@ -189,9 +189,6 @@ export function ProfileSettingsTab({
           <h3 className="text-md font-serif font-black text-[#4e0e15] border-b border-stone-100 pb-2 uppercase tracking-wide">
             🏠 {t.settings_title || 'Company & User Profile Preferences'}
           </h3>
-          <p className="text-[10px] text-slate-450 mt-1">
-            {lang === 'ka' ? 'კომპანიის პარამეტრების, ლოკალიზაციისა და როლების მართვა' : 'Configure company profiles, localization formats and operational user permissions'}
-          </p>
         </div>
 
         <form

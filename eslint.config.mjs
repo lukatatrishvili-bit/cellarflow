@@ -14,7 +14,7 @@ const reactFiles = ['**/*.{jsx,tsx}'];
 export default defineConfig([
   {
     ignores: [
-      'dist/**',
+      '**/dist/**',
       'node_modules/**',
       'coverage/**',
       'playwright-report/**',

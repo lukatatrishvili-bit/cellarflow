@@ -744,11 +744,6 @@ export function TransfersTab({
             <Shuffle className="w-5 h-5 text-[#801323]" />
             {lang === 'ka' ? 'ღვინის გადაადგილებისა და კუპაჟირების პანელი' : 'Winery Liquid Movement & Pomace Blending Panel'}
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            {lang === 'ka'
-              ? 'შეასრულეთ ღვინის გადატანა, დეკანტაცია, ლექიდან მოხსნა და პროპორციული კუპაჟირება ავტომატური მოცულობითი გამოთვლებით.'
-              : 'Perform wine transfers, barrel decantations, Lees rackings, and blend proportional genealogies accurately with automatic volumetric math.'}
-          </p>
         </div>
       </div>
 

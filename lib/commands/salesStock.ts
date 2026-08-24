@@ -20,6 +20,7 @@ export type SalesStockAction = typeof SALES_STOCK_ACTIONS[number];
 
 interface SalesRecordInput {
   customerName: string;
+  marketChannel?: 'domestic' | 'export';
   lotId: string;
   locationId: string;
   bottles: number;
@@ -192,8 +193,21 @@ function positiveAmount(value: unknown, field: string): number {
 }
 
 function salesRecordInput(input: Record<string, unknown>): SalesRecordInput {
+  const marketChannel = input.marketChannel === undefined || input.marketChannel === ''
+    ? undefined
+    : input.marketChannel === 'domestic' || input.marketChannel === 'export'
+      ? input.marketChannel
+      : null;
+  if (marketChannel === null) {
+    throw new SalesStockCommandError(
+      'invalid_sales_stock_payload',
+      'marketChannel must be domestic or export.',
+      400,
+    );
+  }
   return {
     customerName: boundedText(input.customerName, 'customerName', 200),
+    ...(marketChannel ? { marketChannel } : {}),
     lotId: requiredRecordId(input.lotId, 'lotId'),
     locationId: requiredRecordId(input.locationId, 'locationId'),
     bottles: wholeBottles(input.bottles),
@@ -332,6 +346,7 @@ function createDispatchRecords(input: {
   dispatchId: string;
   date: string;
   customerName: string;
+  marketChannel?: 'domestic' | 'export';
   lot: WineLot;
   location: StorageLocation;
   bottles: number;
@@ -373,6 +388,7 @@ function createDispatchRecords(input: {
     recordKind: 'dispatch',
     date: input.date,
     customerName: input.customerName,
+    ...(input.marketChannel ? { marketChannel: input.marketChannel } : {}),
     lotId: input.lot.id,
     lotName: input.lot.name,
     locationId: input.location.id,
@@ -473,6 +489,7 @@ export function applySalesStockCommand(
       dispatchId: payload.dispatchId,
       date: payload.date,
       customerName: order.customerName,
+      marketChannel: order.marketChannel,
       lot,
       location,
       bottles: order.bottles,
@@ -553,6 +570,7 @@ export function applySalesStockCommand(
       ...(payload.requestedDispatchDate ? { requestedDispatchDate: payload.requestedDispatchDate } : {}),
       ...(payload.reservedUntil ? { reservedUntil: payload.reservedUntil } : {}),
       customerName: payload.customerName,
+      ...(payload.marketChannel ? { marketChannel: payload.marketChannel } : {}),
       lotId: lot.id,
       lotName: lot.name,
       locationId: location.id,
@@ -591,6 +609,7 @@ export function applySalesStockCommand(
     dispatchId: payload.dispatchId,
     date: payload.date,
     customerName: payload.customerName,
+    marketChannel: payload.marketChannel,
     lot,
     location,
     bottles: payload.bottles,

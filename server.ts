@@ -250,6 +250,3 @@ if (process.env.VITEST !== 'true') {
     flushAndExit('unhandled rejection', 1);
   });
 }
-
-// Re-export for test compatibility
-export { getHistoricalContext } from './server/routes/winemaker';

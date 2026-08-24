@@ -196,7 +196,8 @@ describe('GrapeReceivingTab compound action permissions', () => {
     });
 
     expect(markup).toContain('მიღებებზე მხოლოდ ნახვის წვდომა');
-    expect(markup).toContain('არსებული მიღების ჩანაწერები აქ გამოჩნდება');
+    expect(markup).toContain('ყურძნის მიღება ჯერ არ არის');
+    expect(markup).not.toContain('არსებული მიღების ჩანაწერები აქ გამოჩნდება');
     expect(markup).not.toContain('Read-only intake access');
     expect(markup).not.toContain('Fill in the receiving form');
   });

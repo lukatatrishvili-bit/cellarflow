@@ -56,6 +56,11 @@ export interface CellarOperationMutationAccess {
   canConsumeOperationMaterials: boolean;
 }
 
+export interface LoggedOperationSummary {
+  id: string;
+  vesselId?: string | null;
+}
+
 /**
  * Keep the callback contract safe even if stale form state survives a role
  * change. A core operation always writes both cellarOps and the lot timeline;
@@ -108,6 +113,11 @@ interface Props {
   canReverseCellarOperation?: boolean;
   /** Vessel to preselect (QR scan / vessel-drawer quick action). Applied once. */
   prefillVesselId?: string;
+  /** Optional operation selected from a vessel's contextual action panel. */
+  prefillOperationType?: CellarOperationType;
+  /** Vessel-originated operations reopen this vessel only after a successful command. */
+  returnToVesselId?: string;
+  onOperationLogged?: (operation: LoggedOperationSummary) => void;
   clearPrefill?: () => void;
 }
 
@@ -147,7 +157,7 @@ export function CellarOperationsTab({
   currency = 'GEL', costAutomation, onAddOperation, onUpdateLots, onUpdateVessels, onUpdateInventory,
   onUpdateOperations, onUpdateCostEntries, onUpdateAuditLogs,
   onApplyCellarOperationCommandResponse, setToastMessage,
-  prefillVesselId, clearPrefill,
+  prefillVesselId, prefillOperationType, returnToVesselId, onOperationLogged, clearPrefill,
   canLogCellarOperation = true,
   canUseOperationVessels = true,
   canConsumeOperationMaterials = true,
@@ -349,12 +359,15 @@ export function CellarOperationsTab({
     if (!vessel) return;
     prefillAppliedRef.current = true;
     prefillGuard.current = true;
+    if (prefillOperationType && CELLAR_OPERATIONS.some(operation => operation.key === prefillOperationType)) {
+      setType(prefillOperationType);
+    }
     setVesselId(vessel.id);
     if (vessel.assignedLotId && lots.some(l => l.id === vessel.assignedLotId)) {
       setLotId(vessel.assignedLotId);
     }
     clearPrefill?.();
-  }, [prefillVesselId, vessels]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [prefillOperationType, prefillVesselId, vessels]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When the batch changes, default the vessel to the one holding it and prefill volume.
   useEffect(() => {
@@ -468,9 +481,12 @@ export function CellarOperationsTab({
       && onUpdateCostEntries && onUpdateAuditLogs,
     );
     if (!hasCommandBindings) {
-      onAddOperation(intent.payload.operation);
+      const operationId = onAddOperation(intent.payload.operation);
       setToastMessage?.(ka ? 'ოპერაცია აღირიცხა.' : 'Operation logged.');
       finishCommand();
+      if (operationId) {
+        onOperationLogged?.({ id: operationId, vesselId: intent.payload.operation.vesselId });
+      }
       return;
     }
 
@@ -495,6 +511,7 @@ export function CellarOperationsTab({
       ? `ოპერაცია აღირიცხა: ${applied.result.operation.lotName}`
       : `Operation logged: ${applied.result.operation.lotName}`);
     finishCommand();
+    onOperationLogged?.(applied.result.operation);
   };
 
   const executeOperationCommand = async (intent: PendingCommandIntent<CellarOperationCommandPayload>) => {
@@ -523,6 +540,7 @@ export function CellarOperationsTab({
         ? `ოპერაცია აღირიცხა: ${response.result.operation.lotName}`
         : `Operation logged: ${response.result.operation.lotName}`);
       finishCommand();
+      onOperationLogged?.(response.result.operation);
     } catch (error) {
       if (error instanceof CommandRequestError
         && error.code === 'command_store_unavailable'
@@ -677,13 +695,6 @@ export function CellarOperationsTab({
           <ClipboardList className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'სწრაფი ოპერაცია' : 'Quick Operation'}
         </h3>
-        <p className="text-xs text-stone-400 font-semibold mt-0.5">
-          {!canLogCellarOperation
-            ? (ka ? 'გადახედეთ ამ სამუშაო სივრცეში აღრიცხული ოპერაციების ისტორიას.' : 'Review the operation history recorded in this workspace.')
-            : (ka
-              ? 'აირჩიეთ ოპერაცია → პარტია → შეინახეთ. ხელმისაწვდომი დაკავშირებული ჩანაწერები ავტომატურად განახლდება.'
-              : 'Pick an operation → batch → save. Available linked records update automatically.')}
-        </p>
       </div>
 
       {!canLogCellarOperation && (
@@ -732,6 +743,19 @@ export function CellarOperationsTab({
                   : (ka ? 'იგივე ბრძანების ხელახლა გაგზავნა' : 'Resubmit same command')}
             </button>
           )}
+        </div>
+      )}
+
+      {canLogCellarOperation && returnToVesselId && (
+        <div role="status" className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[10px] font-semibold text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+          <span>
+            {ka
+              ? `${returnToVesselId}-დან დაწყებული ოპერაციაა. წარმატებული შენახვის შემდეგ ჭურჭლის განახლებული ჩანაწერი გაიხსნება.`
+              : `Started from ${returnToVesselId}. After a successful save, its updated vessel record will reopen.`}
+          </span>
+          <span className="shrink-0 rounded-full border border-emerald-200 bg-white px-2 py-1 font-mono text-[9px] font-black uppercase tracking-wide text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950">
+            {ka ? 'დაბრუნება ჩართულია' : 'Return enabled'}
+          </span>
         </div>
       )}
 

@@ -29,6 +29,20 @@ import type { AiWineryConfig } from './types';
  * the same code runs identically in the browser (live state) and on the server
  * (org data) with no data-access layer in between.
  */
+/**
+ * Data areas a role-filtered snapshot has had removed. An emptied collection is
+ * otherwise indistinguishable from one that was never populated, and the
+ * context builder would report withheld records as "never recorded".
+ */
+export type AiWithheldArea =
+  | 'vessels'
+  | 'lots'
+  | 'fermentation'
+  | 'laboratory'
+  | 'inventory'
+  | 'operations'
+  | 'vineyard';
+
 export interface WineryIntelligenceSnapshot {
   /** ISO yyyy-mm-dd. Injected so every evaluation is deterministic and testable. */
   today: string;
@@ -56,6 +70,8 @@ export interface WineryIntelligenceSnapshot {
   /** Latest fetched conditions per vineyard block, keyed by block id. */
   weatherByBlock: Record<string, VaziWeatherRiskInput>;
   companyProfile?: CompanyProfile;
+  /** Set when this snapshot was narrowed to one role's permissions. */
+  withheld?: AiWithheldArea[];
 }
 
 export type WineryIntelligenceSnapshotInput =
@@ -94,6 +110,9 @@ export function normalizeSnapshot(input: WineryIntelligenceSnapshotInput): Winer
       ? input.weatherByBlock
       : {},
     companyProfile: input.companyProfile,
+    ...(Array.isArray(input.withheld) && input.withheld.length > 0
+      ? { withheld: input.withheld }
+      : {}),
   };
 }
 

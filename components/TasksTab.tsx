@@ -289,7 +289,6 @@ export function TasksTab({
             <ClipboardList className="h-5 w-5 text-[#801323]" />
             {t.tasks}
           </h3>
-          <p className="text-xs text-slate-400">{isKa ? 'აკონტროლეთ მეღვინის გრაფიკი, პრიორიტეტული კორექტირებები და მარნის საქმიანობა' : 'Track winemaker schedule, priority corrections, and cellar activities'}</p>
         </div>
 
         <div className="flex items-center gap-3">

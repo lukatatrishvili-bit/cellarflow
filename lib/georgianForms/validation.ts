@@ -12,14 +12,56 @@ const REQUIRED_BY_KEY: Record<string, { ka: string; en: string }> = {
   placeDate: { ka: 'ჩაყენების თარიღი', en: 'placement date' },
   parcelCadastral: { ka: 'საკადასტრო კოდი', en: 'cadastral code' },
   municipality: { ka: 'მუნიციპალიტეტი', en: 'municipality' },
+  community: { ka: 'თემი', en: 'community' },
   village: { ka: 'სოფელი', en: 'village' },
+  parcelName: { ka: 'ნაკვეთის დასახელება', en: 'parcel name' },
   variety: { ka: 'ვაზის ჯიში', en: 'grape variety' },
+  areaSqm: { ka: 'ვენახის ფართობი', en: 'vineyard area' },
+  areaHa: { ka: 'მოკრეფილი ფართობი', en: 'harvested area' },
+  yieldPerHa: { ka: 'საშუალო მოსავალი ჰექტარზე', en: 'yield per hectare' },
+  plantingYear: { ka: 'გაშენების წელი', en: 'planting year' },
+  rootstock: { ka: 'საძირე', en: 'rootstock' },
+  rowDistance: { ka: 'მანძილი რიგთა შორის', en: 'row spacing' },
+  vineDistance: { ka: 'მანძილი ვაზთა შორის', en: 'vine spacing' },
+  irrigation: { ka: 'რწყვის არსებობა', en: 'irrigation status' },
+  condition: { ka: 'ვენახის მდგომარეობა', en: 'vineyard condition' },
+  supplier: { ka: 'მომწოდებელი', en: 'supplier' },
+  location: { ka: 'ვენახის ადგილმდებარეობა', en: 'vineyard location' },
   transport: { ka: 'ტრანსპორტი', en: 'transport name/number' },
+  brutto: { ka: 'ბრუტო წონა', en: 'gross weight' },
+  tara: { ka: 'ტარა', en: 'tare weight' },
   analysisNo: { ka: 'ანალიზის ნომერი', en: 'analysis number' },
   netto: { ka: 'ნეტო წონა', en: 'net weight' },
+  sugar: { ka: 'შაქრიანობა', en: 'sugar measurement' },
   tons: { ka: 'ყურძნის რაოდენობა', en: 'grape quantity' },
+  vesselNo: { ka: 'ჭურჭლის ნომერი', en: 'vessel number' },
+  placeQty: { ka: 'ჩაყენებული რაოდენობა', en: 'placed quantity' },
+  placeAlc: { ka: 'სპირტშემცველობა', en: 'alcohol measurement' },
+  placeSugar: { ka: 'შაქრიანობა', en: 'sugar measurement' },
+  placeAcid: { ka: 'ტიტრული მჟავიანობა', en: 'titratable acidity' },
+  material: { ka: 'მასალის დასახელება', en: 'material/component name' },
+  qty: { ka: 'რაოდენობა', en: 'quantity' },
+  alc: { ka: 'სპირტშემცველობა', en: 'alcohol measurement' },
+  wineNo: { ka: 'ღვინის ან კუპაჟის ნომერი', en: 'wine/blend number' },
+  lotNo: { ka: 'ლოტის ნომერი', en: 'lot number' },
+  inDate: { ka: 'წარმოებიდან შემოსვლის თარიღი', en: 'production receipt date' },
+  inQty: { ka: 'წარმოებიდან შემოსული რაოდენობა', en: 'quantity received from production' },
+  fillDate: { ka: 'ჩამოსხმის თარიღი', en: 'bottling date' },
   fillQty: { ka: 'ჩამოსხმის რაოდენობა', en: 'bottled quantity' },
+  fromTo: { ka: 'საიდან / სად', en: 'from/to' },
+  grapeTons: { ka: 'ყურძნის რაოდენობა', en: 'grape quantity' },
+  avgSugar: { ka: 'საშუალო შაქარი', en: 'average sugar' },
+  wineCategory: { ka: 'ღვინის კატეგორია', en: 'wine category' },
+  wineTotal: { ka: 'ღვინის საერთო რაოდენობა', en: 'total wine quantity' },
+  wineName: { ka: 'ღვინის დასახელება', en: 'wine name' },
+  typeColor: { ka: 'ტიპი და ფერი', en: 'type and colour' },
+  vintage: { ka: 'მოსავლის წელი', en: 'vintage' },
 };
+
+const POSITIVE_NUMERIC_KEYS = new Set([
+  'areaSqm', 'areaHa', 'yieldPerHa', 'brutto', 'netto', 'tons', 'placeQty', 'qty',
+  'inQty', 'fillQty', 'grapeTons', 'wineTotal',
+]);
 
 export function validateDocument(
   template: FormTemplate,
@@ -61,7 +103,7 @@ export function validateDocument(
       source === 'dateRange' ? (ctx.dateRange.from && ctx.dateRange.to ? 'set' : '') :
       source === 'product' ? ctx.productName :
       'manual';
-    if (source !== 'input' && source !== 'product' && !value) {
+    if (source !== 'input' && !value) {
       warnings.push({
         level: source === 'idCode' || source === 'legalAddress' ? 'warning' : 'warning',
         messageKa: `ზედა ველი აკლია: ${field.labelKa}.`,
@@ -77,7 +119,7 @@ export function validateDocument(
       if (!presentKeys.has(key)) continue;
       const v = row[key];
       const missing = v === undefined || v === '' || v === null;
-      const zeroNumeric = REQUIRED_BY_KEY[key] && ['netto', 'tons', 'fillQty'].includes(key) && toNum(v) === 0;
+      const zeroNumeric = POSITIVE_NUMERIC_KEYS.has(key) && toNum(v) <= 0;
       if (missing || zeroNumeric) {
         const label = REQUIRED_BY_KEY[key];
         warnings.push({
@@ -87,6 +129,25 @@ export function validateDocument(
           messageEn: `Row ${i + 1}: missing ${label.en}.`,
         });
       }
+    }
+
+    if (presentKeys.has('incoming') && presentKeys.has('outgoing')
+      && toNum(row.incoming) === 0 && toNum(row.outgoing) === 0) {
+      warnings.push({
+        level: 'warning',
+        rowIndex: i,
+        messageKa: `სტრიქონი ${i + 1}: შემოსავალი და გასავალი ორივე ნულია.`,
+        messageEn: `Row ${i + 1}: both incoming and outgoing are zero.`,
+      });
+    }
+    if (presentKeys.has('bottles') && presentKeys.has('ceramic')
+      && toNum(row.bottles) === 0 && toNum(row.ceramic) === 0) {
+      warnings.push({
+        level: 'warning',
+        rowIndex: i,
+        messageKa: `სტრიქონი ${i + 1}: ჩამოსხმული ტარის რაოდენობა არ არის მითითებული.`,
+        messageEn: `Row ${i + 1}: no bottled-container quantity is recorded.`,
+      });
     }
   });
 
@@ -99,6 +160,20 @@ export function validateDocument(
         rowIndex: i,
         messageKa: `სტრიქონი ${i + 1}: გასავალი აღემატება ხელმისაწვდომ ნაშთს (უარყოფითი ბალანსი).`,
         messageEn: `Row ${i + 1}: outgoing exceeds available balance (negative balance).`,
+      });
+    }
+  }
+
+  if (template.id === 'annex_18_wine_turnover_notification') {
+    const unclassified = ctx.salesDispatches.filter(dispatch => {
+      const date = (dispatch.date || '').slice(0, 10);
+      return date >= ctx.dateRange.from && date <= ctx.dateRange.to && !dispatch.marketChannel;
+    });
+    if (unclassified.length > 0) {
+      warnings.push({
+        level: 'warning',
+        messageKa: `${unclassified.length} რეალიზაციას არ აქვს მითითებული ბაზარი (შიდა/ექსპორტი).`,
+        messageEn: `${unclassified.length} sales dispatch(es) have no domestic/export market classification.`,
       });
     }
   }

@@ -273,9 +273,6 @@ export function CostsTab({
           <Coins className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'ხარჯები და თვითღირებულება' : 'Costs & Cost-of-Goods'}
         </h3>
-        <p className="text-xs text-stone-400 font-semibold mt-0.5">
-          {ka ? 'ხარჯის აღრიცხვა ლოტებზე — თვითღირებულება ლიტრზე და ბოთლზე' : 'Track costs against lots — cost per litre and per bottle'}
-        </p>
       </div>
 
       {(!canCreateCost || !canDeleteCost || !canUpdatePricing) && (

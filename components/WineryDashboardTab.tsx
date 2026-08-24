@@ -210,9 +210,6 @@ export function WineryDashboardTab({
       <PageHeader
         eyebrow={isKa ? 'მარანი' : 'Cellar'}
         title={t.overview || 'Overview'}
-        description={isKa
-          ? 'წარმოების, ტევადობისა და ქიმიის მოკლე ოპერაციული სურათი.'
-          : 'A focused view of production, capacity, chemistry, and cellar work.'}
         icon={LayoutDashboard}
         actions={(
           <div className="flex flex-wrap gap-2">
@@ -299,9 +296,6 @@ export function WineryDashboardTab({
             content: (
               <SectionCard
           title={isKa ? 'დღის განრიგი' : 'Today’s cellar queue'}
-          subtitle={isKa
-            ? 'ჯერ ქიმიის რისკები, გამოტოვებული დუღილის ჩანაწერები და ვადაგადაცილებული სამუშაო.'
-            : 'Chemistry risks, missing fermentation readings, and overdue work first.'}
           icon={ShieldAlert}
           actions={<StatusBadge tone={workQueue.length ? 'warning' : 'success'}>{workQueue.length ? `${workQueue.length} ${isKa ? 'ღია' : 'open'}` : (isKa ? 'სუფთა' : 'clear')}</StatusBadge>}
         >
@@ -349,9 +343,6 @@ export function WineryDashboardTab({
             content: (
               <SectionCard
             title={isKa ? 'მარნის მდგომარეობა' : 'Cellar health'}
-            subtitle={isKa
-              ? 'თქვენი როლისთვის ხელმისაწვდომი მარნის სიგნალების სწრაფი მიმოხილვა.'
-              : 'Fast read on the cellar signals available to your role.'}
             icon={BarChart3}
           >
             <div className="space-y-4">
@@ -419,7 +410,6 @@ export function WineryDashboardTab({
             content: (
               <SectionCard
           title={isKa ? 'მარნის ჭურჭლის გამოყენება' : 'Cellar vessel utilization'}
-          subtitle={isKa ? 'ტევადობა აქტიური სითხის მოცულობასთან.' : 'Capacity vs active liquid volume.'}
           icon={Container}
           actions={<StatusBadge tone="info">D3</StatusBadge>}
         >
@@ -439,7 +429,6 @@ export function WineryDashboardTab({
             content: (
               <SectionCard
           title={isKa ? 'კინეტიკა და შაქრის დაშლა' : 'Kinetics & sugar degradation'}
-          subtitle={isKa ? 'დუღილის ტრენდი არჩეული პარტიისთვის.' : 'Fermentation trend for the selected lot.'}
           icon={Activity}
           actions={chartableLotIds.length > 0 && (
             <select
@@ -474,9 +463,6 @@ export function WineryDashboardTab({
             content: (
               <SectionCard
           title={t.upcoming_tasks || 'Upcoming tasks'}
-          subtitle={canUpdateTasks
-            ? (isKa ? 'მოკლე სამუშაო რიგი, არა უსასრულო ჟურნალი.' : 'A short work queue, not an endless ledger.')
-            : (isKa ? 'დავალების სტატუსი თქვენი როლისთვის მხოლოდ სანახავია.' : 'Task status is view-only for your role.')}
           icon={ClipboardList}
           actions={<StatusBadge tone={overdueTasks.length ? 'danger' : 'neutral'}>{pendingTasks.length} {isKa ? 'მოლოდინში' : 'pending'}</StatusBadge>}
         >
@@ -517,7 +503,6 @@ export function WineryDashboardTab({
             content: (
               <SectionCard
           title={isKa ? 'ბოლო დუღილის ჩანაწერები' : 'Recent fermentation logs'}
-          subtitle={isKa ? 'ბოლო მაჩვენებლები პარტიების მიხედვით.' : 'Latest cellar readings across lots.'}
           icon={TestTube}
         >
           {recentFermLogs.length === 0 ? (

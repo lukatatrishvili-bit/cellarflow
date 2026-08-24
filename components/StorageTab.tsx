@@ -497,7 +497,6 @@ export function StorageTab({
         <h3 className="text-xl font-serif font-black text-stone-900 uppercase mt-1 flex items-center gap-2 dark:text-amber-100">
           <Warehouse className="w-5 h-5 text-[#4e0e15]" /> {ka ? 'ღვინის შენახვა' : 'Wine Storage'}
         </h3>
-        <p className="text-xs text-stone-400 font-semibold mt-0.5">{ka ? 'მზა ნაწარმის მარაგი ლოკაციების მიხედვით' : 'Finished-goods stock by location · feeds Annex №8'}</p>
       </div>
 
       {!hasAllStorageActions && (

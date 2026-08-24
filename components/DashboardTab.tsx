@@ -695,20 +695,6 @@ export function DashboardTab({
     && currentUser.role !== 'Lab Technician'
     && (lots.length > 0 || vessels.length > 0);
   const showVineyardPulse = canViewVineyard && blocks.length > 0;
-  const queueSubtitle = currentUser.role === 'Viticulturist'
-    ? copy(
-        'Field risk, weather pressure, and overdue work first.',
-        'ჯერ საველე რისკი, ამინდის წნეხი და ვადაგადაცილებული სამუშაო.',
-      )
-    : currentUser.role === 'Lab Technician'
-      ? copy(
-          'Chemistry exceptions and overdue lab work first.',
-          'ჯერ ქიმიის გამონაკლისები და ვადაგადაცილებული ლაბორატორიული სამუშაო.',
-        )
-      : copy(
-          'Critical risks, missing readings, and overdue work first.',
-          'ჯერ კრიტიკული რისკები, გამოტოვებული ჩანაწერები და ვადაგადაცილებული სამუშაო.',
-        );
   const clearQueueDetail = currentUser.role === 'Viticulturist'
     ? copy(
         'Field reports, weather pressure, and assigned work are clear.',
@@ -841,7 +827,6 @@ export function DashboardTab({
             content: (
               <SectionCard
           title={copy('Today’s priority queue', 'დღევანდელი პრიორიტეტები')}
-          subtitle={queueSubtitle}
           icon={ListChecks}
           actions={(
             <StatusBadge tone={criticalAlerts.length ? 'danger' : attentionItems.length ? 'warning' : 'success'}>
@@ -883,9 +868,6 @@ export function DashboardTab({
           title={isFreshWorkspace
             ? copy('Start here', 'დაიწყეთ აქ')
             : copy('Quick actions', 'სწრაფი მოქმედებები')}
-          subtitle={isFreshWorkspace
-            ? copy('Open the workspace where your first record belongs.', 'გახსენით სივრცე, სადაც პირველი ჩანაწერი უნდა შეიქმნას.')
-            : copy('Start the most common shift work.', 'დაიწყეთ ცვლის ყველაზე ხშირი სამუშაო.')}
           icon={ClipboardCheck}
         >
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
@@ -942,12 +924,6 @@ export function DashboardTab({
             content: (
               <SectionCard
               title={copy('Laboratory pulse', 'ლაბორატორიის მდგომარეობა')}
-              subtitle={latestLabAnalysis
-                ? copy(
-                    `Latest result recorded on ${latestLabAnalysis.date}.`,
-                    `ბოლო შედეგი ჩაწერილია ${latestLabAnalysis.date}.`,
-                  )
-                : copy('Chemistry workload and recent analysis coverage.', 'ქიმიის სამუშაო და ბოლო ანალიზების დაფარვა.')}
               icon={FlaskConical}
               actions={(
                 <button
@@ -1023,7 +999,6 @@ export function DashboardTab({
             content: (
               <SectionCard
               title={copy('Cellar pulse', 'მარნის მდგომარეობა')}
-              subtitle={copy('Live production, capacity, and chemistry.', 'წარმოება, ტევადობა და ქიმია ერთ ხედში.')}
               icon={Wine}
               actions={(
                 <button
@@ -1093,7 +1068,6 @@ export function DashboardTab({
             content: (
               <SectionCard
               title={copy('Vineyard pulse', 'ვენახის მდგომარეობა')}
-              subtitle={copy('Current field context beyond the headline metrics.', 'მიმდინარე საველე კონტექსტი ძირითადი მაჩვენებლების მიღმა.')}
               icon={Sprout}
               actions={(
                 <button
@@ -1191,9 +1165,6 @@ export function DashboardTab({
             content: (
               <SectionCard
               title={copy('My tasks', 'ჩემი დავალებები')}
-              subtitle={canUpdateTasks
-                ? copy('A short, actionable work list.', 'მოკლე და ქმედითი სამუშაო სია.')
-                : copy('Task status is view-only for your role.', 'თქვენი როლისთვის დავალებების სტატუსი მხოლოდ სანახავია.')}
               icon={ClipboardList}
               actions={<StatusBadge tone={overdueTasks.length ? 'danger' : 'neutral'}>{pendingTasks.length} {copy('open', 'ღია')}</StatusBadge>}
             >
@@ -1243,7 +1214,6 @@ export function DashboardTab({
             content: (
               <SectionCard
               title={copy('Recent activity', 'ბოლო აქტივობა')}
-              subtitle={copy('Latest recorded changes across the estate.', 'მეურნეობაში ბოლოს ჩაწერილი ცვლილებები.')}
               icon={ShieldCheck}
               actions={(
                 <button

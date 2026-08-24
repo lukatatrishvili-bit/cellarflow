@@ -135,7 +135,11 @@ model AiModelCallUsage {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   usageDate      DateTime     @db.Date
+  /// Generative calls, charged against the winery's `maxModelCallsPerDay`.
   callCount      Int          @default(0)
+  /// Embedding calls, which cost orders of magnitude less and so hold their own
+  /// allowance rather than competing with analysis for the same units.
+  embeddingCount Int          @default(0)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 

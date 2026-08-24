@@ -150,8 +150,10 @@ export function GrapeReceivingTab({
   const [labAnalysisNumber, setLabAnalysisNumber] = useState('');
   const [cadastralCode, setCadastralCode] = useState('');
   const [municipality, setMunicipality] = useState('');
+  const [community, setCommunity] = useState('');
   const [village, setVillage] = useState('');
   const [microzone, setMicrozone] = useState('');
+  const [harvestedAreaHa, setHarvestedAreaHa] = useState('');
   const [grossWeightKg, setGross] = useState('');
   const [tareWeightKg, setTare] = useState('');
   const [netWeightKg, setNetWeight] = useState('');
@@ -237,10 +239,12 @@ export function GrapeReceivingTab({
       const inferredClass = inferWineClassForVariety(b.grapeVariety);
       if (inferredClass) setWineClass(inferredClass);
     }
-    setCadastralCode(b.cadastralCode || b.id || '');
+    setCadastralCode(b.cadastralCode || '');
     setMunicipality(b.municipality || '');
-    setVillage(b.village || b.vineyardName || '');
+    setCommunity(b.community || '');
+    setVillage(b.village || '');
     setMicrozone(b.microzone || '');
+    setHarvestedAreaHa(String(b.parcelArea ?? b.area ?? ''));
   };
 
   const applyHarvest = (id: string) => {
@@ -250,6 +254,7 @@ export function GrapeReceivingTab({
     if (!h) return;
     setSource('own');
     applyBlock(h.blockId);
+    if (h.harvestedAreaHa) setHarvestedAreaHa(String(h.harvestedAreaHa));
     setVariety(h.variety);
     const inferredClass = inferWineClassForVariety(h.variety);
     if (inferredClass) setWineClass(inferredClass);
@@ -280,8 +285,10 @@ export function GrapeReceivingTab({
     setLabAnalysisNumber(input.labAnalysisNumber || '');
     setCadastralCode(input.cadastralCode || '');
     setMunicipality(input.municipality || '');
+    setCommunity(input.community || '');
     setVillage(input.village || '');
     setMicrozone(input.microzone || '');
+    setHarvestedAreaHa(input.harvestedAreaHa ? String(input.harvestedAreaHa) : '');
     setGross(String(input.grossWeightKg));
     setTare(String(input.tareWeightKg));
     setNetWeight(String(Math.max(0, input.grossWeightKg - input.tareWeightKg)));
@@ -367,7 +374,8 @@ export function GrapeReceivingTab({
     setHarvestRecordId(''); setVariety(''); setGross(''); setTare(''); setNetWeight('');
     setBrix(''); setPh(''); setTa(''); setTemp(''); setCostPerKg(''); setTotalCost(''); setNotes(''); setDest('');
     setTransportName(''); setTransportNumber(''); setWeighingDocumentNumber(''); setLabAnalysisNumber('');
-    setSupplierIdCode(''); setCadastralCode(''); setMunicipality(''); setVillage(''); setMicrozone('');
+    setSupplierIdCode(''); setCadastralCode(''); setMunicipality(''); setCommunity(''); setVillage(''); setMicrozone('');
+    setHarvestedAreaHa('');
     setPaymentStatus('not_applicable');
   };
 
@@ -386,8 +394,10 @@ export function GrapeReceivingTab({
       labAnalysisNumber: labAnalysisNumber.trim() || undefined,
       cadastralCode: cadastralCode.trim() || block?.cadastralCode || undefined,
       municipality: municipality.trim() || block?.municipality || undefined,
-      village: village.trim() || block?.village || block?.vineyardName || undefined,
+      community: community.trim() || block?.community || undefined,
+      village: village.trim() || block?.village || undefined,
       microzone: microzone.trim() || block?.microzone || undefined,
+      harvestedAreaHa: parseFloat(harvestedAreaHa) > 0 ? parseFloat(harvestedAreaHa) : undefined,
       variety: variety.trim(),
       vintage,
       grossWeightKg: parseFloat(grossWeightKg) || 0,
@@ -619,19 +629,6 @@ export function GrapeReceivingTab({
               <Grape className="w-5 h-5 text-[#4e0e15]" />
               {ka ? 'ყურძნის მიღება' : 'Grape Intake'}
             </h3>
-            <p className="text-xs text-stone-400 font-semibold mt-0.5">
-              {!canReceiveGrapes
-                ? (ka
-                  ? 'გადახედეთ მიღების ისტორიას და გახსენით დაკავშირებული ღვინის პარტიები.'
-                  : 'Review receiving history and open linked wine batches.')
-                : canFillDestinationVessel
-                  ? (ka
-                    ? 'ყურძნის მიღება საკუთარი ვენახიდან ან მომწოდებლისგან — ავტომატურად იქმნება პარტია და ივსება ჭურჭელი'
-                    : 'Receive fruit from an own block or a supplier — auto-creates the wine batch and fills the vessel')
-                  : (ka
-                    ? 'აღრიცხეთ ყურძნის მიღება და შექმენით პარტია; ჭურჭლის მინიჭება მოგვიანებით შეიძლება.'
-                    : 'Record grape intake and create its batch; a vessel can be assigned later.')}
-            </p>
           </div>
           <a
             href="#grape-intake-history"
@@ -698,9 +695,6 @@ export function GrapeReceivingTab({
             <FormSection
               icon={source === 'own' ? Sprout : Truck}
               title={ka ? 'ხილის წყარო' : 'Fruit source'}
-              description={ka
-                ? 'აირჩიეთ საიდან შემოდის ყურძენი — წარმოშობის ველები ავტომატურად ივსება.'
-                : 'Choose where the fruit comes from — origin fields fill in automatically.'}
             >
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setSource('own')}
@@ -754,9 +748,6 @@ export function GrapeReceivingTab({
             <FormSection
               icon={Grape}
               title={ka ? 'პარტიის იდენტობა' : 'Batch identity'}
-              description={ka
-                ? 'ეს ველები განსაზღვრავს შექმნილი ღვინის პარტიის სახელს და ტიპს.'
-                : 'These fields name and classify the wine batch this intake creates.'}
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
@@ -785,9 +776,6 @@ export function GrapeReceivingTab({
             <FormSection
               icon={Scale}
               title={ka ? 'მასა და გამოსავალი' : 'Weight & yield'}
-              description={ka
-                ? 'ნეტო წონა ხელით შეიყვანეთ ან ბრუტოსა და ტარის მიხედვით ავტომატურად გამოთვალეთ.'
-                : 'Enter net weight manually or calculate it from gross and tare.'}
               footer={(
                 <dl className="grid grid-cols-3 gap-2 text-center">
                   {[
@@ -838,9 +826,6 @@ export function GrapeReceivingTab({
             <FormSection
               icon={FlaskConical}
               title={ka ? 'ხარისხი მიღებისას' : 'Quality at reception'}
-              description={ka
-                ? 'შემოსული ყურძნის ქიმია და მდგომარეობა.'
-                : 'Chemistry and condition of the fruit as it arrives.'}
             >
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div>
@@ -881,9 +866,6 @@ export function GrapeReceivingTab({
               <FormSection
                 icon={Coins}
                 title={ka ? 'ყურძნის ღირებულება' : 'Fruit cost'}
-                description={ka
-                  ? 'შეყვანილი თანხა ავტომატურად ჩაიწერება ხარჯების წიგნში.'
-                  : 'What you enter here posts straight to the cost ledger.'}
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div>
@@ -927,13 +909,6 @@ export function GrapeReceivingTab({
               title={canFillDestinationVessel
                 ? (ka ? 'დანიშნულება და ოპერატორი' : 'Destination & operator')
                 : (ka ? 'ოპერატორი და შენიშვნები' : 'Operator & notes')}
-              description={canFillDestinationVessel
-                ? (ka
-                  ? 'ჭურჭლის მინიჭება არჩევითია — მისი გაკეთება მოგვიანებითაც შეიძლება.'
-                  : 'Assigning a vessel is optional; it can be done later.')
-                : (ka
-                  ? 'ვინ მიიღო ყურძენი და რა შენიშვნები ახლავს მიღებას.'
-                  : 'Who received the fruit and any notes for this receipt.')}
             >
               <div className={`grid grid-cols-1 gap-2 ${canFillDestinationVessel ? 'sm:grid-cols-2' : ''}`}>
                 {canFillDestinationVessel && (
@@ -979,9 +954,6 @@ export function GrapeReceivingTab({
             <FormSection
               icon={FileText}
               title={ka ? 'ოფიციალური მიღების ველები' : 'Official receiving fields'}
-              description={ka
-                ? 'აკლებული გამოჩნდება დოკუმენტებში'
-                : 'Missing values become document warnings'}
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                 <div>
@@ -1009,12 +981,20 @@ export function GrapeReceivingTab({
                   <input type="text" value={municipality} onChange={e => setMunicipality(e.target.value)} className={inputCls} />
                 </div>
                 <div>
+                  <label className={labelCls}>{ka ? 'თემი' : 'Community'}</label>
+                  <input type="text" value={community} onChange={e => setCommunity(e.target.value)} className={inputCls} />
+                </div>
+                <div>
                   <label className={labelCls}>{ka ? 'სოფელი' : 'Village'}</label>
                   <input type="text" value={village} onChange={e => setVillage(e.target.value)} placeholder={ka ? 'სოფელი' : 'Village'} className={inputCls} />
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'მიკროზონა' : 'Microzone'}</label>
                   <input type="text" value={microzone} onChange={e => setMicrozone(e.target.value)} list="georgian-microzone-options" placeholder={ka ? 'მიკროზონა' : 'Microzone'} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>{ka ? 'მოკრეფილი ფართობი (ჰა)' : 'Harvested area (ha)'}</label>
+                  <input type="number" min="0" step="0.0001" value={harvestedAreaHa} onChange={e => setHarvestedAreaHa(e.target.value)} className={inputCls} />
                 </div>
               </div>
             </FormSection>
@@ -1079,13 +1059,6 @@ export function GrapeReceivingTab({
             <EmptyState
               icon={Grape}
               title={ka ? 'ყურძნის მიღება ჯერ არ არის' : 'No grape intakes yet'}
-              description={canReceiveGrapes
-                ? (ka
-                  ? 'შეავსეთ მიღების ფორმა პირველი ხილის მისაღებად და ღვინის პარტიის შესაქმნელად.'
-                  : 'Fill in the receiving form to receive fruit and create the first wine batch.')
-                : (ka
-                  ? 'არსებული მიღების ჩანაწერები აქ გამოჩნდება.'
-                  : 'Existing intake records will appear here.')}
             />
           ) : (
             <div className="overflow-x-auto">

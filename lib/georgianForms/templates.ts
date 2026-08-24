@@ -252,7 +252,6 @@ export const FORM_TEMPLATES: FormTemplate[] = [
     totals: ['inQty', 'fillQty', 'bottles', 'ceramic'],
     signatureLabelKa: 'ხელმომწერი პირი:',
     filenameSlug: 'bottling_act',
-    notes: 'ბოთლის ფორმატების (0.75/0.5/0.2/1.5/3.0/0.375 ლ) დაშლა აპლიკაციაში არ აღირიცხება — იხ. TODO mapper-ში.',
   },
 
   // ─────────────────── Annex №8 — Finished goods warehouse ───────────────────

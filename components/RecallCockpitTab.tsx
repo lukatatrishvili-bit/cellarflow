@@ -165,7 +165,6 @@ export default function RecallCockpitTab(props: RecallCockpitTabProps) {
       <header>
         <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-rose-700 dark:text-rose-300"><ShieldAlert className="h-4 w-4" />{ka ? 'გაწვევა და შეკავება' : 'Recall and containment'}</div>
         <h2 className="mt-2 font-serif text-3xl font-semibold text-stone-950 dark:text-white">{ka ? 'პარტიის კვალის სწრაფი კონტროლი' : 'Lot containment cockpit'}</h2>
-        <p className="mt-2 max-w-3xl text-sm text-stone-600 dark:text-stone-400">{ka ? 'იპოვეთ პარტია, ნახეთ მისი სრული გავრცელება და შექმენით შეკავების სამუშაო ერთ მოქმედებაში.' : 'Select a lot, see its upstream and downstream exposure, and launch auditable containment work in one action.'}</p>
       </header>
 
       <section className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">

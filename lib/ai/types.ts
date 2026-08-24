@@ -337,7 +337,18 @@ export interface AiWineryConfig {
   areas: Record<AiMonitoringArea, boolean>;
   /** Master switch for any paid model call. Rules keep working when false. */
   modelAnalysisEnabled: boolean;
-  /** Hard ceiling on model calls per winery per day. */
+  /**
+   * Lets this winery's own review verdicts mute a detector that keeps being
+   * wrong: it stops notifying and stops earning model calls, while its findings
+   * stay in the activity log. Opt-in, and never applied to a critical finding.
+   */
+  feedbackCalibrationEnabled: boolean;
+  /** Hard ceiling on generative model calls per winery per day. */
   maxModelCallsPerDay: number;
+  /**
+   * Separate ceiling for knowledge embeddings, which cost orders of magnitude
+   * less. Metered apart so retrieval cannot spend the analysis allowance.
+   */
+  maxEmbeddingCallsPerDay: number;
   targets: AiWineryTargets;
 }

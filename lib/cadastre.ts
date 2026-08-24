@@ -80,7 +80,7 @@ export function calculateCadastreCompleteness(block: VineyardBlock): CadastreCom
     req('coordinates', 'GPS coordinates', 'GPS კოორდინატები', hasCoordinates, true),
     req('official_document', 'official cadastre document', 'ოფიციალური საკადასტრო დოკუმენტი', block.officialCadastreDocumentName),
     req('land_owner', 'land owner or grower', 'მიწის მესაკუთრე ან მევენახე', block.landOwner || block.grower),
-    req('community', 'community', 'თემი', block.community),
+    req('community', 'community', 'თემი', block.community, true),
     req('parcel_name', 'parcel name', 'ნაკვეთის დასახელება', block.parcelName),
     req('polygon', 'GPS polygon / boundary', 'GPS პოლიგონი / საზღვარი', hasPolygon(block)),
     req('elevation', 'elevation', 'სიმაღლე', block.elevation),

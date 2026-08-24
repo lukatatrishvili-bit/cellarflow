@@ -173,11 +173,6 @@ export default function OperationsControlTab({
           <h2 className="mt-2 font-serif text-3xl font-semibold text-stone-950 dark:text-stone-50">
             {ka ? 'დღევანდელი სამუშაო და დამტკიცებები' : 'Today’s work and approvals'}
           </h2>
-          <p className="mt-2 max-w-3xl text-sm text-stone-600 dark:text-stone-400">
-            {ka
-              ? 'ერთი რიგი აერთიანებს აქტიურ გაწვევებს, დაგვიანებულ დავალებებს, SOP-ს, შესყიდვებს, გეგმას და დასამტკიცებელ ოპერაციებს.'
-              : 'One queue combines active recalls, overdue work, SOPs, purchasing, the production plan, and commands awaiting review.'}
-          </p>
         </div>
         <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 text-xs font-bold text-stone-700 shadow-sm disabled:opacity-50 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-200">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> {ka ? 'განახლება' : 'Refresh'}

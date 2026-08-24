@@ -2112,6 +2112,7 @@ export function useWineryState() {
         sentToGvino: true,
         actualHarvestedKg: netWeightKg,
         actualHarvestDate: input.date,
+        ...(input.harvestedAreaHa ? { harvestedAreaHa: input.harvestedAreaHa } : {}),
         associatedLotId: lotId,
       }));
     }

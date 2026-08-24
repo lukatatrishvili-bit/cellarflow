@@ -343,7 +343,6 @@ export function QvevriPassportTab({
           <PageHeader
             eyebrow="Gvino"
             title={ka ? 'ქვევრის ჩანაწერები' : 'Qvevri records'}
-            description={ka ? 'ქვევრის იდენტიფიკაცია, სანიტარია და წარმოების ჟურნალი.' : 'Qvevri identity, sanitation, workflow, and linked records.'}
             icon={Container}
           />
         )}
@@ -374,7 +373,6 @@ export function QvevriPassportTab({
         <PageHeader
           eyebrow="Gvino"
           title={ka ? 'ქვევრის ჩანაწერები' : 'Qvevri records'}
-          description={ka ? 'ქვევრის იდენტიფიკაცია, სანიტარია, დუღილი და ოფიციალური კავშირები.' : 'Qvevri identity, sanitation, fermentation, operations, and official links.'}
           icon={Container}
           actions={(
             <div className="flex flex-wrap gap-2">

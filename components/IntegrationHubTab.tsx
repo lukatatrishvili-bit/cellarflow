@@ -376,7 +376,6 @@ export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationH
       <PageHeader
         eyebrow={ka ? 'პარამეტრები / ადმინი' : 'Settings / Admin'}
         title={ka ? 'ინტეგრაციების ცენტრი' : 'Integration Hub'}
-        description={ka ? 'ბუღალტრული და ERP სისტემების კონტროლირებადი სინქრონიზაცია, უსაფრთხო 1C საწყისით.' : 'Controlled synchronization for accounting and ERP systems, starting with a safe 1C placeholder.'}
         icon={DatabaseZap}
         actions={
           <ActionButton onClick={loadHub} tone="secondary">
@@ -444,7 +443,6 @@ export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationH
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)] gap-4">
           <SectionCard
             title={ka ? '1C კონექტორი' : '1C Connector'}
-            subtitle={ka ? 'ახლა ხელით JSON/CSV გაცვლა; API პარამეტრები მომავალი კონექტორისთვისაა.' : 'Manual JSON/CSV exchange now; API settings are placeholders for a future connector.'}
             icon={PlugZap}
           >
             <form onSubmit={saveConnector} className="space-y-4">
@@ -534,7 +532,7 @@ export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationH
             </form>
           </SectionCard>
 
-          <SectionCard title={ka ? 'პირდაპირი 1C კავშირი' : 'Live 1C Connection'} subtitle={ka ? 'შეამოწმეთ OData endpoint და პირდაპირ მოზიდეთ ერთეულები.' : 'Test the OData endpoint and pull entities directly.'} icon={PlugZap}>
+          <SectionCard title={ka ? 'პირდაპირი 1C კავშირი' : 'Live 1C Connection'} icon={PlugZap}>
             <div className="space-y-4">
               <InlineNotice>
                 {ka ? <>საჭიროა გაცვლის რეჟიმი <strong>Live OData</strong>, HTTPS endpoint და შენახული მონაცემები. მონაცემები დაცულია სერვერზე და არასდროს ტოვებს მას; endpoint მოწმდება პრივატულ/შიდა მისამართებზე ყოველ გამოძახებამდე.</> : <>Requires exchange mode <strong>Live OData</strong>, an HTTPS endpoint, and saved credentials. Credentials are sealed server-side and never leave the server; the endpoint is checked for private/internal addresses before every call.</>}
@@ -583,7 +581,7 @@ export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationH
             </div>
           </SectionCard>
 
-          <SectionCard title={ka ? 'ხელით გაცვლა' : 'Manual Exchange'} subtitle={ka ? 'შექმენით კონტროლირებადი ექსპორტის/იმპორტის დავალებები.' : 'Create controlled export/import jobs.'} icon={FileJson}>
+          <SectionCard title={ka ? 'ხელით გაცვლა' : 'Manual Exchange'} icon={FileJson}>
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -758,7 +756,6 @@ export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationH
       {activePanel === 'mappings' && (
         <SectionCard
           title={ka ? 'ველების შესაბამისობა' : 'Field Mappings'}
-          subtitle={ka ? 'შესაბამისობა თარგმნის ხელით გაცვლის ფაილებს გარე ბაზაზე წვდომის მინიჭების გარეშე.' : 'Mappings translate manual exchange files without granting external database access.'}
           icon={GitBranch}
           actions={<ActionButton onClick={saveMappings}><Save className="w-3.5 h-3.5 mr-1.5" />{ka ? 'შესაბამისობის შენახვა' : 'Save mappings'}</ActionButton>}
         >
@@ -856,7 +853,6 @@ export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationH
           </SectionCard>
           <FormSection
             title={ka ? 'ბუღალტრული მეტამონაცემები' : 'Accounting Metadata'}
-            description={ka ? 'გარე მითითებები ინახავს ოფიციალურ ID-ებსა და ბუღალტრულ სტატუსს მარნის მონაცემების გადაწერის გარეშე.' : 'External references store official IDs and accounting status without rewriting cellar facts.'}
             icon={ShieldCheck}
           >
             <div className="space-y-2">

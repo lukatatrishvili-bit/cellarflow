@@ -21,6 +21,7 @@ export * from './roles';
 export * from './events';
 export * from './context';
 export * from './agents';
+export * from './copilot';
 export * from './schema';
 export * from './orchestrator';
 export * from './briefing';

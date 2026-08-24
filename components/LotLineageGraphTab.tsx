@@ -4,7 +4,6 @@ import {
   Boxes,
   GitMerge,
   Grape,
-  Info,
   Maximize2,
   Minimize2,
   PackageCheck,
@@ -264,21 +263,7 @@ function LineageCard({
 }
 
 function DetailPanel({ node, edges, ka }: { node: LineageNode | null; edges: LineageEdge[]; ka: boolean }) {
-  if (!node) {
-    return (
-      <SectionCard
-        title={ka ? 'კვანძის დეტალები' : 'Node details'}
-        subtitle={ka ? 'აირჩიეთ ბარათი გრაფზე დეტალების სანახავად.' : 'Select a card in the graph to inspect its metadata.'}
-        icon={Info}
-      >
-        <p className="text-xs text-stone-400 leading-relaxed">
-          {ka
-            ? 'აქ გამოჩნდება მოცულობა, ბოთლები, თარიღი, დაკავშირებული ოპერაციები და აუდიტის მონაცემები.'
-            : 'You will see volume, bottles, date, linked operations, and audit metadata for the selected traceability event.'}
-        </p>
-      </SectionCard>
-    );
-  }
+  if (!node) return null;
 
   const meta = nodeMeta(node);
   const Icon = meta.icon;
@@ -286,7 +271,7 @@ function DetailPanel({ node, edges, ka }: { node: LineageNode | null; edges: Lin
   const metadata = Object.entries(node.metadata || {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
 
   return (
-    <SectionCard title={node.label} subtitle={ka ? meta.labelKa : meta.label} icon={Icon}>
+    <SectionCard title={node.label} icon={Icon}>
       <div className="grid grid-cols-2 gap-2 text-[11px]">
         {[
           [ka ? 'თარიღი' : 'Date', node.date || '—'],
@@ -351,7 +336,6 @@ function MiniMap({
   width,
   height,
   selectedNodeId,
-  zoom,
 }: {
   ka: boolean;
   nodes: PositionedLineageNode[];
@@ -360,14 +344,13 @@ function MiniMap({
   width: number;
   height: number;
   selectedNodeId?: string;
-  zoom: number;
 }) {
   if (nodes.length === 0) return null;
   const safeWidth = Math.max(width, 1);
   const safeHeight = Math.max(height, 1);
 
   return (
-    <SectionCard title={ka ? 'მინი რუკა' : 'Mini map'} subtitle={ka ? `${Math.round(zoom * 100)}% მასშტაბი` : `${Math.round(zoom * 100)}% zoom`}>
+    <SectionCard title={ka ? 'მინი რუკა' : 'Mini map'}>
       <div className="relative h-20 overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-950/40">
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
           {edges.map(edge => {
@@ -551,9 +534,6 @@ export function LotLineageGraphTab({
       <PageHeader
         eyebrow={ka ? 'მიკვლევადობა' : 'Lineage'}
         title={ka ? 'ღვინის კოდის მიკვლევადობის ხე' : 'Wine Code Traceability Tree'}
-        description={ka
-          ? 'თითო ღვინის კოდის ვიზუალური გზა: ყურძნის მიღება, პარტიის შექმნა, კუპაჟები, ოპერაციები, ჩამოსხმა, საწყობი, ჯავშნები და რეალიზაცია.'
-          : 'A horizontal visual lineage for each wine code: grape intake, lot creation, blends, operations, bottling, storage, reservations, and dispatch.'}
         icon={GitMerge}
         actions={(
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -742,16 +722,6 @@ export function LotLineageGraphTab({
 
         <div className="space-y-4">
           <DetailPanel node={selectedNode} edges={positioned.edges} ka={ka} />
-          <SectionCard title={ka ? 'როგორ იკითხება ხე' : 'Reading the tree'} icon={Info}>
-            <div className="space-y-2 text-[11px] leading-relaxed text-stone-500 dark:text-stone-400">
-              <p>{ka
-                ? 'ბარათები მარცხნიდან მარჯვნივ მიჰყვება ღვინის სასიცოცხლო ციკლს. კუპაჟის კვანძი აერთიანებს ორ ან მეტ საწყის ხაზს ერთ პარტიაში.'
-                : 'Cards move left-to-right through the wine lifecycle. Blend nodes merge two or more parent wine-code lines into one result lot.'}</p>
-              <p>{ka
-                ? 'როცა კუპაჟი ვიზუალურად იტვირთება, ჩართეთ „არჩეული გზა" — დარჩება მხოლოდ დაკავშირებული აუდიტის ხაზი.'
-                : 'Use selected-path mode when a blend becomes visually dense; it keeps the connected audit path visible and hides unrelated noise.'}</p>
-            </div>
-          </SectionCard>
           <MiniMap
             ka={ka}
             nodes={visibleNodes}
@@ -760,7 +730,6 @@ export function LotLineageGraphTab({
             width={positioned.width}
             height={positioned.height}
             selectedNodeId={selectedNode?.id}
-            zoom={zoom}
           />
         </div>
       </div>

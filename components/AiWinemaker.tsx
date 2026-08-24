@@ -40,6 +40,9 @@ interface Message {
   content: string;
 }
 
+/** Turns of transcript sent for continuity; the server caps this again. */
+const HISTORY_TURNS_SENT = 8;
+
 interface TempTask {
   id: number;
   checked: boolean;
@@ -122,16 +125,21 @@ export default function AiWinemaker({
       setInputMsg('');
     }
 
+    // Captured before the optimistic append so the transcript we send is the
+    // conversation *preceding* this question, not one that already contains it.
+    const priorTurns = messages.slice(-HISTORY_TURNS_SENT);
     setMessages(prev => [...prev, { role: 'user', content: query }]);
     setIsLoading(true);
 
     try {
+      // The cellar state is deliberately not sent: the server derives the
+      // winery context itself, filtered to what this user's role may open.
       const resp = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: query,
-          cellarState,
+          history: priorTurns,
           stream: true,
           lang,
           contextModule,
@@ -636,7 +644,6 @@ export default function AiWinemaker({
           <Bot className="w-5 h-5 text-amber-400" />
           <div>
             <h3 className="text-sm font-semibold font-serif tracking-wide">{t.ai_assistant} (Gemini)</h3>
-            <p className="text-[10px] text-amber-200/80">{lang === 'ka' ? 'ღვინის მრჩეველი და ქიმიური მოდელირება' : 'Winery Advisor & Chemistry Modeler Mode'}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">

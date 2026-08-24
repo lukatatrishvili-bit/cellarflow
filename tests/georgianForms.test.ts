@@ -13,6 +13,7 @@ const company: any = {
 
 const blocks: any[] = [
   { id: 'BLK-1', name: 'ქონდოლი 1', vineyardName: 'Kondoli', locationName: 'Telavi, Kakheti, Georgia',
+    cadastralCode: '53.01.01.001', municipality: 'Telavi', community: 'Tsinandali', village: 'Kondoli', parcelName: 'Kondoli 1',
     latitude: 41.9, longitude: 45.4, area: 1.5, elevation: 450, slope: 'S', aspect: 'S', soilType: 'clay',
     grapeVariety: 'საფერავი', plantingYear: 2015, spacing: '2.0 x 1.0', rowsCount: 30, vinesCount: 4500,
     trainingSystem: 'Guyot', pruningSystem: 'Cane', irrigationEnabled: true, farmingStatus: 'organic',
@@ -21,7 +22,7 @@ const blocks: any[] = [
 
 const harvests: any[] = [
   { id: 'H1', blockId: 'BLK-1', variety: 'საფერავი', estimatedHarvestDate: '2026-09-20', estimatedTons: 9,
-    actualHarvestDate: '2026-09-22', actualHarvestedKg: 9000, pickingMethod: 'hand', grapeCondition: 'good',
+    actualHarvestDate: '2026-09-22', actualHarvestedKg: 9000, harvestedAreaHa: 1.2, pickingMethod: 'hand', grapeCondition: 'good',
     sentToGvino: true, notes: '' },
   { id: 'H2', blockId: 'BLK-1', variety: 'საფერავი', estimatedHarvestDate: '2025-09-18', estimatedTons: 8,
     actualHarvestDate: '2025-09-19', actualHarvestedKg: 8000, pickingMethod: 'hand', grapeCondition: 'good',
@@ -30,7 +31,7 @@ const harvests: any[] = [
 
 const lots: any[] = [
   { id: 'SAP-2026-01', name: 'საფერავი 2026', vintage: 2026, variety: 'საფერავი', vineyardBlock: 'BLK-1',
-    region: 'Kakheti', initialVolume: 5000, currentVolume: 4800, wineClass: 'red', stage: 'aging',
+    region: 'Kakheti', initialVolume: 5000, currentVolume: 4800, wineClass: 'red', sugarCategory: 'dry', stage: 'aging',
     createdAt: '2026-10-01', history: [{ date: '2026-10-02', type: 'aging', description: 'to barrel', operator: 'A' }] },
 ];
 
@@ -55,7 +56,7 @@ function makeCtx(over: Partial<ExportContext> = {}): ExportContext {
   return {
     lang: 'ka', mode: 'filled', blankRows: 12, company, generatedBy: 'ტესტერი',
     dateRange: { from: '2026-01-01', to: '2026-12-31' }, accountingYear: '2026',
-    blocks, lots, vessels, harvests, samplings: [], inventory: [], labLogs, transfers, grapeIntakes: [], cellarOps: [], bottlingRuns: [], salesDispatches: [],
+    blocks, lots, vessels, harvests, samplings: [], inventory: [], labLogs, transfers, grapeIntakes: [], cellarOps: [], bottlingRuns: [], salesDispatches: [], inventoryMovements: [], invoiceReceipts: [],
     ...over,
   };
 }
@@ -123,6 +124,7 @@ describe('data mapping', () => {
     const r = doc.rows[0];
     expect(r.areaSqm).toBe(15000); // 1.5 ha
     expect(r.variety).toBe('საფერავი');
+    expect(r.community).toBe('Tsinandali');
     expect(r.rowDistance).toBe('2.0');
     expect(r.vineDistance).toBe('1.0');
     expect(r.irrigation).toBe('დიახ');
@@ -133,16 +135,60 @@ describe('data mapping', () => {
     const doc = buildDocument('annex_02_harvest_journal', makeCtx());
     expect(doc.rows).toHaveLength(1); // 2026 only
     expect(doc.rows[0].tons).toBe(9); // 9000 kg
+    expect(doc.rows[0].areaHa).toBe(1.2);
+    expect(doc.rows[0].yieldPerHa).toBe(7.5);
     expect(doc.totalsRow?.tons).toBe(9);
   });
 
   it('Annex 4 builds a running wine-movement ledger from production + transfers', () => {
     const doc = buildDocument('annex_04_wine_movement', makeCtx({ lotId: 'SAP-2026-01' }));
-    // production-in 500 dal, +50 dal in, −30 dal out
+    // production-in 500 dal, +49.8 dal received after loss, −30 dal out
     const last = doc.rows[doc.rows.length - 1];
-    expect(Number(last.balance)).toBeCloseTo(520, 1);
-    expect(doc.totalsRow?.incoming).toBeCloseTo(550, 1);
+    expect(Number(last.balance)).toBeCloseTo(519.8, 1);
+    expect(doc.totalsRow?.incoming).toBeCloseTo(549.8, 1);
     expect(doc.totalsRow?.outgoing).toBeCloseTo(30, 1);
+  });
+
+  it('Annex 4 reads current transactional transfer records and preserves recorded loss', () => {
+    const currentTransfers: any[] = [{
+      id: 'TR-CURRENT', recordKind: 'transfer', date: '2026-10-10',
+      sourceId: 'T-1', destId: 'T-2', volume: 500, loss: 5,
+      sourceLotId: 'SAP-2026-01', resultLotId: 'SAP-2026-01',
+      sourceContributionL: 500, arrivalVolumeL: 495,
+      category: 'racking', details: 'Racking', pump: 'P-1', operator: 'A',
+    }];
+    const doc = buildDocument('annex_04_wine_movement', makeCtx({
+      lotId: 'SAP-2026-01', transfers: currentTransfers,
+    }));
+    const movement = doc.rows.find(row => row.fromTo === 'T-1 → T-2');
+    expect(movement).toMatchObject({ incoming: 49.5, outgoing: 50 });
+    expect(doc.rows[doc.rows.length - 1].balance).toBe(499.5);
+  });
+
+  it('Annex 6 maps transactional blend components, volumes, and lab references', () => {
+    const blendLots: any[] = [
+      ...lots,
+      { ...lots[0], id: 'RKA-2026-01', name: 'Rkatsiteli 2026', variety: 'Rkatsiteli' },
+      { ...lots[0], id: 'BLEND-2026-01', name: 'Estate Blend 2026', variety: 'Blend' },
+    ];
+    const blendLabs: any[] = [
+      ...labLogs,
+      { ...labLogs[0], id: 'LAB-RKA', lotId: 'RKA-2026-01', alcoholPct: 12, residualSugar: 3 },
+    ];
+    const blendTransfers: any[] = [{
+      id: 'TR-BLEND', recordKind: 'transfer', date: '2026-10-10',
+      sourceId: 'T-1', destId: 'T-2', volume: 500, loss: 2,
+      sourceLotId: 'SAP-2026-01', destinationLotId: 'RKA-2026-01', resultLotId: 'BLEND-2026-01',
+      sourceContributionL: 500, destinationContributionL: 1_000, arrivalVolumeL: 498,
+      category: 'blend', details: 'Blend', pump: 'P-1', operator: 'A',
+    }];
+    const doc = buildDocument('annex_06_wine_blending_act', makeCtx({
+      lotId: 'BLEND-2026-01', lots: blendLots, labLogs: blendLabs, transfers: blendTransfers,
+    }));
+    expect(doc.rows).toHaveLength(2);
+    expect(doc.rows.map(row => row.qty)).toEqual([100, 50]);
+    expect(doc.rows.map(row => row.analysisNo)).toEqual(['LAB-RKA', 'L1']);
+    expect(doc.rows[0]).toMatchObject({ alc: 12, sugar: 0.3, spirit: 1200, sugarTotal: 30 });
   });
 
   it('Annex 5 maps an aging lot with lab analytics', () => {
@@ -258,12 +304,28 @@ describe('data mapping', () => {
     expect(doc.rows.some(row => /Return \/ correction|დაბრუნება \/ კორექცია/.test(String(row.fromTo)))).toBe(true);
   });
 
+  it('Annex 18 separates domestic and export dispatch quantities', () => {
+    const bottlingRuns: any[] = [
+      { id: 'BR1', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026', date: '2026-06-15', lotNumber: 'L-26-07',
+        operator: 'A', formats: { '0.75': 1200 }, volumeBottledL: 900, totalBottles: 1200, totalCeramic: 0 },
+    ];
+    const salesDispatches: any[] = [
+      { id: 'SD-DOM', date: '2026-06-20', marketChannel: 'domestic', customerName: 'Wine Bar', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026',
+        locationId: 'WH-1', locationName: 'WH', bottles: 400, pricePerBottle: 25, currency: 'GEL', revenue: 10000, stockMovementId: 'SM1', operator: 'A' },
+      { id: 'SD-EXP', date: '2026-06-21', marketChannel: 'export', customerName: 'Importer', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026',
+        locationId: 'WH-1', locationName: 'WH', bottles: 200, pricePerBottle: 30, currency: 'GEL', revenue: 6000, stockMovementId: 'SM2', operator: 'A' },
+    ];
+    const doc = buildDocument('annex_18_wine_turnover_notification', makeCtx({ bottlingRuns, salesDispatches }));
+    const row = doc.rows.find(item => item.wineName === 'საფერავი 2026');
+    expect(row).toMatchObject({ inOwn: 500, outDomestic: 30, outExport: 15, closeBalance: 455 });
+  });
+
   it('Annex 3 maps structured grape intakes with gross/tare/net + reception sugar', () => {
     const grapeIntakes: any[] = [
       { id: 'GI1', date: '2026-09-23', source: 'own', blockId: 'BLK-1', blockName: 'ქონდოლი 1', variety: 'საფერავი',
         vintage: 2026, grossWeightKg: 9500, tareWeightKg: 500, netWeightKg: 9000, brix: 23.4, ph: 3.45,
         transportName: 'Truck', transportNumber: 'AA-001-AA', weighingDocumentNumber: 'W-001', labAnalysisNumber: 'LAB-001',
-        cadastralCode: '53.01.01.001', village: 'Kondoli', municipality: 'Telavi', microzone: 'Tsinandali',
+        cadastralCode: '53.01.01.001', village: 'Kondoli', community: 'Tsinandali', municipality: 'Telavi', microzone: 'Tsinandali',
         titratableAcidity: 5.8, temperatureC: 18, condition: 'excellent', pickingMethod: 'hand', wineClass: 'red',
         juiceYieldPct: 70, estimatedVolumeL: 6300, destinationVesselId: 'T-1', createdLotId: 'SAP-2026-01',
         operator: 'A', notes: 'clean' },
@@ -320,6 +382,34 @@ describe('data mapping', () => {
     expect(doc.rows).toHaveLength(1);
     expect(doc.rows[0].balance).toBe(4.5);
     expect(doc.rows[0].outgoing).toBe(0);
+  });
+
+  it('Annex 13 combines procurement receipts with cellar usage and invoice numbers', () => {
+    const inventory: any[] = [
+      { id: 'INV-B', name: 'ბენტონიტი', category: 'additives', stock: 26, minThreshold: 10, unit: 'კგ', costPerUnit: 6, supplierName: 'Enartis', details: '' },
+    ];
+    const cellarOps: any[] = [
+      { id: 'OP-A', date: '2026-10-07', type: 'fining', lotId: 'SAP-2026-01', lotName: 'საფერავი 2026',
+        vesselId: 'T-1', materialId: 'INV-B', materialName: 'ბენტონიტი', dose: 4, unit: 'კგ', operator: 'A', notes: '' },
+    ];
+    const inventoryMovements: any[] = [{
+      id: 'MOV-IN', commandId: 'CMD-IN', kind: 'invoice_receipt', direction: 'in',
+      occurredAt: '2026-10-03T10:00:00Z', inventoryItemId: 'INV-B', inventoryItemName: 'ბენტონიტი',
+      quantity: 10, unit: 'კგ', invoiceReceiptId: 'REC-1', invoiceLineId: 'LINE-1',
+      accountingUnitCost: 6, accountingAmount: 60, accountingCurrency: 'GEL',
+      sourceAmount: 60, sourceCurrency: 'GEL', stockBefore: 20, stockAfter: 30,
+      weightedCostBefore: 6, weightedCostAfter: 6,
+    }];
+    const invoiceReceipts: any[] = [{
+      id: 'REC-1', invoice: { supplierName: 'Enartis', invoiceNumber: 'INV-2026-44', currency: 'GEL' },
+    }];
+    const doc = buildDocument('annex_13_materials_movement', makeCtx({
+      inventory, cellarOps, inventoryMovements, invoiceReceipts,
+    }));
+    expect(doc.rows).toHaveLength(3);
+    expect(doc.rows[0]).toMatchObject({ incoming: 20, balance: 20 });
+    expect(doc.rows[1]).toMatchObject({ docNo: 'INV-2026-44', incoming: 10, balance: 30 });
+    expect(doc.rows[2]).toMatchObject({ outgoing: 4, balance: 26 });
   });
 
   it('Annex 3 retains a reversed receipt and its negative correction', () => {

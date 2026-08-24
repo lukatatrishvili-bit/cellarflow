@@ -166,6 +166,14 @@ describe('CellarOperationsTab action permissions', () => {
     expect(markup).toContain('Log operation</button>');
   });
 
+  it('explains the automatic return when an operation starts from a vessel', () => {
+    const markup = renderOperations({ returnToVesselId: vessel.id });
+
+    expect(markup).toContain('Started from T-1.');
+    expect(markup).toContain('After a successful save, its updated vessel record will reopen.');
+    expect(markup).toContain('Return enabled');
+  });
+
   it('shows correction only for safely reversible command-created operations', () => {
     const allowed = renderOperations({ ops: [reversibleOperation], canReverseCellarOperation: true });
     const denied = renderOperations({ ops: [reversibleOperation], canReverseCellarOperation: false });

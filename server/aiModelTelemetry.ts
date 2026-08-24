@@ -1,11 +1,13 @@
 import crypto from 'crypto';
 import { getPrismaClientForAdmin } from './db';
+import { aiProviderLimiter, AiProviderRateLimitedError } from './aiProviderLimiter';
 
 export type AiModelCallPurpose =
   | 'analysis'
   | 'ask_planner'
   | 'ask_explanation'
-  | 'knowledge_embedding';
+  | 'knowledge_embedding'
+  | 'copilot';
 export type AiModelCallStatus = 'running' | 'succeeded' | 'invalid_response' | 'failed';
 export type AiModelErrorCategory =
   | 'authentication'
@@ -91,7 +93,71 @@ function normalizeRecord(value: any): AiModelCallTelemetryRecord {
   };
 }
 
+/**
+ * How long the provider itself asked us to wait, when it says so. Gemini
+ * returns a `RetryInfo` detail on a quota rejection; honouring it beats
+ * guessing, and reading it also tells us when waiting is hopeless.
+ */
+function providerRetryDelayMs(error: unknown): number | null {
+  const details = (error as { details?: unknown })?.details;
+  const candidates: unknown[] = Array.isArray(details) ? details : [];
+  const message = String((error as { message?: unknown })?.message || '');
+  if (candidates.length === 0 && message) {
+    // The SDK stringifies the error body into `message` for some failures.
+    const match = message.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+    if (match) return Math.round(Number(match[1]) * 1_000);
+  }
+  for (const detail of candidates) {
+    const row = detail as { '@type'?: unknown; retryDelay?: unknown };
+    if (typeof row?.retryDelay !== 'string') continue;
+    const seconds = Number(row.retryDelay.replace(/s$/, ''));
+    if (Number.isFinite(seconds)) return Math.round(seconds * 1_000);
+  }
+  return null;
+}
+
+const RETRYABLE: ReadonlySet<AiModelErrorCategory> = new Set<AiModelErrorCategory>([
+  'rate_limited',
+  'timeout',
+  'provider',
+]);
+
+function shouldRetry(error: unknown): boolean {
+  const category = classifyError(error);
+  if (!RETRYABLE.has(category)) return false;
+
+  // A provider-side 4xx is a permanent request rejection unless it is the
+  // explicit timeout/rate-limit case classified above. Retrying malformed
+  // input only spends quota and makes the original error slower to surface.
+  const candidate = error as { status?: unknown; statusCode?: unknown } | null;
+  const status = Number(candidate?.status || candidate?.statusCode || 0);
+  if (category === 'provider' && status >= 400 && status < 500) return false;
+  return true;
+}
+
+/** Attempts after the first. Kept small: these run inside a user's request. */
+const MAX_RETRIES = 2;
+const BASE_BACKOFF_MS = 400;
+/**
+ * Waiting longer than this inside an interactive request is worse than failing:
+ * the caller is left hanging and the answer arrives after they have moved on.
+ * A quota window measured in tens of seconds is reported, not slept through.
+ */
+const MAX_BACKOFF_MS = 4_000;
+
+function backoffFor(attempt: number, error: unknown): number | null {
+  const suggested = providerRetryDelayMs(error);
+  if (suggested !== null) return suggested <= MAX_BACKOFF_MS ? suggested : null;
+  const exponential = BASE_BACKOFF_MS * 2 ** attempt;
+  // Jitter so several instances retrying the same quota do not resynchronise.
+  return Math.min(MAX_BACKOFF_MS, Math.round(exponential * (0.5 + Math.random())));
+}
+
 function classifyError(error: unknown): AiModelErrorCategory {
+  if (error instanceof AiProviderRateLimitedError) return 'rate_limited';
+  if (String((error as { message?: unknown })?.message || '').includes('RESOURCE_EXHAUSTED')) {
+    return 'rate_limited';
+  }
   const candidate = error as {
     name?: unknown;
     code?: unknown;
@@ -222,7 +288,9 @@ export async function withAiModelCallTelemetry<T>(
   }
 
   try {
-    const result = await operation();
+    // Paced and retried here so every provider call in the product is covered
+    // by one policy: this wrapper is the only path to the provider.
+    const result = await runWithRetries(operation);
     if (record) {
       await finishCall(record, result.valid ? 'succeeded' : 'invalid_response', clock())
         .catch(() => undefined);
@@ -235,6 +303,31 @@ export async function withAiModelCallTelemetry<T>(
     }
     throw error;
   }
+}
+
+async function runWithRetries<T>(
+  operation: () => Promise<AiModelCallResult<T>>,
+): Promise<AiModelCallResult<T>> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      return await aiProviderLimiter.run(operation);
+    } catch (error) {
+      lastError = error;
+      if (attempt === MAX_RETRIES || !shouldRetry(error)) throw error;
+      const delay = backoffFor(attempt, error);
+      // A quota window longer than we are willing to hold the request open:
+      // report it now, with how long the provider said to wait.
+      if (delay === null) {
+        throw new AiProviderRateLimitedError(
+          'The AI provider is rate-limiting this deployment. Try again shortly.',
+          providerRetryDelayMs(error) ?? 60_000,
+        );
+      }
+      await new Promise<void>((resolve) => { setTimeout(resolve, delay); });
+    }
+  }
+  throw lastError;
 }
 
 /** Bounded, content-free operational view for the master-admin console. */
@@ -283,6 +376,7 @@ export async function getAiModelCallOperations(
       ask_planner: emptyPurposeSummary(),
       ask_explanation: emptyPurposeSummary(),
       knowledge_embedding: emptyPurposeSummary(),
+      copilot: emptyPurposeSummary(),
     };
     const today = emptyPurposeSummary() as AiModelCallOperationsSnapshot['today'];
     for (const group of groups) {
@@ -326,6 +420,7 @@ export async function getAiModelCallOperations(
     ask_planner: emptyPurposeSummary(),
     ask_explanation: emptyPurposeSummary(),
     knowledge_embedding: emptyPurposeSummary(),
+    copilot: emptyPurposeSummary(),
   };
   const today = emptyPurposeSummary() as AiModelCallOperationsSnapshot['today'];
   const completedLatencies: number[] = [];

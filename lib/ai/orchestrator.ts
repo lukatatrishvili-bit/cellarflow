@@ -1,5 +1,10 @@
 import { isAreaEnabled, meetsSeverityThreshold } from './config';
-import { findingFeedbackEntries } from './feedback';
+import {
+  detectorKey,
+  findingFeedbackEntries,
+  mutedDetectors,
+  type AiDetectorMute,
+} from './feedback';
 import { severityRank } from './types';
 import { text } from './text';
 import type {
@@ -107,6 +112,31 @@ const MULTI_AGENT: Record<string, AiAgentKey[]> = {
   volatile_acidity_high: ['laboratory', 'winemaking'],
 };
 
+/**
+ * The winery's own review verdicts, applied.
+ *
+ * A muted detector keeps producing findings — it stays in the activity log and
+ * in the briefing, and a user can still review it. What it loses is the two
+ * things that cost something: a notification, and a model call. A critical
+ * finding is never muted, so calibration can reduce noise but cannot silence
+ * the alerts the layer exists for.
+ */
+function mutedDetectorsFor(
+  config: AiWineryConfig,
+  existing: readonly AiFindingRecord[],
+): Map<string, AiDetectorMute> {
+  if (!config.feedbackCalibrationEnabled) return new Map();
+  return mutedDetectors(existing);
+}
+
+function isMuted(
+  muted: ReadonlyMap<string, AiDetectorMute>,
+  finding: Pick<AiFinding, 'findingType' | 'source' | 'area' | 'severity'>,
+): boolean {
+  if (muted.size === 0 || finding.severity === 'critical') return false;
+  return muted.has(detectorKey(finding));
+}
+
 export interface AnalysisPlanItem {
   finding: AiFinding;
   scope: AiContextScope;
@@ -120,6 +150,8 @@ export interface AnalysisPlan {
   plannedModelCalls: number;
   /** Findings that were eligible but dropped by the per-run budget. */
   deferred: number;
+  /** Findings skipped because this winery's reviewers muted their detector. */
+  muted: number;
   reason: 'ok' | 'model_disabled' | 'budget_exhausted' | 'nothing_eligible';
 }
 
@@ -168,23 +200,35 @@ function cooldownActive(finding: AiFinding, existing: AiFindingRecord[], now: st
 export function planAnalysis(findings: AiFinding[], options: PlanOptions): AnalysisPlan {
   const { config } = options;
   if (!config.modelAnalysisEnabled) {
-    return { items: [], plannedModelCalls: 0, deferred: 0, reason: 'model_disabled' };
+    return { items: [], plannedModelCalls: 0, deferred: 0, muted: 0, reason: 'model_disabled' };
   }
   const now = options.now || new Date().toISOString();
   const existing = options.existing || [];
   const remainingBudget = Math.max(0, config.maxModelCallsPerDay - (options.callsUsedToday || 0));
   if (remainingBudget === 0) {
-    return { items: [], plannedModelCalls: 0, deferred: 0, reason: 'budget_exhausted' };
+    return { items: [], plannedModelCalls: 0, deferred: 0, muted: 0, reason: 'budget_exhausted' };
   }
 
-  const eligible = findings
-    .filter((finding) => WORTH_ANALYZING.has(finding.findingType))
+  // Buying an interpretation of a trigger this winery keeps marking wrong is
+  // the least valuable call the layer can make; it is skipped before cooldown.
+  const muted = mutedDetectorsFor(config, existing);
+  const candidates = findings.filter((finding) => WORTH_ANALYZING.has(finding.findingType));
+  const mutedCount = candidates.filter((finding) => isMuted(muted, finding)).length;
+
+  const eligible = candidates
+    .filter((finding) => !isMuted(muted, finding))
     .filter((finding) => severityRank(finding.severity) >= severityRank('warning'))
     .filter((finding) => !cooldownActive(finding, existing, now))
     .sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
 
   if (eligible.length === 0) {
-    return { items: [], plannedModelCalls: 0, deferred: 0, reason: 'nothing_eligible' };
+    return {
+      items: [],
+      plannedModelCalls: 0,
+      deferred: 0,
+      muted: mutedCount,
+      reason: 'nothing_eligible',
+    };
   }
 
   const itemLimit = Math.max(0, options.maxPerRun ?? 3);
@@ -210,6 +254,7 @@ export function planAnalysis(findings: AiFinding[], options: PlanOptions): Analy
       items: [],
       plannedModelCalls: 0,
       deferred: eligible.length,
+      muted: mutedCount,
       reason: 'budget_exhausted',
     };
   }
@@ -218,6 +263,7 @@ export function planAnalysis(findings: AiFinding[], options: PlanOptions): Analy
     items: chosen,
     plannedModelCalls,
     deferred: eligible.length - chosen.length,
+    muted: mutedCount,
     reason: 'ok',
   };
 }
@@ -232,6 +278,8 @@ export interface MergeResult {
   notify: AiFindingRecord[];
   /** Previously open records whose underlying situation is no longer detected. */
   autoResolved: AiFindingRecord[];
+  /** Records that would have notified but for a muted detector. */
+  mutedNotifications: AiFindingRecord[];
 }
 
 /**
@@ -254,6 +302,16 @@ export function mergeFindings(
   const records: AiFindingRecord[] = [];
   const notify: AiFindingRecord[] = [];
   const autoResolved: AiFindingRecord[] = [];
+  const mutedNotifications: AiFindingRecord[] = [];
+  const muted = mutedDetectorsFor(options.config, existing);
+  const routeNotification = (record: AiFindingRecord): void => {
+    if (!meetsSeverityThreshold(record.severity, options.config)) return;
+    if (isMuted(muted, record)) {
+      mutedNotifications.push(record);
+      return;
+    }
+    notify.push(record);
+  };
 
   for (const record of existing) {
     const fresh = incomingByKey.get(record.dedupeKey);
@@ -315,9 +373,7 @@ export function mergeFindings(
       lastModified: now,
     };
     records.push(merged);
-    if (shouldReopen && meetsSeverityThreshold(merged.severity, options.config)) {
-      notify.push(merged);
-    }
+    if (shouldReopen) routeNotification(merged);
   }
 
   for (const finding of incomingByKey.values()) {
@@ -330,10 +386,10 @@ export function mergeFindings(
       lastModified: now,
     };
     records.push(record);
-    if (meetsSeverityThreshold(record.severity, options.config)) notify.push(record);
+    routeNotification(record);
   }
 
-  return { records, notify, autoResolved };
+  return { records, notify, autoResolved, mutedNotifications };
 }
 
 /** Overall winery posture, driven by the most severe open finding. */

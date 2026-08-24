@@ -37,7 +37,7 @@ describe('WineryDashboardTab task permissions', () => {
   it('renders task controls as read-only when updates are not allowed', () => {
     const markup = renderDashboard(false);
 
-    expect(markup).toContain('Task status is view-only for your role.');
+    expect(markup).not.toContain('Task status is view-only for your role.');
     expect(markup).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""/);
     expect(markup).toContain('cursor-default');
   });

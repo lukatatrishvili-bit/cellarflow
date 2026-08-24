@@ -14,6 +14,7 @@ const block: VineyardBlock = {
   locationName: 'Mukuzani',
   cadastralCode: 'CAD-001',
   municipality: 'Gurjaani',
+  community: 'Mukuzani',
   village: 'Mukuzani',
   microzone: 'Mukuzani',
   latitude: 41.81,
@@ -93,6 +94,7 @@ const payload: HarvestIntakeCommandPayload = {
     source: 'own',
     blockId: block.id,
     blockName: 'Untrusted stale name',
+    harvestedAreaHa: 0.8,
     variety: 'Saperavi',
     vintage: 2026,
     grossWeightKg: 1_100,
@@ -149,7 +151,7 @@ describe('cellar.harvest-intake domain command', () => {
       reversalSnapshot: {
         version: 1,
         lot: { id: payload.lotId, currentVolume: 700, stage: 'crushing' },
-        harvest: { id: 'HARVEST-A', sentToGvino: false },
+        harvest: { id: 'HARVEST-A', sentToGvino: false, harvestedAreaHa: null },
         vessel: { id: 'T-1', currentVolume: 0, assignedLotId: null, lastOperation: 'Sanitized' },
         auditId: payload.auditId,
       },
@@ -167,6 +169,7 @@ describe('cellar.harvest-intake domain command', () => {
     expect(applied.result.updatedHarvest).toMatchObject({
       sentToGvino: true,
       actualHarvestedKg: 1_000,
+      harvestedAreaHa: 0.8,
       associatedLotId: payload.lotId,
       lastCommandId: context.commandId,
     });

@@ -273,6 +273,7 @@ function parseIntake(value: unknown): HarvestIntakeInput {
     community: optionalText(input.community, 'intake.community', 180),
     municipality: optionalText(input.municipality, 'intake.municipality', 180),
     microzone: optionalText(input.microzone, 'intake.microzone', 180),
+    harvestedAreaHa: finiteNumber(input.harvestedAreaHa, 'intake.harvestedAreaHa', EPSILON, 1_000_000, false),
     variety: textValue(input.variety, 'intake.variety', 180, true),
     vintage,
     grossWeightKg,
@@ -454,7 +455,7 @@ export function applyHarvestIntakeCommand(
   const cadastralCode = cleanText(block?.cadastralCode) || input.cadastralCode;
   const municipality = cleanText(block?.municipality) || input.municipality;
   const community = cleanText(block?.community) || input.community;
-  const village = cleanText(block?.village) || cleanText(block?.vineyardName) || input.village;
+  const village = cleanText(block?.village) || input.village;
   const microzone = cleanText(block?.microzone) || input.microzone;
   const origin = input.source === 'own' ? (blockName || 'Own vineyard') : (input.supplierName || 'Supplier');
   const lot = stamped<WineLot>(compactRecord({
@@ -527,6 +528,7 @@ export function applyHarvestIntakeCommand(
     sentToGvino: true,
     actualHarvestedKg: netWeightKg,
     actualHarvestDate: input.date,
+    ...(input.harvestedAreaHa ? { harvestedAreaHa: input.harvestedAreaHa } : {}),
     associatedLotId: payload.lotId,
     lastCommandId: context.commandId,
   }, timestamp) : undefined;
@@ -560,6 +562,7 @@ export function applyHarvestIntakeCommand(
         sentToGvino: harvest.sentToGvino,
         actualHarvestedKg: harvest.actualHarvestedKg ?? null,
         actualHarvestDate: harvest.actualHarvestDate ?? null,
+        harvestedAreaHa: harvest.harvestedAreaHa ?? null,
         associatedLotId: harvest.associatedLotId ?? null,
       },
     } : {}),

@@ -7,7 +7,35 @@ import { readDemoAccountConfig } from './demoAccount';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const GEMINI_MODEL = "gemini-2.5-flash";
+/**
+ * Default generative model. Every surface used this one constant: the query
+ * planner, the answer explainer, invoice extraction, the copilot, and a
+ * multi-specialist diagnostic pass alike.
+ */
+export const GEMINI_MODEL = (process.env.AI_MODEL || '').trim() || "gemini-2.5-flash";
+
+/**
+ * Deep analysis is the rarest call the layer makes — several specialists on one
+ * situation, gated behind severity, finding type and a cooldown — and the one
+ * where interpretation quality is the entire product. It gets a stronger model;
+ * the daily budget still caps how many of them a winery can buy.
+ */
+export const GEMINI_DEEP_MODEL = (process.env.AI_MODEL_DEEP || '').trim() || "gemini-2.5-pro";
+
+/**
+ * Choosing a query kind from a fixed list is a classification task, not a
+ * reasoning one. Split out so an operator can point it at a cheaper model
+ * without touching anything that writes prose for a winemaker.
+ */
+export const GEMINI_PLANNER_MODEL = (process.env.AI_MODEL_PLANNER || '').trim() || GEMINI_MODEL;
+
+export type AiModelSlot = 'default' | 'deep' | 'planner';
+
+export function aiModelFor(slot: AiModelSlot): string {
+  if (slot === 'deep') return GEMINI_DEEP_MODEL;
+  if (slot === 'planner') return GEMINI_PLANNER_MODEL;
+  return GEMINI_MODEL;
+}
 export const COOKIE_SECURE = process.env.NODE_ENV === 'production';
 export const demoAccountConfig = readDemoAccountConfig();
 

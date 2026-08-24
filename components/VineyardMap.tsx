@@ -188,14 +188,14 @@ export default function VineyardMap({
     <div
       role="region"
       aria-label={ariaLabel || (lang === 'ka' ? 'ვენახის ინტერაქტიული რუკა' : 'Interactive vineyard map')}
-      className={`relative w-full overflow-hidden rounded-lg bg-stone-100 ${heightClassName} ${drawing ? 'vineyard-map--drawing' : ''}`}
+      className={`relative z-0 isolate w-full overflow-hidden rounded-lg bg-stone-100 [contain:layout_paint] ${heightClassName} ${drawing ? 'vineyard-map--drawing' : ''}`}
       data-testid="vineyard-map"
     >
       <MapContainer
         center={mapCenter}
         zoom={15}
         scrollWheelZoom
-        className="h-full w-full"
+        className="z-0 h-full w-full"
       >
         <TileLayer
           attribution={VINEYARD_SATELLITE_BASEMAP.attribution}

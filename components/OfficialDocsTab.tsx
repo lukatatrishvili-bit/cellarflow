@@ -6,7 +6,7 @@ import {
 import type { Language } from '../lib/i18n';
 import type {
   CompanyProfile, UserProfile, VineyardBlock, WineLot, Vessel, HarvestRecord,
-  GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord, CellarOperation,
+  GrapeSamplingRecord, InventoryItem, LabAnalysis, CellarTransferRecord, GrapeIntakeRecord, CellarOperation,
   BottlingRunRecord, SalesDispatchRecord, DocumentAttachment,
 } from '../lib/wineryState';
 import DateInput from './ui/DateInput';
@@ -32,6 +32,7 @@ import {
 } from '../lib/attachments';
 import { renderDocumentHtml } from '../lib/georgianForms/renderHtml';
 import { demoPools } from '../lib/georgianForms/demoData';
+import type { InventoryMovementRecord, InvoiceReceiptRecord } from '../lib/commands/invoiceReceipt';
 
 interface Props {
   lang: Language;
@@ -40,6 +41,7 @@ interface Props {
   blocks: VineyardBlock[];
   lots: WineLot[];
   vessels: Vessel[];
+  transfers: CellarTransferRecord[];
   harvests: HarvestRecord[];
   samplings: GrapeSamplingRecord[];
   inventory: InventoryItem[];
@@ -48,19 +50,12 @@ interface Props {
   cellarOps: CellarOperation[];
   bottlingRuns: BottlingRunRecord[];
   salesDispatches: SalesDispatchRecord[];
+  inventoryMovements: InventoryMovementRecord[];
+  invoiceReceipts: InvoiceReceiptRecord[];
   attachments?: DocumentAttachment[];
   onAddAttachment?: (attachment: DocumentAttachmentInput) => DocumentAttachment;
   onDeleteAttachment?: (attachmentId: string) => void;
   canManageOfficialDocs?: boolean;
-}
-
-function loadTransfers(): TransferEvent[] {
-  try {
-    const raw = localStorage.getItem('cf_transfers_history');
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
 }
 
 const yearStartISO = () => `${new Date().getFullYear()}-01-01`;
@@ -111,7 +106,6 @@ export function OfficialDocsTab(props: Props) {
   const [xlsxError, setXlsxError] = useState<string | null>(null);
   const [useDemo, setUseDemo] = useState(false);
 
-  const realTransfers = useMemo(loadTransfers, []);
   const template = useMemo(() => forms.find(f => f.id === formId)!, [forms, formId]);
   const documentAttachments = useMemo(
     () => attachmentsForRecord(props.attachments || [], 'officialDocument', formId),
@@ -121,9 +115,10 @@ export function OfficialDocsTab(props: Props) {
   // Data pools: the user's real (synced) data, or a self-contained demo set.
   const pools = useMemo(() => useDemo ? demoPools : ({
     blocks: props.blocks, lots: props.lots, vessels: props.vessels, harvests: props.harvests,
-    samplings: props.samplings, inventory: props.inventory, labLogs: props.labLogs, transfers: realTransfers,
+    samplings: props.samplings, inventory: props.inventory, labLogs: props.labLogs, transfers: props.transfers,
     grapeIntakes: props.grapeIntakes, cellarOps: props.cellarOps, bottlingRuns: props.bottlingRuns,
     salesDispatches: props.salesDispatches,
+    inventoryMovements: props.inventoryMovements, invoiceReceipts: props.invoiceReceipts,
   }), [
     props.blocks,
     props.bottlingRuns,
@@ -131,12 +126,14 @@ export function OfficialDocsTab(props: Props) {
     props.grapeIntakes,
     props.harvests,
     props.inventory,
+    props.inventoryMovements,
+    props.invoiceReceipts,
     props.labLogs,
     props.lots,
     props.salesDispatches,
     props.samplings,
+    props.transfers,
     props.vessels,
-    realTransfers,
     useDemo,
   ]);
 
@@ -165,6 +162,8 @@ export function OfficialDocsTab(props: Props) {
     cellarOps: pools.cellarOps,
     bottlingRuns: pools.bottlingRuns,
     salesDispatches: pools.salesDispatches,
+    inventoryMovements: pools.inventoryMovements,
+    invoiceReceipts: pools.invoiceReceipts,
   }), [ka, mode, blankRows, company, currentUser, from, to, accountingYear, blockId, lotId, tankId,
       productName, materialId, pools]);
 
@@ -303,11 +302,6 @@ export function OfficialDocsTab(props: Props) {
           <ShieldCheck className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'ოფიციალური დოკუმენტები' : 'Official Documents'}
         </h3>
-        <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5">
-          {ka
-            ? 'მევენახეობა-მეღვინეობის ტექნოლოგიური პროცესების აღრიცხვა — დანართები №1–№20'
-            : 'Viticulture & winemaking traceability forms — Annexes №1–№20'}
-        </p>
       </div>
 
       <section className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-5">

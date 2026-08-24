@@ -339,9 +339,6 @@ export function TanksVessels({
     <PageHeader
       eyebrow={ka ? 'მარნის კონტროლი' : 'Cellar control'}
       title={ka ? 'ჭურჭლის მართვის ცენტრი' : 'Vessel command center'}
-      description={ka
-        ? 'გადაწყვიტეთ სად წავა ღვინო შემდეგ, რა მოითხოვს ყურადღებას და რომელი ჭურჭელია მზად.'
-        : 'Decide where wine moves next, what needs attention, and which vessel is truly ready.'}
       icon={ContainerIcon}
     />
   );
@@ -376,11 +373,6 @@ export function TanksVessels({
                           : `${attentionVessels.length} ${attentionVessels.length === 1 ? 'decision' : 'decisions'} before the next movement`)
                       : (ka ? 'მარანი მზადაა შემდეგი მოძრაობისთვის' : 'The cellar is ready for its next movement')}
                   </h3>
-                  <p className="mt-2 max-w-xl text-xs font-medium leading-relaxed text-stone-500 dark:text-stone-400">
-                    {ka
-                      ? 'პირველ რიგში ნაჩვენებია რისკი, სისუფთავე და რეალურად ხელმისაწვდომი ტევადობა.'
-                      : 'Risk, sanitation, and genuinely available capacity are prioritized before the full vessel register.'}
-                  </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {canExecuteTransfer && setActiveTab && (
@@ -470,9 +462,6 @@ export function TanksVessels({
                     <AlertTriangle className="h-4 w-4 text-amber-600" />
                     {ka ? 'მოქმედების რიგი' : 'Action queue'}
                   </h3>
-                  <p className="mt-1 text-[11px] font-medium text-stone-500 dark:text-stone-400">
-                    {ka ? 'ყველაზე კრიტიკული პირველია' : 'Most critical first.'}
-                  </p>
                 </div>
                 {attentionVessels.length > 4 && (
                   <button
@@ -574,7 +563,6 @@ export function TanksVessels({
             <section className="rounded-2xl border border-[#e8dfd5] bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
               <div className="mb-4">
                 <h3 className="text-sm font-black text-stone-900 dark:text-amber-100">{ka ? 'მარნის შევსების დიაგრამა' : 'Cellar fill chart'}</h3>
-                <p className="mt-1 text-[11px] text-stone-500">{ka ? 'ჭურჭლის მოცულობები და 95%-ზე მაღალი შევსების რისკი.' : 'Vessel volumes with high-fill risk highlighted above 95%.'}</p>
               </div>
               <TankCapacityChart
                 tanks={mappedTanks}
@@ -760,7 +748,6 @@ export function TanksVessels({
         >
           <div className="sm:col-span-2">
             <h3 className="text-lg font-black text-stone-900">{ka ? 'ახალი ჭურჭელი' : 'New vessel'}</h3>
-            <p className="mt-1 text-xs text-stone-500">{ka ? 'შეავსეთ ჭურჭლის ძირითადი მონაცემები.' : 'Enter the vessel’s core details.'}</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">

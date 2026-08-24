@@ -61,6 +61,11 @@ export interface QueryPlan {
   /** Look-back window for usage and trend queries. */
   windowDays?: number;
   limit?: number;
+  /**
+   * Set when the planner could not resolve the question and wants to ask one
+   * back. A plan carrying this must not be executed as though it answered.
+   */
+  clarification?: string;
 }
 
 const QUERY_KINDS: QueryKind[] = [
@@ -121,6 +126,13 @@ export const QUERY_PLAN_SCHEMA = {
     compareEntityId: { type: 'STRING' },
     windowDays: { type: 'NUMBER' },
     limit: { type: 'NUMBER' },
+    /**
+     * The one question to ask back when the winemaker's question cannot be
+     * resolved to a query. Without it the planner's only escape is
+     * `winery_summary`, which answers a question nobody asked and reads as
+     * though it did.
+     */
+    clarification: { type: 'STRING' },
   },
   required: ['kind'],
 } as const;
@@ -197,6 +209,9 @@ export function validateQueryPlan(raw: unknown): QueryValidation {
         : undefined,
       limit: typeof row.limit === 'number' && Number.isFinite(row.limit)
         ? Math.max(1, Math.min(MAX_ROWS, Math.round(row.limit)))
+        : undefined,
+      clarification: typeof row.clarification === 'string' && row.clarification.trim()
+        ? row.clarification.trim().slice(0, 300)
         : undefined,
     },
   };

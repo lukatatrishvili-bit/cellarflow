@@ -482,9 +482,6 @@ export function BottlingTab({
           <Package className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'ღვინის ჩამოსხმა' : 'Wine Bottling'}
         </h3>
-        <p className="text-xs text-stone-400 font-semibold mt-0.5">
-          {ka ? 'ჩამოსხმის აღრიცხვა ფორმატების მიხედვით — სინქრონული დანართ №7-თან' : 'Record bottling runs by format — feeds official Annex №7'}
-        </p>
       </div>
 
       {bottlingAccessNotice && (

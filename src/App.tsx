@@ -30,6 +30,7 @@ import {
   vineyardWorkflowPermissions,
 } from '../lib/workflowPermissions';
 import type { BillingFeature } from '../lib/billing/planCatalog';
+import type { CellarOperation, CellarOperationType } from '../lib/wineryState';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -230,6 +231,9 @@ export default function App() {
   const [isAiDrawerOpen, setIsAiDrawerOpen] = useState(false);
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [prefilledOpType, setPrefilledOpType] = useState<CellarOperationType | undefined>();
+  const [operationReturnVesselId, setOperationReturnVesselId] = useState<string | null>(null);
+  const [recentlyLoggedOperationId, setRecentlyLoggedOperationId] = useState<string | null>(null);
   // Stable identity, so ToastHost's memo actually holds across App re-renders.
   const openSyncTroubleshooter = useCallback(() => setShowSyncTroubleshooter(true), []);
 
@@ -258,7 +262,10 @@ export default function App() {
   // entirely — the boundary paid for a prop comparison that could never pass.
   const openOnboarding = useCallback(() => setShowOnboarding(true), []);
   const clearIntakePrefill = useCallback(() => setPrefilledIntakeHarvestId(null), [setPrefilledIntakeHarvestId]);
-  const clearOperationPrefill = useCallback(() => setPrefilledOpVesselId(''), [setPrefilledOpVesselId]);
+  const clearOperationPrefill = useCallback(() => {
+    setPrefilledOpVesselId('');
+    setPrefilledOpType(undefined);
+  }, [setPrefilledOpVesselId]);
   const clearTransferPrefill = useCallback(() => {
     setPrefilledSourceId('');
     setPrefilledDestId('');
@@ -269,6 +276,7 @@ export default function App() {
     if (target.kind === 'vessel') {
       if (canViewUserDestination(currentUserForScan, 'gvino', 'operations')) {
         setPrefilledOpVesselId(target.id);
+        setPrefilledOpType(undefined);
         setActiveTab('operations');
       } else {
         setSelectedTankId(target.id);
@@ -289,7 +297,33 @@ export default function App() {
   const scanVesselIds = useMemo(() => state.vessels.map(vessel => vessel.id), [state.vessels]);
   const scanLotIds = useMemo(() => state.lots.map(lot => lot.id), [state.lots]);
 
-  const closeVesselDrawer = useCallback(() => setSelectedTankId(null), [setSelectedTankId]);
+  const closeVesselDrawer = useCallback(() => {
+    setSelectedTankId(null);
+    setRecentlyLoggedOperationId(null);
+  }, [setSelectedTankId]);
+  const openVesselOperation = useCallback((vesselId: string, operationType?: CellarOperationType) => {
+    setPrefilledOpVesselId(vesselId);
+    setPrefilledOpType(operationType);
+    setOperationReturnVesselId(vesselId);
+    setRecentlyLoggedOperationId(null);
+    setSelectedTankId(null);
+    setActiveModule('gvino');
+    setActiveTab('operations');
+  }, [setActiveModule, setActiveTab, setPrefilledOpVesselId, setSelectedTankId]);
+  const handleVesselOperationLogged = useCallback((operation: Pick<CellarOperation, 'id' | 'vesselId'>) => {
+    if (!operationReturnVesselId) return;
+    const vesselId = operation.vesselId || operationReturnVesselId;
+    setOperationReturnVesselId(null);
+    setRecentlyLoggedOperationId(operation.id);
+    setActiveModule('gvino');
+    setActiveTab('vessels');
+    setSelectedTankId(vesselId);
+  }, [operationReturnVesselId, setActiveModule, setActiveTab, setSelectedTankId]);
+  useEffect(() => {
+    if (state.activeTab !== 'operations' && !state.selectedTankId && operationReturnVesselId) {
+      setOperationReturnVesselId(null);
+    }
+  }, [operationReturnVesselId, state.activeTab, state.selectedTankId]);
   const consumeAiFindingFocus = useCallback(() => setFocusedAiFindingId(null), []);
   const saveAiConfig = useCallback(
     (aiConfig: any) => setCompanyProfile((current: any) => ({ ...current, aiConfig })),
@@ -2263,6 +2297,7 @@ export default function App() {
             blocks={state.blocks}
             lots={state.lots}
             vessels={state.vessels}
+            transfers={state.transfers}
             harvests={state.harvests}
             samplings={state.samplings}
             inventory={state.inventory}
@@ -2271,6 +2306,8 @@ export default function App() {
             cellarOps={state.cellarOps}
             bottlingRuns={state.bottlingRuns}
             salesDispatches={state.salesDispatches}
+            inventoryMovements={state.inventoryMovements}
+            invoiceReceipts={state.invoiceReceipts}
             attachments={state.attachments}
             onAddAttachment={state.handleAddAttachment}
             onDeleteAttachment={state.handleDeleteAttachment}
@@ -2564,6 +2601,7 @@ export default function App() {
                 canUpdateLot={canAccess(state.currentUser.role, 'lots', 'update')}
                 onOpenPassport={state.setPassportLotId}
                 vessels={state.vessels}
+                fermLogs={state.fermLogs}
                 labLogs={state.labLogs}
                 costEntries={state.costEntries}
                 bottlingRuns={state.bottlingRuns}
@@ -2577,6 +2615,9 @@ export default function App() {
                 setSelectedTankId={state.setSelectedTankId}
                 setCalculatorLotId={state.setCalculatorLotId}
                 setCalculatorLotIdA={state.setCalculatorLotIdA}
+                setChartLotId={state.setChartLotId}
+                setLabLotId={state.setLabLotId}
+                currentUserName={state.currentUser.fullName}
               />
             )}
 
@@ -2649,6 +2690,9 @@ export default function App() {
                 onUpdateAuditLogs={state.setAuditLogs}
                 onApplyCellarOperationCommandResponse={state.applyCellarOperationCommandResponse}
                 prefillVesselId={state.prefilledOpVesselId}
+                prefillOperationType={prefilledOpType}
+                returnToVesselId={operationReturnVesselId || undefined}
+                onOperationLogged={handleVesselOperationLogged}
                 clearPrefill={clearOperationPrefill}
                 {...cellarPermissions.operations}
                 setToastMessage={state.setToastMessage}
@@ -3049,11 +3093,14 @@ export default function App() {
             vessels={state.vessels}
             lots={state.lots}
             fermLogs={state.fermLogs}
+            operations={state.cellarOps}
+            recentlyLoggedOperationId={recentlyLoggedOperationId || undefined}
             onClose={closeVesselDrawer}
             onAdjustTargetTemp={state.handleAdjustTargetTemp}
             onToggleSanitation={state.handleToggleSanitation}
             onToggleCoolingJacket={state.handleToggleCoolingJacket}
             onUpdateVessels={state.setVessels}
+            onLogOperation={cellarPermissions.operations.canLogCellarOperation ? openVesselOperation : undefined}
             canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
           />
         </Suspense>

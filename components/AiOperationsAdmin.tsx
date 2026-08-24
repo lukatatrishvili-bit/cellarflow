@@ -75,7 +75,7 @@ interface OperationsSnapshot {
       successRate: number;
       averageLatencyMs: number;
     };
-    byPurpose: Record<'analysis' | 'ask_planner' | 'ask_explanation' | 'knowledge_embedding', {
+    byPurpose: Record<'analysis' | 'ask_planner' | 'ask_explanation' | 'knowledge_embedding' | 'copilot', {
       total: number;
       succeeded: number;
       invalidResponse: number;
@@ -86,7 +86,7 @@ interface OperationsSnapshot {
     recentFailures: Array<{
       id: string;
       organizationId: string;
-      purpose: 'analysis' | 'ask_planner' | 'ask_explanation' | 'knowledge_embedding';
+      purpose: 'analysis' | 'ask_planner' | 'ask_explanation' | 'knowledge_embedding' | 'copilot';
       agent?: string;
       model: string;
       status: 'invalid_response' | 'failed';
@@ -401,13 +401,16 @@ export default function AiOperationsAdmin({ isKa, onMessage }: Props) {
           </div>
         </div>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          {(['analysis', 'ask_planner', 'ask_explanation', 'knowledge_embedding'] as const).map((purpose) => {
-            const purposeSummary = snapshot.modelCalls.byPurpose[purpose];
+          {(['analysis', 'ask_planner', 'ask_explanation', 'knowledge_embedding', 'copilot'] as const).map((purpose) => {
+            // A server that predates a purpose omits its bucket entirely.
+            const purposeSummary = snapshot.modelCalls.byPurpose[purpose]
+              || { total: 0, succeeded: 0, invalidResponse: 0, failed: 0 };
             const labels = {
               analysis: { en: 'Finding analysis', ka: 'მიგნების ანალიზი' },
               ask_planner: { en: 'Question planner', ka: 'კითხვის დამგეგმავი' },
               ask_explanation: { en: 'Answer explanation', ka: 'პასუხის განმარტება' },
               knowledge_embedding: { en: 'Knowledge retrieval', ka: 'ცოდნის მოძიება' },
+              copilot: { en: 'Copilot chat', ka: 'კოპილოტის ჩატი' },
             };
             return (
               <div key={purpose} className="flex items-center justify-between rounded-xl border border-stone-900 px-3 py-2 text-[10px]">
@@ -535,8 +538,8 @@ export default function AiOperationsAdmin({ isKa, onMessage }: Props) {
               </h4>
               <p className="mt-1 max-w-3xl text-[10px] leading-relaxed text-stone-600">
                 {isKa
-                  ? `მხოლოდ სარეკომენდაციო სიგნალი. შეფასება იწყება მინიმუმ ${snapshot.quality.calibration.minimumQualityResponses} ხარისხის პასუხისა და ${snapshot.quality.calibration.minimumFindings} ცალკეული მიგნების შემდეგ; გაფრთხილებები ავტომატურად არასოდეს ითიშება.`
-                  : `Advisory only. Assessment starts after at least ${snapshot.quality.calibration.minimumQualityResponses} quality verdicts across ${snapshot.quality.calibration.minimumFindings} distinct findings; alerts are never suppressed automatically.`}
+                  ? `ყველა მარნის ჯამური სიგნალი. შეფასება იწყება მინიმუმ ${snapshot.quality.calibration.minimumQualityResponses} ხარისხის პასუხისა და ${snapshot.quality.calibration.minimumFindings} ცალკეული მიგნების შემდეგ. აქედან არაფერი ითიშება: დეტექტორის დადუმება თითოეული მარნის AI პარამეტრებში ცალკე ირთვება და კრიტიკულ მიგნებას არასოდეს ეხება.`
+                  : `Pooled across every winery. Assessment starts after at least ${snapshot.quality.calibration.minimumQualityResponses} quality verdicts across ${snapshot.quality.calibration.minimumFindings} distinct findings. Nothing is muted from here: acting on feedback is opt-in per winery in its own AI settings, and never applies to a critical finding.`}
               </p>
             </div>
             <span className={`rounded-full border px-3 py-1 text-[9px] font-bold uppercase tracking-wider ${

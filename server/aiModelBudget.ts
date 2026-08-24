@@ -10,9 +10,29 @@ export interface AiModelBudgetReservation extends AiModelBudgetSnapshot {
   requested: number;
 }
 
+/**
+ * Which allowance a call is charged to.
+ *
+ * A knowledge embedding and a deep multi-agent generation used to cost the same
+ * single unit, so a winery with a knowledge base spent its analysis allowance on
+ * retrieval. They are metered apart: `maxModelCallsPerDay` still governs
+ * generative calls only, and embeddings hold their own, much larger, limit.
+ */
+export type AiModelBudgetKind = 'generation' | 'embedding';
+
+/**
+ * The only source of the column name interpolated into the statements below.
+ * A closed union mapped through this constant never carries request input into
+ * the SQL string.
+ */
+const USAGE_COLUMN: Record<AiModelBudgetKind, string> = {
+  generation: 'callCount',
+  embedding: 'embeddingCount',
+};
+
 interface InMemoryUsage {
   date: string;
-  count: number;
+  counts: Record<AiModelBudgetKind, number>;
 }
 
 // Local/GCS development has one process and no relational database. Production
@@ -31,10 +51,15 @@ function normalizedRequest(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
-function fallbackSnapshot(organizationId: string, limit: number, now: Date): AiModelBudgetSnapshot {
+function fallbackSnapshot(
+  organizationId: string,
+  limit: number,
+  kind: AiModelBudgetKind,
+  now: Date,
+): AiModelBudgetSnapshot {
   const date = usageDate(now);
   const entry = inMemoryUsage.get(organizationId);
-  const used = entry?.date === date ? entry.count : 0;
+  const used = entry?.date === date ? entry.counts[kind] : 0;
   return { used, remaining: Math.max(0, limit - used) };
 }
 
@@ -42,16 +67,22 @@ function reserveFallback(
   organizationId: string,
   limit: number,
   requested: number,
+  kind: AiModelBudgetKind,
   now: Date,
 ): AiModelBudgetReservation {
   const date = usageDate(now);
-  const current = fallbackSnapshot(organizationId, limit, now);
+  const current = fallbackSnapshot(organizationId, limit, kind, now);
   if (requested === 0) return { ...current, granted: true, requested };
   if (current.used + requested > limit) {
     return { ...current, granted: false, requested };
   }
   const used = current.used + requested;
-  inMemoryUsage.set(organizationId, { date, count: used });
+  const entry = inMemoryUsage.get(organizationId);
+  const counts = entry?.date === date
+    ? { ...entry.counts }
+    : { generation: 0, embedding: 0 };
+  counts[kind] = used;
+  inMemoryUsage.set(organizationId, { date, counts });
   return { used, remaining: Math.max(0, limit - used), granted: true, requested };
 }
 
@@ -64,20 +95,22 @@ export async function getAiModelBudget(
   organizationId: string,
   configuredLimit: number,
   now = new Date(),
+  kind: AiModelBudgetKind = 'generation',
 ): Promise<AiModelBudgetSnapshot> {
   const limit = normalizedLimit(configuredLimit);
   const prisma = await getPrismaClientForAdmin();
-  if (!prisma) return fallbackSnapshot(organizationId, limit, now);
+  if (!prisma) return fallbackSnapshot(organizationId, limit, kind, now);
 
+  const column = USAGE_COLUMN[kind];
   const rows = await (prisma as any).$queryRawUnsafe(
-    `SELECT "callCount"
+    `SELECT "${column}" AS "used"
        FROM "AiModelCallUsage"
       WHERE "organizationId" = $1
         AND "usageDate" = $2::date`,
     organizationId,
     usageDate(now),
-  ) as Array<{ callCount: number }>;
-  const used = Number(rows[0]?.callCount || 0);
+  ) as Array<{ used: number }>;
+  const used = Number(rows[0]?.used || 0);
   return { used, remaining: Math.max(0, limit - used) };
 }
 
@@ -91,46 +124,48 @@ export async function reserveAiModelCalls(
   configuredLimit: number,
   requestedCalls = 1,
   now = new Date(),
+  kind: AiModelBudgetKind = 'generation',
 ): Promise<AiModelBudgetReservation> {
   const limit = normalizedLimit(configuredLimit);
   const requested = normalizedRequest(requestedCalls);
   if (requested === 0) {
-    const snapshot = await getAiModelBudget(organizationId, limit, now);
+    const snapshot = await getAiModelBudget(organizationId, limit, now, kind);
     return { ...snapshot, granted: true, requested };
   }
   if (requested > limit) {
-    const snapshot = await getAiModelBudget(organizationId, limit, now);
+    const snapshot = await getAiModelBudget(organizationId, limit, now, kind);
     return { ...snapshot, granted: false, requested };
   }
 
   const prisma = await getPrismaClientForAdmin();
-  if (!prisma) return reserveFallback(organizationId, limit, requested, now);
+  if (!prisma) return reserveFallback(organizationId, limit, requested, kind, now);
 
+  const column = USAGE_COLUMN[kind];
   const date = usageDate(now);
   const rows = await (prisma as any).$queryRawUnsafe(
     `INSERT INTO "AiModelCallUsage"
-       ("organizationId", "usageDate", "callCount", "createdAt", "updatedAt")
+       ("organizationId", "usageDate", "${column}", "createdAt", "updatedAt")
      VALUES ($1, $2::date, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      ON CONFLICT ("organizationId", "usageDate")
      DO UPDATE SET
-       "callCount" = "AiModelCallUsage"."callCount" + EXCLUDED."callCount",
+       "${column}" = "AiModelCallUsage"."${column}" + EXCLUDED."${column}",
        "updatedAt" = CURRENT_TIMESTAMP
-     WHERE "AiModelCallUsage"."callCount" + EXCLUDED."callCount" <= $4
-     RETURNING "callCount"`,
+     WHERE "AiModelCallUsage"."${column}" + EXCLUDED."${column}" <= $4
+     RETURNING "${column}" AS "used"`,
     organizationId,
     date,
     requested,
     limit,
-  ) as Array<{ callCount: number }>;
+  ) as Array<{ used: number }>;
 
   if (rows.length > 0) {
-    const used = Number(rows[0].callCount);
+    const used = Number(rows[0].used);
     return { used, remaining: Math.max(0, limit - used), granted: true, requested };
   }
 
   // The conditional upsert returns no row when another request consumed the
   // remaining capacity first.
-  const snapshot = await getAiModelBudget(organizationId, limit, now);
+  const snapshot = await getAiModelBudget(organizationId, limit, now, kind);
   return { ...snapshot, granted: false, requested };
 }
 

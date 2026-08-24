@@ -182,9 +182,6 @@ export function YearComparisonTab({
               <BarChart3 className="w-5 h-5 text-[#4e0e15]" />
               Year Comparison
             </h3>
-            <p className="text-xs text-stone-400 font-semibold mt-0.5 max-w-3xl">
-              Compare one vintage or business year against another using only your real harvest, cellar, storage, cost, reservation, and dispatch records.
-            </p>
           </div>
 
           <div className="flex flex-wrap items-end gap-2">

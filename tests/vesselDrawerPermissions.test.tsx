@@ -2,7 +2,7 @@ import React, { type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import VesselDrawer from '../components/VesselDrawer';
-import type { DailyFermLog, Vessel, WineLot } from '../lib/wineryState';
+import type { CellarOperation, DailyFermLog, Vessel, WineLot } from '../lib/wineryState';
 
 const vessel: Vessel = {
   id: 'T-DRAWER-1',
@@ -47,6 +47,20 @@ const fermentationLog: DailyFermLog = {
   tastingNotes: 'Stable',
   capManagement: 'None',
   additives: '',
+};
+
+const recentOperation: CellarOperation = {
+  id: 'OP-DRAWER-NEW',
+  recordKind: 'operation',
+  lastModified: '2026-08-24T12:00:00.000Z',
+  date: '2026-08-24',
+  type: 'measurement',
+  lotId: lot.id,
+  lotName: lot.name,
+  vesselId: vessel.id,
+  volumeBeforeL: 2_000,
+  operator: 'Nino Winemaker',
+  notes: 'Density and temperature confirmed.',
 };
 
 function drawerProps(
@@ -102,6 +116,41 @@ describe('VesselDrawer permissions', () => {
     expect(markup).toContain('aria-label="Increase target temperature"');
     expect(markup).toContain('Mark Sanitized Today');
     expect(markup).not.toContain('Read-only vessel details.');
+  });
+
+  it('adds a contextual operation launcher when operation logging is available', () => {
+    const markup = renderDrawer({ onLogOperation: vi.fn() });
+
+    expect(markup).toContain('Act from this vessel');
+    expect(markup).toContain('Saperavi Drawer Reserve · choose an operation');
+    expect(markup).toContain('T-DRAWER-1 and its assigned lot will stay preselected');
+    expect(markup).toContain('Recommended operation');
+    expect(markup).toContain('Temp / Brix check');
+    expect(markup).toContain('Sulfitation (SO₂)');
+    expect(markup).toContain('Transfer / racking');
+    expect(markup).toContain('Additive addition');
+    expect(markup).toContain('View all operations');
+  });
+
+  it('keeps operation controls absent when operation logging is unavailable', () => {
+    const markup = renderDrawer({ onLogOperation: undefined });
+
+    expect(markup).not.toContain('Act from this vessel');
+    expect(markup).not.toContain('View all operations');
+  });
+
+  it('highlights a newly logged operation in the vessel context and ledger', () => {
+    const markup = renderDrawer({
+      onLogOperation: vi.fn(),
+      operations: [recentOperation],
+      recentlyLoggedOperationId: recentOperation.id,
+    });
+
+    expect(markup).toContain('Operation logged successfully');
+    expect(markup).toContain('Temp / Brix check · Nino Winemaker');
+    expect(markup).toContain('Density and temperature confirmed.');
+    expect(markup).toContain('>New</span>');
+    expect(markup).toContain('Nino Winemaker · Saperavi Drawer Reserve');
   });
 
   it('localizes read-only guidance and preserves the Georgian close action', () => {

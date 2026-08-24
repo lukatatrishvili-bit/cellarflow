@@ -7,13 +7,11 @@ export function cx(...classes: Array<string | false | null | undefined>): string
 export function PageHeader({
   eyebrow,
   title,
-  description,
   icon: Icon,
   actions,
 }: {
   eyebrow?: ReactNode;
   title: ReactNode;
-  description?: ReactNode;
   icon?: ComponentType<{ className?: string }>;
   actions?: ReactNode;
 }) {
@@ -35,11 +33,6 @@ export function PageHeader({
             {Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-[#651522] dark:text-amber-200" />}
             <span className="min-w-0">{title}</span>
           </h2>
-          {description && (
-            <p className="mt-1 max-w-3xl text-pretty text-sm font-normal leading-relaxed text-stone-500 dark:text-stone-400">
-              {description}
-            </p>
-          )}
         </div>
         {actions && <div className="w-full min-w-0 flex-[1_1_auto] lg:w-auto lg:flex-[0_1_auto]">{actions}</div>}
       </div>
@@ -49,14 +42,12 @@ export function PageHeader({
 
 export function SectionCard({
   title,
-  subtitle,
   icon: Icon,
   actions,
   children,
   className,
 }: {
   title?: ReactNode;
-  subtitle?: ReactNode;
   icon?: ComponentType<{ className?: string }>;
   actions?: ReactNode;
   children: ReactNode;
@@ -73,7 +64,6 @@ export function SectionCard({
                 {title}
               </h3>
             )}
-            {subtitle && <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">{subtitle}</p>}
           </div>
           {actions && <div className="shrink-0">{actions}</div>}
         </div>
@@ -220,13 +210,11 @@ export function EmptyState({
 
 export function FormSection({
   title,
-  description,
   icon: Icon,
   children,
   footer,
 }: {
   title: ReactNode;
-  description?: ReactNode;
   icon?: ComponentType<{ className?: string }>;
   children: ReactNode;
   footer?: ReactNode;
@@ -241,7 +229,6 @@ export function FormSection({
         )}
         <div className="min-w-0">
           <h4 className="text-xs font-black uppercase tracking-wide text-stone-800 dark:text-amber-100">{title}</h4>
-          {description && <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-stone-500 dark:text-stone-400">{description}</p>}
         </div>
       </div>
       <div className="space-y-3">{children}</div>

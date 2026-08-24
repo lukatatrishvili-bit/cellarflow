@@ -188,6 +188,10 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
     en: 'This winery has used its AI allowance for today. It resets tomorrow, or an administrator can raise the daily limit in AI settings.',
     ka: 'ამ მარანმა დღეს AI-ის ლიმიტი ამოწურა. ის ხვალ განახლდება, ან ადმინისტრატორს შეუძლია დღიური ლიმიტი AI-ის პარამეტრებში გაზარდოს.',
   },
+  ai_provider_rate_limited: {
+    en: 'The AI service is busy right now. Nothing was lost — ask again in a moment.',
+    ka: 'AI სერვისი ამჟამად დატვირთულია. არაფერი დაკარგულა — სცადეთ ერთ წუთში.',
+  },
   ai_notification_retry_unavailable: {
     en: 'This notification cannot be retried right now.',
     ka: 'ამ შეტყობინების ხელახლა გაგზავნა ამჟამად შეუძლებელია.',

@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
-import type { WineLot, WinemakingStage, WineClass, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord, InventoryItem } from '../lib/wineryState';
+import type { WineLot, WinemakingStage, WineClass, WineSugarCategory, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord, InventoryItem, DailyFermLog } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import { stageLabel, vesselTypeLabel, wineClassLabel } from '../lib/enumLabels';
@@ -12,13 +12,19 @@ import {
   stagesForCurrentLot,
   winemakingWorkflowLabel,
 } from '../lib/winemakingWorkflow';
+import {
+  lotNextActionStatusLabel,
+  nextActionForWineLot,
+  type LotNextAction,
+  type LotNextActionStatus,
+} from '../lib/lotNextAction';
 import WineLotCommandCenter from './WineLotCommandCenter';
 import OperationMaterialsEditor, {
   materialDraftIssue,
   materialDraftsToUsages,
   type MaterialUsageDraft,
 } from './OperationMaterialsEditor';
-import { ChevronRight, Compass, Plus, ListFilter, FileText, MapPin, Activity } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Compass, Plus, ListFilter, FileText, MapPin, Activity, X } from 'lucide-react';
 
 interface Props {
   lang: Language;
@@ -28,6 +34,7 @@ interface Props {
   canUpdateLot?: boolean;
   onOpenPassport?: (lotId: string) => void;
   vessels?: Vessel[];
+  fermLogs?: DailyFermLog[];
   labLogs?: LabAnalysis[];
   costEntries?: CostEntry[];
   bottlingRuns?: BottlingRunRecord[];
@@ -39,6 +46,9 @@ interface Props {
   setSelectedTankId?: (tankId: string | null) => void;
   setCalculatorLotId?: (lotId: string) => void;
   setCalculatorLotIdA?: (lotId: string) => void;
+  setChartLotId?: (lotId: string) => void;
+  setLabLotId?: (lotId: string) => void;
+  currentUserName?: string;
   inventory?: InventoryItem[];
   onUpdateInventory?: (inventory: InventoryItem[]) => void;
 }
@@ -61,6 +71,7 @@ export function WineLotsTrace({
   canUpdateLot = true,
   onOpenPassport,
   vessels = [],
+  fermLogs = [],
   labLogs = [],
   costEntries = [],
   bottlingRuns = [],
@@ -72,6 +83,9 @@ export function WineLotsTrace({
   setSelectedTankId,
   setCalculatorLotId,
   setCalculatorLotIdA,
+  setChartLotId,
+  setLabLotId,
+  currentUserName = 'Current cellar operator',
   inventory = [],
   onUpdateInventory,
 }: Props) {
@@ -84,15 +98,20 @@ export function WineLotsTrace({
   const [isEditingLot, setIsEditingLot] = useState(false);
   const [editName, setEditName] = useState('');
   const [editVariety, setEditVariety] = useState('');
-  const [editVintage, setEditVintage] = useState(2025);
+  const [editVintage, setEditVintage] = useState(new Date().getFullYear());
   const [editVolume, setEditVolume] = useState(0);
   const [editBlock, setEditBlock] = useState('');
   const [editRegion, setEditRegion] = useState('');
+  const [editSugarCategory, setEditSugarCategory] = useState<WineSugarCategory | ''>('');
 
   const selectedLot = lots.find(l => l.id === selectedLotId);
   const stagesOrdered = selectedLot
     ? stagesForCurrentLot(selectedLot.wineClass, selectedLot.stage)
     : [];
+  const nextActionContext = { vessels, fermLogs, labLogs, bottlingRuns };
+  const selectedNextAction = selectedLot
+    ? nextActionForWineLot(selectedLot, nextActionContext, lang)
+    : null;
 
   useEffect(() => {
     if (selectedLot) {
@@ -102,6 +121,7 @@ export function WineLotsTrace({
       setEditVolume(selectedLot.currentVolume);
       setEditBlock(selectedLot.vineyardBlock);
       setEditRegion(selectedLot.region);
+      setEditSugarCategory(selectedLot.sugarCategory || '');
       setIsEditingLot(false);
     }
   }, [selectedLotId, selectedLot]);
@@ -109,24 +129,106 @@ export function WineLotsTrace({
   // Stage transition states
   const [showTransitionForm, setShowTransitionForm] = useState(false);
   const [transitionTarget, setTransitionTarget] = useState<WinemakingStage>('crushing');
-  const [transitionOperator, setTransitionOperator] = useState('Luka Tatrishvili');
+  const [transitionOperator, setTransitionOperator] = useState(currentUserName);
   const [transitionNotes, setTransitionNotes] = useState('');
   const [transitionMaterialDrafts, setTransitionMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
-  const stageWorkflowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setShowTransitionForm(false);
     setTransitionMaterialDrafts([]);
   }, [selectedLotId]);
 
-  const openTransitionForm = () => {
+  const openTransitionForm = (targetStage?: WinemakingStage) => {
     if (!canUpdateLot || !selectedLot) return;
-    setTransitionTarget(nextStageForWineClass(selectedLot.wineClass, selectedLot.stage));
-    setTransitionOperator('Luka Tatrishvili');
+    setTransitionTarget(targetStage || nextStageForWineClass(selectedLot.wineClass, selectedLot.stage));
+    setTransitionOperator(currentUserName);
     setTransitionNotes('');
     setTransitionMaterialDrafts([]);
     setShowTransitionForm(true);
-    window.requestAnimationFrame(() => stageWorkflowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+
+  useEffect(() => {
+    if (!showTransitionForm) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowTransitionForm(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [showTransitionForm]);
+
+  const handleRecommendedAction = (action: LotNextAction) => {
+    if (!selectedLot) return;
+    if (action.intent === 'transition') {
+      openTransitionForm(action.targetStage);
+      return;
+    }
+    if (action.destinationTab) {
+      if (action.destinationTab === 'fermentation') setChartLotId?.(selectedLot.id);
+      if (action.destinationTab === 'labs') setLabLotId?.(selectedLot.id);
+      setActiveTab?.(action.destinationTab);
+    }
+  };
+
+  const closeTransitionDialog = () => {
+    setShowTransitionForm(false);
+    setTransitionMaterialDrafts([]);
+  };
+
+  const confirmStageTransition = () => {
+    if (!canUpdateLot || !selectedLot) return;
+    if (!transitionOperator.trim() || !transitionNotes.trim()) {
+      alert(lang === 'ka'
+        ? 'გთხოვთ მიუთითოთ ოპერატორის სახელი და გადასვლის შენიშვნები.'
+        : 'Please provide Operator name and Transition notes.');
+      return;
+    }
+
+    const materialIssue = materialDraftIssue(transitionMaterialDrafts, inventory);
+    if (materialIssue) {
+      alert(lang === 'ka'
+        ? 'შეამოწმეთ არჩეული დანამატი, რაოდენობა და ხელმისაწვდომი მარაგი.'
+        : 'Check the selected material, quantity, and available stock.');
+      return;
+    }
+
+    const materialUsages = materialDraftsToUsages(transitionMaterialDrafts, inventory);
+    const materialSummary = materialUsages.map(usage => (
+      `${usage.materialName || usage.materialId} ${usage.quantity} ${usage.unit || ''}`.trim()
+    )).join(', ');
+    const historyDescription = materialSummary
+      ? `${transitionNotes.trim()} · ${lang === 'ka' ? 'დანამატები' : 'Additions'}: ${materialSummary}`
+      : transitionNotes.trim();
+    const updatedLots = lots.map(lot => {
+      if (lot.id !== selectedLot.id) return lot;
+      return {
+        ...lot,
+        stage: transitionTarget,
+        history: [
+          {
+            date: new Date().toISOString().split('T')[0],
+            type: lang === 'ka'
+              ? `ეტაპის გადასვლა: ${stageLabel(transitionTarget, lang)}`
+              : `Stage Transition: to ${transitionTarget}`,
+            description: historyDescription,
+            operator: transitionOperator.trim(),
+          },
+          ...(lot.history || []),
+        ],
+      };
+    });
+
+    if (!commitWineLotMutationIfAllowed(canUpdateLot, updatedLots, onUpdateLots)) return;
+    if (onUpdateInventory && materialUsages.length > 0) {
+      const usedById = new Map<string, number>();
+      materialUsages.forEach(usage => {
+        usedById.set(usage.materialId, (usedById.get(usage.materialId) || 0) + usage.quantity);
+      });
+      onUpdateInventory(inventory.map(item => {
+        const used = usedById.get(item.id) || 0;
+        return used > 0 ? { ...item, stock: Math.max(0, item.stock - used) } : item;
+      }));
+    }
+    closeTransitionDialog();
   };
 
   // Add Lot State
@@ -135,9 +237,10 @@ export function WineLotsTrace({
   const [newName, setNewName] = useState('');
   const [newVariety, setNewVariety] = useState('Saperavi');
   const [newClass, setNewClass] = useState<WineClass>('red');
-  const [newVintage, setNewVintage] = useState<number>(2025);
+  const [newVintage, setNewVintage] = useState<number>(new Date().getFullYear());
   const [newVolume, setNewVolume] = useState<number>(1000);
   const [newVineyard, setNewVineyard] = useState('');
+  const [newSugarCategory, setNewSugarCategory] = useState<WineSugarCategory | ''>('');
 
   const handleAddLot = (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,19 +252,20 @@ export function WineLotsTrace({
       name: newName,
       vintage: newVintage,
       variety: newVariety,
-      vineyardBlock: newVineyard || 'Generative Select Ridge',
-      region: 'Kakheti Valley microclimate',
+      vineyardBlock: newVineyard.trim(),
+      region: '',
       initialVolume: newVolume,
       currentVolume: newVolume,
       wineClass: newClass,
+      ...(newSugarCategory ? { sugarCategory: newSugarCategory } : {}),
       stage: 'crushing',
       createdAt: new Date().toISOString().split('T')[0],
       history: [
         {
           date: new Date().toISOString().split('T')[0],
           type: 'Intake and Commission',
-          description: `Grapes received: ${newVolume} L crush equivalency. Created lot.`,
-          operator: 'H. Keller'
+          description: `Lot created with ${newVolume} L opening volume.`,
+          operator: 'Manual entry'
         }
       ]
     };
@@ -170,6 +274,7 @@ export function WineLotsTrace({
     setNewId('');
     setNewName('');
     setNewVineyard('');
+    setNewSugarCategory('');
     setShowAddForm(false);
     setSelectedLotId(newLot.id);
   };
@@ -194,7 +299,14 @@ export function WineLotsTrace({
         body: 'You can browse lot details, traceability, lineage, passports, and linked cellar records, but your role cannot create or change wine lots.',
       };
 
+  const preferredTransitionTarget = selectedLot
+    ? nextStageForWineClass(selectedLot.wineClass, selectedLot.stage)
+    : null;
+  const isNonSequentialTransition = preferredTransitionTarget != null
+    && transitionTarget !== preferredTransitionTarget;
+
   return (
+    <>
     <div className="grid grid-cols-1 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
       {isReadOnly && (
         <div role="status" className="xl:col-span-3 2xl:col-span-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
@@ -408,6 +520,16 @@ export function WineLotsTrace({
                 className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]"
               />
             </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">{lang === 'ka' ? 'კატეგორია შაქრიანობის მიხედვით' : 'Category by sugar'}</label>
+              <select value={newSugarCategory} onChange={(e) => setNewSugarCategory(e.target.value as WineSugarCategory | '')} className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-[#FAF8F5]">
+                <option value="">—</option>
+                <option value="dry">{lang === 'ka' ? 'მშრალი' : 'Dry'}</option>
+                <option value="semi_dry">{lang === 'ka' ? 'ნახევრად მშრალი' : 'Semi-dry'}</option>
+                <option value="semi_sweet">{lang === 'ka' ? 'ნახევრად ტკბილი' : 'Semi-sweet'}</option>
+                <option value="sweet">{lang === 'ka' ? 'ტკბილი' : 'Sweet'}</option>
+              </select>
+            </div>
             <button
               type="submit"
               className="w-full py-1.5 text-xs font-semibold text-white bg-[#4e0e15] cursor-pointer hover:bg-[#6b151e] rounded text-center block"
@@ -427,14 +549,23 @@ export function WineLotsTrace({
         <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
           {filteredLots.map(l => {
             const isSelected = l.id === selectedLotId;
+            const nextAction = nextActionForWineLot(l, nextActionContext, lang);
+            const statusClasses: Record<LotNextActionStatus, string> = {
+              ready: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900/60',
+              needs_data: 'bg-amber-50 text-amber-750 border-amber-200 dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-900/60',
+              blocked: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900/60',
+              complete: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-200 dark:border-sky-900/60',
+            };
             return (
-              <div
+              <button
+                type="button"
                 key={l.id}
                 onClick={() => setSelectedLotId(l.id)}
-                className={`p-3 border rounded-lg cursor-pointer transition-all flex items-center justify-between ${
+                aria-pressed={isSelected}
+                className={`w-full p-3 border rounded-xl cursor-pointer transition-all flex items-center justify-between text-left ${
                   isSelected
                     ? 'bg-[#f5efe9] border-[#4e0e15] shadow-sm'
-                    : 'bg-white border-[#e8dfd5] hover:border-slate-300'
+                    : 'bg-white border-[#e8dfd5] hover:border-slate-300 hover:shadow-2xs dark:bg-stone-900 dark:border-stone-800'
                 }`}
               >
                 <div className="min-w-0 pr-2">
@@ -443,15 +574,24 @@ export function WineLotsTrace({
                     <span className="text-[9px] font-mono px-1 py-0.2 bg-slate-100 text-slate-500 border rounded font-bold shrink-0">{l.id}</span>
                     {l.voidedAt && <span className="text-[8px] uppercase font-bold rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">Voided</span>}
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
                     <span className="text-[10px] text-slate-400 capitalize">
                       {wineClassLabel(l.wineClass, lang)} {lang === 'ka' ? 'ღვინო' : 'wine'}
                     </span>
-                    <span className="text-[10px] text-slate-400 font-medium">{lang === 'ka' ? 'მოც.' : 'Vol'}: {l.currentVolume}L</span>
+                    <span className="text-[10px] font-bold text-stone-600 dark:text-stone-300">{stageLabel(l.stage, lang)}</span>
+                    <span className="text-[10px] text-slate-400 font-medium">{l.currentVolume.toLocaleString()} L</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide ${statusClasses[nextAction.status]}`}>
+                      {lotNextActionStatusLabel(nextAction.status, lang)}
+                    </span>
+                    <span className="truncate text-[9px] font-semibold text-stone-500 dark:text-stone-400">
+                      {nextAction.shortLabel}
+                    </span>
                   </div>
                 </div>
                 <ChevronRight className={`w-4 h-4 shrink-0 transition-transform ${isSelected ? 'translate-x-1 text-[#4e0e15]' : 'text-slate-300'}`} />
-              </div>
+              </button>
             );
           })}
         </div>
@@ -472,8 +612,12 @@ export function WineLotsTrace({
               salesOrders={salesOrders}
               salesDispatches={salesDispatches}
               currency={currency}
+              nextAction={selectedNextAction!}
               onEdit={canUpdateLot && !selectedLot.voidedAt ? () => setIsEditingLot(!isEditingLot) : undefined}
-              onChangeStage={canUpdateLot && !selectedLot.voidedAt ? openTransitionForm : undefined}
+              onNextAction={selectedNextAction?.intent === 'transition'
+                ? (canUpdateLot && !selectedLot.voidedAt ? () => handleRecommendedAction(selectedNextAction) : undefined)
+                : (selectedNextAction ? () => handleRecommendedAction(selectedNextAction) : undefined)}
+              onChangeStage={canUpdateLot && !selectedLot.voidedAt ? () => openTransitionForm() : undefined}
               onOpenPassport={onOpenPassport}
               setActiveTab={setActiveTab}
               setSelectedTankId={setSelectedTankId}
@@ -527,10 +671,11 @@ export function WineLotsTrace({
                       ...l,
                       name: editName,
                       variety: editVariety,
-                      vintage: Number(editVintage) || 2025,
+                      vintage: Number(editVintage) || new Date().getFullYear(),
                       currentVolume: Number(editVolume) || 0,
                       vineyardBlock: editBlock,
-                      region: editRegion
+                      region: editRegion,
+                      sugarCategory: editSugarCategory || undefined,
                     };
                   }
                   return l;
@@ -553,6 +698,18 @@ export function WineLotsTrace({
                       className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
                     />
                   </div>
+                  <div>
+                    <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">
+                      {lang === 'ka' ? 'კატეგორია შაქრიანობის მიხედვით' : 'Category by sugar'}
+                    </label>
+                    <select value={editSugarCategory} onChange={(e) => setEditSugarCategory(e.target.value as WineSugarCategory | '')} className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]">
+                      <option value="">—</option>
+                      <option value="dry">{lang === 'ka' ? 'მშრალი' : 'Dry'}</option>
+                      <option value="semi_dry">{lang === 'ka' ? 'ნახევრად მშრალი' : 'Semi-dry'}</option>
+                      <option value="semi_sweet">{lang === 'ka' ? 'ნახევრად ტკბილი' : 'Semi-sweet'}</option>
+                      <option value="sweet">{lang === 'ka' ? 'ტკბილი' : 'Sweet'}</option>
+                    </select>
+                  </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -571,7 +728,7 @@ export function WineLotsTrace({
                       </label>
                       <input
                         type="number" required
-                        value={editVintage} onChange={(e) => setEditVintage(Number(e.target.value) || 2025)}
+                        value={editVintage} onChange={(e) => setEditVintage(Number(e.target.value) || new Date().getFullYear())}
                         className="w-full bg-white border border-[#e8dfd5] p-2.5 rounded text-stone-900 outline-none focus:border-[#4e0e15]"
                       />
                     </div>
@@ -632,7 +789,7 @@ export function WineLotsTrace({
               <>
 
             {/* General Chemistry specs summary */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-3 bg-gradient-to-br from-[#FAF8F5] to-[#f5efe9]/30 border border-[#f0e6da] rounded-lg">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 p-3 bg-gradient-to-br from-[#FAF8F5] to-[#f5efe9]/30 border border-[#f0e6da] rounded-lg">
               <div>
                 <span className="text-[9px] text-slate-400 font-mono block uppercase">Grape Variety</span>
                 <strong className="text-slate-700 font-bold text-xs">{selectedLot.variety}</strong>
@@ -648,6 +805,10 @@ export function WineLotsTrace({
               <div>
                 <span className="text-[9px] text-slate-400 font-mono block uppercase text-red-800/80">Active Balance</span>
                 <strong className="text-slate-700 font-bold text-xs">{selectedLot.currentVolume} {lang === 'ka' ? 'ლიტრი' : 'Liters'}</strong>
+              </div>
+              <div>
+                <span className="text-[9px] text-slate-400 font-mono block uppercase">{lang === 'ka' ? 'შაქრიანობის კატეგორია' : 'Sugar category'}</span>
+                <strong className="text-slate-700 font-bold text-xs">{selectedLot.sugarCategory || '—'}</strong>
               </div>
             </div>
 
@@ -777,20 +938,15 @@ export function WineLotsTrace({
             {/* Stage Progress Stepper */}
             {(() => {
               return (
-                <div ref={stageWorkflowRef} className="scroll-mt-4 space-y-4 border border-stone-200/80 bg-stone-50/50 p-4 rounded-xl dark:bg-stone-900/50 dark:border-stone-800">
+                <div className="space-y-4 border border-stone-200/80 bg-stone-50/50 p-4 rounded-xl dark:bg-stone-900/50 dark:border-stone-800">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h4 className="text-xs uppercase font-mono tracking-wider font-bold text-stone-550 flex items-center gap-1.5 dark:text-stone-400">
                         🍇 {winemakingWorkflowLabel(selectedLot.wineClass, lang)}
                       </h4>
-                      <p className="mt-1 text-[10px] text-stone-400">
-                        {lang === 'ka'
-                          ? 'თანმიმდევრობა შერჩეულია ამ პარტიის ღვინის ტიპისთვის.'
-                          : 'This sequence is tailored to the lot’s wine type.'}
-                      </p>
                     </div>
                     {canUpdateLot && <button
-                      onClick={openTransitionForm}
+                      onClick={() => openTransitionForm()}
                       className="px-2 py-1 text-[10px] font-bold text-white bg-[#801323] hover:bg-[#4e0e15] rounded transition-all cursor-pointer shadow-2xs"
                     >
                       {lang === 'ka' ? 'ეტაპის შეცვლა' : 'Advance / Modify Stage'}
@@ -834,136 +990,6 @@ export function WineLotsTrace({
                     </div>
                   </div>
 
-                  {/* Transition form drawer */}
-                  {canUpdateLot && showTransitionForm && (
-                    <div className="bg-white border border-stone-200 p-4 rounded-xl space-y-3.5 shadow-2xs text-xs dark:bg-stone-950 dark:border-stone-800">
-                      <h5 className="font-bold text-[#4e0e15] border-b border-stone-100 pb-1.5 uppercase text-[10px] tracking-wide dark:text-amber-100 dark:border-stone-850">
-                        {lang === 'ka' ? 'ეტაპის გადასვლის ჩაწერა' : 'Log Stage Transition'}
-                      </h5>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div>
-                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სამიზნე ეტაპი' : 'Target Stage'}</label>
-                          <select
-                            value={transitionTarget}
-                            onChange={(e) => setTransitionTarget(e.target.value as WinemakingStage)}
-                            className="w-full bg-[#FAF8F5] border border-stone-200 px-2 py-1.5 rounded outline-none text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
-                          >
-                            {stagesOrdered.map(st => (
-                              <option key={st} value={st}>
-                                {stageLabel(st, lang)}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="sm:col-span-2">
-                          <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ოპერატორი / მემარნე' : 'Operator / Cellarer'}</label>
-                          <input
-                            type="text"
-                            value={transitionOperator}
-                            onChange={(e) => setTransitionOperator(e.target.value)}
-                            className="w-full bg-[#FAF8F5] border border-stone-200 px-2 py-1.5 rounded outline-none text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
-                            placeholder={lang === 'ka' ? 'მაგ. პასუხისმგებელი პირი' : 'e.g. Responsible person'}
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[9.5px] font-mono uppercase text-slate-400 font-bold mb-1">{lang === 'ka' ? 'გადასვლის ოპერაციის შენიშვნები' : 'Transition Operation Log notes'}</label>
-                        <textarea
-                          value={transitionNotes}
-                          onChange={(e) => setTransitionNotes(e.target.value)}
-                          className="w-full bg-[#FAF8F5] border border-stone-200 p-2 rounded outline-none h-16 text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-100"
-                          placeholder={lang === 'ka' ? 'აღწერეთ ქმედება: გადატანა, მაცერაცია, გოგირდის კორექცია ან ფილტრაციის შემოწმება...' : 'Describe action: racking, dynamic skin maceration, sulfur adjustment, or filtration check...'}
-                          required
-                        />
-                      </div>
-
-                      {onUpdateInventory && (
-                        <OperationMaterialsEditor
-                          lang={lang}
-                          inventory={inventory}
-                          value={transitionMaterialDrafts}
-                          onChange={setTransitionMaterialDrafts}
-                          operationType="additive"
-                          lotVolumeL={selectedLot.currentVolume}
-                          compact
-                        />
-                      )}
-
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowTransitionForm(false);
-                            setTransitionMaterialDrafts([]);
-                          }}
-                          className="px-3 py-1.5 bg-stone-100 text-stone-600 rounded hover:bg-stone-200 cursor-pointer dark:bg-stone-900 dark:text-stone-400 dark:hover:bg-stone-850"
-                        >
-                          {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!canUpdateLot) return;
-                            if (transitionOperator.trim() && transitionNotes.trim()) {
-                              const materialIssue = materialDraftIssue(transitionMaterialDrafts, inventory);
-                              if (materialIssue) {
-                                alert(lang === 'ka'
-                                  ? 'შეამოწმეთ არჩეული დანამატი, რაოდენობა და ხელმისაწვდომი მარაგი.'
-                                  : 'Check the selected material, quantity, and available stock.');
-                                return;
-                              }
-                              const materialUsages = materialDraftsToUsages(transitionMaterialDrafts, inventory);
-                              const materialSummary = materialUsages.map(usage => (
-                                `${usage.materialName || usage.materialId} ${usage.quantity} ${usage.unit || ''}`.trim()
-                              )).join(', ');
-                              const historyDescription = materialSummary
-                                ? `${transitionNotes.trim()} · ${lang === 'ka' ? 'დანამატები' : 'Additions'}: ${materialSummary}`
-                                : transitionNotes.trim();
-                              const updatedLots = lots.map(l => {
-                                if (l.id === selectedLot.id) {
-                                  return {
-                                    ...l,
-                                    stage: transitionTarget,
-                                    history: [
-                                      {
-                                        date: new Date().toISOString().split('T')[0],
-                                        type: lang === 'ka' ? `ეტაპის გადასვლა: ${stageLabel(transitionTarget, lang)}` : `Stage Transition: to ${transitionTarget}`,
-                                        description: historyDescription,
-                                        operator: transitionOperator
-                                      },
-                                      ...(l.history || [])
-                                    ]
-                                  };
-                                }
-                                return l;
-                              });
-                              if (!commitWineLotMutationIfAllowed(canUpdateLot, updatedLots, onUpdateLots)) return;
-                              if (onUpdateInventory && materialUsages.length > 0) {
-                                const usedById = new Map<string, number>();
-                                materialUsages.forEach(usage => {
-                                  usedById.set(usage.materialId, (usedById.get(usage.materialId) || 0) + usage.quantity);
-                                });
-                                onUpdateInventory(inventory.map(item => {
-                                  const used = usedById.get(item.id) || 0;
-                                  return used > 0 ? { ...item, stock: Math.max(0, item.stock - used) } : item;
-                                }));
-                              }
-                              setShowTransitionForm(false);
-                              setTransitionMaterialDrafts([]);
-                            } else {
-                              alert(lang === 'ka' ? 'გთხოვთ მიუთითოთ ოპერატორის სახელი და გადასვლის შენიშვნები.' : 'Please provide Operator name and Transition notes.');
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-emerald-705 text-white rounded hover:bg-emerald-800 cursor-pointer"
-                        >
-                          {lang === 'ka' ? 'გადასვლის დადასტურება' : 'Confirm Transition'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })()}
@@ -1007,6 +1033,150 @@ export function WineLotsTrace({
         )}
       </div>
     </div>
+
+    {canUpdateLot && showTransitionForm && selectedLot && (
+      <div
+        className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-950/45 p-4 backdrop-blur-[2px]"
+        onMouseDown={(event) => {
+          if (event.currentTarget === event.target) closeTransitionDialog();
+        }}
+      >
+        <section
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lot-stage-transition-title"
+          className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950"
+        >
+          <header className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4 dark:border-stone-800">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-[#f5efe9] px-2 py-1 text-[9px] font-mono font-black text-[#4e0e15]">
+                  {selectedLot.id}
+                </span>
+                <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-stone-400">
+                  {stageLabel(selectedLot.stage, lang)} → {stageLabel(transitionTarget, lang)}
+                </span>
+              </div>
+              <h3 id="lot-stage-transition-title" className="mt-2 text-xl font-serif font-black text-stone-950 dark:text-amber-100">
+                {lang === 'ka' ? 'ეტაპის გადასვლის ჩაწერა' : 'Log stage transition'}
+              </h3>
+              <p className="mt-1 text-[11px] text-stone-500 dark:text-stone-400">
+                {selectedLot.name} · {selectedLot.currentVolume.toLocaleString()} L
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={closeTransitionDialog}
+              aria-label={lang === 'ka' ? 'ფანჯრის დახურვა' : 'Close transition dialog'}
+              className="rounded-xl border border-stone-200 p-2 text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:border-stone-800 dark:hover:bg-stone-900"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </header>
+
+          <div className="space-y-4 overflow-y-auto px-5 py-4 text-xs">
+            {isNonSequentialTransition && (
+              <div role="alert" className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p className="text-[10px] leading-relaxed">
+                  {lang === 'ka'
+                    ? `რეკომენდებული შემდეგი ეტაპია ${stageLabel(preferredTransitionTarget!, lang)}. სხვა ეტაპის არჩევისას შენიშვნებში მიუთითეთ მიზეზი.`
+                    : `The recommended next stage is ${stageLabel(preferredTransitionTarget!, lang)}. Explain why you are skipping or moving backward in the notes.`}
+                </p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <label htmlFor="lot-transition-target" className="mb-1 block text-[9.5px] font-mono font-bold uppercase text-slate-400">
+                  {lang === 'ka' ? 'სამიზნე ეტაპი' : 'Target stage'}
+                </label>
+                <select
+                  id="lot-transition-target"
+                  value={transitionTarget}
+                  onChange={(e) => setTransitionTarget(e.target.value as WinemakingStage)}
+                  className="w-full rounded-lg border border-stone-200 bg-[#FAF8F5] px-2.5 py-2 text-stone-800 outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-900 dark:text-stone-100"
+                >
+                  {stagesOrdered.map(stage => (
+                    <option key={stage} value={stage}>
+                      {stageLabel(stage, lang)}{stage === preferredTransitionTarget ? (lang === 'ka' ? ' · რეკომენდებული' : ' · Recommended') : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="lot-transition-operator" className="mb-1 block text-[9.5px] font-mono font-bold uppercase text-slate-400">
+                  {lang === 'ka' ? 'ოპერატორი / მემარნე' : 'Operator / Cellarer'}
+                </label>
+                <input
+                  id="lot-transition-operator"
+                  type="text"
+                  value={transitionOperator}
+                  onChange={(e) => setTransitionOperator(e.target.value)}
+                  className="w-full rounded-lg border border-stone-200 bg-[#FAF8F5] px-2.5 py-2 text-stone-800 outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-900 dark:text-stone-100"
+                  placeholder={lang === 'ka' ? 'მაგ. პასუხისმგებელი პირი' : 'e.g. Responsible person'}
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="lot-transition-notes" className="mb-1 block text-[9.5px] font-mono font-bold uppercase text-slate-400">
+                {lang === 'ka' ? 'რა შესრულდა და რატომ არის პარტია მზად?' : 'What was completed, and why is the lot ready?'}
+              </label>
+              <textarea
+                id="lot-transition-notes"
+                value={transitionNotes}
+                onChange={(e) => setTransitionNotes(e.target.value)}
+                className="h-24 w-full rounded-lg border border-stone-200 bg-[#FAF8F5] p-2.5 text-stone-800 outline-none focus:border-[#4e0e15] dark:border-stone-800 dark:bg-stone-900 dark:text-stone-100"
+                placeholder={lang === 'ka'
+                  ? 'ჩაწერეთ ლაბორატორიული შედეგი, ოპერაცია, გადატანა ან სხვა მზადყოფნის მტკიცებულება...'
+                  : 'Record the lab result, cellar operation, transfer, or other readiness evidence...'}
+                required
+              />
+            </div>
+
+            {onUpdateInventory && (
+              <OperationMaterialsEditor
+                lang={lang}
+                inventory={inventory}
+                value={transitionMaterialDrafts}
+                onChange={setTransitionMaterialDrafts}
+                operationType="additive"
+                lotVolumeL={selectedLot.currentVolume}
+                compact
+              />
+            )}
+          </div>
+
+          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-stone-50/80 px-5 py-4 dark:border-stone-800 dark:bg-stone-900/50">
+            <p className="text-[9px] leading-relaxed text-stone-400">
+              {lang === 'ka'
+                ? 'დადასტურება განაახლებს პარტიის ეტაპს და დაამატებს ჩანაწერს ქრონოლოგიაში.'
+                : 'Confirmation updates the lot stage and adds a traceability timeline entry.'}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={closeTransitionDialog}
+                className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-[10px] font-bold text-stone-600 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300"
+              >
+                {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={confirmStageTransition}
+                disabled={!transitionOperator.trim() || !transitionNotes.trim()}
+                className="rounded-xl bg-emerald-700 px-4 py-2 text-[10px] font-black text-white transition-colors hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {lang === 'ka' ? 'გადასვლის დადასტურება' : 'Confirm transition'}
+              </button>
+            </div>
+          </footer>
+        </section>
+      </div>
+    )}
+    </>
   );
 }
 

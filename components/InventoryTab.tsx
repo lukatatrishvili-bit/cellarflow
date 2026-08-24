@@ -301,11 +301,6 @@ export function InventoryTab({
             <Package className="w-5 h-5 text-[#801323]" />
             {ka ? 'პროდუქტებისა და მარაგების მართვის ცენტრი' : 'Winemaker Material & Stockpile Command Center'}
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            {ka
-              ? 'მარაგის ხარჯვა ოპერაციებიდან ავტომატურად აღირიცხება. აქ მართეთ მიღება, სპეციფიკაციები და მარაგის შესწორებები.'
-              : 'Consumption is recorded automatically from cellar operations. Use this area for receipts, specifications, and stock corrections.'}
-          </p>
         </div>
         {(canCreateInventory || canUpdateInventory) && (
         <div className="flex gap-2">

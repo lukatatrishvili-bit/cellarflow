@@ -420,9 +420,6 @@ export function CertificationManagerTab({
       <PageHeader
         eyebrow={isKa ? 'Agency workflow' : 'Agency workflow'}
         title={isKa ? 'Certification Manager' : 'Certification Manager'}
-        description={isKa
-          ? 'Track sample preparation, lab protocol, organoleptic result, balance check, and issued certificate for each lot.'
-          : 'Track sample preparation, lab protocol, organoleptic result, balance check, and issued certificate for each lot.'}
         icon={BadgeCheck}
         actions={canManageCertification ? (
           <ActionButton onClick={saveRecord} disabled={!canManageCertification}>
@@ -449,7 +446,6 @@ export function CertificationManagerTab({
         <div className="space-y-5 min-w-0">
           <SectionCard
             title={isKa ? 'Lot and certification file' : 'Lot and certification file'}
-            subtitle={selectedLot ? `${selectedLot.name} - ${selectedLot.id}` : undefined}
             icon={ClipboardList}
             actions={
               <StatusBadge tone={form.applicationStatus === 'approved' ? 'success' : form.applicationStatus === 'rejected' ? 'danger' : 'info'}>
@@ -518,7 +514,6 @@ export function CertificationManagerTab({
 
           <SectionCard
             title={isKa ? 'PDO / Appellation checker' : 'PDO / Appellation checker'}
-            subtitle={selectedLot ? `${selectedLot.variety} - ${selectedLot.vintage}` : undefined}
             icon={Compass}
             actions={
               pdoResult ? (
@@ -586,6 +581,8 @@ export function CertificationManagerTab({
                     {[
                       ['Lot appellation', selectedLot?.intendedAppellation],
                       ['Block microzone', linkedBlock?.microzone],
+                      ['Municipality', linkedIntake?.municipality || linkedBlock?.municipality],
+                      ['Community', linkedIntake?.community || linkedBlock?.community],
                       ['Village', linkedIntake?.village || linkedBlock?.village],
                       ['Cadastral code', linkedIntake?.cadastralCode || linkedBlock?.cadastralCode],
                       ['Grape sugar', linkedIntake?.brix ? `${linkedIntake.brix} Brix` : undefined],
@@ -910,6 +907,7 @@ export function CertificationManagerTab({
                 <div className="rounded-xl border border-stone-200 bg-stone-50/70 p-3 text-[11px] font-semibold text-stone-600 dark:border-stone-800 dark:bg-stone-950/30 dark:text-stone-300">
                   <div className="flex justify-between gap-3"><span>Class</span><strong>{selectedLot.wineClass}</strong></div>
                   <div className="mt-1 flex justify-between gap-3"><span>Classification</span><strong>{selectedLot.classification || '-'}</strong></div>
+                  <div className="mt-1 flex justify-between gap-3"><span>Sugar category</span><strong>{selectedLot.sugarCategory || '-'}</strong></div>
                   <div className="mt-1 flex justify-between gap-3"><span>Appellation</span><strong>{selectedLot.intendedAppellation || '-'}</strong></div>
                   <div className="mt-1 flex justify-between gap-3"><span>Lot status</span><strong>{selectedLot.certificationStatus || 'not_started'}</strong></div>
                 </div>
