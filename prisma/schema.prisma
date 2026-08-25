@@ -259,7 +259,7 @@ model AiNotificationPreference {
   @@index([organizationId, emailEnabled])
   @@index([organizationId, pushEnabled])
   @@index([organizationId, whatsappEnabled])
-  @@index([organizationId, notificationsEnabled])
+  @@index([organizationId, notificationsEnabled], map: "AiNotificationPreference_org_notifications_enabled_idx")
 }
 
 /// One browser endpoint registered by a user for one winery. The endpoint and

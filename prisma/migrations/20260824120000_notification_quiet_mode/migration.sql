@@ -4,5 +4,5 @@ ALTER TABLE "AiNotificationPreference"
   ADD COLUMN "notificationsEnabled" BOOLEAN NOT NULL DEFAULT true,
   ADD COLUMN "notificationsPausedUntil" TIMESTAMP(3);
 
-CREATE INDEX "AiNotificationPreference_organizationId_notificationsEnabled_idx"
+CREATE INDEX "AiNotificationPreference_org_notifications_enabled_idx"
   ON "AiNotificationPreference"("organizationId", "notificationsEnabled");

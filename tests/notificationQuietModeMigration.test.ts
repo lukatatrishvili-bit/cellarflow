@@ -9,6 +9,6 @@ describe('notification quiet-mode migration', () => {
     ), 'utf8');
     expect(migration).toContain('"notificationsEnabled" BOOLEAN NOT NULL DEFAULT true');
     expect(migration).toContain('"notificationsPausedUntil" TIMESTAMP(3)');
-    expect(migration).toContain('notificationsEnabled_idx');
+    expect(migration).toContain('AiNotificationPreference_org_notifications_enabled_idx');
   });
 });
