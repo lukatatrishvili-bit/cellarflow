@@ -552,7 +552,11 @@ export function ProfileSettingsTab({
             </div>
           </div>
 
-          <NotificationPreferencesPanel lang={lang} onMessage={setToastMessage} />
+          <NotificationPreferencesPanel
+            lang={lang}
+            onMessage={setToastMessage}
+            preferenceScopeKey={`${currentUser.username}:${activeOrg?.id || ''}`}
+          />
 
           <hr className="border-stone-100" />
 

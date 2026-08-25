@@ -84,7 +84,7 @@ describe('TanksVessels action permissions', () => {
     expect(markup).not.toContain('Commission Vessel');
     expect(markup).toContain('Your role cannot commission vessels or decommission vessels.');
     expect(markup).toContain('title="Set temperature value"');
-    expect(markup).toContain('Wash Vessel');
+    expect(markup).not.toContain('Wash Vessel');
     expect(markup).not.toContain('Commission out / destroy vessel');
   });
 
@@ -97,7 +97,7 @@ describe('TanksVessels action permissions', () => {
 
     expect(markup).toContain('Commission Vessel');
     expect(markup).toContain('title="Set temperature value"');
-    expect(markup).toContain('Wash Vessel');
+    expect(markup).not.toContain('Wash Vessel');
     expect(markup).not.toContain('Commission out / destroy vessel');
     expect(markup).toContain('Your role cannot decommission vessels.');
   });
@@ -107,10 +107,10 @@ describe('TanksVessels action permissions', () => {
 
     expect(markup).toContain('Winemaker briefing');
     expect(markup).toContain('1 decision before the next movement');
-    expect(markup).toContain('Sanitation required');
+    expect(markup).toContain('40% headspace');
     expect(markup).toContain('Commission Vessel');
     expect(markup).toContain('title="Set temperature value"');
-    expect(markup).toContain('Wash Vessel');
+    expect(markup).not.toContain('Wash Vessel');
     expect(markup).not.toContain('Commission out / destroy vessel');
     expect(markup).not.toContain('Limited vessel access.');
   });
@@ -128,6 +128,23 @@ describe('TanksVessels action permissions', () => {
     expect(markup).toContain('Empty and clean');
     expect(markup).toContain('2,000 L');
     expect(markup).toContain('Commission out / destroy vessel');
+  });
+
+  it('offers sanitation only after the vessel is empty and unassigned', () => {
+    const markup = renderVessels({
+      canCreateVessel: false,
+      canUpdateVessel: true,
+      canDeleteVessel: false,
+      vessels: [{
+        ...vessel,
+        currentVolume: 0,
+        assignedLotId: null,
+        cleaningStatus: 'dirty',
+      }],
+    });
+
+    expect(markup).toContain('Sanitation required');
+    expect(markup).toContain('Wash Vessel');
   });
 
   it('localizes the read-only explanation in Georgian', () => {

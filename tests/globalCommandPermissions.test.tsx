@@ -28,6 +28,7 @@ describe('GlobalCommandPalette permissions', () => {
     const markup = renderPalette('Lab Technician');
 
     expect(markup).toContain('>Today</strong>');
+    expect(markup).toContain('>Work Queue</strong>');
     expect(markup).toContain('>Cellar</strong>');
     expect(markup).toContain('>Documents</strong>');
     expect(markup).toContain('>Settings</strong>');

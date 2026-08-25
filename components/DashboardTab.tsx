@@ -47,6 +47,15 @@ import { computeAlerts, type Alert, type AlertSeverity } from '../lib/alerts';
 import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
 import { canAccess, type PermissionAction, type PermissionModule } from '../server/permissions';
 import { canViewAppDestination } from '../lib/navigationPermissions';
+import { tasksForIdentity } from '../lib/workAssignments';
+import {
+  buildTodayQueue,
+  type ProductionPlanItem,
+  type PurchaseOrder,
+  type QualitySop,
+  type RecallCase,
+  type TodayQueueItem,
+} from '../lib/operationsControl';
 import {
   type DayWeather,
   describeWeatherCode,
@@ -76,10 +85,15 @@ interface DashboardTabProps {
   auditLogs: MaraniOSAuditLog[];
   grapeIntakes: GrapeIntakeRecord[];
   cellarOps: CellarOperation[];
+  qualitySops?: QualitySop[];
+  purchaseOrders?: PurchaseOrder[];
+  productionPlans?: ProductionPlanItem[];
+  recallCases?: RecallCase[];
   onToggleTaskStatus: (taskId: string) => void;
   setActiveModule: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
   setActiveTab: (tab: string) => void;
   onOpenOnboarding: () => void;
+  onOpenWorkItem?: (tab: string, targetId?: string) => void;
 }
 
 const SETUP_STEP_PERMISSIONS: Record<SetupStep['id'], [PermissionModule, PermissionAction]> = {
@@ -153,6 +167,7 @@ function alertDestination(alert: Alert): { tab: string; labelEn: string; labelKa
       return { tab: 'inventory', labelEn: 'Open inventory', labelKa: 'მარაგების გახსნა' };
     case 'so2':
     case 'va':
+    case 'lab':
       return { tab: 'labs', labelEn: 'Open laboratory', labelKa: 'ლაბორატორიის გახსნა' };
     case 'cleaning':
     case 'temperature':
@@ -231,6 +246,49 @@ function QueueRow({ item }: { item: AttentionItem }) {
   );
 }
 
+function WorkQueueRow({
+  item,
+  lang,
+  onOpen,
+}: {
+  item: TodayQueueItem;
+  lang: Language;
+  onOpen?: (tab: string, targetId?: string) => void;
+}) {
+  const isKa = lang === 'ka';
+  const sourceLabel: Record<TodayQueueItem['source'], string> = {
+    task: isKa ? 'დავალება' : 'Task',
+    sop: 'SOP',
+    purchase_order: isKa ? 'შესყიდვა' : 'Purchase order',
+    production_plan: isKa ? 'გეგმა' : 'Production plan',
+    approval: isKa ? 'დამტკიცება' : 'Approval',
+    recall: isKa ? 'გაწვევა' : 'Recall',
+  };
+  const critical = item.priority === 'critical';
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen?.(item.targetTab, item.targetId)}
+      disabled={!onOpen}
+      className={`flex w-full min-h-16 items-center gap-3 rounded-2xl border p-3.5 text-left transition enabled:hover:-translate-y-0.5 enabled:hover:shadow-sm disabled:cursor-default ${
+        critical
+          ? 'border-rose-200 bg-rose-50/70 text-rose-900 dark:border-rose-900 dark:bg-rose-950/25 dark:text-rose-100'
+          : 'border-amber-200 bg-amber-50/60 text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100'
+      }`}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block text-[9px] font-black uppercase tracking-wider text-stone-700 dark:text-stone-200">{sourceLabel[item.source]}</span>
+        <strong className="mt-1 block truncate text-sm">{item.title}</strong>
+        <span className="mt-1 block truncate text-[11px] text-stone-700 dark:text-stone-200">{item.detail}</span>
+      </span>
+      <span className="shrink-0 text-right text-[10px] font-black">
+        <span className="block">{item.dueDate}</span>
+        {onOpen && <span className="mt-1 inline-flex items-center gap-1 uppercase text-stone-700 dark:text-stone-200">{isKa ? 'გახსნა' : 'Open'} <ArrowRight className="h-3 w-3" /></span>}
+      </span>
+    </button>
+  );
+}
+
 export function DashboardTab({
   lang,
   companyProfile,
@@ -246,10 +304,15 @@ export function DashboardTab({
   auditLogs,
   grapeIntakes,
   cellarOps,
+  qualitySops = [],
+  purchaseOrders = [],
+  productionPlans = [],
+  recallCases = [],
   onToggleTaskStatus,
   setActiveModule,
   setActiveTab,
   onOpenOnboarding,
+  onOpenWorkItem,
 }: DashboardTabProps) {
   const isKa = lang === 'ka';
   const copy = (en: string, ka: string) => (isKa ? ka : en);
@@ -259,6 +322,10 @@ export function DashboardTab({
   const canViewVineyard = enabledModules.includes('vazi') && canViewAppDestination(currentUser.role, 'vazi');
   const canViewCellar = enabledModules.includes('gvino') && canViewAppDestination(currentUser.role, 'gvino');
   const canViewTasks = canViewCellarTab('tasks');
+  const canViewQuality = canViewCellarTab('quality');
+  const canViewPlanning = canViewCellarTab('planner');
+  const canViewProcurement = canViewAppDestination(currentUser.role, 'procurement');
+  const canViewRecall = canViewAppDestination(currentUser.role, 'recall');
   const canUpdateTasks = canAccess(currentUser.role, 'tasks', 'update');
   const canCreateFermentation = canAccess(currentUser.role, 'fermentation', 'create');
   const canCreateLab = canAccess(currentUser.role, 'lab', 'create');
@@ -313,10 +380,49 @@ export function DashboardTab({
   const capacityPct = totalCapacity > 0 ? Math.round((usedCapacity / totalCapacity) * 100) : 0;
   const totalWineVolume = lots.reduce((sum, lot) => sum + lot.currentVolume, 0);
   const activeFerments = lots.filter((lot) => lot.stage === 'fermenting');
-  const pendingTasks = tasks
+  const userTasks = useMemo(
+    () => tasksForIdentity(tasks, { username: currentUser.username, fullName: currentUser.fullName }),
+    [currentUser.fullName, currentUser.username, tasks],
+  );
+  const pendingTasks = userTasks
     .filter((task) => task.status !== 'completed')
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const overdueTasks = pendingTasks.filter((task) => task.dueDate < today);
+  const workQueue = useMemo(() => buildTodayQueue({
+    today,
+    tasks,
+    sops: qualitySops,
+    purchaseOrders,
+    productionPlans,
+    approvals: [],
+    recallCases,
+    currentUsername: currentUser.username,
+    currentUserName: currentUser.fullName,
+    visibility: {
+      tasks: canViewTasks,
+      sops: canViewQuality,
+      purchaseOrders: canViewProcurement,
+      productionPlans: canViewPlanning,
+      approvals: 'none',
+      recalls: canViewRecall,
+      includeTeamWork: currentUser.role === 'Owner/Admin',
+    },
+  }), [
+    canViewPlanning,
+    canViewProcurement,
+    canViewQuality,
+    canViewRecall,
+    canViewTasks,
+    currentUser.fullName,
+    currentUser.role,
+    currentUser.username,
+    productionPlans,
+    purchaseOrders,
+    qualitySops,
+    recallCases,
+    tasks,
+    today,
+  ]);
   const fermentsMissingReading = activeFerments.filter(
     (lot) => !fermLogs.some((log) => (
       log.lotId === lot.id && log.date === today && isPhysicalFermentationReading(log)
@@ -337,14 +443,15 @@ export function DashboardTab({
     fermLogs,
     labLogs,
     inventory,
-    tasks,
+    tasks: userTasks,
     today,
     lang,
-  }), [vessels, lots, fermLogs, labLogs, inventory, tasks, today, lang]);
+  }), [vessels, lots, fermLogs, labLogs, inventory, userTasks, today, lang]);
   const visibleAlerts = derivedAlerts.filter((alert) => (
     canViewCellarTab(alertDestination(alert).tab)
   ));
-  const criticalAlerts = visibleAlerts.filter((alert) => alert.severity === 'critical');
+  const visibleRiskAlerts = visibleAlerts.filter(alert => alert.category !== 'task');
+  const criticalAlerts = visibleRiskAlerts.filter((alert) => alert.severity === 'critical');
 
   const [weather, setWeather] = useState<DayWeather | null>(null);
   const [weatherError, setWeatherError] = useState('');
@@ -414,7 +521,7 @@ export function DashboardTab({
   );
 
   const attentionItems: AttentionItem[] = [
-    ...visibleAlerts.slice(0, 4).map((alert) => {
+    ...visibleRiskAlerts.slice(0, 4).map((alert) => {
       const destination = alertDestination(alert);
       return {
         id: alert.id,
@@ -489,11 +596,9 @@ export function DashboardTab({
     }] : []),
   ].slice(0, 6);
 
-  const attentionCount = visibleAlerts.length
-    + fermentsMissingReading.length
-    + highRiskScoutings.length
-    + (diseaseRisk === 'high' && canViewVineyard ? 1 : 0)
-    + unassignedLots.length;
+  const attentionCount = attentionItems.length + workQueue.length;
+  const criticalAttentionCount = criticalAlerts.length
+    + workQueue.filter(item => item.priority === 'critical').length;
   const estateName = companyProfile.wineryName
     || companyProfile.companyName
     || currentUser.fullName
@@ -513,10 +618,10 @@ export function DashboardTab({
       label: copy('Needs attention', 'საჭიროებს ყურადღებას'),
       value: attentionCount,
       detail: attentionCount
-        ? copy(`${criticalAlerts.length} critical`, `${criticalAlerts.length} კრიტიკული`)
+        ? copy(`${criticalAttentionCount} critical`, `${criticalAttentionCount} კრიტიკული`)
         : copy('Everything is clear', 'ყველაფერი წესრიგშია'),
       icon: attentionCount ? AlertTriangle : CheckCircle2,
-      tone: (criticalAlerts.length ? 'danger' : attentionCount ? 'warning' : 'success') as Tone,
+      tone: (criticalAttentionCount ? 'danger' : attentionCount ? 'warning' : 'success') as Tone,
     },
     ...(canViewTasks ? [{
       id: 'tasks',
@@ -681,10 +786,12 @@ export function DashboardTab({
       : hasCellarData || (canViewVineyard && hasVineyardData);
   const showDashboardMetrics = hasRoleOperationalData
     || attentionItems.length > 0
+    || workQueue.length > 0
     || pendingTasks.length > 0;
   const showPriorityQueue = showDashboardMetrics;
   const isFreshWorkspace = !hasRoleOperationalData
     && attentionItems.length === 0
+    && workQueue.length === 0
     && pendingTasks.length === 0
     && latestAuditLogs.length === 0;
   const showLabPulse = currentUser.role === 'Lab Technician'
@@ -826,19 +933,31 @@ export function DashboardTab({
             defaultSpan: 8 as const,
             content: (
               <SectionCard
-          title={copy('Today’s priority queue', 'დღევანდელი პრიორიტეტები')}
+          title={copy('Today’s work and risks', 'დღევანდელი სამუშაო და რისკები')}
           icon={ListChecks}
           actions={(
-            <StatusBadge tone={criticalAlerts.length ? 'danger' : attentionItems.length ? 'warning' : 'success'}>
-              {attentionItems.length
-                ? copy(`${attentionItems.length} open`, `${attentionItems.length} ღია`)
+            <StatusBadge tone={criticalAttentionCount ? 'danger' : attentionCount ? 'warning' : 'success'}>
+              {attentionCount
+                ? copy(`${attentionCount} open`, `${attentionCount} ღია`)
                 : copy('clear', 'წესრიგშია')}
             </StatusBadge>
           )}
         >
-          {attentionItems.length ? (
+          {attentionCount ? (
             <div className="space-y-2.5">
-              {attentionItems.map((item) => <QueueRow key={item.id} item={item} />)}
+              {workQueue.slice(0, 6).map(item => (
+                <WorkQueueRow key={item.id} item={item} lang={lang} onOpen={onOpenWorkItem} />
+              ))}
+              {attentionItems.slice(0, 4).map((item) => <QueueRow key={item.id} item={item} />)}
+              {(workQueue.length > 6 || attentionItems.length > 4) && canViewAppDestination(currentUser.role, 'work') && (
+                <button
+                  type="button"
+                  onClick={() => onOpenWorkItem?.('control')}
+                  className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-3 text-xs font-bold text-[#5b1320] hover:bg-stone-50 dark:border-stone-800 dark:bg-stone-900 dark:text-amber-200"
+                >
+                  {copy('Open the complete work queue', 'სრული სამუშაო რიგის გახსნა')} <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex min-h-36 items-center gap-4 rounded-2xl bg-emerald-50/70 p-5 text-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200">

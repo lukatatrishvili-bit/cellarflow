@@ -401,6 +401,12 @@ export interface BottlingRunRecord {
   /** Optional restoration metadata for reversing a newly-recorded run. */
   previousLotVolumeL?: number;
   previousLotStage?: WinemakingStage;
+  /** Physical vessel debited by this run. New command-created runs always capture it. */
+  sourceVesselId?: string;
+  previousSourceVesselVolumeL?: number;
+  previousSourceVesselAssignedLotId?: string | null;
+  previousSourceVesselCleaningStatus?: Vessel['cleaningStatus'];
+  previousSourceVesselLastOperation?: string;
   /**
    * Optional packaging materials consumed by the run. Keys are semantic
    * components such as bottle/closure/capsule/label/box, values are inventory IDs.

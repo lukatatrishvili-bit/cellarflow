@@ -3,11 +3,9 @@ import { can, canAccess, type PermissionModule } from '../server/permissions';
 export const WINERY_TAB_IDS = [
   'dashboard',
   'intelligence',
-  'control',
   'intake',
   'lots',
   'lineage',
-  'recall',
   'vessels',
   'operations',
   'transfers',
@@ -16,7 +14,6 @@ export const WINERY_TAB_IDS = [
   'calculators',
   'bottling',
   'inventory',
-  'procurement',
   'quality',
   'planner',
   'tasks',
@@ -44,7 +41,6 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
       case 'intake': return 'grape_intake';
       case 'lots':
       case 'lineage': return 'lots';
-      case 'recall': return 'lots';
       case 'vessels':
       case 'qvevri': return 'vessels';
       case 'operations': return 'operations';
@@ -54,10 +50,8 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
       case 'calculators': return 'lab';
       case 'bottling': return 'bottling';
       case 'inventory': return 'inventory';
-      case 'procurement': return 'inventory';
       case 'quality': return 'tasks';
       case 'planner': return 'planning';
-      case 'control': return 'tasks';
       case 'tasks':
       case 'ai': return 'tasks';
       case 'notes': return 'notes';
@@ -67,6 +61,7 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
 
   const moduleMap: Record<string, PermissionModule> = {
     portal: 'reports',
+    work: 'tasks',
     vazi: 'vineyard',
     docs: 'official_docs',
     certification: 'certification',
@@ -74,6 +69,8 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
     costs: 'costs',
     storage: 'storage',
     sales: 'sales',
+    recall: 'recall',
+    procurement: 'procurement',
     analytics: 'reports',
     integrations: 'company_profile',
     settings: 'company_profile',
@@ -87,6 +84,12 @@ export function canViewAppDestination(role: unknown, moduleId: string, tabId?: s
   // Organization-management controls inside Settings remain separately gated.
   if (moduleId === 'portal' || moduleId === 'settings') return true;
   if (moduleId === 'integrations') return can(role, 'admin');
+  if (
+    moduleId === 'gvino'
+    && tabId !== undefined
+    && tabId !== 'qvevri'
+    && !(WINERY_TAB_IDS as readonly string[]).includes(tabId)
+  ) return false;
 
   // The cellar overview and the intelligence centre are aggregate surfaces.
   // They are useful whenever at least one operational cellar destination is

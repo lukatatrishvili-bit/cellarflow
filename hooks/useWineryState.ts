@@ -38,7 +38,7 @@ import type {
   DocumentAttachment,
   CrmLeadRecord,
 } from '../lib/wineryState';
-import { CELLAR_OPERATIONS, deductStock, estimateMustVolumeL } from '../lib/wineryOperations';
+import { CELLAR_OPERATIONS, estimateMustVolumeL, isQuickCellarOperation } from '../lib/wineryOperations';
 import { signAuditEntries } from '../lib/auditHash';
 import type { CostEntry } from '../lib/costing';
 import {
@@ -67,6 +67,7 @@ import { createUniqueLotId, createUniqueRecordId } from '../lib/recordIds';
 import { recordContentEquals } from '../lib/recordEquality';
 import { useStatusToastControls } from './useStatusToast';
 import { useStableCallbacks } from './useStableCallbacks';
+import { localISODate } from '../lib/weatherApi';
 import {
   createAiDraftQueueItems,
   upsertAiDraftQueueItems,
@@ -82,6 +83,7 @@ import type {
   FermentationCompletionReversalCommandResponse,
   HarvestIntakeCommandResponse,
   InvoiceReceiptCommandResponse,
+  LotStageTransitionCommandResponse,
   SalesStockCommandResponse,
   StorageMovementCommandResponse,
   TransferCommandResponse,
@@ -408,7 +410,7 @@ export function useWineryState() {
 
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(createBlankCompanyProfile);
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'analytics' | 'master-admin'>('portal');
+  const [activeModule, setActiveModule] = useState<'portal' | 'work' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'recall' | 'procurement' | 'analytics' | 'master-admin'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Datasets
@@ -461,6 +463,10 @@ export function useWineryState() {
   // Lab entry inputs
   const [labLotId, setLabLotId] = useState('');
   const [labTankId, setLabTankId] = useState('');
+  const [labDate, setLabDate] = useState(() => localISODate());
+  const [labPH, setLabPH] = useState(3.5);
+  const [labMalic, setLabMalic] = useState(0);
+  const [labTechnician, setLabTechnician] = useState('');
   const [labABV, setLabABV] = useState(13.5);
   const [labVA, setLabVA] = useState(0.4);
   const [labFSO2, setLabFSO2] = useState(25);
@@ -469,6 +475,12 @@ export function useWineryState() {
   const [labLactic, setLabLactic] = useState(1.2);
   const [labTurbidity, setLabTurbidity] = useState(20);
   const [labTA, setLabTA] = useState(5.8);
+
+  useEffect(() => {
+    if (!labTechnician.trim() && (currentUser.fullName || currentUser.username)) {
+      setLabTechnician(currentUser.fullName || currentUser.username);
+    }
+  }, [currentUser.fullName, currentUser.username, labTechnician]);
 
   // Lab filters
   const [labFilterType, setLabFilterType] = useState('all');
@@ -827,6 +839,7 @@ export function useWineryState() {
     const changedInventory = new Map(result.updatedInventoryItems.map(item => [item.id, item]));
     updateAllStates({
       lots: lots.map(lot => lot.id === result.updatedLot.id ? result.updatedLot : lot),
+      vessels: vessels.map(vessel => vessel.id === result.updatedVessel.id ? result.updatedVessel : vessel),
       bottlingRuns: bottlingRuns.some(run => run.id === result.run.id)
         ? bottlingRuns
         : [result.run, ...bottlingRuns],
@@ -997,6 +1010,21 @@ export function useWineryState() {
         ...generatedCostEntries.filter(entry => !costEntries.some(item => item.id === entry.id)),
         ...costEntries,
       ],
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyLotStageTransitionCommandResponse = (response: LotStageTransitionCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      lots: lots.map(item => item.id === result.updatedLot.id ? result.updatedLot : item),
       auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
         ? auditLogs
         : [result.auditLog, ...auditLogs],
@@ -2192,6 +2220,12 @@ export function useWineryState() {
   ): string => {
     const lot = lots.find(l => l.id === input.lotId);
     if (!lot) return '';
+    if (!isQuickCellarOperation(input.type)) {
+      setToastMessage(lang === 'ka'
+        ? 'ეს ფიზიკური მოქმედება შეასრულეთ მის სპეციალურ პროცესში.'
+        : 'Use the dedicated workflow for this physical cellar action.');
+      return '';
+    }
 
     const meta = CELLAR_OPERATIONS.find(o => o.key === input.type);
     const opLabel = input.type === 'custom'
@@ -2216,6 +2250,13 @@ export function useWineryState() {
         },
       }];
     });
+    if (materialUsages.length !== requestedMaterials.length
+      || materialUsages.some(({ material, usage }) => usage.quantity > material.stock)) {
+      setToastMessage(lang === 'ka'
+        ? 'ოპერაცია არ ჩაიწერა: შეამოწმეთ დანამატები და ხელმისაწვდომი მარაგი.'
+        : 'Operation not recorded: check materials and available stock.');
+      return '';
+    }
     const volumeBeforeL = lot.currentVolume;
     const hasVolumeChange = input.volumeAfterL != null && Number.isFinite(input.volumeAfterL);
     const volumeAfterL = hasVolumeChange ? Math.max(0, input.volumeAfterL as number) : undefined;
@@ -2257,7 +2298,7 @@ export function useWineryState() {
       setVessels(prev => prev.map(v => v.id !== input.vesselId ? v : { ...v, lastOperation: description }));
     }
 
-    // 3) Inventory: deduct every consumed material (clamped at zero).
+    // 3) Inventory: exact validated deduction; insufficient stock is rejected above.
     if (materialUsages.length) {
       const deductions = new Map(
         materialUsages.map(({ material, usage }) => [material.id, usage.quantity]),
@@ -2266,7 +2307,7 @@ export function useWineryState() {
         const quantity = deductions.get(item.id);
         return quantity == null ? item : {
           ...item,
-          stock: deductStock(item.stock, quantity),
+          stock: Math.round((item.stock - quantity) * 1000) / 1000,
         };
       }));
     }
@@ -2323,27 +2364,44 @@ export function useWineryState() {
 
   const handleAddLabLog = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!labLotId || !labTankId) return;
+    const selectedLot = lots.find(lot => lot.id === labLotId && !lot.voidedAt);
+    const selectedVessel = vessels.find(vessel => vessel.id === labTankId);
+    const operator = labTechnician.trim();
+    const readings = [labABV, labVA, labFSO2, labTSO2, labResidualSugar, labPH, labMalic, labLactic, labTurbidity, labTA];
+    const invalidReading = readings.some(reading => !Number.isFinite(reading) || reading < 0);
+
+    if (!selectedLot || !selectedVessel || selectedVessel.assignedLotId !== selectedLot.id || selectedVessel.currentVolume <= 0) {
+      setToastMessage(lang === 'ka'
+        ? 'აირჩიეთ პარტიაზე რეალურად მიბმული, შევსებული ჭურჭელი.'
+        : 'Choose a filled vessel that is actually assigned to the selected lot.');
+      return;
+    }
+    if (!labDate || labDate > localISODate() || !operator || invalidReading || labPH > 14 || labTSO2 < labFSO2) {
+      setToastMessage(lang === 'ka'
+        ? 'შეამოწმეთ თარიღი, შემსრულებელი და მაჩვენებლები. საერთო SO₂ არ უნდა იყოს თავისუფალ SO₂-ზე ნაკლები.'
+        : 'Check the date, technician and readings. Total SO₂ cannot be lower than free SO₂.');
+      return;
+    }
 
     const newLab: LabAnalysis = {
       id: createUniqueRecordId('lab', labLogs.map(item => item.id)),
       lotId: labLotId,
       tankId: labTankId,
-      date: new Date().toISOString().split('T')[0],
+      date: labDate,
       alcoholPct: labABV,
       volatileAcid: labVA,
       freeSo2: labFSO2,
       totalSo2: labTSO2,
       residualSugar: labResidualSugar,
-      ph: 3.55,
-      malicAcid: 1.2,
+      ph: labPH,
+      malicAcid: labMalic,
       lacticAcid: labLactic,
       turbidity: labTurbidity,
-      technician: 'Sophia Rossi',
+      technician: operator,
       titratableAcidity: labTA
     };
 
-    setLabLogs([newLab, ...labLogs]);
+    setLabLogs(previous => [newLab, ...previous]);
     const automaticLabCost = automaticLabCostEntry({
       analysisId: newLab.id,
       date: newLab.date,
@@ -2366,10 +2424,10 @@ export function useWineryState() {
             history: [
               ...(l.history || []),
               {
-                date: new Date().toISOString().split('T')[0],
+                date: labDate,
                 type: 'Lab Analysis Audit',
                 description: `Completed chemical panel: ABV%: ${labABV}%, Free SO2: ${labFSO2} mg/L, VA: ${labVA} g/L, TA: ${labTA} g/L.`,
-                operator: 'Sophia Rossi'
+                operator
               }
             ]
           };
@@ -2377,6 +2435,9 @@ export function useWineryState() {
         return l;
       }));
     }
+    setLabLotId('');
+    setLabTankId('');
+    setLabDate(localISODate());
     setToastMessage(lang === 'ka' ? 'ლაბორატორიული ანალიზი დაემატა!' : 'Lab analysis added successfully!');
   };
 
@@ -2902,6 +2963,10 @@ export function useWineryState() {
 
     labLotId, setLabLotId,
     labTankId, setLabTankId,
+    labDate, setLabDate,
+    labPH, setLabPH,
+    labMalic, setLabMalic,
+    labTechnician, setLabTechnician,
     labABV, setLabABV,
     labVA, setLabVA,
     labFSO2, setLabFSO2,
@@ -2938,6 +3003,7 @@ export function useWineryState() {
     applyFermentationCompletionCommandResponse,
     applyFermentationCompletionReversalCommandResponse,
     applyCellarOperationCommandResponse,
+    applyLotStageTransitionCommandResponse,
     handleToggleCoolingJacket,
     handleAdjustTargetTemp,
     handleToggleSanitation,

@@ -33,10 +33,10 @@ const ALL_ROLES = [
 ] as const;
 
 const NAV_GROUPS: Record<string, string[]> = {
-  dashboard: ['portal'],
+  dashboard: ['portal', 'work'],
   vineyard: ['vazi'],
   cellar: ['gvino'],
-  business: ['sales', 'storage', 'costs', 'analytics'],
+  business: ['sales', 'storage', 'recall', 'procurement', 'costs', 'analytics'],
   documents: ['docs', 'certification', 'audit'],
   settings: ['integrations', 'settings'],
 };
@@ -78,7 +78,7 @@ describe('role navigation matrix — exact per-role group visibility', () => {
   // it in the same commit; an accidental one fails loudly here.
   const EXPECTED: Record<(typeof ALL_ROLES)[number], string[]> = {
     'Owner/Admin':    ['dashboard', 'vineyard', 'cellar', 'business', 'documents', 'settings'],
-    'Winemaker':      ['dashboard', 'cellar', 'documents', 'settings'],
+    'Winemaker':      ['dashboard', 'cellar', 'business', 'documents', 'settings'],
     'Viticulturist':  ['dashboard', 'vineyard', 'cellar', 'documents', 'settings'],
     'Lab Technician': ['dashboard', 'cellar', 'documents', 'settings'],
     'Cellar Worker':  ['dashboard', 'cellar', 'documents', 'settings'],

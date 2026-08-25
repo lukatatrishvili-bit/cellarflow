@@ -13,6 +13,7 @@ import type {
 } from './wineryState';
 import type { StockMovement, StorageLocation } from './storage';
 import { buildAllLineageGraph } from './lineage';
+import { taskIsAssignedToIdentity, workOwnerMatchesIdentity } from './workAssignments';
 
 export const APPROVABLE_COMMAND_TYPES = [
   'cellar.operation',
@@ -541,6 +542,55 @@ export function detectProductionPlanConflicts(items: ProductionPlanItem[], vesse
   return conflicts;
 }
 
+const productionPlanStatusTransitions: Record<ProductionPlanStatus, ProductionPlanStatus[]> = {
+  planned: ['planned', 'ready', 'blocked', 'cancelled'],
+  ready: ['planned', 'ready', 'in_progress', 'blocked', 'cancelled'],
+  blocked: ['planned', 'ready', 'blocked', 'cancelled'],
+  in_progress: ['ready', 'in_progress', 'completed', 'blocked', 'cancelled'],
+  completed: ['completed'],
+  cancelled: ['cancelled'],
+};
+
+export function productionPlanTransitionIssue(
+  item: ProductionPlanItem,
+  targetStatus: ProductionPlanStatus,
+  items: ProductionPlanItem[],
+  conflicts: ProductionPlanConflict[] = [],
+): string | null {
+  if (!productionPlanStatusTransitions[item.status].includes(targetStatus)) {
+    return `Plan item cannot move from ${item.status} to ${targetStatus}.`;
+  }
+  if (targetStatus === item.status || ['planned', 'blocked', 'cancelled'].includes(targetStatus)) return null;
+
+  const byId = new Map(items.map(candidate => [candidate.id, candidate]));
+  const missingDependencies = item.dependencyIds.filter(dependencyId => !byId.has(dependencyId));
+  if (missingDependencies.length) {
+    return `${missingDependencies.length} prerequisite${missingDependencies.length === 1 ? '' : 's'} no longer exist.`;
+  }
+  const incompleteDependencies = item.dependencyIds
+    .map(dependencyId => byId.get(dependencyId))
+    .filter((dependency): dependency is ProductionPlanItem => Boolean(dependency && dependency.status !== 'completed'));
+  if (incompleteDependencies.length) {
+    return `Complete prerequisite work first: ${incompleteDependencies.map(dependency => dependency.title).join(', ')}.`;
+  }
+
+  if (targetStatus === 'ready' || targetStatus === 'in_progress') {
+    const criticalConflicts = conflicts.filter(conflict => conflict.itemId === item.id && conflict.severity === 'critical');
+    if (criticalConflicts.length) return criticalConflicts[0].message;
+  }
+  return null;
+}
+
+export function allowedProductionPlanStatuses(
+  item: ProductionPlanItem,
+  items: ProductionPlanItem[],
+  conflicts: ProductionPlanConflict[] = [],
+): ProductionPlanStatus[] {
+  return productionPlanStatusTransitions[item.status].filter(status => (
+    productionPlanTransitionIssue(item, status, items, conflicts) === null
+  ));
+}
+
 export interface TodayQueueItem {
   id: string;
   source: 'task' | 'sop' | 'purchase_order' | 'production_plan' | 'approval' | 'recall';
@@ -552,6 +602,27 @@ export interface TodayQueueItem {
   targetId?: string;
 }
 
+export interface TodayQueueVisibility {
+  tasks: boolean;
+  sops: boolean;
+  purchaseOrders: boolean;
+  productionPlans: boolean;
+  approvals: 'all' | 'own' | 'none';
+  recalls: boolean;
+  /** Owners can supervise team work; operational roles receive their own queue. */
+  includeTeamWork: boolean;
+}
+
+const DEFAULT_QUEUE_VISIBILITY: TodayQueueVisibility = {
+  tasks: true,
+  sops: true,
+  purchaseOrders: true,
+  productionPlans: true,
+  approvals: 'all',
+  recalls: true,
+  includeTeamWork: true,
+};
+
 export function buildTodayQueue(input: {
   today: string;
   tasks: Task[];
@@ -561,10 +632,15 @@ export function buildTodayQueue(input: {
   approvals: WorkflowApprovalRecord[];
   recallCases?: RecallCase[];
   currentUsername?: string;
+  currentUserName?: string;
+  visibility?: Partial<TodayQueueVisibility>;
 }): TodayQueueItem[] {
   const items: TodayQueueItem[] = [];
+  const visibility = { ...DEFAULT_QUEUE_VISIBILITY, ...input.visibility };
+  const identity = { username: input.currentUsername, fullName: input.currentUserName };
   for (const task of input.tasks.filter(item => item.status !== 'completed')) {
-    if (input.currentUsername && task.assignedUserId && task.assignedUserId !== input.currentUsername) continue;
+    if (!visibility.tasks) continue;
+    if (!visibility.includeTeamWork && !taskIsAssignedToIdentity(task, identity)) continue;
     items.push({
       id: `task:${task.id}`,
       source: 'task',
@@ -573,9 +649,12 @@ export function buildTodayQueue(input: {
       dueDate: task.dueDate,
       priority: task.dueDate < input.today ? 'critical' : task.priority,
       targetTab: 'tasks',
+      targetId: task.id,
     });
   }
   for (const sop of input.sops.filter(item => item.active && item.nextDueDate <= input.today)) {
+    if (!visibility.sops) continue;
+    if (!visibility.includeTeamWork && !workOwnerMatchesIdentity(sop.owner, identity)) continue;
     items.push({
       id: `sop:${sop.id}`,
       source: 'sop',
@@ -584,9 +663,11 @@ export function buildTodayQueue(input: {
       dueDate: sop.nextDueDate,
       priority: sop.nextDueDate < input.today ? 'critical' : 'high',
       targetTab: 'quality',
+      targetId: sop.id,
     });
   }
   for (const order of input.purchaseOrders.filter(item => ['submitted', 'ordered', 'partially_received'].includes(item.status))) {
+    if (!visibility.purchaseOrders) continue;
     if (!order.expectedDate || order.expectedDate > input.today) continue;
     items.push({
       id: `po:${order.id}`,
@@ -596,9 +677,12 @@ export function buildTodayQueue(input: {
       dueDate: order.expectedDate,
       priority: order.expectedDate < input.today ? 'critical' : 'medium',
       targetTab: 'procurement',
+      targetId: order.id,
     });
   }
   for (const plan of input.productionPlans.filter(item => !['completed', 'cancelled'].includes(item.status) && item.startDate <= input.today)) {
+    if (!visibility.productionPlans) continue;
+    if (!visibility.includeTeamWork && !workOwnerMatchesIdentity(plan.assignedTo, identity)) continue;
     items.push({
       id: `plan:${plan.id}`,
       source: 'production_plan',
@@ -607,9 +691,12 @@ export function buildTodayQueue(input: {
       dueDate: plan.startDate,
       priority: plan.status === 'blocked' ? 'critical' : plan.startDate < input.today ? 'high' : 'medium',
       targetTab: 'planner',
+      targetId: plan.id,
     });
   }
   for (const approval of input.approvals.filter(item => item.status === 'pending')) {
+    if (visibility.approvals === 'none') continue;
+    if (visibility.approvals === 'own' && !workOwnerMatchesIdentity(approval.requestedBy, identity)) continue;
     items.push({
       id: `approval:${approval.id}`,
       source: 'approval',
@@ -621,6 +708,7 @@ export function buildTodayQueue(input: {
     });
   }
   for (const recall of (input.recallCases || []).filter(item => ['active', 'contained'].includes(item.status))) {
+    if (!visibility.recalls) continue;
     items.push({
       id: `recall:${recall.id}`,
       source: 'recall',

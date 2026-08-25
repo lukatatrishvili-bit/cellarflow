@@ -2,7 +2,10 @@ import express from 'express';
 import type { Server } from 'node:http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiFindingRecord } from '../lib/ai';
-import { __resetInMemoryAiNotificationPreferences } from '../server/aiNotificationPreferences';
+import {
+  __resetInMemoryAiNotificationPreferences,
+  setAiNotificationPreference,
+} from '../server/aiNotificationPreferences';
 import {
   __resetInMemoryAiModelTelemetry,
   getAiModelCallOperations,
@@ -310,6 +313,23 @@ describe.sequential('AI route boundaries', () => {
     }));
     expect(mocks.save).not.toHaveBeenCalled();
     expect(mocks.generate).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty in-app feed while the current user has notifications paused', async () => {
+    await setAiNotificationPreference({
+      organizationId: 'org-ai',
+      username: 'ai-user',
+      emailEnabled: false,
+      minimumSeverity: 'warning',
+      notificationsPausedUntil: new Date(Date.now() + 60 * 60 * 1_000),
+    });
+    const response = await fetch(`${baseUrl}/api/ai/notifications?lang=en`);
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.notificationsEnabled).toBe(true);
+    expect(body.notificationsPausedUntil).toEqual(expect.any(String));
+    expect(body.total).toBe(0);
+    expect(body.findings).toEqual([]);
   });
 
   it('routes notification responsibility separately from activity-log visibility', async () => {

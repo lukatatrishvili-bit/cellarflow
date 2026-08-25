@@ -168,6 +168,8 @@ describe('AI notification outbox', () => {
     const defaults = await getAiNotificationPreference('org-1', 'owner');
     expect(defaults.emailEnabled).toBe(false);
     expect(defaults.inAppMinimumSeverity).toBe('info');
+    expect(defaults.notificationsEnabled).toBe(true);
+    expect(defaults.notificationsPausedUntil).toBeUndefined();
     const enabled = await setAiNotificationPreference({
       organizationId: 'org-1',
       username: 'owner',
@@ -190,6 +192,19 @@ describe('AI notification outbox', () => {
     const claimed = await claimAiNotificationBatch(10);
     expect(claimed.map((row) => row.recipientUsername).sort()).toEqual(['lab', 'maker', 'owner']);
     expect(claimed.every((row) => !('evidence' in row.payload))).toBe(true);
+  });
+
+  it('does not enqueue AI delivery on any external channel when recipients turn notifications off', async () => {
+    for (const username of ['owner', 'maker', 'lab']) {
+      await setAiNotificationPreference({
+        organizationId: 'org-1',
+        username,
+        emailEnabled: true,
+        minimumSeverity: 'warning',
+        notificationsEnabled: false,
+      });
+    }
+    expect(await enqueueAiFindingNotifications('org-1', [finding()])).toBe(0);
   });
 
   it('requires the active claim token and retries failures with backoff', async () => {

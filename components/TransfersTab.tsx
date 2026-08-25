@@ -11,6 +11,7 @@ import type {
 } from '../lib/wineryState';
 import type { CellarOperationInput } from '../lib/commands/cellarOperation';
 import type { CostEntry } from '../lib/costing';
+import { localISODate } from '../lib/weatherApi';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
   applyTransferCommand,
@@ -84,7 +85,7 @@ export function TransfersTab({
   prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers,
   onUpdateCostEntries,
   onApplyTransferCommandResponse, onApplyTransferReversalCommandResponse,
-  canExecuteTransfer = true, canSanitizeVessels = true,
+  canExecuteTransfer = true,
   canConsumeTransferMaterials = false, canReverseTransfer = true,
 }: Props) {
   // Transfer input states
@@ -276,12 +277,8 @@ export function TransfersTab({
     const destinationVessel = vessels.find(item => item.id === pendingMaterialPosting.vesselId);
     if (!destinationLot || destinationVessel?.assignedLotId !== destinationLot.id) return;
     onAddCellarOperation({
-      date: new Date().toISOString().slice(0, 10),
-      type: pendingMaterialPosting.category === 'blend'
-        ? 'blending'
-        : pendingMaterialPosting.category === 'bottling'
-          ? 'bottling'
-          : pendingMaterialPosting.category,
+      date: localISODate(),
+      type: 'additive',
       lotId: destinationLot.id,
       vesselId: destinationVessel.id,
       vesselToId: null,
@@ -386,22 +383,6 @@ export function TransfersTab({
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  // Quick sanitation of vessels
-  const handleSanitizeVessel = (id: string, stage: 'clean' | 'sterilized') => {
-    if (!canSanitizeVessels) return;
-    const updated = vessels.map(v => {
-      if (v.id === id) {
-        return {
-          ...v,
-          cleaningStatus: (stage === 'sterilized' ? 'clean' : stage) as any,
-          lastOperation: `Sanitized on ${new Date().toISOString().split('T')[0]} as ${stage.toUpperCase()}`
-        };
-      }
-      return v;
-    });
-    onUpdateVessels(updated);
   };
 
   const clearReversalForm = () => {
@@ -716,12 +697,10 @@ export function TransfersTab({
   const restrictedActionLabels = lang === 'ka'
     ? [
         !canExecuteTransfer && 'ტრანსფერის შესრულება',
-        !canSanitizeVessels && 'ჭურჭლის სანიტარიზაცია',
         !canReverseTransfer && 'ტრანსფერის ჩანაწერის დაბრუნება',
       ].filter((label): label is string => Boolean(label))
     : [
         !canExecuteTransfer && 'initiate transfers',
-        !canSanitizeVessels && 'sanitize vessels',
         !canReverseTransfer && 'reverse transfer records',
       ].filter((label): label is string => Boolean(label));
   const restrictedActionsText = lang === 'ka' || restrictedActionLabels.length < 2
@@ -729,7 +708,7 @@ export function TransfersTab({
     : restrictedActionLabels.length === 2
       ? `${restrictedActionLabels[0]} or ${restrictedActionLabels[1]}`
       : `${restrictedActionLabels.slice(0, -1).join(', ')}, or ${restrictedActionLabels.at(-1)}`;
-  const isTransferReadOnly = !canExecuteTransfer && !canSanitizeVessels && !canReverseTransfer;
+  const isTransferReadOnly = !canExecuteTransfer && !canReverseTransfer;
   const reversalTarget = reversalTargetId
     ? pastTransfers.find(record => record.id === reversalTargetId)
     : pastTransfers.find(record => record.commandId === pendingReversalIntent?.payload.originalCommandId);
@@ -879,43 +858,6 @@ export function TransfersTab({
               })}
             </div>
           </div>
-
-          {/* Quick sanitization list */}
-          {canSanitizeVessels && (
-            <div className="bg-amber-50/50 p-4 border border-[#e8dfd5] rounded-xl space-y-2">
-            <h4 className="text-[10px] font-mono font-bold uppercase text-amber-955 flex items-center gap-1">
-              <Compass className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-              {lang === 'ka' ? 'სწრაფი სანიტარული კონტროლი' : 'Quick Sanitization Controls'}
-            </h4>
-            <p className="text-[10px] text-amber-900/80 leading-relaxed font-serif">
-              {lang === 'ka' ? 'დაუყოვნებლივ გაწმინდეთ და გაასტერილეთ ცარიელი ჭურჭელი, რომ ღვინის შესანახად მზად იყოს.' : 'Immediately clean and sterilize empty tanks so they are ready for wine storage.'}
-            </p>
-            <div className="space-y-2 mt-2">
-              {vessels.filter(v => v.currentVolume === 0 && (v.cleaningStatus === 'dirty' || v.cleaningStatus === 'clean')).map(v => (
-                <div key={v.id} className="text-xs font-semibold bg-white p-2 border border-slate-205 rounded-lg flex items-center justify-between">
-                  <span>{v.id} ({lang === 'ka' ? (v.cleaningStatus === 'dirty' ? 'ჭუჭყიანი' : 'სუფთა') : v.cleaningStatus})</span>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => handleSanitizeVessel(v.id, 'clean')}
-                      className="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded text-[9px] font-bold hover:bg-emerald-100"
-                    >
-                      {lang === 'ka' ? 'გაწმენდა' : 'Clean'}
-                    </button>
-                    <button
-                      onClick={() => handleSanitizeVessel(v.id, 'sterilized')}
-                      className="px-2 py-0.5 bg-blue-50 text-blue-800 border border-blue-350 rounded text-[9px] font-bold hover:bg-blue-105"
-                    >
-                      {lang === 'ka' ? 'სტერილიზაცია' : 'Sterilize'}
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {vessels.filter(v => v.currentVolume === 0 && (v.cleaningStatus === 'dirty' || v.cleaningStatus === 'clean')).length === 0 && (
-                <p className="text-[10px] text-slate-400 italic text-center p-2">{lang === 'ka' ? 'ყველა ცარიელი ჭურჭელი უკვე სუფთა ან სტერილურია!' : 'All empty tanks are already clean or sterilized!'}</p>
-              )}
-            </div>
-            </div>
-          )}
 
         </div>
 

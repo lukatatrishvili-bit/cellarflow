@@ -23,6 +23,8 @@ export interface AiNotificationPreference {
   pushEnabledAt?: string;
   minimumSeverity: AiSeverity;
   inAppMinimumSeverity: AiSeverity;
+  notificationsEnabled: boolean;
+  notificationsPausedUntil?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -132,6 +134,10 @@ function normalizePreference(
     ...(iso(value?.pushEnabledAt) ? { pushEnabledAt: iso(value.pushEnabledAt) } : {}),
     minimumSeverity: normalizeSeverity(value?.minimumSeverity),
     inAppMinimumSeverity: normalizeSeverity(value?.inAppMinimumSeverity, 'info'),
+    notificationsEnabled: value?.notificationsEnabled !== false,
+    ...(iso(value?.notificationsPausedUntil)
+      ? { notificationsPausedUntil: iso(value.notificationsPausedUntil) }
+      : {}),
     ...(iso(value?.createdAt) ? { createdAt: iso(value.createdAt) } : {}),
     ...(iso(value?.updatedAt) ? { updatedAt: iso(value.updatedAt) } : {}),
   };
@@ -163,6 +169,8 @@ export async function setAiNotificationPreference(input: {
   pushEnabled?: boolean;
   minimumSeverity: AiSeverity;
   inAppMinimumSeverity?: AiSeverity;
+  notificationsEnabled?: boolean;
+  notificationsPausedUntil?: string | Date | null;
   now?: Date;
 }): Promise<AiNotificationPreference> {
   const now = input.now || new Date();
@@ -196,6 +204,16 @@ export async function setAiNotificationPreference(input: {
       input.inAppMinimumSeverity ?? existing?.inAppMinimumSeverity,
       'info',
     );
+    const notificationsEnabled = input.notificationsEnabled
+      ?? (existing?.notificationsEnabled !== false);
+    const notificationsPausedUntil = Object.prototype.hasOwnProperty.call(input, 'notificationsPausedUntil')
+      ? input.notificationsPausedUntil == null
+        ? null
+        : new Date(input.notificationsPausedUntil)
+      : existing?.notificationsPausedUntil || null;
+    if (notificationsPausedUntil instanceof Date && Number.isNaN(notificationsPausedUntil.getTime())) {
+      throw new Error('Notification pause end time is invalid.');
+    }
     const row = await model.upsert({
       where: {
         organizationId_username: {
@@ -214,6 +232,8 @@ export async function setAiNotificationPreference(input: {
         whatsappEnabledAt: null,
         minimumSeverity,
         inAppMinimumSeverity,
+        notificationsEnabled,
+        notificationsPausedUntil,
       },
       update: {
         emailEnabled: input.emailEnabled,
@@ -224,6 +244,8 @@ export async function setAiNotificationPreference(input: {
         whatsappEnabledAt: null,
         minimumSeverity,
         inAppMinimumSeverity,
+        notificationsEnabled,
+        notificationsPausedUntil,
       },
     });
     return normalizePreference(row, input.organizationId, input.username);
@@ -237,6 +259,16 @@ export async function setAiNotificationPreference(input: {
   );
   const timestamp = now.toISOString();
   const pushEnabled = input.pushEnabled ?? (existing?.pushEnabled === true);
+  const notificationsEnabled = input.notificationsEnabled
+    ?? (existing?.notificationsEnabled !== false);
+  const notificationsPausedUntil = Object.prototype.hasOwnProperty.call(input, 'notificationsPausedUntil')
+    ? input.notificationsPausedUntil == null
+      ? undefined
+      : iso(input.notificationsPausedUntil)
+    : existing?.notificationsPausedUntil;
+  if (input.notificationsPausedUntil != null && !notificationsPausedUntil) {
+    throw new Error('Notification pause end time is invalid.');
+  }
   const record: AiNotificationPreference = {
     organizationId: input.organizationId,
     username: input.username,
@@ -254,11 +286,32 @@ export async function setAiNotificationPreference(input: {
       : {}),
     minimumSeverity,
     inAppMinimumSeverity,
+    notificationsEnabled,
+    ...(notificationsPausedUntil ? { notificationsPausedUntil } : {}),
     createdAt: existing?.createdAt || timestamp,
     updatedAt: timestamp,
   };
   localPreferences.set(key, record);
   return record;
+}
+
+/** A single quiet-mode decision is shared by every notification channel. */
+export function notificationPreferenceIsMuted(
+  preference: Pick<AiNotificationPreference, 'notificationsEnabled' | 'notificationsPausedUntil'>,
+  now: Date = new Date(),
+): boolean {
+  if (!preference.notificationsEnabled) return true;
+  if (!preference.notificationsPausedUntil) return false;
+  const pausedUntil = new Date(preference.notificationsPausedUntil).getTime();
+  return Number.isFinite(pausedUntil) && pausedUntil > now.getTime();
+}
+
+function notificationMuteReason(preference: AiNotificationPreference, now: Date = new Date()): string | null {
+  if (!preference.notificationsEnabled) return 'Notifications are disabled by the recipient.';
+  if (notificationPreferenceIsMuted(preference, now)) {
+    return `Notifications are paused until ${preference.notificationsPausedUntil}.`;
+  }
+  return null;
 }
 
 function transitionOccurredAt(finding: AiFindingRecord): number {
@@ -280,6 +333,7 @@ function preferenceAllowsFinding(
   finding: AiFindingRecord,
   channel: AiExternalNotificationChannel = 'email',
 ): boolean {
+  if (notificationPreferenceIsMuted(preference)) return false;
   const enabledAt = channelEnabledAt(preference, channel);
   if (!enabledAt) return false;
   if (severityRank(finding.severity) < severityRank(preference.minimumSeverity)) return false;
@@ -306,6 +360,8 @@ export async function eligibleAiEmailRecipients(
         emailEnabled: true,
         emailEnabledAt: true,
         minimumSeverity: true,
+        notificationsEnabled: true,
+        notificationsPausedUntil: true,
       },
     });
     if (preferences.length === 0) return [];
@@ -503,6 +559,8 @@ export async function aiEmailDeliveryEligibility(input: {
     if (!preferenceValue || !preference.emailEnabled || !preference.emailEnabledAt) {
       return { eligible: false, reason: 'Email alerts are not enabled for this winery.' };
     }
+    const muteReason = notificationMuteReason(preference);
+    if (muteReason) return { eligible: false, reason: muteReason };
     if (membership?.role !== input.recipientRole) {
       return { eligible: false, reason: 'Recipient role changed before delivery.' };
     }
@@ -533,6 +591,8 @@ export async function aiEmailDeliveryEligibility(input: {
   if (!preference?.emailEnabled || !preference.emailEnabledAt) {
     return { eligible: false, reason: 'Email alerts are not enabled for this winery.' };
   }
+  const muteReason = notificationMuteReason(preference);
+  if (muteReason) return { eligible: false, reason: muteReason };
   if (membership?.role !== input.recipientRole) {
     return { eligible: false, reason: 'Recipient role changed before delivery.' };
   }
@@ -559,6 +619,8 @@ function deliveryPreferenceAllows(input: {
   severity: AiSeverity;
   eventOccurredAt: string;
 }): string | null {
+  const muteReason = notificationMuteReason(input.preference);
+  if (muteReason) return muteReason;
   const enabledAt = channelEnabledAt(input.preference, input.channel);
   if (!enabledAt) return `${input.channel} alerts are not enabled for this winery.`;
   if (severityRank(input.severity) < severityRank(input.preference.minimumSeverity)) {

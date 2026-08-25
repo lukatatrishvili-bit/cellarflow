@@ -14,7 +14,7 @@ import type {
   CellarOperationType,
   MaraniOSAuditLog,
 } from '../lib/wineryState';
-import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
+import { CELLAR_OPERATIONS, QUICK_CELLAR_OPERATIONS } from '../lib/wineryOperations';
 import {
   automaticOperationCostEntries,
   operationCostProfile,
@@ -119,6 +119,7 @@ interface Props {
   returnToVesselId?: string;
   onOperationLogged?: (operation: LoggedOperationSummary) => void;
   clearPrefill?: () => void;
+  onNavigateWorkflow?: (tab: 'transfers' | 'bottling' | 'vessels') => void;
 }
 
 const OP_ICONS: Record<CellarOperationType, React.ComponentType<{ className?: string }>> = {
@@ -158,6 +159,7 @@ export function CellarOperationsTab({
   onUpdateOperations, onUpdateCostEntries, onUpdateAuditLogs,
   onApplyCellarOperationCommandResponse, setToastMessage,
   prefillVesselId, prefillOperationType, returnToVesselId, onOperationLogged, clearPrefill,
+  onNavigateWorkflow,
   canLogCellarOperation = true,
   canUseOperationVessels = true,
   canConsumeOperationMaterials = true,
@@ -241,7 +243,7 @@ export function CellarOperationsTab({
     restoredInitialDraftRef.current = true;
     skipRestoredLotDefaultsRef.current = true;
     skipRestoredTypeDefaultsRef.current = true;
-    const restoredType = CELLAR_OPERATIONS.some(operation => operation.key === draft.type)
+    const restoredType = QUICK_CELLAR_OPERATIONS.some(operation => operation.key === draft.type)
       ? draft.type
       : 'measurement';
     setType(restoredType);
@@ -359,7 +361,7 @@ export function CellarOperationsTab({
     if (!vessel) return;
     prefillAppliedRef.current = true;
     prefillGuard.current = true;
-    if (prefillOperationType && CELLAR_OPERATIONS.some(operation => operation.key === prefillOperationType)) {
+    if (prefillOperationType && QUICK_CELLAR_OPERATIONS.some(operation => operation.key === prefillOperationType)) {
       setType(prefillOperationType);
     }
     setVesselId(vessel.id);
@@ -697,6 +699,31 @@ export function CellarOperationsTab({
         </h3>
       </div>
 
+      <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 dark:border-sky-900/60 dark:bg-sky-950/20">
+        <p className="text-xs font-bold text-sky-950 dark:text-sky-100">
+          {ka ? 'ფიზიკურ მოძრაობას თავისი სამუშაო პროცესი აქვს' : 'Physical movements use dedicated workflows'}
+        </p>
+        <p className="mt-0.5 text-[10px] font-semibold text-sky-800/80 dark:text-sky-200/80">
+          {ka
+            ? 'გადატანა/გადაღება, კუპაჟი და შევსება აღრიცხეთ გადატანებში; ჩამოსხმა — ჩამოსხმაში; რეცხვა და დეზინფექცია — ჭურჭლის სანიტარიაში.'
+            : 'Record racking, blending and filling in Transfers; bottling in Bottling; washing and disinfection in Vessel sanitation.'}
+        </p>
+        {onNavigateWorkflow && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {([
+              ['transfers', ArrowRightLeft, ka ? 'გადატანები' : 'Transfers'],
+              ['bottling', Package, ka ? 'ჩამოსხმა' : 'Bottling'],
+              ['vessels', Sparkles, ka ? 'სანიტარია' : 'Sanitation'],
+            ] as const).map(([tab, Icon, label]) => (
+              <button key={tab} type="button" onClick={() => onNavigateWorkflow(tab)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-sky-900 hover:border-sky-400 dark:border-sky-800 dark:bg-stone-900 dark:text-sky-100">
+                <Icon className="h-3.5 w-3.5" /> {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {!canLogCellarOperation && (
         <div role="status" className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-stone-600 dark:border-stone-700 dark:bg-stone-900/70 dark:text-stone-300">
           <p className="text-xs font-bold">{ka ? 'ოპერაციებზე მხოლოდ ნახვის წვდომა' : 'Read-only operation access'}</p>
@@ -776,7 +803,7 @@ export function CellarOperationsTab({
           <div>
             <label className={labelCls}>{ka ? 'ოპერაციის ტიპი' : 'Operation type'}</label>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
-              {CELLAR_OPERATIONS.map(o => {
+              {QUICK_CELLAR_OPERATIONS.map(o => {
                 const Icon = OP_ICONS[o.key];
                 const active = type === o.key;
                 return (

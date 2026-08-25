@@ -158,7 +158,7 @@ describe('cellar.operation domain command', () => {
       auditId: 'AUDIT-AUTO-COST-1',
       operation: {
         date: '2026-09-10',
-        type: 'racking',
+        type: 'filtration',
         lotId: 'LOT-CELLAR-1',
         vesselId: null,
         vesselToId: null,
@@ -302,12 +302,12 @@ describe('cellar.operation domain command', () => {
     expect(() => applyCellarOperationCommand(state(), pressing, context))
       .toThrowError(expect.objectContaining({ code: 'cellar_operation_volume_inconsistent' }));
 
-    const blend = {
+    const unsupportedGenericTransfer = {
       ...pressing,
       operation: { ...pressing.operation, type: 'blending' as const, volumeAfterL: 1_201 },
     };
-    expect(() => applyCellarOperationCommand(state(), blend, context))
-      .toThrowError(expect.objectContaining({ code: 'cellar_operation_vessel_capacity_exceeded' }));
+    expect(() => applyCellarOperationCommand(state(), unsupportedGenericTransfer, context))
+      .toThrowError(expect.objectContaining({ code: 'invalid_cellar_operation_payload', statusCode: 400 }));
   });
 
   it('validates dates, type-specific fields, generated ids, and derived-cost collisions', () => {

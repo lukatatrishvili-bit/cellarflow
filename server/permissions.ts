@@ -39,6 +39,8 @@ export type PermissionModule =
   | 'costs'
   | 'storage'
   | 'sales'
+  | 'recall'
+  | 'procurement'
   | 'planning'
   | 'reports'
   | 'tasks'
@@ -64,7 +66,7 @@ const readWriteDelete: PermissionAction[] = ['view', 'create', 'update', 'delete
 const ALL_MODULES: PermissionModule[] = [
   'company_profile', 'lots', 'grape_intake', 'vessels', 'operations', 'transfers', 'fermentation', 'lab', 'bottling',
   'official_docs', 'certification', 'vineyard', 'vineyard_projects', 'inventory', 'costs',
-  'storage', 'sales', 'planning', 'reports', 'tasks', 'notes', 'audit',
+  'storage', 'sales', 'recall', 'procurement', 'planning', 'reports', 'tasks', 'notes', 'audit',
 ];
 
 const ownerPermissions: Record<PermissionModule, PermissionAction[]> =
@@ -84,6 +86,8 @@ const ROLE_MODULE_PERMISSIONS: Record<Role, Partial<Record<PermissionModule, Per
     official_docs: readExport,
     certification: readWrite,
     inventory: readWrite,
+    recall: readWrite,
+    procurement: readWrite,
     planning: readWrite,
     tasks: readWriteDelete,
     notes: readWriteDelete,
@@ -191,9 +195,9 @@ const SYNC_COLLECTION_MODULES: Record<string, PermissionModule> = {
   crmLeads: 'sales',
   aiDrafts: 'tasks',
   qualitySops: 'tasks',
-  purchaseOrders: 'inventory',
+  purchaseOrders: 'procurement',
   productionPlans: 'planning',
-  recallCases: 'lots',
+  recallCases: 'recall',
 };
 
 export function moduleForSyncCollection(collection: string): PermissionModule | null {

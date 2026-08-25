@@ -5,7 +5,7 @@ import {
   resolveCostAutomationSettings,
   type CostEntry,
 } from '../costing';
-import { CELLAR_OPERATIONS } from '../wineryOperations';
+import { CELLAR_OPERATIONS, isQuickCellarOperation } from '../wineryOperations';
 import type {
   CellarOperation,
   CellarOperationReversalSnapshot,
@@ -263,6 +263,13 @@ function parseOperation(value: unknown): CellarOperationInput {
     );
   }
   const type = input.type as CellarOperationType;
+  if (!isQuickCellarOperation(type)) {
+    throw new CellarOperationCommandError(
+      'invalid_cellar_operation_payload',
+      'This operation requires its dedicated transfer, bottling, or sanitation workflow.',
+      400,
+    );
+  }
   const meta = CELLAR_OPERATIONS.find(item => item.key === type)!;
   const customLabel = textValue(input.customLabel, 'operation.customLabel', 160);
   if (type === 'custom' && !customLabel) {

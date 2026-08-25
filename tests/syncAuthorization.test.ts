@@ -172,10 +172,10 @@ describe('sync authorization', () => {
     expect(response.costEntries).toEqual([]);
     expect(response.supplierPayments).toEqual([]);
     expect(response.winePricing).toEqual({});
-    expect(response.storageLocations).toEqual([]);
-    expect(response.stockMovements).toEqual([]);
-    expect(response.salesDispatches).toEqual([]);
-    expect(response.salesOrders).toEqual([]);
+    expect(response.storageLocations).toEqual(userDb.storageLocations);
+    expect(response.stockMovements).toEqual(userDb.stockMovements);
+    expect(response.salesDispatches).toEqual([{ id: 'dispatch-1' }]);
+    expect(response.salesOrders).toEqual([{ id: 'order-1' }]);
     expect(response.crmLeads).toEqual([]);
     expect(response.companyProfile).toEqual({});
     expect(response.integrationHub).toEqual({});

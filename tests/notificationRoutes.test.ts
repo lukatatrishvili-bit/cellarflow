@@ -156,6 +156,75 @@ afterAll(async () => {
 });
 
 describe.sequential('email and browser push notification routes', () => {
+  it('persists a temporary pause, a full disable, and an explicit resume', async () => {
+    const { owner } = seedWorkspace();
+    const token = authModule.createSessionToken(authModule.sessionPayloadForUser(owner, 'Owner/Admin'));
+    const pauseEnd = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
+
+    const paused = await request('/api/notifications/preferences', token, {
+      method: 'PUT',
+      body: JSON.stringify({ notificationsEnabled: true, notificationsPausedUntil: pauseEnd }),
+    });
+    expect(paused.status).toBe(200);
+    expect((await paused.json()).preference).toEqual(expect.objectContaining({
+      notificationsEnabled: true,
+      notificationsPausedUntil: pauseEnd,
+    }));
+
+    const disabled = await request('/api/notifications/preferences', token, {
+      method: 'PUT',
+      body: JSON.stringify({ notificationsEnabled: false, notificationsPausedUntil: null }),
+    });
+    expect((await disabled.json()).preference).toEqual(expect.objectContaining({
+      notificationsEnabled: false,
+      notificationsPausedUntil: null,
+    }));
+
+    const resumed = await request('/api/notifications/preferences', token, {
+      method: 'PUT',
+      body: JSON.stringify({ notificationsEnabled: true, notificationsPausedUntil: null }),
+    });
+    expect((await resumed.json()).preference).toEqual(expect.objectContaining({
+      notificationsEnabled: true,
+      notificationsPausedUntil: null,
+    }));
+  });
+
+  it('rejects invalid or excessively long temporary pauses', async () => {
+    const { owner } = seedWorkspace();
+    const token = authModule.createSessionToken(authModule.sessionPayloadForUser(owner, 'Owner/Admin'));
+    const response = await request('/api/notifications/preferences', token, {
+      method: 'PUT',
+      body: JSON.stringify({
+        notificationsPausedUntil: new Date(Date.now() + 40 * 24 * 60 * 60 * 1_000).toISOString(),
+      }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('suppresses every task-notification channel while the assignee is paused', async () => {
+    const { owner } = seedWorkspace();
+    await optRecipientIntoBothChannels();
+    await preferenceModule.setAiNotificationPreference({
+      organizationId: 'org-notifications',
+      username: 'nino',
+      emailEnabled: true,
+      pushEnabled: true,
+      minimumSeverity: 'warning',
+      notificationsPausedUntil: new Date(Date.now() + 60 * 60 * 1_000),
+    });
+    const token = authModule.createSessionToken(authModule.sessionPayloadForUser(owner, 'Owner/Admin'));
+    const response = await request('/api/notifications/tasks', token, {
+      method: 'POST',
+      body: JSON.stringify({ assigneeUsername: 'nino', task: task('task-muted') }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual(expect.objectContaining({ code: 'notification_suppressed' }));
+    expect(notificationModule.sendTaskAssignmentEmail).not.toHaveBeenCalled();
+    expect(notificationModule.sendTaskAssignmentPush).not.toHaveBeenCalled();
+  });
+
   it('requires the assignee to opt in to at least one external channel', async () => {
     const { owner } = seedWorkspace();
     const token = authModule.createSessionToken(authModule.sessionPayloadForUser(owner, 'Owner/Admin'));

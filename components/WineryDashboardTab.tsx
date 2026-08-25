@@ -4,7 +4,9 @@ import type { Language } from '../lib/i18n';
 import type { Vessel, WineLot, DailyFermLog, LabAnalysis, Task } from '../lib/wineryState';
 import { taskPriorityLabel } from '../lib/enumLabels';
 import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
+import { tasksForIdentity } from '../lib/workAssignments';
 import { canAccess, type Role } from '../server/permissions';
+import { isLabAnalysisFresh } from '../lib/alerts';
 import TankCapacityChart from './TankCapacityChart';
 import FermentationCurveChart from './FermentationCurveChart';
 import DashboardLayout, { type DashboardWidgetSpec } from './DashboardLayout';
@@ -39,6 +41,8 @@ interface WineryDashboardTabProps {
   fermLogs: DailyFermLog[];
   labLogs: LabAnalysis[];
   tasks: Task[];
+  currentUsername?: string;
+  currentUserName?: string;
   chartLotId: string;
   setChartLotId: (val: string) => void;
   selectedTankId: string | null;
@@ -83,6 +87,8 @@ export function WineryDashboardTab({
   fermLogs,
   labLogs,
   tasks,
+  currentUsername = '',
+  currentUserName = '',
   chartLotId,
   setChartLotId,
   selectedTankId,
@@ -127,10 +133,19 @@ export function WineryDashboardTab({
 
   const latestFermByLot = latestByLot(physicalFermLogs);
   const latestLabByLot = latestByLot(labLogs);
+  const currentLabResults = Object.values(latestLabByLot).filter(log => (
+    isLabAnalysisFresh(log, lots.find(lot => lot.id === log.lotId), today)
+  ));
   const fermentsMissingReading = activeFerms.filter(lot => latestFermByLot[lot.id]?.date !== today);
-  const lowSO2Alerts = Object.values(latestLabByLot).filter(log => log.freeSo2 < 15);
-  const highVAAlerts = Object.values(latestLabByLot).filter(log => log.volatileAcid > 0.8);
-  const pendingTasks = tasks
+  const lowSO2Alerts = currentLabResults.filter(log => log.freeSo2 < 15);
+  const highVAAlerts = currentLabResults.filter(log => log.volatileAcid > 0.8);
+  const userTasks = useMemo(
+    () => currentUsername || currentUserName
+      ? tasksForIdentity(tasks, { username: currentUsername, fullName: currentUserName })
+      : tasks,
+    [currentUserName, currentUsername, tasks],
+  );
+  const pendingTasks = userTasks
     .filter(task => task.status !== 'completed')
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const overdueTasks = pendingTasks.filter(task => task.dueDate < today);

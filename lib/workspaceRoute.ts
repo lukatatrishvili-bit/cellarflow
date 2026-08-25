@@ -22,6 +22,7 @@ export const TAB_PARAM = 'tab';
 /** Mirrors the `activeModule` union in `hooks/useWineryState.ts`. */
 export const WORKSPACE_MODULES = [
   'portal',
+  'work',
   'vazi',
   'gvino',
   'integrations',
@@ -32,6 +33,8 @@ export const WORKSPACE_MODULES = [
   'costs',
   'storage',
   'sales',
+  'recall',
+  'procurement',
   'analytics',
   'master-admin',
 ] as const;

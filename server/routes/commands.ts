@@ -16,6 +16,7 @@ import { FermentationCompletionCommandError } from '../../lib/commands/fermentat
 import { FermentationCompletionReversalCommandError } from '../../lib/commands/fermentationCompletionReversal';
 import { HarvestIntakeCommandError } from '../../lib/commands/harvestIntake';
 import { HarvestIntakeReversalCommandError } from '../../lib/commands/harvestIntakeReversal';
+import { LotStageTransitionCommandError } from '../../lib/commands/lotStageTransition';
 import { SalesStockCommandError } from '../../lib/commands/salesStock';
 import { SalesStockReversalCommandError } from '../../lib/commands/salesStockReversal';
 import { StorageMovementCommandError } from '../../lib/commands/storageMovement';
@@ -46,6 +47,10 @@ import {
   executeHarvestIntakeReversalCommand,
   harvestIntakeReversalCommandResult,
 } from '../commands/harvestIntakeReversal';
+import {
+  executeLotStageTransitionCommand,
+  lotStageTransitionCommandResult,
+} from '../commands/lotStageTransition';
 import { executeSalesStockCommand, salesStockCommandResult } from '../commands/salesStock';
 import {
   executeSalesStockReversalCommand,
@@ -135,6 +140,9 @@ function handledCommandError(res: express.Response, error: unknown): express.Res
     return commandError(res, error.statusCode, error.code, error.message);
   }
   if (error instanceof HarvestIntakeReversalCommandError) {
+    return commandError(res, error.statusCode, error.code, error.message);
+  }
+  if (error instanceof LotStageTransitionCommandError) {
     return commandError(res, error.statusCode, error.code, error.message);
   }
   if (error instanceof SalesStockCommandError) {
@@ -354,6 +362,69 @@ router.post('/cellar.harvest-intake.reverse', checkWineryScope('write'), async (
       500,
       'command_execution_failed',
       'The grape-intake reversal could not be completed. Keep the command id before retrying.',
+      true,
+    );
+  }
+});
+
+// Lot stage and its signed audit evidence move together. Bottling and sales
+// remain dedicated commands so a stage label cannot get ahead of physical stock.
+router.post('/lot.stage.transition', checkWineryScope('write'), async (req, res) => {
+  const session = (req as any).wineryContext;
+  if (!canAccess(session.role, 'lots', 'update') || !canAccess(session.role, 'audit', 'create')) {
+    return commandError(
+      res,
+      403,
+      'forbidden_lot_stage_transition',
+      'This role cannot update the wine lot and append its signed audit record.',
+    );
+  }
+
+  const commandId = typeof req.body?.commandId === 'string' ? req.body.commandId : '';
+  const organizationId = String(session.organizationId || '');
+  try {
+    const prisma = await getPrismaClientForAdmin();
+    if (!prisma) {
+      return commandError(
+        res,
+        503,
+        'command_store_unavailable',
+        'Durable command storage is unavailable. Keep the command id and retry later.',
+        true,
+      );
+    }
+    const outcome = await executeLotStageTransitionCommand(prisma, {
+      organizationId,
+      commandId,
+      actorUsername: session.username,
+      payload: req.body?.payload,
+      performedAt: new Date(),
+    });
+    const refreshed = await reloadOrganizationDataFromPostgres(organizationId);
+    await setOrganizationStateHeaders(res, session.username);
+    const result = lotStageTransitionCommandResult(outcome);
+    return res.status(outcome.disposition === 'executed' ? 201 : 200).json({
+      ok: true,
+      disposition: outcome.disposition,
+      commandId: outcome.commandId,
+      commandType: outcome.commandType,
+      result,
+      ...(refreshed ? {
+        collections: {
+          lots: refreshed.data.lots,
+          auditLogs: refreshed.data.auditLogs,
+        },
+      } : {}),
+    });
+  } catch (error) {
+    const handled = handledCommandError(res, error);
+    if (handled) return handled;
+    console.error('[commands] lot stage transition execution failed', error);
+    return commandError(
+      res,
+      500,
+      'command_execution_failed',
+      'The lot-stage transition could not be completed. Keep the command id before retrying.',
       true,
     );
   }
@@ -884,6 +955,7 @@ router.post('/cellar.bottling', checkWineryScope('write'), workflowApprovalGate(
       ...(refreshed ? {
         collections: {
           lots: refreshed.data.lots,
+          vessels: refreshed.data.vessels,
           bottlingRuns: refreshed.data.bottlingRuns,
           inventory: refreshed.data.inventory,
           costEntries: refreshed.data.costEntries,
@@ -951,6 +1023,7 @@ router.post('/cellar.bottling.reverse', checkWineryScope('write'), workflowAppro
       ...(refreshed ? {
         collections: {
           lots: refreshed.data.lots,
+          vessels: refreshed.data.vessels,
           bottlingRuns: refreshed.data.bottlingRuns,
           inventory: refreshed.data.inventory,
           costEntries: refreshed.data.costEntries,

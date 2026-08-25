@@ -6,6 +6,7 @@ export type AlertSeverity = 'critical' | 'warning' | 'info';
 export type AlertCategory =
   | 'so2'
   | 'va'
+  | 'lab'
   | 'fermentation'
   | 'temperature'
   | 'cleaning'
@@ -59,6 +60,34 @@ function latestByLot<T extends { lotId: string; date: string }>(rows: T[]): Map<
   return map;
 }
 
+function isoDayNumber(value: string): number | null {
+  const parsed = Date.parse(`${value.slice(0, 10)}T12:00:00.000Z`);
+  return Number.isFinite(parsed) ? Math.floor(parsed / 86_400_000) : null;
+}
+
+export function labAnalysisMaxAgeDays(lot?: WineLot): number {
+  if (!lot) return 30;
+  if (['crushing', 'fermenting', 'maceration', 'pressing'].includes(lot.stage)) return 7;
+  if (['stabilization', 'filtration'].includes(lot.stage)) return 14;
+  if (lot.stage === 'bottled') return 90;
+  return 30;
+}
+
+export function labAnalysisAgeDays(lab: Pick<LabAnalysis, 'date'>, today: string): number {
+  const sampleDay = isoDayNumber(lab.date);
+  const currentDay = isoDayNumber(today);
+  if (sampleDay == null || currentDay == null) return Number.POSITIVE_INFINITY;
+  return Math.max(0, currentDay - sampleDay);
+}
+
+export function isLabAnalysisFresh(
+  lab: Pick<LabAnalysis, 'date'>,
+  lot: WineLot | undefined,
+  today: string,
+): boolean {
+  return labAnalysisAgeDays(lab, today) <= labAnalysisMaxAgeDays(lot);
+}
+
 /**
  * Derives the live cellar alert list from current state. Pure function: no
  * side effects, deterministic given `today`.
@@ -72,6 +101,28 @@ export function computeAlerts(input: AlertInputs): Alert[] {
 
   // SO₂ protection + volatile acidity — evaluated on the latest lab per lot.
   for (const lab of latestByLot(labLogs).values()) {
+    const lot = lots.find(candidate => candidate.id === lab.lotId);
+    if (lot?.voidedAt || lot?.stage === 'sold') continue;
+    const ageDays = labAnalysisAgeDays(lab, today);
+    const maxAgeDays = labAnalysisMaxAgeDays(lot);
+    if (ageDays > maxAgeDays) {
+      alerts.push({
+        id: `lab-stale-${lab.lotId}`,
+        severity: 'warning',
+        category: 'lab',
+        title: ka
+          ? `ლაბორატორიული შედეგი მოძველებულია — ${lotName(lab.lotId)}`
+          : `Lab result is stale — ${lotName(lab.lotId)}`,
+        message: ka
+          ? `ბოლო ნიმუში ${ageDays} დღის წინ არის აღებული (${lab.date}); ამ ეტაპისთვის მოქმედების ზღვარია ${maxAgeDays} დღე. მკურნალობის გადაწყვეტილებამდე გაიმეორეთ ანალიზი.`
+          : `The latest sample is ${ageDays} days old (${lab.date}); this stage uses a ${maxAgeDays}-day action window. Retest before making a treatment decision.`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lab.lotId,
+        relatedLotId: lab.lotId,
+        relatedTankId: lab.tankId,
+      });
+      continue;
+    }
     const mol = molecularSO2(lab.freeSo2, lab.ph);
     if (mol < 0.5) {
       alerts.push({

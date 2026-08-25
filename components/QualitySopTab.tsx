@@ -2,6 +2,7 @@ import React from 'react';
 import { Check, ClipboardCheck, History, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import type { Language } from '../lib/language';
 import type { Vessel, WineLot } from '../lib/wineryState';
+import { localISODate } from '../lib/weatherApi';
 import {
   completeQualitySop,
   type QualitySop,
@@ -19,12 +20,13 @@ interface QualitySopTabProps {
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
+  focusSopId?: string;
   setToastMessage?: (message: string | null) => void;
 }
 
 const categories: QualitySopCategory[] = ['sanitation', 'calibration', 'sampling', 'bottling', 'compliance', 'safety', 'other'];
 const frequencies: QualitySopFrequency[] = ['once', 'daily', 'weekly', 'monthly', 'quarterly', 'seasonal'];
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localISODate();
 
 export default function QualitySopTab(props: QualitySopTabProps) {
   const ka = props.lang === 'ka';
@@ -39,6 +41,16 @@ export default function QualitySopTab(props: QualitySopTabProps) {
   const [relatedLotId, setRelatedLotId] = React.useState('');
   const [checks, setChecks] = React.useState<Record<string, string[]>>({});
   const [evidence, setEvidence] = React.useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (!props.focusSopId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(`quality-sop-${props.focusSopId}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.focusSopId, props.qualitySops]);
 
   const sorted = React.useMemo(() => [...props.qualitySops].sort((a, b) => Number(b.active) - Number(a.active) || a.nextDueDate.localeCompare(b.nextDueDate)), [props.qualitySops]);
   const overdue = props.qualitySops.filter(item => item.active && item.nextDueDate < today()).length;
@@ -95,7 +107,7 @@ export default function QualitySopTab(props: QualitySopTabProps) {
     <section className="grid gap-4 lg:grid-cols-2">{sorted.length === 0 ? <div className="rounded-2xl border border-dashed border-stone-300 p-12 text-center text-sm text-stone-500 lg:col-span-2 dark:border-stone-700">{ka ? 'SOP ჯერ არ არის.' : 'No SOPs yet.'}</div> : sorted.map(sop => {
       const checked = checks[sop.id] || [];
       const isOverdue = sop.active && sop.nextDueDate < today();
-      return <article key={sop.id} className={`rounded-2xl border bg-white p-5 shadow-sm dark:bg-stone-900 ${isOverdue ? 'border-rose-300 dark:border-rose-900' : 'border-stone-200 dark:border-stone-800'}`}><div className="flex items-start justify-between gap-4"><div><div className="text-[10px] font-black uppercase tracking-wider text-stone-500">{sop.category} · {sop.frequency}</div><h3 className="mt-1 text-lg font-bold text-stone-950 dark:text-white">{sop.title}</h3><p className={`mt-1 text-xs font-bold ${isOverdue ? 'text-rose-700 dark:text-rose-300' : 'text-stone-500'}`}>{ka ? 'შემდეგი ვადა' : 'Next due'}: {sop.nextDueDate}</p></div>{props.canDelete && <button type="button" onClick={() => props.onUpdateQualitySops(current => current.filter(item => item.id !== sop.id))} className="rounded-lg p-2 text-stone-400 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>}</div>
+      return <article id={`quality-sop-${sop.id}`} tabIndex={-1} key={sop.id} className={`rounded-2xl border bg-white p-5 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-700 dark:bg-stone-900 ${props.focusSopId === sop.id ? 'border-emerald-700 bg-emerald-50/40 dark:border-emerald-400 dark:bg-emerald-950/20' : isOverdue ? 'border-rose-300 dark:border-rose-900' : 'border-stone-200 dark:border-stone-800'}`}><div className="flex items-start justify-between gap-4"><div><div className="text-[10px] font-black uppercase tracking-wider text-stone-500">{sop.category} · {sop.frequency}</div><h3 className="mt-1 text-lg font-bold text-stone-950 dark:text-white">{sop.title}</h3><p className={`mt-1 text-xs font-bold ${isOverdue ? 'text-rose-700 dark:text-rose-300' : 'text-stone-500'}`}>{ka ? 'შემდეგი ვადა' : 'Next due'}: {sop.nextDueDate}</p></div>{props.canDelete && <button type="button" onClick={() => props.onUpdateQualitySops(current => current.filter(item => item.id !== sop.id))} className="rounded-lg p-2 text-stone-400 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>}</div>
       <div className="mt-4 space-y-2">{sop.checklist.map(item => <label key={item} className="flex items-start gap-3 rounded-xl bg-stone-50 p-3 text-xs dark:bg-stone-950"><input type="checkbox" disabled={!props.canUpdate || !sop.active} checked={checked.includes(item)} onChange={event => setChecks(current => ({ ...current, [sop.id]: event.target.checked ? [...checked, item] : checked.filter(value => value !== item) }))} className="mt-0.5 h-4 w-4 accent-emerald-700" /><span>{item}</span></label>)}</div>
       {sop.evidenceRequired && <textarea value={evidence[sop.id] || ''} disabled={!props.canUpdate || !sop.active} onChange={event => setEvidence(current => ({ ...current, [sop.id]: event.target.value }))} placeholder={ka ? 'შედეგი, საზომი ან მტკიცებულების მითითება' : 'Result, reading, or evidence reference'} className="mt-3 min-h-20 w-full rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs dark:border-stone-700 dark:bg-stone-950" />}
       <div className="mt-3 flex gap-2">{props.canUpdate && sop.active && <button type="button" onClick={() => complete(sop)} className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 text-xs font-black text-white"><Check className="h-4 w-4" />{ka ? 'დასრულება' : 'Complete'}</button>}<details className="flex-1 rounded-xl border border-stone-200 p-2 dark:border-stone-700"><summary className="flex cursor-pointer items-center justify-center gap-2 text-xs font-bold"><History className="h-4 w-4" />{sop.completionHistory.length} {ka ? 'ჩანაწერი' : 'records'}</summary><div className="mt-2 max-h-40 space-y-2 overflow-auto">{sop.completionHistory.map(entry => <div key={entry.id} className="rounded-lg bg-stone-50 p-2 text-[10px] dark:bg-stone-950"><strong>{new Date(entry.completedAt).toLocaleString()}</strong><p>{entry.completedBy}</p><p className="mt-1 text-stone-500">{entry.evidenceNote}</p></div>)}</div></details></div>

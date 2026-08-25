@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   ClipboardCheck,
@@ -22,17 +23,23 @@ import {
   type RecallCase,
   type WorkflowApprovalPolicy,
   type WorkflowApprovalRecord,
+  type TodayQueueVisibility,
 } from '../lib/operationsControl';
+import { localISODate } from '../lib/weatherApi';
+import { workOwnerMatchesIdentity } from '../lib/workAssignments';
 
 interface OperationsControlTabProps {
   lang: Language;
   currentUsername: string;
+  currentUserName: string;
   currentRole: string;
   tasks: Task[];
   qualitySops: QualitySop[];
   purchaseOrders: PurchaseOrder[];
   productionPlans: ProductionPlanItem[];
   recallCases: RecallCase[];
+  queueVisibility: Partial<TodayQueueVisibility>;
+  focusApprovalId?: string;
   onNavigate: (tab: string, targetId?: string) => void;
   setToastMessage?: (message: string | null) => void;
 }
@@ -63,12 +70,15 @@ function priorityClass(priority: string): string {
 export default function OperationsControlTab({
   lang,
   currentUsername,
+  currentUserName,
   currentRole,
   tasks,
   qualitySops,
   purchaseOrders,
   productionPlans,
   recallCases,
+  queueVisibility,
+  focusApprovalId,
   onNavigate,
   setToastMessage,
 }: OperationsControlTabProps) {
@@ -82,6 +92,16 @@ export default function OperationsControlTab({
   const [loading, setLoading] = React.useState(true);
   const [working, setWorking] = React.useState('');
   const [decisionReasons, setDecisionReasons] = React.useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (!focusApprovalId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(`approval-${focusApprovalId}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusApprovalId]);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -103,7 +123,7 @@ export default function OperationsControlTab({
 
   React.useEffect(() => { void load(); }, [load]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localISODate();
   const queue = React.useMemo(() => buildTodayQueue({
     today,
     tasks,
@@ -113,7 +133,9 @@ export default function OperationsControlTab({
     approvals: data.approvals,
     recallCases,
     currentUsername,
-  }), [currentUsername, data.approvals, productionPlans, purchaseOrders, qualitySops, recallCases, tasks, today]);
+    currentUserName,
+    visibility: queueVisibility,
+  }), [currentUserName, currentUsername, data.approvals, productionPlans, purchaseOrders, qualitySops, queueVisibility, recallCases, tasks, today]);
 
   const updatePolicy = async () => {
     setWorking('policy');
@@ -160,8 +182,19 @@ export default function OperationsControlTab({
     }
   };
 
-  const pending = data.approvals.filter(item => item.status === 'pending');
-  const history = data.approvals.filter(item => item.status !== 'pending').slice(0, 20);
+  const visibleApprovals = data.approvals.filter(item => (
+    canApprove || workOwnerMatchesIdentity(item.requestedBy, { username: currentUsername, fullName: currentUserName })
+  ));
+  const pending = visibleApprovals.filter(item => item.status === 'pending');
+  const history = visibleApprovals.filter(item => item.status !== 'pending').slice(0, 20);
+  const queueSourceLabel = (source: (typeof queue)[number]['source']) => ({
+    task: ka ? 'დავალება' : 'Task',
+    sop: 'SOP',
+    purchase_order: ka ? 'შესყიდვა' : 'Purchase order',
+    production_plan: ka ? 'გეგმა' : 'Production plan',
+    approval: ka ? 'დამტკიცება' : 'Approval',
+    recall: ka ? 'გაწვევა' : 'Recall',
+  })[source];
 
   return (
     <div className="space-y-6">
@@ -206,10 +239,11 @@ export default function OperationsControlTab({
           ) : queue.map(item => (
             <button key={item.id} type="button" onClick={() => onNavigate(item.targetTab, item.targetId)} className={`flex w-full min-h-16 items-center gap-3 rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${priorityClass(item.priority)}`}>
               <span className="min-w-0 flex-1">
+                <span className="mb-1 block text-[9px] font-black uppercase tracking-wider opacity-65">{queueSourceLabel(item.source)}</span>
                 <strong className="block truncate text-sm">{item.title}</strong>
                 <span className="mt-1 block truncate text-[11px] opacity-75">{item.detail}</span>
               </span>
-              <span className="shrink-0 text-[10px] font-black uppercase">{item.dueDate}</span>
+              <span className="shrink-0 text-right text-[10px] font-black uppercase"><span className="block">{item.dueDate}</span><span className="mt-1 inline-flex items-center gap-1 opacity-70">{ka ? 'გახსნა' : 'Open'} <ArrowRight className="h-3 w-3" /></span></span>
             </button>
           ))}
         </div>
@@ -257,7 +291,7 @@ export default function OperationsControlTab({
           <h3 className="text-sm font-black text-stone-900 dark:text-white">{ka ? 'დასამტკიცებელი ოპერაციები' : 'Commands awaiting review'}</h3>
           <div className="mt-4 space-y-3">
             {pending.length === 0 ? <p className="rounded-xl border border-dashed border-stone-300 p-8 text-center text-xs text-stone-500 dark:border-stone-700">{ka ? 'მოლოდინში ოპერაცია არ არის.' : 'No commands are waiting for approval.'}</p> : pending.map(approval => (
-              <article key={approval.id} className="rounded-xl border border-stone-200 p-4 dark:border-stone-800">
+              <article id={`approval-${approval.id}`} tabIndex={-1} key={approval.id} className={`rounded-xl border p-4 focus:outline-none focus:ring-2 focus:ring-[#7a1c2b] ${focusApprovalId === approval.id ? 'border-[#7a1c2b] bg-rose-50/40 dark:bg-rose-950/20' : 'border-stone-200 dark:border-stone-800'}`}>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <strong className="text-sm text-stone-900 dark:text-white">{approval.requestSummary}</strong>

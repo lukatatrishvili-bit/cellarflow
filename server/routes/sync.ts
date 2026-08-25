@@ -51,6 +51,7 @@ import {
 import { assessFootprintPressure, measureStateFootprint } from '../../lib/retention';
 import { recordSyncOperationalMetric, recordSyncMergeOutcomeMetric } from '../operationalTelemetry';
 import { organizationHasFeature, recordProductionUsage } from '../billing/service';
+import { productionPlanTransitionIssue } from '../../lib/operationsControl';
 
 const router = express.Router();
 
@@ -2344,6 +2345,16 @@ export function validateSyncPayload(
             if (!['planned', 'ready', 'blocked', 'in_progress', 'completed', 'cancelled'].includes(item.status)) {
               throw new Error(`Production plan ${item.id} has invalid status.`);
             }
+            if (existingItem && item.status !== existingItem.status) {
+              const transitionIssue = productionPlanTransitionIssue(
+                existingItem,
+                item.status,
+                effectiveCollection('productionPlans'),
+              );
+              if (transitionIssue) {
+                throw new Error(`Production plan ${item.id} status is invalid: ${transitionIssue}`);
+              }
+            }
             if (!isValidCalendarDate(item.startDate) || !isValidCalendarDate(item.endDate)) {
               throw new Error(`Production plan ${item.id} requires valid start and end dates.`);
             }
@@ -2666,15 +2677,28 @@ export function validateSyncPayload(
 const RESPONSE_COLLECTION_DEPENDENCIES: Partial<Record<string, PermissionModule[]>> = {
   // Lab entry needs active vessel IDs even though technicians do not manage the
   // vessel module itself.
-  vessels: ['lab'],
+  vessels: ['lab', 'recall'],
   // Certification review is an evidence-aggregation workflow spanning origin,
   // receiving, lab, and bottling records. These collections remain read-only
   // unless their own module permission grants writes.
-  lots: ['certification'],
+  lots: ['certification', 'recall'],
   blocks: ['certification'],
-  grapeIntakes: ['certification'],
+  grapeIntakes: ['certification', 'recall'],
   lablogs: ['certification'],
-  bottlingRuns: ['certification'],
+  bottlingRuns: ['certification', 'recall'],
+  // A recall is a business containment workflow, but its evidence spans the
+  // full chain from harvest through customer dispatch. These dependencies are
+  // projections only: write access still belongs to each collection's owner.
+  harvests: ['recall'],
+  cellarOps: ['recall'],
+  transfers: ['recall'],
+  storageLocations: ['recall'],
+  stockMovements: ['recall'],
+  salesOrders: ['recall'],
+  salesDispatches: ['recall'],
+  tasks: ['recall'],
+  // Purchasing needs the item catalogue to build and inspect order lines.
+  inventory: ['procurement'],
 };
 
 function mayViewResponseCollection(role: string, collection: string): boolean {
@@ -2714,6 +2738,7 @@ export function redactWineryDatabaseForRole(role: string, userDb: any): any {
   const response: any = {};
   const canViewCosts = canAccess(role, 'costs', 'view');
   const canViewStorage = canAccess(role, 'storage', 'view');
+  const canViewSales = canAccess(role, 'sales', 'view');
 
   for (const [collection, emptyValue] of Object.entries(empty)) {
     if (collection === 'syncDeletionLedger') continue;
@@ -2767,6 +2792,17 @@ export function redactWineryDatabaseForRole(role: string, userDb: any): any {
     if (!canViewStorage && collection === 'bottlingRuns') {
       records = records.map((record: any) => omitRecordFields(record, [
         'storageLocationId', 'storageMovementId', 'placedInStorageBottles',
+      ]));
+    }
+    if (!canViewSales && collection === 'salesDispatches') {
+      records = records.map((record: any) => omitRecordFields(record, [
+        'pricePerBottle', 'currency', 'revenue', 'costPerBottle', 'cogs',
+        'grossProfit', 'marginPct',
+      ]));
+    } else if (!canViewSales && collection === 'salesOrders') {
+      records = records.map((record: any) => omitRecordFields(record, [
+        'pricePerBottle', 'currency', 'revenue', 'costPerBottle', 'cogs',
+        'grossProfit', 'marginPct',
       ]));
     }
     response[collection] = records;

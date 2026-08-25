@@ -6,9 +6,14 @@ import {
 } from '../costing';
 import { computeStock, stockMovementFromBottlingRun, type StockMovement, type StorageLocation } from '../storage';
 import { isInventoryItemForPackagingComponent } from '../inventoryCategories';
-import type { BottlingRunRecord, InventoryItem, WineLot } from '../wineryState';
+import type { BottlingRunRecord, InventoryItem, Vessel, WineLot, WinemakingStage } from '../wineryState';
 
 export const BOTTLING_COMMAND_TYPE = 'cellar.bottling' as const;
+export const BOTTLING_READY_STAGES: readonly WinemakingStage[] = ['aging', 'stabilization', 'filtration'];
+
+export function isBottlingReadyStage(stage: WinemakingStage): boolean {
+  return BOTTLING_READY_STAGES.includes(stage);
+}
 
 export const BOTTLING_FORMATS = [
   { key: '0.75', litres: 0.75, kind: 'bottle' },
@@ -37,6 +42,7 @@ const MAX_AMOUNT = 1_000_000_000;
 export interface BottlingCommandPayload {
   runId: string;
   lotId: string;
+  sourceVesselId: string;
   date: string;
   lotNumber: string;
   operator: string;
@@ -49,6 +55,7 @@ export interface BottlingCommandPayload {
 
 export interface BottlingCommandState {
   lots: WineLot[];
+  vessels: Vessel[];
   bottlingRuns: BottlingRunRecord[];
   inventory: InventoryItem[];
   costEntries: CostEntry[];
@@ -66,6 +73,7 @@ export interface BottlingCommandContext {
 export interface BottlingCommandResult {
   run: BottlingRunRecord;
   updatedLot: WineLot;
+  updatedVessel: Vessel;
   updatedInventoryItems: InventoryItem[];
   createdCostEntries: CostEntry[];
   storageMovement?: StockMovement;
@@ -92,6 +100,9 @@ export type BottlingCommandErrorCode =
   | 'bottling_run_id_conflict'
   | 'bottling_lot_not_found'
   | 'bottling_lot_unavailable'
+  | 'bottling_vessel_not_found'
+  | 'bottling_vessel_unavailable'
+  | 'insufficient_vessel_volume'
   | 'insufficient_lot_volume'
   | 'packaging_material_not_found'
   | 'packaging_category_mismatch'
@@ -232,6 +243,7 @@ export function parseBottlingCommandPayload(value: unknown): BottlingCommandPayl
   return {
     runId: requiredRecordId(input.runId, 'runId'),
     lotId: requiredRecordId(input.lotId, 'lotId'),
+    sourceVesselId: requiredRecordId(input.sourceVesselId, 'sourceVesselId'),
     date: validDate(input.date),
     lotNumber: boundedText(input.lotNumber, 'lotNumber', 120, false),
     operator: boundedText(input.operator, 'operator', 120, true),
@@ -256,7 +268,7 @@ export function applyBottlingCommand(
   if (!(context.performedAt instanceof Date) || Number.isNaN(context.performedAt.getTime())) {
     throw new BottlingCommandError('invalid_bottling_payload', 'Bottling execution time is invalid.', 400);
   }
-  if (!currentState || !Array.isArray(currentState.lots) || !Array.isArray(currentState.bottlingRuns)
+  if (!currentState || !Array.isArray(currentState.lots) || !Array.isArray(currentState.vessels) || !Array.isArray(currentState.bottlingRuns)
     || !Array.isArray(currentState.inventory) || !Array.isArray(currentState.costEntries)
     || !Array.isArray(currentState.storageLocations) || !Array.isArray(currentState.stockMovements)) {
     throw new BottlingCommandError('bottling_state_inconsistent', 'Organization bottling state is unavailable.', 400);
@@ -267,11 +279,29 @@ export function applyBottlingCommand(
 
   const lot = currentState.lots.find(item => item.id === payload.lotId);
   if (!lot) throw new BottlingCommandError('bottling_lot_not_found', 'The wine lot was not found.', 404);
-  if (lot.stage === 'sold' || !(lot.currentVolume > 0)) {
-    throw new BottlingCommandError('bottling_lot_unavailable', 'The wine lot is not available for bottling.', 409);
+  if (!isBottlingReadyStage(lot.stage) || !(lot.currentVolume > 0)) {
+    throw new BottlingCommandError(
+      'bottling_lot_unavailable',
+      'The wine lot must be in aging, stabilization, or filtration with a positive volume before bottling.',
+      409,
+    );
   }
   if (!Number.isFinite(lot.currentVolume) || lot.currentVolume < 0) {
     throw new BottlingCommandError('bottling_state_inconsistent', 'The wine lot has an invalid stored volume.', 409);
+  }
+  const sourceVessel = currentState.vessels.find(vessel => vessel.id === payload.sourceVesselId);
+  if (!sourceVessel) {
+    throw new BottlingCommandError('bottling_vessel_not_found', 'The source vessel was not found.', 404);
+  }
+  if (sourceVessel.assignedLotId !== lot.id || !(sourceVessel.currentVolume > 0)) {
+    throw new BottlingCommandError(
+      'bottling_vessel_unavailable',
+      'The source vessel must be filled with the selected wine lot.',
+      409,
+    );
+  }
+  if (!Number.isFinite(sourceVessel.currentVolume) || sourceVessel.currentVolume < 0) {
+    throw new BottlingCommandError('bottling_state_inconsistent', 'The source vessel has an invalid stored volume.', 409);
   }
 
   const totalCeramic = payload.formats.ceramic || 0;
@@ -287,6 +317,13 @@ export function applyBottlingCommand(
     throw new BottlingCommandError(
       'insufficient_lot_volume',
       `Lot ${lot.id} contains ${lot.currentVolume} L, less than the requested ${volumeBottledL} L.`,
+      409,
+    );
+  }
+  if (volumeBottledL > sourceVessel.currentVolume + EPSILON) {
+    throw new BottlingCommandError(
+      'insufficient_vessel_volume',
+      `Vessel ${sourceVessel.id} contains ${sourceVessel.currentVolume} L, less than the requested ${volumeBottledL} L.`,
       409,
     );
   }
@@ -377,7 +414,8 @@ export function applyBottlingCommand(
 
   const timestamp = context.performedAt.toISOString();
   const remainingLotVolumeL = Math.max(0, round1(lot.currentVolume - volumeBottledL));
-  const fullyBottled = remainingLotVolumeL <= 0.5;
+  const remainingVesselVolumeL = Math.max(0, round1(sourceVessel.currentVolume - volumeBottledL));
+  const fullyBottled = remainingLotVolumeL <= EPSILON;
   const breakdown = Object.entries(payload.formats)
     .filter(([, count]) => count > 0)
     .map(([key, count]) => `${count}×${key === 'ceramic' ? 'ceramic 0.75 L' : `${key} L`}`)
@@ -394,6 +432,14 @@ export function applyBottlingCommand(
       operator: payload.operator,
       sourceRef: payload.runId,
     }, ...(lot.history || [])],
+  }, timestamp);
+  const updatedVessel = stamped<Vessel>({
+    ...sourceVessel,
+    lastCommandId: context.commandId,
+    currentVolume: remainingVesselVolumeL,
+    assignedLotId: remainingVesselVolumeL <= EPSILON ? null : sourceVessel.assignedLotId,
+    cleaningStatus: remainingVesselVolumeL <= EPSILON ? 'cleaning_needed' : sourceVessel.cleaningStatus,
+    lastOperation: `Bottling run ${payload.runId}: ${volumeBottledL} L`,
   }, timestamp);
 
   const updatedInventoryItems: InventoryItem[] = [];
@@ -425,6 +471,11 @@ export function applyBottlingCommand(
     volumeBottledL,
     previousLotVolumeL: lot.currentVolume,
     previousLotStage: lot.stage,
+    sourceVesselId: sourceVessel.id,
+    previousSourceVesselVolumeL: sourceVessel.currentVolume,
+    previousSourceVesselAssignedLotId: sourceVessel.assignedLotId,
+    previousSourceVesselCleaningStatus: sourceVessel.cleaningStatus,
+    previousSourceVesselLastOperation: sourceVessel.lastOperation,
     ...(Object.keys(payload.packagingSelections).length > 0
       ? { packagingMaterialIds: { ...payload.packagingSelections } }
       : {}),
@@ -442,6 +493,7 @@ export function applyBottlingCommand(
   return {
     state: {
       lots: currentState.lots.map(item => item.id === updatedLot.id ? updatedLot : item),
+      vessels: currentState.vessels.map(item => item.id === updatedVessel.id ? updatedVessel : item),
       bottlingRuns: [run, ...currentState.bottlingRuns],
       inventory,
       costEntries: [...createdCostEntries, ...currentState.costEntries],
@@ -451,6 +503,7 @@ export function applyBottlingCommand(
     result: {
       run,
       updatedLot,
+      updatedVessel,
       updatedInventoryItems,
       createdCostEntries,
       ...(storageMovement ? { storageMovement } : {}),

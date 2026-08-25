@@ -180,6 +180,10 @@ export const SERVER_ERROR_MESSAGES: Readonly<Record<string, LocalizedServerMessa
     en: 'This person has email and browser push notifications turned off.',
     ka: 'ამ პირს ელფოსტისა და ბრაუზერის Push შეტყობინებები გამორთული აქვს.',
   },
+  notification_suppressed: {
+    en: 'This person has paused or turned off notifications. The task is still saved; they can review it in the app when ready.',
+    ka: 'ამ პირს შეტყობინებები დროებით შეჩერებული ან გამორთული აქვს. დავალება მაინც შენახულია და აპში მისთვის სასურველ დროს ნახავს.',
+  },
   ai_operations_unavailable: {
     en: 'Winery Intelligence is temporarily unavailable. Your data is unaffected.',
     ka: 'Winery Intelligence დროებით მიუწვდომელია. თქვენს მონაცემებზე ეს არ მოქმედებს.',

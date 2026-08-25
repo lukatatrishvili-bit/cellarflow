@@ -34,6 +34,27 @@ export const CELLAR_OPERATIONS: CellarOperationMeta[] = [
   { key: 'custom', en: 'Custom operation', ka: 'სხვა ოპერაცია' },
 ];
 
+/**
+ * Operations that are safe to capture as one-lot quick facts. Physical moves,
+ * bottling and sanitation use dedicated workflows so balances and evidence
+ * cannot diverge behind a generic log entry.
+ */
+export const DEDICATED_CELLAR_OPERATION_TYPES = new Set<CellarOperationMeta['key']>([
+  'racking',
+  'blending',
+  'vessel_filling',
+  'bottling',
+  'cleaning',
+]);
+
+export const QUICK_CELLAR_OPERATIONS = CELLAR_OPERATIONS.filter(
+  operation => !DEDICATED_CELLAR_OPERATION_TYPES.has(operation.key),
+);
+
+export function isQuickCellarOperation(type: CellarOperationMeta['key']): boolean {
+  return !DEDICATED_CELLAR_OPERATION_TYPES.has(type);
+}
+
 /** Deduct an amount from a stock level, clamped at zero and rounded to 3 dp. */
 export function deductStock(currentStock: number, amount: number): number {
   const next = (currentStock || 0) - (amount || 0);

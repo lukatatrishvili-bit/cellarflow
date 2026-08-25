@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { InventoryItem, WineLot } from '../lib/wineryState';
+import type { InventoryItem, Vessel, WineLot } from '../lib/wineryState';
 import {
   applyBottlingCommand,
   parseBottlingCommandPayload,
@@ -38,9 +38,28 @@ function material(id: string, stock: number, costPerUnit: number): InventoryItem
   };
 }
 
+function vessel(overrides: Partial<Vessel> = {}): Vessel {
+  return {
+    id: 'TANK-A',
+    type: 'stainless_steel',
+    shape: 'vertical',
+    capacity: 300,
+    currentVolume: 200,
+    assignedLotId: 'LOT-A',
+    cleaningStatus: 'clean',
+    lastCleaned: '2026-07-01',
+    temperature: 14,
+    coolingJacketActive: false,
+    targetTemperature: null,
+    lastOperation: 'Aging',
+    ...overrides,
+  };
+}
+
 function state(overrides: Partial<BottlingCommandState> = {}): BottlingCommandState {
   return {
     lots: [lot()],
+    vessels: [vessel()],
     bottlingRuns: [],
     inventory: [
       material('BOTTLE', 500, 0.6),
@@ -64,6 +83,7 @@ function state(overrides: Partial<BottlingCommandState> = {}): BottlingCommandSt
 const payload: BottlingCommandPayload = {
   runId: 'bot-test-0001',
   lotId: 'LOT-A',
+  sourceVesselId: 'TANK-A',
   date: '2026-07-20',
   lotNumber: 'L-2026-07',
   operator: 'Nino',
@@ -99,6 +119,12 @@ describe('cellar.bottling domain command', () => {
       stage: 'aging',
       history: [expect.objectContaining({ sourceRef: 'bot-test-0001', type: 'bottling' })],
     });
+    expect(applied.state.vessels[0]).toMatchObject({
+      id: 'TANK-A',
+      currentVolume: 125,
+      assignedLotId: 'LOT-A',
+      lastCommandId: 'cmd-bottling-test-0001',
+    });
     expect(applied.state.bottlingRuns[0]).toMatchObject({
       id: 'bot-test-0001',
       commandId: 'cmd-bottling-test-0001',
@@ -122,23 +148,43 @@ describe('cellar.bottling domain command', () => {
     });
   });
 
-  it('marks an essentially emptied lot bottled while retaining its exact residual volume', () => {
-    const applied = applyBottlingCommand(state({ lots: [lot({ currentVolume: 75.4 })] }), {
+  it('keeps a residual physical balance active instead of silently treating it as bottled', () => {
+    const applied = applyBottlingCommand(state({
+      lots: [lot({ currentVolume: 75.4 })],
+      vessels: [vessel({ currentVolume: 75.4 })],
+    }), {
       ...payload,
       packagingSelections: {},
       bottlingServiceCost: 0,
       storageLocationId: '',
     }, context);
 
-    expect(applied.result.updatedLot).toMatchObject({ currentVolume: 0.4, stage: 'bottled' });
+    expect(applied.result.updatedLot).toMatchObject({ currentVolume: 0.4, stage: 'aging' });
+    expect(applied.result.updatedVessel).toMatchObject({ currentVolume: 0.4, assignedLotId: 'LOT-A' });
     expect(applied.state.inventory).toEqual(state().inventory);
     expect(applied.state.costEntries).toEqual([]);
     expect(applied.result.storageMovement).toBeUndefined();
   });
 
+  it('empties and releases the source vessel only when the physical balance reaches zero', () => {
+    const applied = applyBottlingCommand(state({
+      lots: [lot({ currentVolume: 75 })],
+      vessels: [vessel({ currentVolume: 75 })],
+    }), { ...payload, packagingSelections: {}, bottlingServiceCost: 0, storageLocationId: '' }, context);
+
+    expect(applied.result.updatedLot).toMatchObject({ currentVolume: 0, stage: 'bottled' });
+    expect(applied.result.updatedVessel).toMatchObject({
+      currentVolume: 0,
+      assignedLotId: null,
+      cleaningStatus: 'cleaning_needed',
+    });
+  });
+
   it('rejects lot volume and packaging double-spends before returning any state', () => {
     expect(() => applyBottlingCommand(state({ lots: [lot({ currentVolume: 50 })] }), payload, context))
       .toThrowError(expect.objectContaining({ code: 'insufficient_lot_volume', statusCode: 409 }));
+    expect(() => applyBottlingCommand(state({ vessels: [vessel({ currentVolume: 50 })] }), payload, context))
+      .toThrowError(expect.objectContaining({ code: 'insufficient_vessel_volume', statusCode: 409 }));
     expect(() => applyBottlingCommand(state({
       inventory: [material('BOTTLE', 99, 0.6), material('CORK', 500, 0.2), material('BOX', 100, 1.5)],
     }), payload, context)).toThrowError(expect.objectContaining({ code: 'insufficient_packaging_stock', statusCode: 409 }));

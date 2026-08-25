@@ -33,6 +33,12 @@ function initialBottlingState() {
       createdAt: '2025-10-01',
       history: [],
     }],
+    vessels: [{
+      id: 'TANK-A', type: 'stainless_steel', shape: 'vertical', capacity: 300,
+      currentVolume: 200, assignedLotId: 'LOT-A', cleaningStatus: 'clean',
+      lastCleaned: '2026-07-01', temperature: 14, coolingJacketActive: false,
+      targetTemperature: null, lastOperation: 'Aging',
+    }],
     bottlingRuns: [],
     inventory: [{
       id: 'BOTTLE',
@@ -160,6 +166,7 @@ function sessionCookie(): string {
 const basePayload = {
   runId: 'bot-route-0001',
   lotId: 'LOT-A',
+  sourceVesselId: 'TANK-A',
   date: '2026-07-20',
   lotNumber: 'ROUTE-01',
   operator: 'Route Winemaker',
@@ -288,6 +295,7 @@ describe.sequential('cellar.bottling command route', () => {
       },
     });
     expect(storedState.data.lots[0]).toMatchObject({ currentVolume: 125, stage: 'aging' });
+    expect(storedState.data.vessels[0]).toMatchObject({ currentVolume: 125, assignedLotId: 'LOT-A' });
     expect(storedState.data.inventory[0].stock).toBe(50);
     expect(storedState.data.costEntries).toEqual(expect.arrayContaining([
       expect.objectContaining({ amount: 50, currency: 'USD' }),

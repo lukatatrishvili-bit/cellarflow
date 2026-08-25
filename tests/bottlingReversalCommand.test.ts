@@ -25,6 +25,12 @@ function baseState(): BottlingCommandState {
       createdAt: '2025-10-01',
       history: [],
     }],
+    vessels: [{
+      id: 'TANK-A', type: 'stainless_steel', shape: 'vertical', capacity: 300,
+      currentVolume: 200, assignedLotId: 'LOT-A', cleaningStatus: 'clean',
+      lastCleaned: '2026-07-01', temperature: 14, coolingJacketActive: false,
+      targetTemperature: null, lastOperation: 'Aging',
+    }],
     bottlingRuns: [],
     inventory: [{
       id: 'BOTTLE-1',
@@ -47,6 +53,7 @@ function postedState(options: { storage?: boolean; costing?: boolean } = {}) {
   const applied = applyBottlingCommand(state, {
     runId: 'BOT-1',
     lotId: 'LOT-A',
+    sourceVesselId: 'TANK-A',
     date: '2026-07-20',
     lotNumber: 'B-2026-01',
     operator: 'Nino',
@@ -95,6 +102,13 @@ describe('bottling reversal command', () => {
     expect(applied.state.lots[0].history[0]).toMatchObject({
       type: 'correction',
       sourceRef: 'BOT-REV-1',
+    });
+    expect(applied.state.vessels[0]).toMatchObject({
+      currentVolume: 200,
+      assignedLotId: 'LOT-A',
+      cleaningStatus: 'clean',
+      lastOperation: 'Aging',
+      lastCommandId: 'cmd-bottling-reversal-1',
     });
     expect(applied.state.inventory[0]).toMatchObject({
       stock: 150,

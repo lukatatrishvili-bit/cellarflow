@@ -161,6 +161,16 @@ async function postReversal(body: unknown): Promise<Response> {
   });
 }
 
+async function postLotStageTransition(body: unknown): Promise<Response> {
+  return fetch(`${baseUrl}/api/commands/lot.stage.transition`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json', cookie: sessionCookie(), 'x-cellarflow-org-id': organizationId,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 beforeAll(async () => {
   vi.resetModules();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cellarflow-cellar-operation-routes-'));
@@ -390,5 +400,59 @@ describe.sequential('cellar.operation command route', () => {
       error: { code: 'command_store_unavailable', retryable: true },
     });
     expect(storedState.version).toBe(1);
+  });
+
+  it('commits and replays a lot stage with its signed audit under one claim', async () => {
+    const request = {
+      commandId: 'cmd-route-lot-stage-0001',
+      payload: {
+        transitionId: 'LOT-STAGE-ROUTE-1',
+        auditId: 'AUDIT-LOT-STAGE-ROUTE-1',
+        lotId: 'LOT-CELLAR-1',
+        expectedStage: 'aging',
+        targetStage: 'stabilization',
+        date: '2026-09-20',
+        operator: 'Route Winemaker',
+        notes: 'Stability checks completed and reviewed.',
+      },
+    };
+    const response = await postLotStageTransition(request);
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      disposition: 'executed',
+      result: {
+        updatedLot: { id: 'LOT-CELLAR-1', stage: 'stabilization' },
+        auditLog: { id: 'AUDIT-LOT-STAGE-ROUTE-1', chainSequence: 1 },
+        transition: { correction: false },
+        stateVersion: 2,
+      },
+    });
+    expect(storedState.data.lots[0].stage).toBe('stabilization');
+    expect(storedState.data.auditLogs).toHaveLength(1);
+
+    const replay = await postLotStageTransition(request);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ disposition: 'replayed' });
+    expect(storedState.version).toBe(2);
+    expect(storedState.data.auditLogs).toHaveLength(1);
+  });
+
+  it('denies lot-stage changes before a command claim for read-only roles', async () => {
+    resetDb('Read-Only');
+    const response = await postLotStageTransition({
+      commandId: 'cmd-route-lot-stage-forbidden',
+      payload: {
+        transitionId: 'LOT-STAGE-ROUTE-FORBIDDEN',
+        auditId: 'AUDIT-LOT-STAGE-ROUTE-FORBIDDEN',
+        lotId: 'LOT-CELLAR-1', expectedStage: 'aging', targetStage: 'stabilization',
+        date: '2026-09-20', operator: 'Viewer', notes: 'Attempted without authority.',
+      },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: 'Forbidden: write access required.' });
+    expect(storedState.version).toBe(1);
+    expect(storedCommands.size).toBe(0);
   });
 });

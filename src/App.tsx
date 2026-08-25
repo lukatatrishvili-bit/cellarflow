@@ -117,6 +117,7 @@ import {
   ChevronUp,
   ChevronDown,
   ClipboardList,
+  ListChecks,
   FileText,
   FileSpreadsheet,
   BarChart3,
@@ -207,6 +208,7 @@ function clearPostLoginReturnTo(): void {
 
 export default function App() {
   const state = useWineryState();
+  const isKa = state.lang === 'ka';
   const [routeRevision, setRouteRevision] = useState(0);
   const [resolvedAuthRouteKey, setResolvedAuthRouteKey] = useState('');
   const replaceRoute = useCallback((target: string) => {
@@ -270,6 +272,11 @@ export default function App() {
     setPrefilledSourceId('');
     setPrefilledDestId('');
   }, [setPrefilledSourceId, setPrefilledDestId]);
+  const navigateCellarWorkflow = useCallback(
+    (tab: 'transfers' | 'bottling' | 'vessels') => setActiveTab(tab),
+    [setActiveTab],
+  );
+  const openProcurement = useCallback(() => setActiveModule('procurement'), [setActiveModule]);
   const closeScanner = useCallback(() => setIsScannerOpen(false), []);
   const handleScanResolve = useCallback((target: CellarScanTarget) => {
     setActiveModule('gvino');
@@ -363,6 +370,10 @@ export default function App() {
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
   const [recallFocusCaseId, setRecallFocusCaseId] = useState<string>('');
+  const [workflowFocus, setWorkflowFocus] = useState<{ tab: string; targetId: string } | null>(null);
+  const [expandedWineryGroups, setExpandedWineryGroups] = useState<Set<string>>(
+    () => new Set(['overview', 'wine', 'production']),
+  );
   const [focusedAiFindingId, setFocusedAiFindingId] = useState<string | null>(null);
   const locallyReadAiNotificationEvents = useRef<Set<string>>(new Set());
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -445,13 +456,13 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    document.documentElement.lang = state.lang === 'ka' ? 'ka' : 'en';
+    document.documentElement.lang = isKa ? 'ka' : 'en';
     document.title = isMarketingPage
-      ? (state.lang === 'ka' ? 'VinOS | ღვინის წარმოების ერთიანი სისტემა' : 'VinOS | The operating system for wine')
+      ? (isKa ? 'VinOS | ღვინის წარმოების ერთიანი სისტემა' : 'VinOS | The operating system for wine')
       : isTerroirPulsePage
       ? 'Terroir Pulse — VinOS'
-      : (state.lang === 'ka' ? 'VinOS — მარნის მართვა' : 'VinOS — Winery Management');
-  }, [isMarketingPage, isTerroirPulsePage, state.lang]);
+      : (isKa ? 'VinOS — მარნის მართვა' : 'VinOS — Winery Management');
+  }, [isKa, isMarketingPage, isTerroirPulsePage]);
 
   useEffect(() => {
     if (!state.isLoggedIn || typeof window === 'undefined') return;
@@ -637,12 +648,12 @@ export default function App() {
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      state.setToastMessage(state.lang === 'ka' ? 'ინტერნეტთან კავშირი აღდგა! ხდება სინქრონიზაცია...' : 'Connection restored! Synchronizing...');
+      state.setToastMessage(isKa ? 'ინტერნეტთან კავშირი აღდგა! ხდება სინქრონიზაცია...' : 'Connection restored! Synchronizing...');
       state.triggerSync();
     };
     const handleOffline = () => {
       setIsOnline(false);
-      state.setToastMessage(state.lang === 'ka' ? 'კავშირი გაწყდა. მუშაობა გრძელდება ოფლაინ რეჟიმში.' : 'Connection lost. Operating in offline mode.');
+      state.setToastMessage(isKa ? 'კავშირი გაწყდა. მუშაობა გრძელდება ოფლაინ რეჟიმში.' : 'Connection lost. Operating in offline mode.');
     };
 
     window.addEventListener('online', handleOnline);
@@ -780,7 +791,6 @@ export default function App() {
       lang: state.lang
     });
 
-    const isKa = state.lang === 'ka';
     const telemetryAlerts: Alert[] = [];
     activeTelemetry.forEach((t: any) => {
       if (t.dailySlope < 0.002 && t.status === 'stuck') {
@@ -790,10 +800,10 @@ export default function App() {
           id: `telemetry-stuck-${t.lotId}`,
           severity: 'critical',
           category: 'fermentation',
-          title: isKa
+          title: state.lang === 'ka'
             ? `გაჩერებული დუღილი — ${name} (ტელემეტრია)`
             : `Stuck fermentation — ${name} (Telemetry)`,
-          message: isKa
+          message: state.lang === 'ka'
             ? `სენსორმა დააფიქსირა სიმკვრივის ვარდნა ${t.dailySlope.toFixed(4)} SG/დღეში (< 0.002 SG/დღე ზღვარი). მიმდინარე SG: ${t.density}. ტემპერატურა: ${t.temperature}°C.`
             : `Sensor detected gravity drop rate of ${t.dailySlope.toFixed(4)} SG/day (< 0.002 SG/day threshold). Current SG: ${t.density}. Temperature: ${t.temperature}°C.`,
           relatedEntityType: 'lot',
@@ -956,7 +966,7 @@ export default function App() {
           ? { ...finding, unread: true, readAt: undefined }
           : finding
       )));
-      state.setToastMessage(state.lang === 'ka'
+      state.setToastMessage(isKa
         ? 'შეტყობინების წაკითხულად მონიშვნა ვერ შეინახა.'
         : 'Could not save the notification as read.');
     }
@@ -997,7 +1007,7 @@ export default function App() {
           ? { ...finding, unread: true, readAt: undefined }
           : finding
       )));
-      state.setToastMessage(state.lang === 'ka'
+      state.setToastMessage(isKa
         ? 'შეტყობინებების წაკითხულად მონიშვნა ვერ შეინახა.'
         : 'Could not mark AI notifications as read.');
       throw new Error('Could not mark AI notifications as read.');
@@ -1015,6 +1025,7 @@ export default function App() {
     const tabByCategory: Record<Alert['category'], string> = {
       so2: 'labs',
       va: 'labs',
+      lab: 'labs',
       fermentation: 'fermentation',
       temperature: 'vessels',
       cleaning: 'vessels',
@@ -1061,40 +1072,42 @@ export default function App() {
   const urgentAlertCount = alerts.filter(alert => alert.severity === 'critical').length;
   const wineryTabGroups = [
     {
-      label: state.lang === 'ka' ? 'მიმოხილვა' : 'Overview',
+      id: 'overview',
+      label: isKa ? 'მიმოხილვა' : 'Overview',
       tabs: [
         { id: 'dashboard', label: t.overview, icon: LayoutDashboard },
-        { id: 'intelligence', label: t.ai_intelligence, icon: BrainCircuitIcon },
-        { id: 'control', label: state.lang === 'ka' ? 'დღეს' : 'Today', icon: ShieldCheck },
       ],
     },
     {
-      label: state.lang === 'ka' ? 'ღვინის გზა' : 'Wine lifecycle',
+      id: 'wine',
+      label: isKa ? 'ღვინის გზა' : 'Wine lifecycle',
       tabs: [
         { id: 'intake', label: t.grape_intake || 'Grape Intake', icon: Grape },
         { id: 'lots', label: t.wine_lots, icon: Wine },
-        { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
-        { id: 'recall', label: state.lang === 'ka' ? 'გაწვევა' : 'Recall', icon: AlertOctagon },
+        { id: 'vessels', label: t.tanks, icon: Container },
       ],
     },
     {
-      label: state.lang === 'ka' ? 'მარანი' : 'Cellar work',
+      id: 'production',
+      label: isKa ? 'მიმდინარე წარმოება' : 'Current production',
       tabs: [
-        { id: 'vessels', label: t.tanks, icon: Container },
-        { id: 'operations', label: t.cellar_operations || 'Operations', icon: Workflow },
-        { id: 'transfers', label: t.transfers, icon: GitCommit },
+        { id: 'operations', label: isKa ? 'მოვლა და გაზომვები' : 'Treatments & checks', icon: Workflow },
         { id: 'fermentation', label: t.fermentation, icon: Activity },
+        { id: 'transfers', label: t.transfers, icon: GitCommit },
         { id: 'labs', label: t.lab_analysis, icon: TestTube },
         { id: 'bottling', label: t.bottling, icon: Package },
       ],
     },
     {
-      label: state.lang === 'ka' ? 'სამუშაოები' : 'Tools',
+      id: 'tools',
+      label: isKa ? 'მეტი ხელსაწყო' : 'More tools',
+      collapsible: true,
       tabs: [
+        { id: 'intelligence', label: t.ai_intelligence, icon: BrainCircuitIcon },
+        { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
         { id: 'inventory', label: t.inventory, icon: Boxes },
-        { id: 'procurement', label: state.lang === 'ka' ? 'შესყიდვა' : 'Purchasing', icon: ShoppingCart },
-        { id: 'quality', label: state.lang === 'ka' ? 'ხარისხი' : 'Quality SOPs', icon: ShieldCheck },
-        { id: 'planner', label: state.lang === 'ka' ? 'გეგმა' : 'Planner', icon: CalendarRange },
+        { id: 'quality', label: isKa ? 'ხარისხი' : 'Quality SOPs', icon: ShieldCheck },
+        { id: 'planner', label: isKa ? 'გეგმა' : 'Planner', icon: CalendarRange },
         { id: 'tasks', label: t.tasks, icon: ClipboardList },
         { id: 'notes', label: t.notes, icon: FileText },
         { id: 'calculators', label: t.calculators, icon: TestTube },
@@ -1115,9 +1128,21 @@ export default function App() {
     }))
     .filter((group) => group.tabs.length > 0);
   useEffect(() => {
+    const activeGroup = accessibleWineryTabGroups.find(group => (
+      group.tabs.some(tab => tab.id === state.activeTab)
+    ));
+    if (!activeGroup?.collapsible) return;
+    setExpandedWineryGroups(previous => {
+      if (previous.has(activeGroup.id)) return previous;
+      const next = new Set(previous);
+      next.add(activeGroup.id);
+      return next;
+    });
+  }, [accessibleWineryTabGroups, state.activeTab]);
+  useEffect(() => {
     if (!state.isLoggedIn || !taskDeepLinkId) return;
     if (!canViewModule('gvino', 'tasks')) {
-      state.setToastMessage(state.lang === 'ka'
+      state.setToastMessage(isKa
         ? 'თქვენს როლს ამ დავალების ნახვის უფლება არ აქვს.'
         : 'Your workspace role cannot view this task.');
       return;
@@ -1195,11 +1220,14 @@ export default function App() {
       label: t.today,
       icon: LayoutDashboard,
       primary: 'portal',
-      modules: [{ id: 'portal', label: t.today, icon: LayoutDashboard }],
+      modules: [
+        { id: 'portal', label: t.today, icon: LayoutDashboard },
+        { id: 'work', label: isKa ? 'სამუშაო რიგი' : 'Work Queue', icon: ListChecks },
+      ],
     },
     {
       id: 'vineyard',
-      label: state.lang === 'ka' ? 'ვენახი' : 'Vineyard',
+      label: isKa ? 'ვენახი' : 'Vineyard',
       icon: Sprout,
       primary: 'vazi',
       requires: 'vazi',
@@ -1207,7 +1235,7 @@ export default function App() {
     },
     {
       id: 'cellar',
-      label: state.lang === 'ka' ? 'მარანი' : 'Cellar',
+      label: isKa ? 'მარანი' : 'Cellar',
       icon: Wine,
       primary: 'gvino',
       requires: 'gvino',
@@ -1215,24 +1243,26 @@ export default function App() {
     },
     {
       id: 'business',
-      label: state.lang === 'ka' ? 'ბიზნესი' : 'Business',
+      label: isKa ? 'ბიზნესი' : 'Business',
       icon: BadgeDollarSign,
       primary: 'sales',
       modules: [
         { id: 'sales', label: t.nav_sales || 'Sales', icon: Truck },
         { id: 'storage', label: t.nav_storage || 'Storage', icon: Warehouse },
+        { id: 'recall', label: isKa ? 'პროდუქტის გაწვევა' : 'Product Recall', icon: AlertOctagon },
+        { id: 'procurement', label: isKa ? 'შესყიდვა' : 'Purchasing', icon: ShoppingCart },
         { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
         { id: 'analytics', label: t.nav_analytics || 'Analytics', icon: BarChart3 },
       ],
     },
     {
       id: 'documents',
-      label: state.lang === 'ka' ? 'დოკუმენტები' : 'Documents',
+      label: isKa ? 'დოკუმენტები' : 'Documents',
       icon: FileSpreadsheet,
       primary: 'docs',
       modules: [
         { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
-        { id: 'certification', label: state.lang === 'ka' ? 'სერტიფიცირება' : 'Certification', icon: BadgeCheck },
+        { id: 'certification', label: isKa ? 'სერტიფიცირება' : 'Certification', icon: BadgeCheck },
         { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
       ],
     },
@@ -1242,7 +1272,7 @@ export default function App() {
       icon: state.currentUser.isMasterAdmin ? ShieldAlert : ClipboardList,
       primary: 'integrations',
       modules: [
-        { id: 'integrations', label: state.lang === 'ka' ? 'ინტეგრაციები' : 'Integration Hub', icon: PlugZap },
+        { id: 'integrations', label: isKa ? 'ინტეგრაციები' : 'Integration Hub', icon: PlugZap },
         { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList },
         { id: 'master-admin', label: 'System Console', icon: ShieldAlert },
       ],
@@ -1264,6 +1294,27 @@ export default function App() {
     .find(tab => tab.id === state.activeTab);
   useEffect(() => {
     if (!state.isLoggedIn) return;
+    if (state.activeModule === 'gvino' && state.activeTab === 'qvevri') {
+      state.setActiveTab('vessels');
+      return;
+    }
+    if (state.activeModule === 'gvino' && state.activeTab === 'control') {
+      if (canViewModule('work')) state.setActiveModule('work');
+      else {
+        const fallbackTab = firstVisibleWineryTab(state.currentUser.role);
+        if (fallbackTab) state.setActiveTab(fallbackTab);
+      }
+      return;
+    }
+    if (state.activeModule === 'gvino' && ['recall', 'procurement'].includes(state.activeTab)) {
+      if (canViewModule(state.activeTab)) {
+        state.setActiveModule(state.activeTab as 'recall' | 'procurement');
+        return;
+      }
+      const fallbackTab = firstVisibleWineryTab(state.currentUser.role);
+      if (fallbackTab) state.setActiveTab(fallbackTab);
+      return;
+    }
     if (canViewModule(state.activeModule, state.activeTab)) return;
     if (state.activeModule === 'gvino') {
       const fallbackTab = firstVisibleWineryTab(state.currentUser.role);
@@ -1286,7 +1337,7 @@ export default function App() {
   };
   const handleNavigate = (target: { module: string; tab?: string }) => {
     if (!canViewModule(target.module, target.tab)) {
-      state.setToastMessage(state.lang === 'ka'
+      state.setToastMessage(isKa
         ? 'თქვენს როლს ამ განყოფილებაზე წვდომა არ აქვს.'
         : 'Your workspace role does not have access to that area.');
       return;
@@ -1294,6 +1345,24 @@ export default function App() {
     state.setActiveModule(target.module as any);
     if (target.tab) state.setActiveTab(target.tab);
   };
+  const openWorkflowItem = useCallback((tab: string, targetId?: string) => {
+    setWorkflowFocus(targetId ? { tab, targetId } : null);
+    if (tab === 'recall') {
+      setRecallFocusCaseId(targetId || '');
+      setActiveModule('recall');
+      return;
+    }
+    if (tab === 'procurement') {
+      setActiveModule('procurement');
+      return;
+    }
+    if (tab === 'control') {
+      setActiveModule('work');
+      return;
+    }
+    setActiveModule('gvino');
+    setActiveTab(tab);
+  }, [setActiveModule, setActiveTab]);
 
   // Loading gate — MUST come after every hook above. React requires an
   // unconditional, stable hook order across renders; early-returning before a
@@ -1304,7 +1373,7 @@ export default function App() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#FAF8F5] text-[#2c241e]">
         <Loader2 className="w-10 h-10 animate-spin text-emerald-800 mb-2" />
-        <span className="text-xs font-semibold tracking-wide uppercase font-serif">{state.lang === 'ka' ? 'VinOS ერთიანი პლატფორმა იტვირთება...' : 'Powering up VinOS Unified Platform...'}</span>
+        <span className="text-xs font-semibold tracking-wide uppercase font-serif">{isKa ? 'VinOS ერთიანი პლატფორმა იტვირთება...' : 'Powering up VinOS Unified Platform...'}</span>
       </div>
     );
   }
@@ -1350,7 +1419,7 @@ export default function App() {
             <div className="flex items-center gap-2 text-xs font-semibold">
               <span className="animate-pulse">⚡</span>
               <span>
-                {state.lang === 'ka'
+                {isKa
                   ? 'კავშირი გაწყდა. მარანი მუშაობს ოფლაინ რეჟიმში — ცვლილებები შეინახება ლოკალურად და სინქრონიზირდება კავშირის აღდგენისას.'
                   : 'Offline Mode Enabled — Using local VinOS cache. Unsaved modifications will auto-sync on reconnect.'}
               </span>
@@ -1361,16 +1430,16 @@ export default function App() {
                   const online = navigator.onLine;
                   setIsOnline(online);
                   if (online) {
-                    state.setToastMessage(state.lang === 'ka' ? 'კავშირი აღდგა! სინქრონიზაცია...' : 'Connection restored! Syncing...');
+                    state.setToastMessage(isKa ? 'კავშირი აღდგა! სინქრონიზაცია...' : 'Connection restored! Syncing...');
                     state.triggerSync();
                   } else {
-                    state.setToastMessage(state.lang === 'ka' ? 'კავშირი კვლავ არ არის.' : 'Still offline.');
+                    state.setToastMessage(isKa ? 'კავშირი კვლავ არ არის.' : 'Still offline.');
                   }
                 }
               }}
               className="px-2.5 py-1 bg-white hover:bg-stone-50 text-rose-700 rounded-lg text-[10px] font-black tracking-wide uppercase transition-all cursor-pointer shadow-3xs active:scale-95 shrink-0"
             >
-              🔄 {state.lang === 'ka' ? 'ხელახლა ცდა' : 'Retry'}
+              🔄 {isKa ? 'ხელახლა ცდა' : 'Retry'}
             </button>
           </motion.div>
         )}
@@ -1385,7 +1454,7 @@ export default function App() {
             role="status"
           >
             <span className="text-xs font-semibold">
-              {state.lang === 'ka'
+              {isKa
                 ? 'ხელმისაწვდომია ახალი ვერსია.'
                 : 'A new version of VinOS is ready.'}
             </span>
@@ -1393,11 +1462,11 @@ export default function App() {
               onClick={() => window.location.reload()}
               className="px-3 py-1 bg-white text-[#4e0e15] rounded-lg text-[10px] font-black tracking-wide uppercase cursor-pointer active:scale-95 transition-transform shrink-0"
             >
-              {state.lang === 'ka' ? 'განახლება' : 'Reload'}
+              {isKa ? 'განახლება' : 'Reload'}
             </button>
             <button
               onClick={() => setUpdateReady(false)}
-              aria-label={state.lang === 'ka' ? 'დახურვა' : 'Dismiss'}
+              aria-label={isKa ? 'დახურვა' : 'Dismiss'}
               className="text-white/60 hover:text-white text-sm leading-none cursor-pointer shrink-0"
             >
               ×
@@ -1498,9 +1567,9 @@ export default function App() {
         <button
           onClick={() => setHeaderHidden(false)}
           className="fixed top-1.5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 px-3 py-1 bg-[#4e0e15]/90 backdrop-blur text-amber-50 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-lg cursor-pointer hover:bg-[#4e0e15] animate-fade-in"
-          title={state.lang === 'ka' ? 'მენიუს ჩვენება' : 'Show menu'}
+          title={isKa ? 'მენიუს ჩვენება' : 'Show menu'}
         >
-          <ChevronDown className="w-3.5 h-3.5" /> {state.lang === 'ka' ? 'მენიუ' : 'Menu'}
+          <ChevronDown className="w-3.5 h-3.5" /> {isKa ? 'მენიუ' : 'Menu'}
         </button>
       )}
 
@@ -1539,7 +1608,7 @@ export default function App() {
         {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
           <>
             {/* Desktop: inline module tabs, with dropdown submenus for grouped areas */}
-            <nav aria-label={state.lang === 'ka' ? 'მოდულების ნავიგაცია' : 'Module navigation'} className="hidden md:flex items-center gap-0.5 min-w-0">
+            <nav aria-label={isKa ? 'მოდულების ნავიგაცია' : 'Module navigation'} className="hidden md:flex items-center gap-0.5 min-w-0">
               {moduleGroups.filter(g => g.id !== 'settings').map(group => {
                 const Icon = group.icon;
                 const isActive = activeModuleGroup.id === group.id;
@@ -1610,7 +1679,7 @@ export default function App() {
             <div className="relative md:hidden">
               <button
                 onClick={() => setOpenMenu(openMenu === 'mobile' ? null : 'mobile')}
-                aria-label={state.lang === 'ka' ? 'მენიუ' : 'Menu'}
+                aria-label={isKa ? 'მენიუ' : 'Menu'}
                 aria-haspopup="menu"
                 aria-expanded={openMenu === 'mobile'}
                 className="min-w-[40px] min-h-[40px] flex items-center justify-center bg-stone-50 border border-stone-200 text-[#4e0e15] rounded-xl cursor-pointer dark:bg-stone-900 dark:border-stone-800 dark:text-amber-300"
@@ -1675,8 +1744,8 @@ export default function App() {
               type="button"
               onClick={() => setIsScannerOpen(true)}
               className="min-h-10 min-w-10 rounded-xl border border-stone-200 bg-stone-50 p-2 text-stone-600 transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-[#651522] dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300"
-              title={state.lang === 'ka' ? 'ჭურჭლის ან პარტიის სკანირება' : 'Scan vessel or lot'}
-              aria-label={state.lang === 'ka' ? 'ჭურჭლის ან პარტიის სკანირება' : 'Scan vessel or lot'}
+              title={isKa ? 'ჭურჭლის ან პარტიის სკანირება' : 'Scan vessel or lot'}
+              aria-label={isKa ? 'ჭურჭლის ან პარტიის სკანირება' : 'Scan vessel or lot'}
             >
               <ScanLine className="h-4 w-4" />
             </button>
@@ -1687,10 +1756,10 @@ export default function App() {
               type="button"
               onClick={() => setIsCommandOpen(true)}
               className="hidden xl:flex items-center gap-2 w-40 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-left text-[11px] font-semibold text-stone-500 shadow-2xs transition-colors hover:border-[#4e0e15]/30 hover:bg-white hover:text-stone-800 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-amber-100"
-              title={state.lang === 'ka' ? 'ყველაფრის ძიება' : 'Search everything'}
+              title={isKa ? 'ყველაფრის ძიება' : 'Search everything'}
             >
               <Search className="w-3.5 h-3.5 text-[#4e0e15] dark:text-amber-300" />
-              <span className="flex-1 truncate">{state.lang === 'ka' ? 'ძიება…' : 'Search…'}</span>
+              <span className="flex-1 truncate">{isKa ? 'ძიება…' : 'Search…'}</span>
               <kbd className="rounded-md border border-stone-200 bg-white px-1.5 py-0.5 text-[9px] font-black text-stone-600 dark:bg-stone-950 dark:border-stone-700 dark:text-stone-300">⌘K</kbd>
             </button>
           )}
@@ -1705,6 +1774,7 @@ export default function App() {
                 onMarkAllAiRead={markAllAiNotificationsRead}
                 onSelect={handleSelectNotification}
                 lang={state.lang}
+                preferenceScopeKey={`${state.currentUser.username}:${activeBillingOrganizationId}`}
               />
             </Suspense>
           )}
@@ -1714,7 +1784,7 @@ export default function App() {
             <div className="relative">
               <button
                 onClick={() => setOpenMenu(openMenu === 'settings' ? null : 'settings')}
-                aria-label={state.lang === 'ka' ? 'პარამეტრები' : 'Settings menu'}
+                aria-label={isKa ? 'პარამეტრები' : 'Settings menu'}
                 aria-haspopup="menu"
                 aria-expanded={openMenu === 'settings'}
                 className={`min-w-[40px] min-h-[40px] md:min-w-0 md:min-h-0 md:p-2 flex items-center justify-center border rounded-xl cursor-pointer transition-colors ${openMenu === 'settings' ? 'bg-[#4e0e15] border-[#801323] text-amber-100' : 'bg-stone-50 border-stone-200 text-stone-600 hover:text-[#4e0e15] hover:bg-stone-100 dark:bg-stone-900 dark:border-stone-800 dark:text-stone-300'}`}
@@ -1739,14 +1809,14 @@ export default function App() {
                     >
                       <span className="flex items-center gap-2.5">
                         {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-[#4e0e15]" />}
-                        {darkMode ? (state.lang === 'ka' ? 'ნათელი თემა' : 'Light theme') : (state.lang === 'ka' ? 'მუქი თემა' : 'Dark theme')}
+                        {darkMode ? (isKa ? 'ნათელი თემა' : 'Light theme') : (isKa ? 'მუქი თემა' : 'Dark theme')}
                       </span>
                     </button>
 
                     {/* Language */}
                     <div className="px-3 py-2">
                       <div className="flex items-center gap-2 mb-1.5 text-[9px] font-black uppercase tracking-widest text-stone-500 dark:text-stone-400">
-                        <Languages className="w-3 h-3" />{state.lang === 'ka' ? 'ენა' : 'Language'}
+                        <Languages className="w-3 h-3" />{isKa ? 'ენა' : 'Language'}
                       </div>
                       <div className="flex gap-1">
                         {(['en', 'ka'] as const).map(code => (
@@ -1777,13 +1847,13 @@ export default function App() {
                     )}
                     {canViewModule('integrations') && (
                       <button role="menuitem" onClick={() => { switchModule('integrations'); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
-                        <PlugZap className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />{state.lang === 'ka' ? 'ინტეგრაციები' : 'Integration Hub'}
+                        <PlugZap className="w-4 h-4 text-[#4e0e15] dark:text-amber-300" />{isKa ? 'ინტეგრაციები' : 'Integration Hub'}
                       </button>
                     )}
 
                     <div className="my-1 border-t border-stone-200/70 dark:border-stone-800" />
                     <button role="menuitem" onClick={() => { setHeaderHidden(true); setOpenMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold cursor-pointer text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800">
-                      <ChevronUp className="w-4 h-4 text-stone-400" />{state.lang === 'ka' ? 'ზოლის დამალვა' : 'Hide menu bar'}
+                      <ChevronUp className="w-4 h-4 text-stone-400" />{isKa ? 'ზოლის დამალვა' : 'Hide menu bar'}
                     </button>
                   </motion.div>
                 )}
@@ -1803,9 +1873,9 @@ export default function App() {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => { void handleLogout(); }}
-                aria-label={state.lang === 'ka' ? 'გამოსვლა' : 'Log Out'}
+                aria-label={isKa ? 'გამოსვლა' : 'Log Out'}
                 className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl border border-stone-200 bg-[#faf8f6] p-0 text-[10px] font-mono font-extrabold uppercase tracking-wider text-[#801323] shadow-2xs transition-all duration-150 hover:bg-rose-50/50 sm:min-h-0 sm:min-w-0 sm:px-3 sm:py-2 dark:bg-stone-900 dark:border-stone-800 dark:text-rose-300"
-                title={state.lang === 'ka' ? 'გამოსვლა' : 'Log Out'}
+                title={isKa ? 'გამოსვლა' : 'Log Out'}
               >
                 <LogOut className="h-4 w-4 sm:hidden" aria-hidden="true" />
                 <span className="hidden sm:inline">{t.nav_logout || 'Logout'}</span>
@@ -1831,7 +1901,7 @@ export default function App() {
       )}
       {shouldShowReadOnlyNotice && (
         <div role="status" className="relative max-w-[1600px] w-full mx-auto px-4 py-2 border-x border-b border-amber-200 bg-amber-50 text-[10px] font-mono font-bold uppercase tracking-wide text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-          {state.lang === 'ka' ? 'ამ განყოფილებაში მხოლოდ ნახვა შეგიძლიათ' : 'View-only access in this area'}: {activePermissionModule.replace(/_/g, ' ')}
+          {isKa ? 'ამ განყოფილებაში მხოლოდ ნახვა შეგიძლიათ' : 'View-only access in this area'}: {activePermissionModule.replace(/_/g, ' ')}
         </div>
       )}
       </motion.div>
@@ -1845,7 +1915,7 @@ export default function App() {
         <div className="flex-1 flex items-center justify-center p-4 sm:p-8 bg-gradient-to-b from-[#f8f6f2] to-[#ece5dd] min-h-[82vh] dark:from-[#0d0b09] dark:to-[#1a1512]">
           <Suspense fallback={<ModuleLoader />}>
             <AuthAccountFlows
-              lang={state.lang === 'ka' ? 'ka' : 'en'}
+              lang={isKa ? 'ka' : 'en'}
               flow={authAccountFlow}
               resetToken={initialAuthLinkContext.resetToken}
               username={initialAuthLinkContext.username}
@@ -1867,7 +1937,7 @@ export default function App() {
                 </div>
                 <div>
                   <div className="font-black tracking-tight text-stone-900 dark:text-stone-100">VinOS</div>
-                  <div className="text-[10px] font-medium text-stone-500">{state.lang === 'ka' ? 'ვენახიდან ბოთლამდე' : 'Vineyard to bottle'}</div>
+                  <div className="text-[10px] font-medium text-stone-500">{isKa ? 'ვენახიდან ბოთლამდე' : 'Vineyard to bottle'}</div>
                 </div>
               </div>
 
@@ -1878,21 +1948,21 @@ export default function App() {
                     <div className="min-w-0">
                       <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
                         {state.verificationPending.approvalOnly
-                          ? (state.lang === 'ka' ? 'ანგარიში დასამტკიცებელია' : 'Waiting for approval')
-                          : (state.lang === 'ka' ? 'დაადასტურეთ ელფოსტა' : 'Verify your email')}
+                          ? (isKa ? 'ანგარიში დასამტკიცებელია' : 'Waiting for approval')
+                          : (isKa ? 'დაადასტურეთ ელფოსტა' : 'Verify your email')}
                       </h3>
                       {!state.verificationPending.approvalOnly && (
                         <p className="text-[12px] text-amber-800/90 mt-0.5 dark:text-amber-200/80">
-                          {state.lang === 'ka'
+                          {isKa
                             ? 'გამოგიგზავნეთ დადასტურების ბმული მისამართზე '
                             : 'We sent a confirmation link to '}
                           <strong className="break-all">{state.verificationPending.email}</strong>
-                          {state.lang === 'ka' ? '. გახსენით ბმული ანგარიშის გასააქტიურებლად.' : '. Open it to activate your account.'}
+                          {isKa ? '. გახსენით ბმული ანგარიშის გასააქტიურებლად.' : '. Open it to activate your account.'}
                         </p>
                       )}
                       {state.verificationPending.requiresApproval && (
                         <p className="text-[12px] text-amber-800/90 mt-1.5 dark:text-amber-200/80">
-                          {state.lang === 'ka'
+                          {isKa
                             ? 'თქვენი მოთხოვნა გადაეგზავნა ადმინისტრატორს. შესვლა შესაძლებელი იქნება დამტკიცების შემდეგ — შეტყობინებას ელფოსტაზე მიიღებთ.'
                             : 'Your request was sent to the administrator for approval. Sign-in unlocks once it is approved — we will email you either way.'}
                         </p>
@@ -1904,7 +1974,7 @@ export default function App() {
                             onClick={() => state.handleResendVerification(state.verificationPending!.email)}
                             className="text-[11px] font-bold uppercase tracking-wide text-amber-900 bg-amber-200/70 hover:bg-amber-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors"
                           >
-                            {state.lang === 'ka' ? 'ხელახლა გაგზავნა' : 'Resend link'}
+                            {isKa ? 'ხელახლა გაგზავნა' : 'Resend link'}
                           </button>
                         )}
                         <button
@@ -1912,7 +1982,7 @@ export default function App() {
                           onClick={() => state.setVerificationPending(null)}
                           className="text-[11px] font-semibold text-amber-800/70 hover:text-amber-900 cursor-pointer"
                         >
-                          {state.lang === 'ka' ? 'დახურვა' : 'Dismiss'}
+                          {isKa ? 'დახურვა' : 'Dismiss'}
                         </button>
                       </div>
                       {state.verificationPending.devVerifyUrl && (
@@ -1920,7 +1990,7 @@ export default function App() {
                           href={state.verificationPending.devVerifyUrl}
                           className="block mt-2.5 text-[10px] font-mono text-amber-700 underline break-all"
                         >
-                          {state.lang === 'ka' ? 'დეველოპერ ბმული: ' : 'Dev link: '}{state.verificationPending.devVerifyUrl}
+                          {isKa ? 'დეველოპერ ბმული: ' : 'Dev link: '}{state.verificationPending.devVerifyUrl}
                         </a>
                       )}
                       {state.verificationPending.devApprovalUrl && (
@@ -1928,7 +1998,7 @@ export default function App() {
                           href={state.verificationPending.devApprovalUrl}
                           className="block mt-1.5 text-[10px] font-mono text-amber-700 underline break-all"
                         >
-                          {state.lang === 'ka' ? 'დეველოპერ დამტკიცება: ' : 'Dev approval link: '}{state.verificationPending.devApprovalUrl}
+                          {isKa ? 'დეველოპერ დამტკიცება: ' : 'Dev approval link: '}{state.verificationPending.devApprovalUrl}
                         </a>
                       )}
                     </div>
@@ -1939,7 +2009,7 @@ export default function App() {
               {isRegistering ? (
                 <Suspense fallback={<ModuleLoader />}>
                   <RegistrationPanel
-                    lang={state.lang === 'ka' ? 'ka' : 'en'}
+                    lang={isKa ? 'ka' : 'en'}
                     error={state.loginError}
                     submitting={authSubmitting}
                     onGoogle={() => {
@@ -1962,7 +2032,7 @@ export default function App() {
                           email: submission.email,
                           fullName: `${submission.firstName} ${submission.lastName}`.trim(),
                           passcode: submission.passcode,
-                          language: state.lang === 'ka' ? 'ka' : 'en',
+                          language: isKa ? 'ka' : 'en',
                           rememberMe: true,
                           companyProfile: {
                             companyName: submission.companyName,
@@ -1984,7 +2054,7 @@ export default function App() {
               ) : (
                 <Suspense fallback={<ModuleLoader />}>
                   <SignInPanel
-                    lang={state.lang === 'ka' ? 'ka' : 'en'}
+                    lang={isKa ? 'ka' : 'en'}
                     error={state.loginError}
                     submitting={authSubmitting}
                     demoEnabled={state.demoLoginEnabled}
@@ -2122,12 +2192,45 @@ export default function App() {
             auditLogs={state.auditLogs}
             grapeIntakes={state.grapeIntakes}
             cellarOps={state.cellarOps}
+            qualitySops={state.qualitySops}
+            purchaseOrders={state.purchaseOrders}
+            productionPlans={state.productionPlans}
+            recallCases={state.recallCases}
             onToggleTaskStatus={state.handleToggleTaskStatus}
             setActiveModule={state.setActiveModule}
             setActiveTab={state.setActiveTab}
             onOpenOnboarding={openOnboarding}
+            onOpenWorkItem={openWorkflowItem}
           />
         </Suspense>
+      ) : state.activeModule === 'work' ? (
+        <main className="app-content mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6">
+          <Suspense fallback={<ModuleLoader />}>
+            <OperationsControlTab
+              lang={state.lang}
+              currentUsername={state.currentUser.username}
+              currentUserName={state.currentUser.fullName}
+              currentRole={state.currentUser.role}
+              tasks={state.tasks}
+              qualitySops={state.qualitySops}
+              purchaseOrders={state.purchaseOrders}
+              productionPlans={state.productionPlans}
+              recallCases={state.recallCases}
+              queueVisibility={{
+                tasks: canViewModule('gvino', 'tasks'),
+                sops: canViewModule('gvino', 'quality'),
+                purchaseOrders: canViewModule('procurement'),
+                productionPlans: canViewModule('gvino', 'planner'),
+                approvals: state.currentUser.role === 'Owner/Admin' ? 'all' : 'own',
+                recalls: canViewModule('recall'),
+                includeTeamWork: state.currentUser.role === 'Owner/Admin',
+              }}
+              focusApprovalId={workflowFocus?.tab === 'control' ? workflowFocus.targetId : undefined}
+              onNavigate={openWorkflowItem}
+              setToastMessage={state.setToastMessage}
+            />
+          </Suspense>
+        </main>
       ) : state.activeModule === 'integrations' ? (
         <Suspense fallback={<ModuleLoader />}>
           <IntegrationHubTab
@@ -2261,6 +2364,54 @@ export default function App() {
             canViewBottling={salesPermissions.canViewBottling}
           />
         </Suspense>
+      ) : state.activeModule === 'recall' ? (
+        <main className="app-content mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6">
+          <Suspense fallback={<ModuleLoader />}>
+            <RecallCockpitTab
+              lang={state.lang}
+              currentUsername={state.currentUser.username}
+              currentUserName={state.currentUser.fullName}
+              lots={state.lots}
+              grapeIntakes={state.grapeIntakes}
+              harvests={state.harvests}
+              vessels={state.vessels}
+              bottlingRuns={state.bottlingRuns}
+              cellarOps={state.cellarOps}
+              transfers={state.transfers}
+              storageLocations={state.storageLocations}
+              stockMovements={state.stockMovements}
+              salesOrders={state.salesOrders}
+              salesDispatches={state.salesDispatches}
+              tasks={state.tasks}
+              recallCases={state.recallCases}
+              focusCaseId={recallFocusCaseId}
+              onUpdateRecallCases={state.setRecallCases}
+              onAddTask={state.handleAddNewTask}
+              canManage={canAccess(state.currentUser.role, 'recall', 'update')}
+              canCreateTasks={canAccess(state.currentUser.role, 'tasks', 'create')}
+              setToastMessage={state.setToastMessage}
+            />
+          </Suspense>
+        </main>
+      ) : state.activeModule === 'procurement' ? (
+        <main className="app-content mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6">
+          <Suspense fallback={<ModuleLoader />}>
+            <ProcurementTab
+              lang={state.lang}
+              currentUsername={state.currentUser.username}
+              accountingCurrency={state.companyProfile.currency || 'GEL'}
+              inventory={state.inventory}
+              purchaseOrders={state.purchaseOrders}
+              onUpdatePurchaseOrders={state.setPurchaseOrders}
+              onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
+              canCreate={canAccess(state.currentUser.role, 'procurement', 'create')}
+              canUpdate={canAccess(state.currentUser.role, 'procurement', 'update')}
+              canReceive={canAccess(state.currentUser.role, 'inventory', 'update') && canAccess(state.currentUser.role, 'costs', 'create')}
+              focusOrderId={workflowFocus?.tab === 'procurement' ? workflowFocus.targetId : undefined}
+              setToastMessage={state.setToastMessage}
+            />
+          </Suspense>
+        </main>
       ) : state.activeModule === 'analytics' ? (
         billingAllows('advanced_reports') ? (
           <Suspense fallback={<ModuleLoader />}>
@@ -2282,9 +2433,9 @@ export default function App() {
           <main className="mx-auto w-full max-w-3xl flex-1 p-6">
             <div className="rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center dark:border-amber-900 dark:bg-amber-950/30">
               <BarChart3 className="mx-auto h-10 w-10 text-amber-700 dark:text-amber-300" />
-              <h2 className="mt-4 font-serif text-2xl font-semibold text-stone-950 dark:text-white">{state.lang === 'ka' ? 'გაფართოებული ანგარიშები' : 'Advanced reports'}</h2>
-              <p className="mx-auto mt-2 max-w-xl text-sm text-stone-600 dark:text-stone-300">{state.lang === 'ka' ? 'წლების შედარება და მარჟის გაფართოებული ანალიზი ხელმისაწვდომია Professional გეგმიდან.' : 'Year comparison and advanced margin analysis are available on the Professional plan and above.'}</p>
-              <button type="button" onClick={() => window.location.assign('/pricing')} className="mt-5 min-h-11 rounded-xl bg-[#651522] px-5 text-xs font-black text-white">{state.lang === 'ka' ? 'გეგმების ნახვა' : 'View plans'}</button>
+              <h2 className="mt-4 font-serif text-2xl font-semibold text-stone-950 dark:text-white">{isKa ? 'გაფართოებული ანგარიშები' : 'Advanced reports'}</h2>
+              <p className="mx-auto mt-2 max-w-xl text-sm text-stone-600 dark:text-stone-300">{isKa ? 'წლების შედარება და მარჟის გაფართოებული ანალიზი ხელმისაწვდომია Professional გეგმიდან.' : 'Year comparison and advanced margin analysis are available on the Professional plan and above.'}</p>
+              <button type="button" onClick={() => window.location.assign('/pricing')} className="mt-5 min-h-11 rounded-xl bg-[#651522] px-5 text-xs font-black text-white">{isKa ? 'გეგმების ნახვა' : 'View plans'}</button>
             </div>
           </main>
         )
@@ -2321,7 +2472,7 @@ export default function App() {
           <aside className={`app-sidebar shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} lg:self-start lg:sticky lg:top-20 lg:max-h-[calc(100dvh-9rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1 lg:pb-2 lg:[scrollbar-gutter:stable] transition-[width] duration-300`}>
             <div className="lg:hidden rounded-xl border border-stone-200 bg-white p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
               <label htmlFor="mobile-winery-section" className="mb-1.5 block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">
-                {state.lang === 'ka' ? 'მარნის განყოფილება' : 'Winery section'}
+                {isKa ? 'მარნის განყოფილება' : 'Winery section'}
               </label>
               <select
                 id="mobile-winery-section"
@@ -2344,7 +2495,7 @@ export default function App() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
-                      {state.lang === 'ka' ? 'დღის ფოკუსი' : 'Today focus'}
+                      {isKa ? 'დღის ფოკუსი' : 'Today focus'}
                     </span>
                     <strong className="mt-1 block text-sm font-black text-stone-900 dark:text-amber-100">
                       {activeWineryTab?.label || activeModuleGroup.label}
@@ -2355,7 +2506,7 @@ export default function App() {
                       ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
                       : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
                   }`}>
-                    {urgentAlertCount > 0 ? `${urgentAlertCount} ${state.lang === 'ka' ? 'გადაუდებელი' : 'urgent'}` : (state.lang === 'ka' ? 'სტაბილური' : 'steady')}
+                    {urgentAlertCount > 0 ? `${urgentAlertCount} ${isKa ? 'გადაუდებელი' : 'urgent'}` : (isKa ? 'სტაბილური' : 'steady')}
                   </span>
                 </div>
                 {(canViewModule('gvino', 'tasks') || canViewModule('gvino', 'fermentation')) && (
@@ -2368,7 +2519,7 @@ export default function App() {
                     )}
                     {canViewModule('gvino', 'fermentation') && (
                       <button type="button" onClick={() => state.setActiveTab('fermentation')} className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-                        <span className="block text-stone-400">{state.lang === 'ka' ? 'დუღილი' : 'Ferments'}</span>
+                        <span className="block text-stone-400">{isKa ? 'დუღილი' : 'Ferments'}</span>
                         <strong className="text-lg text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
                       </button>
                     )}
@@ -2377,7 +2528,7 @@ export default function App() {
                 {canViewModule('gvino', 'vessels') && (
                 <div className="mt-3">
                   <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
-                    <span>{state.lang === 'ka' ? 'ტევადობა' : 'Capacity'}</span>
+                    <span>{isKa ? 'ტევადობა' : 'Capacity'}</span>
                     <span>{cellarCapacityPct}%</span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
@@ -2387,7 +2538,7 @@ export default function App() {
                     />
                   </div>
                   <span className="mt-2 block text-[10px] font-semibold text-stone-400">
-                    {state.lang === 'ka'
+                    {isKa
                       ? `${occupiedTanksCount} დაკავებული ჭურჭელი · საშ. ${averageOccupiedTemp} °C`
                       : `${occupiedTanksCount} occupied vessels · avg ${averageOccupiedTemp} °C`}
                   </span>
@@ -2397,25 +2548,46 @@ export default function App() {
             )}
 
             <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
-              {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">{state.lang === 'ka' ? 'განყოფილებები' : 'Sections'}</span>}
+              {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">{isKa ? 'განყოფილებები' : 'Sections'}</span>}
               <button
                 onClick={() => state.setIsSidebarCollapsed(!state.isSidebarCollapsed)}
                 className="ml-auto p-1.5 text-stone-400 hover:text-[#4e0e15] hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
-                title={state.isSidebarCollapsed ? (state.lang === 'ka' ? 'მენიუს გაშლა' : 'Expand menu') : (state.lang === 'ka' ? 'მენიუს ჩაკეცვა' : 'Collapse menu')}
+                title={state.isSidebarCollapsed ? (isKa ? 'მენიუს გაშლა' : 'Expand menu') : (isKa ? 'მენიუს ჩაკეცვა' : 'Collapse menu')}
               >
                 {state.isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
               </button>
             </div>
 
             <div className="hidden lg:flex lg:flex-col gap-3 lg:overflow-visible">
-              {accessibleWineryTabGroups.map(group => (
-                <div key={group.label} className="space-y-1">
+              {accessibleWineryTabGroups.map(group => {
+                const isExpanded = !group.collapsible
+                  || state.isSidebarCollapsed
+                  || expandedWineryGroups.has(group.id);
+                return (
+                <div key={group.id} className="space-y-1">
                   {!state.isSidebarCollapsed && (
-                    <div className="px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
-                      {group.label}
-                    </div>
+                    group.collapsible ? (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedWineryGroups(previous => {
+                          const next = new Set(previous);
+                          if (next.has(group.id)) next.delete(group.id);
+                          else next.add(group.id);
+                          return next;
+                        })}
+                        aria-expanded={isExpanded}
+                        className="flex w-full items-center justify-between px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+                      >
+                        <span>{group.label}</span>
+                        <ChevronDown className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      </button>
+                    ) : (
+                      <div className="px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
+                        {group.label}
+                      </div>
+                    )
                   )}
-                  <div className="space-y-1">
+                  {isExpanded && <div className="space-y-1">
                     {group.tabs.map(tab => {
                       const Icon = tab.icon;
                       const isActive = state.activeTab === tab.id;
@@ -2438,9 +2610,9 @@ export default function App() {
                         </button>
                       );
                     })}
-                  </div>
+                  </div>}
                 </div>
-              ))}
+              )})}
             </div>
           </aside>
 
@@ -2448,7 +2620,7 @@ export default function App() {
           <section className="app-content flex-1 min-w-0 space-y-4">
             {!canViewModule('gvino', state.activeTab) ? (
               <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-                {state.lang === 'ka'
+                {isKa
                   ? 'თქვენს როლს ამ განყოფილებაზე წვდომა არ აქვს. ხელმისაწვდომ განყოფილებაზე გადაგიყვანთ.'
                   : 'Your workspace role cannot open this area. Redirecting to an available section.'}
               </div>
@@ -2478,6 +2650,8 @@ export default function App() {
                 fermLogs={state.fermLogs}
                 labLogs={state.labLogs}
                 tasks={state.tasks}
+                currentUsername={state.currentUser.username}
+                currentUserName={state.currentUser.fullName}
                 chartLotId={state.chartLotId}
                 setChartLotId={state.setChartLotId}
                 selectedTankId={state.selectedTankId}
@@ -2522,25 +2696,6 @@ export default function App() {
               </Suspense>
             )}
 
-            {/* A2. UNIFIED TODAY QUEUE & APPROVALS */}
-            {state.activeTab === 'control' && (
-              <OperationsControlTab
-                lang={state.lang}
-                currentUsername={state.currentUser.username}
-                currentRole={state.currentUser.role}
-                tasks={state.tasks}
-                qualitySops={state.qualitySops}
-                purchaseOrders={state.purchaseOrders}
-                productionPlans={state.productionPlans}
-                recallCases={state.recallCases}
-                onNavigate={(tab, targetId) => {
-                  if (tab === 'recall') setRecallFocusCaseId(targetId || '');
-                  state.setActiveTab(tab);
-                }}
-                setToastMessage={state.setToastMessage}
-              />
-            )}
-
             {/* B. VESSELS TAB */}
             {state.activeTab === 'vessels' && (
               <div className="space-y-4 text-stone-800 animate-fade-in">
@@ -2549,6 +2704,7 @@ export default function App() {
                   vessels={state.vessels}
                   lots={state.lots}
                   onUpdateVessels={state.setVessels}
+                  currentUserName={state.currentUser.fullName || state.currentUser.username}
                   {...cellarPermissions.vessels}
                   canExecuteTransfer={cellarPermissions.transfers.canExecuteTransfer}
                   onSelectTank={state.setSelectedTankId}
@@ -2608,8 +2764,6 @@ export default function App() {
                 stockMovements={state.stockMovements}
                 salesOrders={state.salesOrders}
                 salesDispatches={state.salesDispatches}
-                inventory={state.inventory}
-                onUpdateInventory={state.setInventory}
                 currency={state.companyProfile.currency || 'GEL'}
                 setActiveTab={state.setActiveTab}
                 setSelectedTankId={state.setSelectedTankId}
@@ -2618,6 +2772,11 @@ export default function App() {
                 setChartLotId={state.setChartLotId}
                 setLabLotId={state.setLabLotId}
                 currentUserName={state.currentUser.fullName}
+                currentUsername={state.currentUser.username}
+                auditLogs={state.auditLogs}
+                onUpdateAuditLogs={state.setAuditLogs}
+                onApplyLotStageTransitionCommandResponse={state.applyLotStageTransitionCommandResponse}
+                setToastMessage={state.setToastMessage}
               />
             )}
 
@@ -2636,34 +2795,6 @@ export default function App() {
                 salesDispatches={state.salesDispatches}
                 certificationRecords={state.certificationRecords}
                 focusLotId={lineageFocusLotId}
-              />
-            )}
-
-            {/* C1A. RECALL & CONTAINMENT */}
-            {state.activeTab === 'recall' && (
-              <RecallCockpitTab
-                lang={state.lang}
-                currentUsername={state.currentUser.username}
-                currentUserName={state.currentUser.fullName}
-                lots={state.lots}
-                grapeIntakes={state.grapeIntakes}
-                harvests={state.harvests}
-                vessels={state.vessels}
-                bottlingRuns={state.bottlingRuns}
-                cellarOps={state.cellarOps}
-                transfers={state.transfers}
-                storageLocations={state.storageLocations}
-                stockMovements={state.stockMovements}
-                salesOrders={state.salesOrders}
-                salesDispatches={state.salesDispatches}
-                tasks={state.tasks}
-                recallCases={state.recallCases}
-                focusCaseId={recallFocusCaseId}
-                onUpdateRecallCases={state.setRecallCases}
-                onAddTask={state.handleAddNewTask}
-                canManage={canAccess(state.currentUser.role, 'lots', 'update')}
-                canCreateTasks={canAccess(state.currentUser.role, 'tasks', 'create')}
-                setToastMessage={state.setToastMessage}
               />
             )}
 
@@ -2694,6 +2825,7 @@ export default function App() {
                 returnToVesselId={operationReturnVesselId || undefined}
                 onOperationLogged={handleVesselOperationLogged}
                 clearPrefill={clearOperationPrefill}
+                onNavigateWorkflow={navigateCellarWorkflow}
                 {...cellarPermissions.operations}
                 setToastMessage={state.setToastMessage}
               />
@@ -2762,6 +2894,14 @@ export default function App() {
                 setLabLotId={state.setLabLotId}
                 labTankId={state.labTankId}
                 setLabTankId={state.setLabTankId}
+                labDate={state.labDate}
+                setLabDate={state.setLabDate}
+                labPH={state.labPH}
+                setLabPH={state.setLabPH}
+                labMalic={state.labMalic}
+                setLabMalic={state.setLabMalic}
+                labTechnician={state.labTechnician}
+                setLabTechnician={state.setLabTechnician}
                 labABV={state.labABV}
                 setLabABV={state.setLabABV}
                 labVA={state.labVA}
@@ -2789,6 +2929,8 @@ export default function App() {
                 {...cellarPermissions.bottling}
                 lots={state.lots}
                 onUpdateLots={state.setLots}
+                vessels={state.vessels}
+                onUpdateVessels={state.setVessels}
                 history={state.bottlingRuns}
                 onUpdateHistory={state.setBottlingRuns}
                 inventory={state.inventory}
@@ -2836,23 +2978,7 @@ export default function App() {
                 canPostInvoiceCosts={canAccess(state.currentUser.role, 'costs', 'create') && billingAllows('data_import_export')}
                 accountingCurrency={state.companyProfile.currency || 'GEL'}
                 onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
-              />
-            )}
-
-            {/* H1. PROCUREMENT */}
-            {state.activeTab === 'procurement' && (
-              <ProcurementTab
-                lang={state.lang}
-                currentUsername={state.currentUser.username}
-                accountingCurrency={state.companyProfile.currency || 'GEL'}
-                inventory={state.inventory}
-                purchaseOrders={state.purchaseOrders}
-                onUpdatePurchaseOrders={state.setPurchaseOrders}
-                onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
-                canCreate={canAccess(state.currentUser.role, 'inventory', 'create')}
-                canUpdate={canAccess(state.currentUser.role, 'inventory', 'update')}
-                canReceive={canAccess(state.currentUser.role, 'inventory', 'update') && canAccess(state.currentUser.role, 'costs', 'create')}
-                setToastMessage={state.setToastMessage}
+                onOpenProcurement={openProcurement}
               />
             )}
 
@@ -2868,6 +2994,7 @@ export default function App() {
                 canCreate={canAccess(state.currentUser.role, 'tasks', 'create')}
                 canUpdate={canAccess(state.currentUser.role, 'tasks', 'update')}
                 canDelete={canAccess(state.currentUser.role, 'tasks', 'delete')}
+                focusSopId={workflowFocus?.tab === 'quality' ? workflowFocus.targetId : undefined}
                 setToastMessage={state.setToastMessage}
               />
             )}
@@ -2886,6 +3013,7 @@ export default function App() {
                 canCreate={canAccess(state.currentUser.role, 'planning', 'create')}
                 canUpdate={canAccess(state.currentUser.role, 'planning', 'update')}
                 canDelete={canAccess(state.currentUser.role, 'planning', 'delete')}
+                focusPlanId={workflowFocus?.tab === 'planner' ? workflowFocus.targetId : undefined}
                 setToastMessage={state.setToastMessage}
               />
             )}
@@ -2925,6 +3053,7 @@ export default function App() {
               <TasksTab
                 lang={state.lang}
                 currentUsername={state.currentUser.username}
+                currentUserName={state.currentUser.fullName}
                 tasks={state.tasks}
                 onToggleTaskStatus={state.handleToggleTaskStatus}
                 onDeleteTask={state.handleDeleteTask}
@@ -2940,7 +3069,7 @@ export default function App() {
                 setPrefilledTaskPriority={state.setPrefilledTaskPriority}
                 prefilledTaskDesc={state.prefilledTaskDesc}
                 setPrefilledTaskDesc={state.setPrefilledTaskDesc}
-                focusTaskId={taskDeepLinkId}
+                focusTaskId={taskDeepLinkId || (workflowFocus?.tab === 'tasks' ? workflowFocus.targetId : undefined)}
               />
             )}
 
@@ -3005,7 +3134,7 @@ export default function App() {
           >
             <div className="flex items-center gap-2 rounded-xl bg-white px-5 py-4 text-xs font-bold text-stone-700 shadow-2xl">
               <Loader2 className="h-4 w-4 animate-spin text-[#4e0e15]" aria-hidden="true" />
-              {state.lang === 'ka' ? 'კონფლიქტების მიმოხილვა იტვირთება…' : 'Loading conflict review…'}
+              {isKa ? 'კონფლიქტების მიმოხილვა იტვირთება…' : 'Loading conflict review…'}
             </div>
           </div>
         )}>
@@ -3030,7 +3159,7 @@ export default function App() {
           onClick={() => setIsConflictResolutionOpen(true)}
           className="fixed bottom-5 right-5 z-40 rounded-full border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-950 shadow-lg hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700"
         >
-          {state.lang === 'ka'
+          {isKa
             ? `სინქრონიზაციის ${state.syncConflicts.length} კონფლიქტის მოგვარება`
             : `Review ${state.syncConflicts.length} sync conflict${state.syncConflicts.length === 1 ? '' : 's'}`}
         </button>
@@ -3039,7 +3168,7 @@ export default function App() {
       {state.isLoggedIn && showOnboarding && (
         <Suspense fallback={null}>
           <WorkspaceSetupDialog
-            lang={state.lang === 'ka' ? 'ka' : 'en'}
+            lang={isKa ? 'ka' : 'en'}
             required={needsRegistrationCompletion}
             user={state.currentUser}
             companyProfile={state.companyProfile}
@@ -3062,7 +3191,7 @@ export default function App() {
                 const completed = await state.handleCompleteRegistration({
                   fullName: state.currentUser.fullName,
                   role: state.currentUser.role,
-                  language: state.lang === 'ka' ? 'ka' : 'en',
+                  language: isKa ? 'ka' : 'en',
                   companyProfile: companySetup,
                   enabledModules: setup.enabledModules,
                   enabledWidgets: setup.enabledWidgets,
@@ -3124,7 +3253,7 @@ export default function App() {
                 title="Open AI Winemaker Assistant"
               >
                 <BrainCircuitIcon className="h-4 w-4" />
-                <span className="text-xs font-bold">{state.lang === 'ka' ? 'AI მეღვინე' : 'AI Winemaker'}</span>
+                <span className="text-xs font-bold">{isKa ? 'AI მეღვინე' : 'AI Winemaker'}</span>
               </motion.button>
             )}
           </AnimatePresence>
@@ -3172,7 +3301,7 @@ export default function App() {
                     </div>
                     <button
                       onClick={() => setIsAiDrawerOpen(false)}
-                      aria-label={state.lang === 'ka' ? 'AI ასისტენტის დახურვა' : 'Close AI assistant'}
+                      aria-label={isKa ? 'AI ასისტენტის დახურვა' : 'Close AI assistant'}
                       className="p-1.5 rounded-full hover:bg-stone-200/50 dark:hover:bg-stone-850 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 transition-colors cursor-pointer"
                     >
                       <X className="w-4 h-4" />
@@ -3226,7 +3355,7 @@ export default function App() {
 
       {!state.isLoggedIn && (
         <footer className="app-footer py-5 px-6 text-center mt-auto text-[10px] font-medium">
-          {state.lang === 'ka'
+          {isKa
             ? 'VinOS • ვენახიდან ბოთლამდე'
             : 'VinOS · Vineyard to bottle'}
         </footer>

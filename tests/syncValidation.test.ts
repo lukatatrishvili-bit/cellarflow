@@ -2016,6 +2016,32 @@ describe('sync payload validation', () => {
     expect(() => validateSyncPayload(cyclic, { productionPlans: cyclic.productionPlans }, undefined)).toThrow(/dependency cycle/i);
   });
 
+  it('enforces production-plan status order and completed prerequisites on the server', () => {
+    const prerequisite = {
+      id: 'plan-prepare', title: 'Prepare vessel', kind: 'sanitation', status: 'in_progress',
+      startDate: '2026-08-13', endDate: '2026-08-13', vesselIds: [], dependencyIds: [],
+    };
+    const transfer = {
+      id: 'plan-transfer', title: 'Transfer', kind: 'transfer', status: 'planned',
+      startDate: '2026-08-14', endDate: '2026-08-15', vesselIds: [], dependencyIds: ['plan-prepare'],
+    };
+    const db = operationalDb({ productionPlans: [prerequisite, transfer] });
+
+    expect(() => validateSyncPayload(db, {
+      productionPlans: [{ ...transfer, status: 'completed' }],
+    }, undefined)).toThrow(/cannot move from planned to completed/i);
+    expect(() => validateSyncPayload(db, {
+      productionPlans: [{ ...transfer, status: 'ready' }],
+    }, undefined)).toThrow(/Complete prerequisite work first/i);
+
+    const readyDb = operationalDb({
+      productionPlans: [{ ...prerequisite, status: 'completed' }, transfer],
+    });
+    expect(() => validateSyncPayload(readyDb, {
+      productionPlans: [{ ...transfer, status: 'ready' }],
+    }, undefined)).not.toThrow();
+  });
+
   it('freezes recall exposure and makes closure terminal', () => {
     const recall = {
       id: 'recall-1', lotId: 'lot-1', title: 'Recall lot-1', reason: 'Cork issue', status: 'active',

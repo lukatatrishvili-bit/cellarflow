@@ -3,11 +3,14 @@ import { AlertTriangle, CalendarRange, CheckCircle2, Plus, Sparkles, Trash2 } fr
 import type { Language } from '../lib/language';
 import type { HarvestRecord, Vessel, VineyardBlock, WineLot } from '../lib/wineryState';
 import {
+  allowedProductionPlanStatuses,
   detectProductionPlanConflicts,
+  productionPlanTransitionIssue,
   type ProductionPlanItem,
   type ProductionPlanKind,
   type ProductionPlanStatus,
 } from '../lib/operationsControl';
+import { localISODate } from '../lib/weatherApi';
 
 interface ProductionPlannerTabProps {
   lang: Language;
@@ -21,12 +24,13 @@ interface ProductionPlannerTabProps {
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
+  focusPlanId?: string;
   setToastMessage?: (message: string | null) => void;
 }
 
 const kinds: ProductionPlanKind[] = ['harvest', 'intake', 'transfer', 'fermentation', 'lab', 'bottling', 'sanitation', 'procurement', 'dispatch', 'other'];
 const statuses: ProductionPlanStatus[] = ['planned', 'ready', 'blocked', 'in_progress', 'completed', 'cancelled'];
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localISODate();
 function plusDays(date: string, days: number): string {
   const value = new Date(`${date}T00:00:00.000Z`);
   value.setUTCDate(value.getUTCDate() + days);
@@ -56,6 +60,16 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
   const days = React.useMemo(() => Array.from({ length: 14 }, (_, index) => plusDays(windowStart, index)), [windowStart]);
   const conflicts = React.useMemo(() => detectProductionPlanConflicts(props.productionPlans, props.vessels), [props.productionPlans, props.vessels]);
   const active = React.useMemo(() => [...props.productionPlans].sort((a, b) => a.startDate.localeCompare(b.startDate)), [props.productionPlans]);
+
+  React.useEffect(() => {
+    if (!props.focusPlanId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(`plan-${props.focusPlanId}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.focusPlanId, props.productionPlans]);
 
   const addPlan = () => {
     if (!title.trim() || !startDate || !endDate || endDate < startDate) {
@@ -118,6 +132,15 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
 
   const update = (id: string, patch: Partial<ProductionPlanItem>) => props.onUpdateProductionPlans(current => current.map(item => item.id === id ? { ...item, ...patch, lastModified: new Date().toISOString() } : item));
 
+  const changeStatus = (item: ProductionPlanItem, status: ProductionPlanStatus) => {
+    const issue = productionPlanTransitionIssue(item, status, props.productionPlans, conflicts);
+    if (issue) {
+      props.setToastMessage?.(ka ? `სტატუსი ვერ შეიცვალა: ${issue}` : `Status was not changed: ${issue}`);
+      return;
+    }
+    update(item.id, { status });
+  };
+
   const removePlan = (id: string) => {
     const dependents = props.productionPlans.filter(item => item.dependencyIds.includes(id));
     if (dependents.length) {
@@ -164,7 +187,73 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
 
     <section className="overflow-x-auto rounded-2xl border border-stone-200 bg-white shadow-sm dark:border-stone-800 dark:bg-stone-900"><div className="flex items-center justify-between border-b border-stone-200 p-3 dark:border-stone-800"><button type="button" onClick={() => setWindowStart(plusDays(windowStart, -14))} className="rounded-lg border px-3 py-2 text-xs">← 14d</button><strong className="text-xs">{windowStart} — {days[13]}</strong><button type="button" onClick={() => setWindowStart(plusDays(windowStart, 14))} className="rounded-lg border px-3 py-2 text-xs">14d →</button></div><div className="grid min-w-[1120px]" style={{ gridTemplateColumns: 'repeat(14, minmax(80px, 1fr))' }}>{days.map(day => <div key={day} className={`min-h-72 border-r border-stone-100 p-2 dark:border-stone-800 ${day === today() ? 'bg-violet-50 dark:bg-violet-950/20' : ''}`}><div className="mb-3 text-center text-[9px] font-black uppercase text-stone-500">{new Date(`${day}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div><div className="space-y-2">{active.filter(item => item.startDate <= day && item.endDate >= day && !['cancelled'].includes(item.status)).map(item => <div key={item.id} title={`${item.startDate} — ${item.endDate}`} className={`rounded-lg p-2 text-[9px] font-bold ${kindColor(item.kind)}`}>{item.title}<span className="mt-1 block opacity-65">{item.kind}</span></div>)}</div></div>)}</div></section>
 
-    <section className="space-y-3">{active.map(item => { const itemConflicts = conflicts.filter(conflict => conflict.itemId === item.id); return <article id={`plan-${item.id}`} key={item.id} className="rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${kindColor(item.kind)}`}>{item.kind}</span>{itemConflicts.length === 0 && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}<strong className="truncate text-sm">{item.title}</strong></div><p className="mt-2 text-xs text-stone-500">{item.startDate} — {item.endDate} · {item.vesselIds.join(', ') || 'No vessel'}{item.quantityLiters ? ` · ${item.quantityLiters.toLocaleString()} L` : ''}{item.dependencyIds.length ? ` · ${item.dependencyIds.length} prerequisite(s)` : ''}</p>{itemConflicts.map((conflict, index) => <p key={index} className="mt-1 text-[10px] font-bold text-amber-700 dark:text-amber-300">{conflict.message}</p>)}</div><div className="flex gap-2">{props.canUpdate && <select value={item.status} onChange={event => update(item.id, { status: event.target.value as ProductionPlanStatus })} className="min-h-10 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950">{statuses.map(status => <option key={status}>{status}</option>)}</select>}{props.canDelete && <button type="button" onClick={() => removePlan(item.id)} className="rounded-xl border border-stone-200 p-3 text-stone-400 hover:text-rose-700 dark:border-stone-700"><Trash2 className="h-4 w-4" /></button>}</div></div></article>; })}</section>
+    <section className="space-y-3">
+      {active.map(item => {
+        const itemConflicts = conflicts.filter(conflict => conflict.itemId === item.id);
+        const allowedStatuses = allowedProductionPlanStatuses(item, props.productionPlans, conflicts);
+        const nextStatus: ProductionPlanStatus | null = item.status === 'planned' || item.status === 'blocked'
+          ? 'ready'
+          : item.status === 'ready'
+            ? 'in_progress'
+            : item.status === 'in_progress' ? 'completed' : null;
+        const nextIssue = nextStatus
+          ? productionPlanTransitionIssue(item, nextStatus, props.productionPlans, conflicts)
+          : null;
+        return (
+          <article
+            id={`plan-${item.id}`}
+            tabIndex={-1}
+            key={item.id}
+            className={`rounded-2xl border bg-white p-4 focus:outline-none focus:ring-2 focus:ring-violet-700 dark:bg-stone-900 ${
+              props.focusPlanId === item.id
+                ? 'border-violet-700 bg-violet-50/40 dark:border-violet-400 dark:bg-violet-950/20'
+                : 'border-stone-200 dark:border-stone-800'
+            }`}
+          >
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2 py-1 text-[9px] font-black uppercase ${kindColor(item.kind)}`}>{item.kind}</span>
+                  {itemConflicts.length === 0 && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+                  <strong className="truncate text-sm">{item.title}</strong>
+                </div>
+                <p className="mt-2 text-xs text-stone-500">
+                  {item.startDate} — {item.endDate} · {item.vesselIds.join(', ') || 'No vessel'}
+                  {item.quantityLiters ? ` · ${item.quantityLiters.toLocaleString()} L` : ''}
+                  {item.dependencyIds.length ? ` · ${item.dependencyIds.length} prerequisite(s)` : ''}
+                </p>
+                {nextStatus && (
+                  <p className={`mt-2 text-[10px] font-bold ${nextIssue ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
+                    {nextIssue
+                      ? `${ka ? 'შემდეგი ნაბიჯი დაბლოკილია' : 'Next step is blocked'}: ${nextIssue}`
+                      : `${ka ? 'შემდეგი ნაბიჯი' : 'Next step'}: ${nextStatus.replace('_', ' ')}`}
+                  </p>
+                )}
+                {itemConflicts.map((conflict, index) => (
+                  <p key={index} className="mt-1 text-[10px] font-bold text-amber-700 dark:text-amber-300">{conflict.message}</p>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                {props.canUpdate && (
+                  <select
+                    value={item.status}
+                    onChange={event => changeStatus(item, event.target.value as ProductionPlanStatus)}
+                    className="min-h-10 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950"
+                  >
+                    {statuses.map(status => <option key={status} disabled={!allowedStatuses.includes(status)}>{status}</option>)}
+                  </select>
+                )}
+                {props.canDelete && (
+                  <button type="button" onClick={() => removePlan(item.id)} className="rounded-xl border border-stone-200 p-3 text-stone-400 hover:text-rose-700 dark:border-stone-700">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </article>
+        );
+      })}
+    </section>
 
     {props.canUpdate && active.length > 1 && <section className="rounded-2xl border border-stone-200 bg-white p-5 dark:border-stone-800 dark:bg-stone-900"><h3 className="text-xs font-black uppercase tracking-wider">{ka ? 'წინაპირობების რედაქტორი' : 'Prerequisite editor'}</h3><div className="mt-3 grid gap-3 lg:grid-cols-2">{active.map(item => <details key={item.id} className="rounded-xl bg-stone-50 p-3 dark:bg-stone-950"><summary className="cursor-pointer text-xs font-bold">{item.title} · {item.dependencyIds.length}</summary><div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-auto">{active.filter(candidate => candidate.id !== item.id).map(candidate => { const cycle = !item.dependencyIds.includes(candidate.id) && wouldCreateDependencyCycle(item.id, candidate.id); return <label key={candidate.id} className={`flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-[11px] dark:bg-stone-900 ${cycle ? 'opacity-40' : ''}`}><input type="checkbox" checked={item.dependencyIds.includes(candidate.id)} disabled={cycle} onChange={event => toggleDependency(item, candidate.id, event.target.checked)} />{candidate.title}</label>; })}</div></details>)}</div></section>}
   </div>;

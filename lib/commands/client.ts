@@ -85,6 +85,11 @@ import {
   type CellarOperationReversalCommandResult,
 } from './cellarOperationReversal';
 import {
+  LOT_STAGE_TRANSITION_COMMAND_TYPE,
+  type LotStageTransitionCommandPayload,
+  type LotStageTransitionCommandResult,
+} from './lotStageTransition';
+import {
   STORAGE_MOVEMENT_COMMAND_TYPE,
   type AdjustStorageMovementPayload,
   type ReceiveStorageMovementPayload,
@@ -141,6 +146,7 @@ export interface BottlingCommandResponse {
   result: BottlingCommandResult;
   collections?: {
     lots: WineLot[];
+    vessels: Vessel[];
     bottlingRuns: BottlingRunRecord[];
     inventory: InventoryItem[];
     costEntries: CostEntry[];
@@ -156,6 +162,7 @@ export interface BottlingReversalCommandResponse {
   result: BottlingReversalCommandResult;
   collections?: {
     lots: WineLot[];
+    vessels: Vessel[];
     bottlingRuns: BottlingRunRecord[];
     inventory: InventoryItem[];
     costEntries: CostEntry[];
@@ -277,6 +284,18 @@ export interface CellarOperationReversalCommandResponse {
     inventory: InventoryItem[];
     cellarOps: CellarOperation[];
     costEntries: CostEntry[];
+    auditLogs: MaraniOSAuditLog[];
+  };
+}
+
+export interface LotStageTransitionCommandResponse {
+  ok: true;
+  disposition: 'executed' | 'replayed';
+  commandId: string;
+  commandType: typeof LOT_STAGE_TRANSITION_COMMAND_TYPE;
+  result: LotStageTransitionCommandResult;
+  collections?: {
+    lots: WineLot[];
     auditLogs: MaraniOSAuditLog[];
   };
 }
@@ -596,6 +615,29 @@ export function pendingCellarOperationCommandIntent(): PendingCommandIntent<Cell
   return SyncQueueManager
     .getPendingCommandIntents<CellarOperationCommandPayload>()
     .find(intent => intent.commandType === CELLAR_OPERATION_COMMAND_TYPE) || null;
+}
+
+export function createLotStageTransitionCommandIntent(
+  payload: Omit<LotStageTransitionCommandPayload, 'transitionId' | 'auditId'>,
+): PendingCommandIntent<LotStageTransitionCommandPayload> {
+  const nonce = randomId();
+  return {
+    commandId: `cmd-lot-stage-${nonce}`,
+    commandType: LOT_STAGE_TRANSITION_COMMAND_TYPE,
+    capturedAt: new Date().toISOString(),
+    payload: {
+      ...payload,
+      transitionId: `lot-stage-${nonce}`,
+      auditId: `audit-lot-stage-${nonce}`,
+    },
+  };
+}
+
+export function pendingLotStageTransitionCommandIntent(
+): PendingCommandIntent<LotStageTransitionCommandPayload> | null {
+  return SyncQueueManager
+    .getPendingCommandIntents<LotStageTransitionCommandPayload>()
+    .find(intent => intent.commandType === LOT_STAGE_TRANSITION_COMMAND_TYPE) || null;
 }
 
 export function createCellarOperationReversalCommandIntent(
@@ -1163,6 +1205,49 @@ export async function submitCellarOperationCommand(
     throw new CommandRequestError(
       'command_network_error',
       'The server did not acknowledge the cellar operation. Retry to recover the original result.',
+      0,
+      true,
+    );
+  }
+}
+
+export async function submitLotStageTransitionCommand(
+  intent: PendingCommandIntent<LotStageTransitionCommandPayload>,
+): Promise<LotStageTransitionCommandResponse> {
+  try {
+    const response = await SyncQueueManager.executeCommandRequest('/api/commands/lot.stage.transition', intent);
+    const body = await response.json().catch(() => null) as any;
+    if (!response.ok) {
+      const apiError = body?.error && typeof body.error === 'object' ? body.error : null;
+      const retryable = apiError?.retryable === true || response.status >= 500;
+      if (!retryable) SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+      throw new CommandRequestError(
+        typeof apiError?.code === 'string' ? apiError.code : 'command_rejected',
+        typeof apiError?.message === 'string'
+          ? apiError.message
+          : `Lot stage transition rejected (HTTP ${response.status}).`,
+        response.status,
+        retryable,
+      );
+    }
+    if (!body || body.ok !== true || body.commandId !== intent.commandId
+      || body.commandType !== LOT_STAGE_TRANSITION_COMMAND_TYPE
+      || !body.result?.updatedLot || !body.result?.auditLog || !body.result?.transition) {
+      throw new CommandRequestError(
+        'invalid_command_response',
+        'The lot-stage transition response could not be verified. Retry the same command.',
+        response.status,
+        true,
+      );
+    }
+
+    SyncQueueManager.consumePendingCommandIntent(intent.commandId);
+    return body as LotStageTransitionCommandResponse;
+  } catch (error) {
+    if (error instanceof CommandRequestError) throw error;
+    throw new CommandRequestError(
+      'command_network_error',
+      'The server did not acknowledge the lot-stage transition. Retry to recover the original result.',
       0,
       true,
     );

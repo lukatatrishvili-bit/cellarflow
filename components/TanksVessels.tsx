@@ -30,12 +30,13 @@ interface Props {
   canUpdateVessel?: boolean;
   canDeleteVessel?: boolean;
   canExecuteTransfer?: boolean;
+  currentUserName?: string;
   qvevriCount?: number;
   renderQvevriRecords?: (onBackToVessels: () => void, focusedVesselId?: string | null) => React.ReactNode;
 }
 
 type VesselStatusFilter = 'all' | 'attention' | 'ready' | 'empty' | 'occupied' | 'dirty' | 'cooling';
-type VesselSignalKind = 'assignment' | 'fill' | 'hygiene' | 'seal' | 'temperature';
+type VesselSignalKind = 'assignment' | 'fill' | 'headspace' | 'hygiene' | 'seal' | 'temperature';
 
 function qvevriSealNeedsAttention(vessel: Vessel, now = Date.now()): boolean {
   if (vessel.type !== 'qvevri') return false;
@@ -51,6 +52,7 @@ export function TanksVessels({
   lang, vessels, lots, onUpdateVessels, onSelectTank, selectedTankId,
   setActiveTab,
   canCreateVessel = true, canUpdateVessel = true, canDeleteVessel = true, canExecuteTransfer = true,
+  currentUserName = 'Current cellar operator',
   renderQvevriRecords,
 }: Props) {
   const t = translations[lang];
@@ -104,13 +106,25 @@ export function TanksVessels({
 
   const handleClean = (vId: string) => {
     if (!canUpdateVessel) return;
+    const target = vessels.find(vessel => vessel.id === vId);
+    if (!target || target.currentVolume > 0 || target.assignedLotId || target.type === 'qvevri') {
+      error(ka
+        ? 'სანიტარია შეიძლება დადასტურდეს მხოლოდ ცარიელ, პარტიისგან თავისუფალ ჩვეულებრივ ჭურჭელზე. ქვევრის მოვლა აღრიცხეთ ქვევრის ჩანაწერში.'
+        : 'Sanitation can only be confirmed for an empty, unassigned standard vessel. Record qvevri care in its dedicated record.');
+      return;
+    }
+    const date = new Date().toISOString().split('T')[0];
     const updated = vessels.map(v => {
       if (v.id === vId) {
         return {
           ...v,
           cleaningStatus: 'clean' as const,
-          lastCleaned: new Date().toISOString().split('T')[0],
-          lastOperation: 'Sanitized'
+          lastCleaned: date,
+          lastOperation: `Sanitized by ${currentUserName}`,
+          sanitationHistory: [
+            ...(v.sanitationHistory || []),
+            { date, action: 'Wash and sanitation completed', operator: currentUserName },
+          ],
         };
       }
       return v;
@@ -225,7 +239,11 @@ export function TanksVessels({
     if ((vessel.currentVolume > 0 && !vessel.assignedLotId) || (vessel.currentVolume === 0 && vessel.assignedLotId)) {
       return 'assignment';
     }
-    if (fill >= 95) return 'fill';
+    if (fill > 100 || (assignedLot?.stage === 'fermenting' && fill >= 90)) return 'fill';
+    if (assignedLot && ['aging', 'stabilization', 'filtration'].includes(assignedLot.stage)
+      && vessel.currentVolume > 0 && fill < (vessel.type === 'barrel' ? 95 : 85)) {
+      return 'headspace';
+    }
     if (vessel.cleaningStatus !== 'clean') return 'hygiene';
     if (qvevriSealNeedsAttention(vessel)) return 'seal';
     if (assignedLot?.stage === 'fermenting' && (!Number.isFinite(vessel.temperature) || vessel.temperature < 8 || vessel.temperature > 30)) {
@@ -244,9 +262,14 @@ export function TanksVessels({
         action: ka ? 'ჭურჭლის გახსნა' : 'Open vessel',
       },
       fill: {
-        title: ka ? `შევსება ${fill}%` : `${fill}% fill level`,
-        detail: ka ? 'შემდეგ ოპერაციამდე შეამოწმეთ თავისუფალი სივრცე.' : 'Check headspace before the next cellar movement.',
+        title: ka ? `დუღილის ჭურჭელი ${fill}%-ითაა შევსებული` : `Fermenter is ${fill}% full`,
+        detail: ka ? 'დუღილისთვის დატოვებული სივრცე შეიძლება არასაკმარისი იყოს. შეამოწმეთ ქაფი და წნევა.' : 'Fermentation headroom may be insufficient. Check foam expansion and pressure.',
         action: ka ? 'შევსების ნახვა' : 'Review fill',
+      },
+      headspace: {
+        title: ka ? `თავისუფალი სივრცე ${100 - fill}%` : `${100 - fill}% headspace`,
+        detail: ka ? 'დაძველებისას შეამოწმეთ შევსება, ინერტული გაზი ან დალუქვა ჟანგბადის რისკის შესამცირებლად.' : 'During aging, confirm topping, inert-gas cover, or sealing to limit oxygen exposure.',
+        action: ka ? 'ჭურჭლის შემოწმება' : 'Review vessel',
       },
       hygiene: {
         title: ka ? 'სანიტაცია საჭიროა' : 'Sanitation required',
@@ -273,7 +296,7 @@ export function TanksVessels({
     .map(vessel => ({ vessel, kind: vesselSignalKind(vessel) }))
     .filter((item): item is { vessel: Vessel; kind: VesselSignalKind } => Boolean(item.kind))
     .sort((a, b) => {
-      const priority: Record<VesselSignalKind, number> = { assignment: 0, fill: 1, temperature: 2, hygiene: 3, seal: 4 };
+      const priority: Record<VesselSignalKind, number> = { assignment: 0, fill: 1, temperature: 2, headspace: 3, hygiene: 4, seal: 5 };
       return priority[a.kind] - priority[b.kind];
     });
   const readyVessels = vessels.filter(vessel =>
@@ -920,7 +943,7 @@ export function TanksVessels({
             const progress = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
             const assignedLot = lots.find(l => l.id === v.assignedLotId);
             const needsCleaning = v.cleaningStatus !== 'clean';
-            const isOver95 = progress >= 95;
+            const isHighFermentationFill = assignedLot?.stage === 'fermenting' && progress >= 90;
             const isSelected = v.id === selectedTankId;
             const signalKind = vesselSignalKind(v);
             const signal = signalKind ? signalCopy(v, signalKind) : null;
@@ -942,7 +965,7 @@ export function TanksVessels({
                   className={`flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border bg-white text-stone-800 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-[#801323]/40 ${
                     isSelected
                       ? 'border-[#801323] ring-2 ring-[#801323]/10'
-                      : isOver95
+                      : isHighFermentationFill
                         ? 'border-rose-400 shadow-md ring-1 ring-rose-100'
                         : signal
                           ? 'border-amber-300 hover:border-amber-400'
@@ -1014,7 +1037,7 @@ export function TanksVessels({
                   )}
                   <div className="flex items-center gap-4">
                     {/* Animated liquid-fill vessel (height = volume, colour = wine class) */}
-                    <div className={`shrink-0 flex flex-col items-center ${isOver95 ? 'text-red-600' : 'text-[#4e0e15]'}`}>
+                    <div className={`shrink-0 flex flex-col items-center ${isHighFermentationFill ? 'text-red-600' : 'text-[#4e0e15]'}`}>
                       <VesselFill
                         fillPct={progress}
                         wineClass={assignedLot?.wineClass || 'red'}
@@ -1235,7 +1258,7 @@ export function TanksVessels({
                       )}
                     </div>
 
-                    {canUpdateVessel && needsCleaning && (
+                    {canUpdateVessel && needsCleaning && v.currentVolume === 0 && !v.assignedLotId && v.type !== 'qvevri' && (
                       <button
                         onClick={() => handleClean(v.id)}
                         className="inline-flex items-center gap-0.5 px-2 py-1 bg-[#4e0e15] text-white font-bold rounded hover:bg-[#6b151e] cursor-pointer text-[9px] active:scale-95 hover:-translate-y-0.5 duration-150"
@@ -1275,7 +1298,7 @@ export function TanksVessels({
                   const progress = v.capacity > 0 ? (v.currentVolume / v.capacity) * 100 : 0;
                   const assignedLot = lots.find(l => l.id === v.assignedLotId);
                   const needsCleaning = v.cleaningStatus !== 'clean';
-                  const isOver95 = progress >= 95;
+                  const isHighFermentationFill = assignedLot?.stage === 'fermenting' && progress >= 90;
                   const isSelected = v.id === selectedTankId;
 
                   return (
@@ -1299,7 +1322,7 @@ export function TanksVessels({
                           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                             isSelected
                               ? 'bg-[#801323] animate-ping'
-                              : isOver95
+                              : isHighFermentationFill
                                 ? 'bg-red-500'
                                 : v.currentVolume > 0 ? 'bg-[#801323]' : 'bg-slate-300'
                           }`} />
@@ -1335,7 +1358,7 @@ export function TanksVessels({
                             </div>
                             <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                               <div
-                                className={`h-full rounded-full transition-all duration-300 ${isOver95 ? 'bg-red-500' : 'bg-[#801323]'}`}
+                                className={`h-full rounded-full transition-all duration-300 ${isHighFermentationFill ? 'bg-red-500' : 'bg-[#801323]'}`}
                                 style={{ width: `${Math.min(100, progress)}%` }}
                               />
                             </div>
@@ -1440,7 +1463,7 @@ export function TanksVessels({
                       {(canUpdateVessel || canDeleteVessel) && (
                         <td className="py-3.5 px-4 text-center" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-center gap-1.5">
-                            {canUpdateVessel && needsCleaning && (
+                            {canUpdateVessel && needsCleaning && v.currentVolume === 0 && !v.assignedLotId && v.type !== 'qvevri' && (
                               <button
                                 onClick={() => handleClean(v.id)}
                                 className="px-2 py-1 bg-[#4e0e15] text-white hover:bg-[#6b151e] rounded text-[10px] font-bold inline-flex items-center gap-0.5 cursor-pointer"

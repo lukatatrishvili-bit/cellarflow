@@ -117,7 +117,7 @@ describe('TransfersTab action permissions', () => {
     expect(markup).not.toContain('title="Post a reversal correction"');
   });
 
-  it('applies execution, sanitation, and reversal permissions independently', () => {
+  it('applies execution and reversal permissions independently while keeping sanitation out of transfers', () => {
     const reversalRestricted = renderTransfers({
       canExecuteTransfer: true,
       canSanitizeVessels: true,
@@ -137,15 +137,15 @@ describe('TransfersTab action permissions', () => {
     expect(reversalRestricted).toContain('Limited transfer actions');
     expect(reversalRestricted).toContain('cannot reverse transfer records');
     expect(reversalRestricted).toContain('Racking &amp; Blending Form');
-    expect(reversalRestricted).toContain('Quick Sanitization Controls');
+    expect(reversalRestricted).not.toContain('Quick Sanitization Controls');
     expect(reversalRestricted).not.toContain('title="Post a reversal correction"');
 
     expect(executionRestricted).toContain('cannot initiate transfers');
     expect(executionRestricted).not.toContain('Racking &amp; Blending Form');
-    expect(executionRestricted).toContain('Quick Sanitization Controls');
+    expect(executionRestricted).not.toContain('Quick Sanitization Controls');
     expect(executionRestricted).toContain('title="Post a reversal correction"');
 
-    expect(sanitationRestricted).toContain('cannot sanitize vessels');
+    expect(sanitationRestricted).not.toContain('cannot sanitize vessels');
     expect(sanitationRestricted).toContain('Racking &amp; Blending Form');
     expect(sanitationRestricted).not.toContain('Quick Sanitization Controls');
     expect(sanitationRestricted).toContain('title="Post a reversal correction"');
@@ -157,7 +157,7 @@ describe('TransfersTab action permissions', () => {
     expect(markup).not.toContain('Limited transfer actions');
     expect(markup).not.toContain('Read-only transfer access');
     expect(markup).toContain('Racking &amp; Blending Form');
-    expect(markup).toContain('Quick Sanitization Controls');
+    expect(markup).not.toContain('Quick Sanitization Controls');
     expect(markup).toContain('title="Post a reversal correction"');
   });
 

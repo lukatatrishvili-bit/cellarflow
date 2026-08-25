@@ -120,7 +120,7 @@ function aiItem(finding: AiNotificationFinding): NotificationItem {
 
 function dedupeIdentity(item: NotificationItem): string | null {
   let entityId: string | undefined;
-  if (item.category === 'so2' || item.category === 'va' || item.category === 'fermentation') {
+  if (item.category === 'so2' || item.category === 'va' || item.category === 'lab' || item.category === 'fermentation') {
     entityId = item.relatedLotId;
   } else if (item.category === 'temperature' || item.category === 'cleaning') {
     entityId = item.relatedTankId;

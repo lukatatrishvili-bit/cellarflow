@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Wine, Package, AlertTriangle, CheckCircle2, RotateCcw, FileDown, X } from 'lucide-react';
 import type { Language } from '../lib/i18n';
-import type { WineLot, BottlingRunRecord, InventoryItem } from '../lib/wineryState';
+import type { WineLot, BottlingRunRecord, InventoryItem, Vessel } from '../lib/wineryState';
 import {
   computeBottlingCostPosting,
   type BottlingPackagingComponent,
@@ -19,6 +19,7 @@ import {
   applyBottlingCommand,
   BOTTLING_FORMATS,
   bottlingFormatLitres,
+  isBottlingReadyStage,
   type BottlingCommandPayload,
 } from '../lib/commands/bottling';
 import type { BottlingReversalCommandPayload } from '../lib/commands/bottlingReversal';
@@ -37,6 +38,7 @@ import {
   type BottlingCommandResponse,
 } from '../lib/commands/client';
 import DateInput from './ui/DateInput';
+import { localISODate } from '../lib/weatherApi';
 
 interface Props {
   lang: Language;
@@ -46,6 +48,8 @@ interface Props {
   canPlaceFinishedGoods?: boolean;
   lots: WineLot[];
   onUpdateLots: (lots: WineLot[]) => void;
+  vessels: Vessel[];
+  onUpdateVessels: (vessels: Vessel[]) => void;
   history: BottlingRunRecord[];
   onUpdateHistory: (runs: BottlingRunRecord[]) => void;
   inventory: InventoryItem[];
@@ -105,6 +109,8 @@ export function BottlingTab({
   canPlaceFinishedGoods = true,
   lots,
   onUpdateLots,
+  vessels,
+  onUpdateVessels,
   history,
   onUpdateHistory,
   inventory,
@@ -130,14 +136,22 @@ export function BottlingTab({
   const [reversalReason, setReversalReason] = useState('');
 
   const bottleable = useMemo(
-    () => lots.filter(l => (l.currentVolume > 0 && l.stage !== 'sold') || l.id === pendingIntent?.payload.lotId),
-    [lots, pendingIntent?.payload.lotId],
+    () => lots.filter(lot => (
+      (lot.currentVolume > 0
+        && isBottlingReadyStage(lot.stage)
+        && vessels.some(vessel => vessel.assignedLotId === lot.id && vessel.currentVolume > 0))
+      || lot.id === pendingIntent?.payload.lotId
+    )),
+    [lots, pendingIntent?.payload.lotId, vessels],
   );
 
   const [lotId, setLotId] = useState(bottleable[0]?.id || '');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [sourceVesselId, setSourceVesselId] = useState(() => (
+    vessels.find(vessel => vessel.assignedLotId === bottleable[0]?.id && vessel.currentVolume > 0)?.id || ''
+  ));
+  const [date, setDate] = useState(localISODate());
   const [lotNumber, setLotNumber] = useState('');
-  const [operator, setOperator] = useState('');
+  const [operator, setOperator] = useState(currentUserName);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [customBottleSize, setCustomBottleSize] = useState('0.75');
   const [customBottleCount, setCustomBottleCount] = useState('');
@@ -151,6 +165,7 @@ export function BottlingTab({
     if (!restored) return;
     setPendingIntent(restored);
     setLotId(restored.payload.lotId);
+    setSourceVesselId(restored.payload.sourceVesselId);
     setDate(restored.payload.date);
     setLotNumber(restored.payload.lotNumber);
     setOperator(restored.payload.operator);
@@ -177,7 +192,19 @@ export function BottlingTab({
   }, [history, ka]);
 
   const lot = lots.find(l => l.id === lotId) || null;
-  const availableL = lot ? lot.currentVolume : 0;
+  const sourceVessels = useMemo(
+    () => vessels.filter(vessel => vessel.assignedLotId === lotId && vessel.currentVolume > 0),
+    [lotId, vessels],
+  );
+  const sourceVessel = sourceVessels.find(vessel => vessel.id === sourceVesselId) || null;
+  const availableL = lot && sourceVessel ? Math.min(lot.currentVolume, sourceVessel.currentVolume) : 0;
+
+  useEffect(() => {
+    if (pendingIntent) return;
+    if (!sourceVessels.some(vessel => vessel.id === sourceVesselId)) {
+      setSourceVesselId(sourceVessels[0]?.id || '');
+    }
+  }, [pendingIntent, sourceVesselId, sourceVessels]);
 
   const displayedFormats = useMemo(() => {
     const known = new Set(BOTTLE_FORMATS.map(format => format.key));
@@ -253,7 +280,7 @@ export function BottlingTab({
     [costPreview.deductions, inventory],
   );
   const hasPackagingShortfall = overdrawnPackaging.length > 0;
-  const canSubmit = Boolean(pendingIntent) || (!!lot && !overfill && !noBottles && !hasPackagingShortfall);
+  const canSubmit = Boolean(pendingIntent) || (!!lot && !!sourceVessel && !overfill && !noBottles && !hasPackagingShortfall);
   const orderedHistory = useMemo(
     () => [...history].sort(compareBottlingRunsNewestFirst),
     [history],
@@ -293,7 +320,7 @@ export function BottlingTab({
 
   const applyBottlingLocally = (intent: PendingCommandIntent<BottlingCommandPayload>) => {
     const applied = applyBottlingCommand(
-      { lots, bottlingRuns: history, inventory, costEntries, storageLocations, stockMovements },
+      { lots, vessels, bottlingRuns: history, inventory, costEntries, storageLocations, stockMovements },
       intent.payload,
       {
         commandId: intent.commandId,
@@ -303,6 +330,7 @@ export function BottlingTab({
       },
     );
     onUpdateLots(applied.state.lots);
+    onUpdateVessels(applied.state.vessels);
     onUpdateHistory(applied.state.bottlingRuns);
     saveBottlingHistory(applied.state.bottlingRuns);
     onUpdateInventory(applied.state.inventory);
@@ -312,8 +340,8 @@ export function BottlingTab({
       ? `ჩამოსხმა აღირიცხა: ${applied.result.receipt.totalUnits} ერთეული (${applied.result.receipt.volumeBottledL} ლ)`
       : `Bottling recorded: ${applied.result.receipt.totalUnits} units (${applied.result.receipt.volumeBottledL} L)`);
     finishCommand();
-    if (applied.result.receipt.remainingLotVolumeL <= 0.5) {
-      setLotId(applied.state.lots.find(item => item.currentVolume > 0 && item.stage !== 'sold')?.id || '');
+    if (applied.result.updatedLot.stage === 'bottled') {
+      setLotId(applied.state.lots.find(item => item.currentVolume > 0 && isBottlingReadyStage(item.stage))?.id || '');
     }
   };
 
@@ -321,6 +349,7 @@ export function BottlingTab({
     if (!canCreateBottling || (!pendingIntent && (!lot || !canSubmit))) return;
     const intent = pendingIntent || createBottlingCommandIntent({
       lotId,
+      sourceVesselId,
       date,
       lotNumber,
       operator: operator || currentUserName,
@@ -356,9 +385,9 @@ export function BottlingTab({
         ? `ჩამოსხმა აღირიცხა: ${response.result.receipt.totalUnits} ერთეული (${response.result.receipt.volumeBottledL} ლ)`
         : `Bottling recorded: ${response.result.receipt.totalUnits} units (${response.result.receipt.volumeBottledL} L)`);
       finishCommand();
-      if (response.result.receipt.remainingLotVolumeL <= 0.5) {
+      if (response.result.updatedLot.stage === 'bottled') {
         const authoritativeLots = response.collections?.lots || lots;
-        setLotId(authoritativeLots.find(item => item.currentVolume > 0 && item.stage !== 'sold')?.id || '');
+        setLotId(authoritativeLots.find(item => item.currentVolume > 0 && isBottlingReadyStage(item.stage))?.id || '');
       }
     } catch (error) {
       if (error instanceof CommandRequestError
@@ -386,6 +415,7 @@ export function BottlingTab({
   const applyReversalResponse = (response: Awaited<ReturnType<typeof submitBottlingReversalCommand>>) => {
     if (response.collections) {
       onUpdateLots(response.collections.lots);
+      onUpdateVessels(response.collections.vessels);
       onUpdateHistory(response.collections.bottlingRuns);
       saveBottlingHistory(response.collections.bottlingRuns);
       onUpdateInventory(response.collections.inventory);
@@ -399,6 +429,9 @@ export function BottlingTab({
     };
     const nextRuns = replaceById(history, [response.result.reversalRun, response.result.originalRun]);
     onUpdateLots(replaceById(lots, [response.result.updatedLot]));
+    if (response.result.updatedVessel) {
+      onUpdateVessels(replaceById(vessels, [response.result.updatedVessel]));
+    }
     onUpdateHistory(nextRuns);
     saveBottlingHistory(nextRuns);
     onUpdateInventory(replaceById(inventory, response.result.updatedInventoryItems));
@@ -508,8 +541,8 @@ export function BottlingTab({
               <p className="text-xs font-bold">{ka ? 'ჩამოსასხმელი ლოტი არ მოიძებნა' : 'No lots available to bottle'}</p>
               <p className="text-[11px] mt-1.5 max-w-xs mx-auto leading-relaxed">
                 {ka
-                  ? 'ჩამოსხმა ხელმისაწვდომი გახდება, როცა ლოტს ექნება მოცულობა — დაიწყეთ ყურძნის მიღებით და დუღილით.'
-                  : 'Bottling unlocks once a wine lot holds volume — start with grape intake and fermentation, then return here.'}
+                  ? 'ჩამოსხმა ხელმისაწვდომია დაძველების, სტაბილიზაციის ან ფილტრაციის ეტაპზე, როცა ლოტი რეალურად არის განთავსებული შევსებულ ჭურჭელში.'
+                  : 'Bottling is available during aging, stabilization, or filtration when the lot is physically assigned to a filled vessel.'}
               </p>
             </div>
           ) : (
@@ -517,7 +550,12 @@ export function BottlingTab({
               <fieldset disabled={Boolean(pendingIntent) || isSubmitting} className="contents">
               <div>
                 <label className={labelCls}>{ka ? 'ღვინის ლოტი' : 'Wine lot'}</label>
-                <select value={lotId} onChange={e => { setLotId(e.target.value); resetForm(); }} className={inputCls}>
+                <select value={lotId} onChange={e => {
+                  const nextLotId = e.target.value;
+                  setLotId(nextLotId);
+                  setSourceVesselId(vessels.find(vessel => vessel.assignedLotId === nextLotId && vessel.currentVolume > 0)?.id || '');
+                  resetForm();
+                }} className={inputCls}>
                   {bottleable.map(l => (
                     <option key={l.id} value={l.id}>{l.name} ({l.id}) — {round1(l.currentVolume)} L</option>
                   ))}
@@ -585,6 +623,23 @@ export function BottlingTab({
                     {ka ? 'დამატება' : 'Add'}
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <label className={labelCls}>{ka ? 'წყარო ჭურჭელი' : 'Source vessel'}</label>
+                <select required value={sourceVesselId} onChange={event => setSourceVesselId(event.target.value)} className={inputCls}>
+                  <option value="">{ka ? '— აირჩიეთ ჭურჭელი —' : '— choose vessel —'}</option>
+                  {sourceVessels.map(vessel => (
+                    <option key={vessel.id} value={vessel.id}>
+                      {vessel.id} — {round1(vessel.currentVolume)} L
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[10px] text-stone-500">
+                  {ka
+                    ? 'ჩამოსხმისას მოცულობა ერთდროულად ჩამოიწერება ლოტიდან და ამ ჭურჭლიდან.'
+                    : 'The run debits the wine lot and this physical vessel together.'}
+                </p>
               </div>
 
               {/* Packaging and bottling costing */}
@@ -665,7 +720,7 @@ export function BottlingTab({
               {/* Live summary */}
               <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono border-t border-stone-100 pt-3 dark:border-stone-800">
                 <span className="text-stone-500">{ka ? 'ჩამოსხმული:' : 'Bottled:'} <strong className={overfill ? 'text-rose-600' : 'text-[#4e0e15] dark:text-amber-300'}>{volumeBottledL} L</strong></span>
-                <span className="text-stone-500">{ka ? 'ხელმისაწვდომი:' : 'Available:'} <strong>{round1(availableL)} L</strong></span>
+                <span className="text-stone-500">{ka ? 'ჭურჭელში ხელმისაწვდომი:' : 'Available in vessel:'} <strong>{round1(availableL)} L</strong></span>
                 <span className="text-stone-500">{ka ? 'ბოთლი:' : 'Bottles:'} <strong>{totalBottles}</strong></span>
                 {totalCeramic > 0 && <span className="text-stone-500">{ka ? 'კერამიკა:' : 'Ceramic:'} <strong>{totalCeramic}</strong></span>}
               </div>
@@ -673,7 +728,7 @@ export function BottlingTab({
               {overfill && (
                 <div className="flex items-center gap-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 dark:bg-rose-950/30">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  {ka ? 'ჩამოსხმის მოცულობა აღემატება ლოტში არსებულ ნაშთს.' : 'Bottled volume exceeds the lot’s available balance.'}
+                  {ka ? 'ჩამოსხმის მოცულობა აღემატება ლოტის ან წყარო ჭურჭლის ნაშთს.' : 'Bottled volume exceeds the lot or source-vessel balance.'}
                 </div>
               )}
 

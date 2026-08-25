@@ -71,4 +71,16 @@ describe('TasksTab action permissions', () => {
     expect(markup).toContain('Mark Pending pump-over completed');
     expect(markup).not.toContain('cannot be updated by your role');
   });
+
+  it('opens on the current user task scope while keeping a visible team switch', () => {
+    const markup = renderToStaticMarkup(React.createElement(TasksTab, taskProps({
+      currentUsername: 'nino',
+      currentUserName: 'Nino',
+    })));
+
+    expect(markup).toContain('Pending pump-over');
+    expect(markup).not.toContain('Completed lab check');
+    expect(markup).toContain('Mine');
+    expect(markup).toContain('Team');
+  });
 });

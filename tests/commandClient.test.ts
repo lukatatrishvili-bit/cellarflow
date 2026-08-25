@@ -10,6 +10,7 @@ import {
   createHarvestIntakeCommandIntent,
   createHarvestIntakeReversalCommandIntent,
   createInvoiceReceiptCommandIntent,
+  createLotStageTransitionCommandIntent,
   createSalesStockCommandIntent,
   createSalesStockReversalCommandIntent,
   createStorageMovementCommandIntent,
@@ -24,6 +25,7 @@ import {
   pendingHarvestIntakeCommandIntent,
   pendingHarvestIntakeReversalCommandIntent,
   pendingInvoiceReceiptCommandIntent,
+  pendingLotStageTransitionCommandIntent,
   pendingSalesStockCommandIntent,
   pendingSalesStockReversalCommandIntent,
   pendingStorageMovementCommandIntent,
@@ -37,6 +39,7 @@ import {
   submitHarvestIntakeCommand,
   submitHarvestIntakeReversalCommand,
   submitInvoiceReceiptCommand,
+  submitLotStageTransitionCommand,
   submitSalesStockCommand,
   submitSalesStockReversalCommand,
   submitStorageMovementCommand,
@@ -71,6 +74,7 @@ const payload = {
 
 const bottlingPayload = {
   lotId: 'LOT-A',
+  sourceVesselId: 'TANK-A',
   date: '2026-07-20',
   lotNumber: 'CLIENT-01',
   operator: 'Client Winemaker',
@@ -782,6 +786,47 @@ describe('durable command client', () => {
       expect.objectContaining({ method: 'POST' }),
     );
     expect(pendingCellarOperationReversalCommandIntent()).toBeNull();
+  });
+
+  it('keeps one stable lot-stage transition until its lot and audit are acknowledged', async () => {
+    const intent = createLotStageTransitionCommandIntent({
+      lotId: 'LOT-STAGE-CLIENT-1',
+      expectedStage: 'aging',
+      targetStage: 'stabilization',
+      date: '2026-09-20',
+      operator: 'Client Winemaker',
+      notes: 'Stability checks completed and reviewed.',
+    });
+    expect(intent.commandId).toMatch(/^cmd-lot-stage-/);
+    expect(intent.payload.transitionId).toMatch(/^lot-stage-/);
+    expect(intent.payload.auditId).toMatch(/^audit-lot-stage-/);
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        ok: false,
+        error: { code: 'command_store_unavailable', message: 'Retry.', retryable: true },
+      }, 503))
+      .mockResolvedValueOnce(response({
+        ok: true,
+        disposition: 'executed',
+        commandId: intent.commandId,
+        commandType: 'lot.stage.transition',
+        result: {
+          updatedLot: { id: intent.payload.lotId, stage: intent.payload.targetStage },
+          auditLog: { id: intent.payload.auditId },
+          transition: { id: intent.payload.transitionId },
+        },
+      }, 201));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(submitLotStageTransitionCommand(intent)).rejects.toMatchObject({ retryable: true });
+    expect(pendingLotStageTransitionCommandIntent()).toEqual(intent);
+    await expect(submitLotStageTransitionCommand(intent)).resolves.toMatchObject({ commandId: intent.commandId });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/commands/lot.stage.transition',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(pendingLotStageTransitionCommandIntent()).toBeNull();
   });
 
   it('keeps stable invoice receipt and movement ids until the atomic post is acknowledged', async () => {

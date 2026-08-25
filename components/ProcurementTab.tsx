@@ -3,6 +3,7 @@ import { ArrowDownToLine, Boxes, CircleDollarSign, PackageCheck, Plus, Send, Tru
 import type { Language } from '../lib/language';
 import type { InventoryItem } from '../lib/wineryState';
 import { identityExchangeRateQuote, normalizeInvoiceCurrency } from '../lib/currency';
+import { localISODate } from '../lib/weatherApi';
 import {
   createInvoiceReceiptCommandIntent,
   submitInvoiceReceiptCommand,
@@ -30,10 +31,11 @@ interface ProcurementTabProps {
   canCreate: boolean;
   canUpdate: boolean;
   canReceive: boolean;
+  focusOrderId?: string;
   setToastMessage?: (message: string | null) => void;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localISODate();
 const statuses: PurchaseOrderStatus[] = ['draft', 'submitted', 'ordered', 'partially_received', 'received', 'cancelled'];
 
 export function buildPurchaseOrderReceiptCommandIntent(input: {
@@ -96,6 +98,16 @@ export default function ProcurementTab(props: ProcurementTabProps) {
   const lowStock = React.useMemo(() => props.inventory.filter(item => item.stock <= item.minThreshold), [props.inventory]);
   const supplierNames = React.useMemo(() => [...new Set(lowStock.map(item => item.supplierName.trim()).filter(Boolean))].sort(), [lowStock]);
   const accountingCurrency = normalizeInvoiceCurrency(props.accountingCurrency) || 'GEL';
+
+  React.useEffect(() => {
+    if (!props.focusOrderId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(`purchase-order-${props.focusOrderId}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [props.focusOrderId, props.purchaseOrders]);
 
   const createOrder = (supplierName: string) => {
     try {
@@ -194,7 +206,7 @@ export default function ProcurementTab(props: ProcurementTabProps) {
 
     {props.canCreate && supplierNames.length > 0 && <section className="rounded-2xl border border-sky-200 bg-sky-50/60 p-5 dark:border-sky-900 dark:bg-sky-950/20"><h3 className="text-xs font-black uppercase tracking-wider text-sky-900 dark:text-sky-100">{ka ? 'შევსების წინადადებები' : 'Reorder suggestions'}</h3><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{supplierNames.map(supplier => { const count = lowStock.filter(item => item.supplierName.trim() === supplier).length; return <button key={supplier} type="button" onClick={() => createOrder(supplier)} className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-white px-4 text-left text-xs font-bold shadow-sm dark:bg-stone-900"><span>{supplier}<small className="mt-1 block font-normal text-stone-500">{count} item(s)</small></span><Plus className="h-4 w-4 text-sky-700" /></button>; })}</div></section>}
 
-    <section className="space-y-4">{props.purchaseOrders.length === 0 ? <div className="rounded-2xl border border-dashed border-stone-300 p-12 text-center text-sm text-stone-500 dark:border-stone-700">{ka ? 'შესყიდვის შეკვეთა ჯერ არ არის.' : 'No purchase orders yet.'}</div> : props.purchaseOrders.map(order => <article key={order.id} className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900"><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="text-[10px] font-black uppercase tracking-wider text-sky-700 dark:text-sky-300">{order.orderNumber} · {order.status}</div><h3 className="mt-1 text-lg font-bold">{order.supplierName}</h3><p className="mt-1 text-xs text-stone-500">{order.orderDate} · {purchaseOrderTotal(order).toLocaleString(undefined, { maximumFractionDigits: 2 })} {order.currency}</p></div>{props.canUpdate && <div className="flex flex-wrap gap-2"><select value={order.status} onChange={event => changeStatus(order, event.target.value as PurchaseOrderStatus)} className="min-h-10 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950">{statuses.map(status => <option key={status} disabled={!allowedPurchaseOrderStatuses(order.status).includes(status)}>{status}</option>)}</select><input type="date" value={order.expectedDate || ''} onChange={event => updateOrder(order.id, { expectedDate: event.target.value || undefined })} className="min-h-10 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></div>}</div>
+    <section className="space-y-4">{props.purchaseOrders.length === 0 ? <div className="rounded-2xl border border-dashed border-stone-300 p-12 text-center text-sm text-stone-500 dark:border-stone-700">{ka ? 'შესყიდვის შეკვეთა ჯერ არ არის.' : 'No purchase orders yet.'}</div> : props.purchaseOrders.map(order => <article id={`purchase-order-${order.id}`} tabIndex={-1} key={order.id} className={`rounded-2xl border bg-white p-5 shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-700 dark:bg-stone-900 ${props.focusOrderId === order.id ? 'border-sky-700 bg-sky-50/40 dark:border-sky-400 dark:bg-sky-950/20' : 'border-stone-200 dark:border-stone-800'}`}><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="text-[10px] font-black uppercase tracking-wider text-sky-700 dark:text-sky-300">{order.orderNumber} · {order.status}</div><h3 className="mt-1 text-lg font-bold">{order.supplierName}</h3><p className="mt-1 text-xs text-stone-500">{order.orderDate} · {purchaseOrderTotal(order).toLocaleString(undefined, { maximumFractionDigits: 2 })} {order.currency}</p></div>{props.canUpdate && <div className="flex flex-wrap gap-2"><select value={order.status} onChange={event => changeStatus(order, event.target.value as PurchaseOrderStatus)} className="min-h-10 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950">{statuses.map(status => <option key={status} disabled={!allowedPurchaseOrderStatuses(order.status).includes(status)}>{status}</option>)}</select><input type="date" value={order.expectedDate || ''} onChange={event => updateOrder(order.id, { expectedDate: event.target.value || undefined })} className="min-h-10 rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></div>}</div>
       <div className="mt-4 overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr className="border-b border-stone-200 text-[10px] uppercase text-stone-500 dark:border-stone-800"><th className="py-2">Item</th><th className="py-2">Qty</th><th className="py-2">Unit cost</th>{props.canReceive && ['submitted', 'ordered', 'partially_received'].includes(order.status) && <th className="py-2">Receive now</th>}<th className="py-2 text-right">Total</th></tr></thead><tbody>{order.lines.map(line => { const outstanding = Math.max(0, line.quantity - line.receivedQuantity); const entered = receiptQuantities[order.id]?.[line.id] ?? String(outstanding); return <tr key={line.id} className="border-b border-stone-100 dark:border-stone-800"><td className="py-3 font-bold">{line.productName}</td><td className="py-3">{line.quantity} {line.unit}{line.receivedQuantity > 0 ? ` (${line.receivedQuantity} received)` : ''}</td><td className="py-3">{line.unitCost.toLocaleString()}</td>{props.canReceive && ['submitted', 'ordered', 'partially_received'].includes(order.status) && <td className="py-2 pr-3"><input type="number" min="0" max={outstanding} step="any" value={entered} disabled={outstanding === 0 || busy === order.id} aria-label={`Receive ${line.productName}`} onChange={event => setReceiptQuantities(current => ({ ...current, [order.id]: { ...(current[order.id] || {}), [line.id]: event.target.value } }))} className="min-h-9 w-24 rounded-lg border border-stone-200 bg-stone-50 px-2 text-xs dark:border-stone-700 dark:bg-stone-950" /><span className="ml-1 text-stone-400">/ {outstanding}</span></td>}<td className="py-3 text-right">{(line.quantity * line.unitCost).toLocaleString()}</td></tr>; })}</tbody></table></div>
       {(order.receiptHistory || []).length > 0 && <details className="mt-3 rounded-xl bg-stone-50 p-3 text-xs dark:bg-stone-950"><summary className="cursor-pointer font-bold">{order.receiptHistory!.length} receipt event(s)</summary><div className="mt-2 space-y-1 text-[11px] text-stone-500">{order.receiptHistory!.map(receipt => <div key={receipt.id}>{new Date(receipt.receivedAt).toLocaleString()} · {receipt.receivedBy} · {receipt.lines.length} line(s)</div>)}</div></details>}
       {props.canReceive && ['submitted', 'ordered', 'partially_received'].includes(order.status) && <button type="button" disabled={busy === order.id} onClick={() => void receive(order)} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 text-xs font-black text-white disabled:opacity-50">{busy === order.id ? <ArrowDownToLine className="h-4 w-4 animate-bounce" /> : <PackageCheck className="h-4 w-4" />}{ka ? 'მიღება და მარაგში შეტანა' : 'Receive into inventory'}</button>}</article>)}</section>

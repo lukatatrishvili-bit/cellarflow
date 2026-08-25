@@ -51,7 +51,7 @@ describe('WineLotsTrace permissions', () => {
     expect(markup).toContain('Received from Mukuzani Block 1.');
     expect(markup).toContain('Lineage');
     expect(markup).toContain('Passport');
-    expect(markup).not.toContain('Create Lot');
+    expect(markup).not.toContain('New grape intake');
     expect(markup).not.toContain('Advance / Modify Stage');
     expect(markup).not.toContain('Save Changes');
     expect(markup).not.toContain('Confirm Transition');
@@ -60,12 +60,12 @@ describe('WineLotsTrace permissions', () => {
 
   it('applies create and update permissions independently', () => {
     const updateOnly = renderLots({ canCreateLot: false, canUpdateLot: true });
-    expect(updateOnly).not.toContain('Create Lot');
+    expect(updateOnly).not.toContain('New grape intake');
     expect(updateOnly).toContain('Advance / Modify Stage');
     expect(updateOnly).toContain('>Edit</button>');
 
     const createOnly = renderLots({ canCreateLot: true, canUpdateLot: false });
-    expect(createOnly).toContain('Create Lot');
+    expect(createOnly).toContain('New grape intake');
     expect(createOnly).not.toContain('Advance / Modify Stage');
     expect(createOnly).not.toContain('>Edit</button>');
   });
@@ -92,7 +92,7 @@ describe('WineLotsTrace permissions', () => {
   it('keeps the original create and update behavior enabled by default', () => {
     const markup = renderLots();
 
-    expect(markup).toContain('Create Lot');
+    expect(markup).toContain('New grape intake');
     expect(markup).toContain('Advance / Modify Stage');
     expect(markup).toContain('Add an aging lab panel');
     expect(markup).toContain('Needs data');

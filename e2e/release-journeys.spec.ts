@@ -118,25 +118,53 @@ test('dashboard initialization does not lock module navigation', async ({ page }
   await expect(cellar).toHaveAttribute('aria-current', 'page');
 
   await today.click();
+  await page.getByRole('menuitem', { name: 'Today', exact: true }).click();
   await expect(today).toHaveAttribute('aria-current', 'page');
 });
 
-test('owner can open the operations control workflows', async ({ page }) => {
+test('owner can open business containment and cellar planning workflows', async ({ page }) => {
   const fixture = await resetFixture(page);
   await page.goto('/');
   await signIn(page, fixture.owner);
 
   const navigation = page.getByRole('navigation', { name: 'Module navigation' });
-  await navigation.getByRole('button', { name: 'Cellar' }).click();
+  const today = navigation.getByRole('button', { name: 'Today' });
+  await today.click();
+  await page.getByRole('menuitem', { name: 'Work Queue', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Today’s work and approvals' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Recall', exact: true }).click();
+  const business = navigation.getByRole('button', { name: 'Business' });
+  await business.click();
+
+  await page.getByRole('menuitem', { name: 'Product Recall', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Lot containment cockpit' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Purchasing', exact: true }).click();
+  await business.click();
+  await page.getByRole('menuitem', { name: 'Purchasing', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Purchasing and receiving' })).toBeVisible();
 
+  await navigation.getByRole('button', { name: 'Cellar' }).click();
+  await page.getByRole('button', { name: /More tools/ }).click();
   await page.getByRole('button', { name: 'Planner', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Visual production schedule' })).toBeVisible();
+});
+
+test('owner can pause every notification channel and resume immediately', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto('/');
+  await signIn(page, fixture.owner);
+
+  const bell = page.getByRole('button', { name: /^Notifications:/ });
+  await bell.click();
+  const center = page.getByRole('dialog', { name: 'Notification center' });
+  await center.getByRole('button', { name: 'Mute', exact: true }).click();
+  await center.getByRole('button', { name: '1 hour', exact: true }).click();
+
+  await expect(center).toContainText('Every channel is paused until');
+  await expect(page.getByRole('button', { name: /^Notifications paused until/ })).toBeVisible();
+
+  await center.getByRole('button', { name: 'Resume', exact: true }).click();
+  await expect(page.getByRole('button', { name: /^Notifications:/ })).toBeVisible();
 });
 
 test('unfinished task draft survives a browser refresh', async ({ page }) => {

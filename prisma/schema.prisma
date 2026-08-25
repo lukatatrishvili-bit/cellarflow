@@ -250,6 +250,8 @@ model AiNotificationPreference {
   whatsappEnabledAt   DateTime?
   minimumSeverity     String       @default("warning")
   inAppMinimumSeverity String  @default("info")
+  notificationsEnabled Boolean    @default(true)
+  notificationsPausedUntil DateTime?
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
@@ -257,6 +259,7 @@ model AiNotificationPreference {
   @@index([organizationId, emailEnabled])
   @@index([organizationId, pushEnabled])
   @@index([organizationId, whatsappEnabled])
+  @@index([organizationId, notificationsEnabled])
 }
 
 /// One browser endpoint registered by a user for one winery. The endpoint and

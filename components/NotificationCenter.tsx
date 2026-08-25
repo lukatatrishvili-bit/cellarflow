@@ -4,7 +4,16 @@ import type { AlertSeverity } from '../lib/alerts';
 import type { NotificationCategory, NotificationItem } from '../lib/notificationFeed';
 import type { Language } from '../lib/i18n';
 import {
+  announceNotificationPreferenceChange,
+  normalizeNotificationQuietMode,
+  notificationPauseUntil,
+  notificationQuietModeIsActive,
+  NOTIFICATION_PREFERENCES_CHANGED_EVENT,
+  type NotificationQuietMode,
+} from '../lib/notificationQuietMode';
+import {
   Bell,
+  BellOff,
   BrainCircuit,
   Droplet,
   TestTube,
@@ -13,6 +22,7 @@ import {
   CheckSquare,
   Boxes,
   ShieldCheck,
+  Clock3,
 } from 'lucide-react';
 
 interface Props {
@@ -23,11 +33,14 @@ interface Props {
   /** Optional: jump to the area a notification relates to. */
   onSelect?: (item: NotificationItem) => void;
   lang?: Language;
+  /** Changes whenever the signed-in user or active winery changes. */
+  preferenceScopeKey?: string;
 }
 
 const CATEGORY_ICON: Record<NotificationCategory, React.ComponentType<{ className?: string }>> = {
   so2: Droplet,
   va: TestTube,
+  lab: TestTube,
   fermentation: Sparkles,
   temperature: Thermometer,
   cleaning: Droplet,
@@ -45,16 +58,30 @@ export default function NotificationCenter({
   onMarkAllAiRead,
   onSelect,
   lang = 'en',
+  preferenceScopeKey = '',
 }: Props) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<NotificationFilter>('all');
   const [markingAllRead, setMarkingAllRead] = useState(false);
+  const [quietMode, setQuietMode] = useState<NotificationQuietMode>({
+    notificationsEnabled: true,
+    notificationsPausedUntil: null,
+  });
+  const [quietClock, setQuietClock] = useState(() => Date.now());
+  const [quietLoading, setQuietLoading] = useState(true);
+  const [quietSaving, setQuietSaving] = useState(false);
+  const [quietError, setQuietError] = useState('');
+  const [showQuietOptions, setShowQuietOptions] = useState(false);
   const [panelBox, setPanelBox] = useState({ top: 0, left: 0, width: 360, maxHeight: 360 });
   const ref = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const preferenceScopeRef = useRef(preferenceScopeKey);
+  preferenceScopeRef.current = preferenceScopeKey;
 
   const isKa = lang === 'ka';
+  const quietActive = notificationQuietModeIsActive(quietMode, new Date(quietClock));
+  const activeItems = useMemo(() => quietActive ? [] : items, [items, quietActive]);
 
   const SEVERITY_STYLES: Record<AlertSeverity, { dot: string; chip: string; label: string }> = {
     critical: { dot: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700 border-rose-200', label: isKa ? 'კრიტიკული' : 'Critical' },
@@ -65,6 +92,7 @@ export default function NotificationCenter({
   const CATEGORY_LABEL: Record<NotificationCategory, string> = {
     so2: 'SO2',
     va: 'VA',
+    lab: isKa ? 'ლაბორატორია' : 'Laboratory',
     fermentation: isKa ? 'დუღილი' : 'Fermentation',
     temperature: isKa ? 'ტემპერატურა' : 'Temperature',
     cleaning: isKa ? 'რეცხვა' : 'Cleaning',
@@ -73,24 +101,24 @@ export default function NotificationCenter({
     intelligence: isKa ? 'ინტელექტი' : 'Intelligence',
   };
 
-  const criticalCount = items.filter((item) => item.severity === 'critical').length;
-  const warningCount = items.filter((item) => item.severity === 'warning').length;
-  const infoCount = items.filter((item) => item.severity === 'info').length;
-  const aiCount = items.filter((item) => item.source === 'ai').length;
-  const aiUnreadCount = items.filter((item) => item.source === 'ai' && item.unread).length;
-  const unreadCount = items.filter((item) => item.unread).length;
-  const count = items.length;
-  const unreadCriticalCount = items.filter(
+  const criticalCount = activeItems.filter((item) => item.severity === 'critical').length;
+  const warningCount = activeItems.filter((item) => item.severity === 'warning').length;
+  const infoCount = activeItems.filter((item) => item.severity === 'info').length;
+  const aiCount = activeItems.filter((item) => item.source === 'ai').length;
+  const aiUnreadCount = activeItems.filter((item) => item.source === 'ai' && item.unread).length;
+  const unreadCount = activeItems.filter((item) => item.unread).length;
+  const count = activeItems.length;
+  const unreadCriticalCount = activeItems.filter(
     (item) => item.unread && item.severity === 'critical',
   ).length;
   const badgeColor = unreadCriticalCount > 0 ? 'bg-rose-600' : 'bg-amber-500';
   const filteredItems = useMemo(
     () => filter === 'all'
-      ? items
+      ? activeItems
       : filter === 'ai'
-        ? items.filter((item) => item.source === 'ai')
-        : items.filter((item) => item.severity === filter),
-    [items, filter],
+        ? activeItems.filter((item) => item.source === 'ai')
+        : activeItems.filter((item) => item.severity === filter),
+    [activeItems, filter],
   );
   const filterCounts: Record<NotificationFilter, number> = {
     all: count,
@@ -147,6 +175,81 @@ export default function NotificationCenter({
     };
   }, [open, updatePanelBox]);
 
+  const loadQuietMode = useCallback(async (scopeKey: string) => {
+    setQuietLoading(true);
+    try {
+      const response = await fetch('/api/notifications/preferences', { credentials: 'include' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Notification preferences could not be loaded.');
+      if (preferenceScopeRef.current !== scopeKey) return;
+      setQuietMode(normalizeNotificationQuietMode(payload?.preference));
+      setQuietError('');
+    } catch {
+      if (preferenceScopeRef.current !== scopeKey) return;
+      setQuietError(isKa
+        ? 'დადუმების პარამეტრი ვერ ჩაიტვირთა.'
+        : 'Quiet-mode preference could not be loaded.');
+    } finally {
+      if (preferenceScopeRef.current === scopeKey) setQuietLoading(false);
+    }
+  }, [isKa]);
+
+  useEffect(() => {
+    void loadQuietMode(preferenceScopeKey);
+    const onPreferenceChanged = (event: Event) => {
+      setQuietMode(normalizeNotificationQuietMode((event as CustomEvent).detail));
+      setQuietClock(Date.now());
+    };
+    window.addEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, onPreferenceChanged);
+    return () => window.removeEventListener(NOTIFICATION_PREFERENCES_CHANGED_EVENT, onPreferenceChanged);
+  }, [loadQuietMode, preferenceScopeKey]);
+
+  useEffect(() => {
+    if (!quietMode.notificationsPausedUntil) return;
+    const remaining = new Date(quietMode.notificationsPausedUntil).getTime() - Date.now();
+    if (remaining <= 0) {
+      setQuietClock(Date.now());
+      return;
+    }
+    const timer = window.setTimeout(() => setQuietClock(Date.now()), Math.min(remaining + 50, 2_147_000_000));
+    return () => window.clearTimeout(timer);
+  }, [quietMode.notificationsPausedUntil]);
+
+  const saveQuietMode = async (patch: Partial<NotificationQuietMode>) => {
+    setQuietSaving(true);
+    setQuietError('');
+    try {
+      const response = await fetch('/api/notifications/preferences', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.error || 'Notification preference could not be saved.');
+      const next = normalizeNotificationQuietMode(payload?.preference);
+      setQuietMode(next);
+      setQuietClock(Date.now());
+      setShowQuietOptions(false);
+      announceNotificationPreferenceChange(next);
+    } catch (error) {
+      setQuietError(error instanceof Error
+        ? error.message
+        : (isKa ? 'დადუმება ვერ შეინახა.' : 'Quiet mode could not be saved.'));
+    } finally {
+      setQuietSaving(false);
+    }
+  };
+
+  const quietUntilLabel = quietMode.notificationsPausedUntil
+    ? new Date(quietMode.notificationsPausedUntil).toLocaleString(isKa ? 'ka-GE' : undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    : '';
+
   const panel = (
     <div
       ref={panelRef}
@@ -165,12 +268,54 @@ export default function NotificationCenter({
           <span className="text-[11px] font-serif font-black uppercase tracking-widest flex items-center gap-1.5">
             <Bell className="w-3.5 h-3.5 text-amber-300" /> {isKa ? 'შეტყობინებების ცენტრი' : 'Notification Center'}
           </span>
-          <span className="text-[9px] font-mono font-bold">
-            {criticalCount > 0
-              ? (isKa ? `${criticalCount} კრიტიკული` : `${criticalCount} critical`)
-              : (isKa ? `${count} აქტიური` : `${count} open`)}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-mono font-bold">
+              {quietActive
+                ? (quietMode.notificationsEnabled ? (isKa ? 'დროებით დადუმებული' : 'Paused') : (isKa ? 'გამორთულია' : 'Off'))
+                : criticalCount > 0
+                  ? (isKa ? `${criticalCount} კრიტიკული` : `${criticalCount} critical`)
+                  : (isKa ? `${count} აქტიური` : `${count} open`)}
+            </span>
+            <button
+              type="button"
+              disabled={quietLoading || quietSaving}
+              onClick={() => {
+                if (quietActive) {
+                  void saveQuietMode({ notificationsEnabled: true, notificationsPausedUntil: null });
+                } else {
+                  setShowQuietOptions(value => !value);
+                }
+              }}
+              className="inline-flex min-h-7 items-center gap-1 rounded-lg border border-white/20 bg-white/10 px-2 text-[9px] font-bold hover:bg-white/20 disabled:opacity-50"
+            >
+              {quietActive ? <Bell className="h-3 w-3" /> : <BellOff className="h-3 w-3" />}
+              {quietActive ? (isKa ? 'ჩართვა' : 'Resume') : (isKa ? 'დადუმება' : 'Mute')}
+            </button>
+          </div>
         </div>
+        {quietActive && (
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-white/15 bg-black/10 px-2.5 py-2 text-[9px] leading-relaxed text-amber-50">
+            <BellOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
+            <span>
+              {quietMode.notificationsEnabled
+                ? (isKa ? `ყველა არხი შეჩერებულია ${quietUntilLabel}-მდე.` : `Every channel is paused until ${quietUntilLabel}.`)
+                : (isKa ? 'ყველა შეტყობინება სრულად გამორთულია.' : 'All notifications are turned off.')}
+            </span>
+          </div>
+        )}
+        {!quietActive && showQuietOptions && (
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
+            <button type="button" disabled={quietSaving} onClick={() => void saveQuietMode({ notificationsEnabled: true, notificationsPausedUntil: notificationPauseUntil('hour') })} className="rounded-lg border border-white/20 bg-white/10 px-2 py-2 text-[9px] font-bold hover:bg-white/20 disabled:opacity-50">
+              <Clock3 className="mx-auto mb-1 h-3 w-3" />{isKa ? '1 საათით' : '1 hour'}
+            </button>
+            <button type="button" disabled={quietSaving} onClick={() => void saveQuietMode({ notificationsEnabled: true, notificationsPausedUntil: notificationPauseUntil('today') })} className="rounded-lg border border-white/20 bg-white/10 px-2 py-2 text-[9px] font-bold hover:bg-white/20 disabled:opacity-50">
+              <Clock3 className="mx-auto mb-1 h-3 w-3" />{isKa ? 'დღის ბოლომდე' : 'Rest of day'}
+            </button>
+            <button type="button" disabled={quietSaving} onClick={() => void saveQuietMode({ notificationsEnabled: false, notificationsPausedUntil: null })} className="rounded-lg border border-white/20 bg-white/10 px-2 py-2 text-[9px] font-bold hover:bg-white/20 disabled:opacity-50">
+              <BellOff className="mx-auto mb-1 h-3 w-3" />{isKa ? 'სრულად' : 'Turn off'}
+            </button>
+          </div>
+        )}
         {count > 0 && (
           <div className="mt-2 grid grid-cols-3 gap-1.5 text-[9px] font-mono font-bold uppercase">
             <span className="rounded-lg bg-white/10 px-2 py-1 text-rose-100">{criticalCount} {isKa ? 'კრიტიკული' : 'critical'}</span>
@@ -203,6 +348,12 @@ export default function NotificationCenter({
         )}
       </div>
 
+      {quietError && (
+        <div role="alert" className="border-b border-rose-200 bg-rose-50 px-3 py-2 text-[9px] font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+          {quietError}
+        </div>
+      )}
+
       {count > 0 && (
         <div className="grid grid-cols-5 gap-1 border-b border-stone-200 bg-stone-50 p-2 dark:border-stone-800 dark:bg-stone-900/70">
           {FILTERS.map((item) => {
@@ -232,7 +383,7 @@ export default function NotificationCenter({
         </div>
       )}
 
-      {aiStatus !== 'ready' && (
+      {!quietActive && aiStatus !== 'ready' && (
         <div className={`border-b px-3 py-2 text-[9px] font-semibold ${
           aiStatus === 'loading'
             ? 'border-violet-100 bg-violet-50 text-violet-700 dark:border-violet-950 dark:bg-violet-950/30 dark:text-violet-300'
@@ -252,9 +403,15 @@ export default function NotificationCenter({
       >
         {count === 0 ? (
           <div className="px-4 py-8 text-center text-stone-400 flex flex-col items-center gap-2">
-            <ShieldCheck className="w-7 h-7 text-emerald-500" />
+            {quietActive
+              ? <BellOff className="h-7 w-7 text-stone-400" />
+              : <ShieldCheck className="w-7 h-7 text-emerald-500" />}
             <span className="text-[11px] font-semibold">
-              {aiStatus === 'loading'
+              {quietActive
+                ? (quietMode.notificationsEnabled
+                  ? (isKa ? `შეტყობინებები დადუმებულია ${quietUntilLabel}-მდე.` : `Notifications are paused until ${quietUntilLabel}.`)
+                  : (isKa ? 'შეტყობინებები გამორთულია. მათი ჩართვა ზემოთ შეგიძლიათ.' : 'Notifications are off. You can resume them above.'))
+                : aiStatus === 'loading'
                 ? (isKa ? 'საოპერაციო ალერტები არ არის. AI შემოწმება იტვირთება.' : 'No operational alerts. AI checks are loading.')
                 : (isKa ? 'ყველა სისტემა წესრიგშია — აქტიური შეტყობინებები არ არის.' : 'All clear — no active notifications.')}
             </span>
@@ -345,12 +502,18 @@ export default function NotificationCenter({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="cellar-alerts-popover"
-        aria-label={isKa
-          ? `შეტყობინებები: ${unreadCount} წაუკითხავი, ${count} აქტიური`
-          : `Notifications: ${unreadCount} unread, ${count} active`}
+        aria-label={quietActive
+          ? (quietMode.notificationsEnabled
+            ? (isKa ? `შეტყობინებები დადუმებულია ${quietUntilLabel}-მდე` : `Notifications paused until ${quietUntilLabel}`)
+            : (isKa ? 'შეტყობინებები გამორთულია' : 'Notifications are off'))
+          : isKa
+            ? `შეტყობინებები: ${unreadCount} წაუკითხავი, ${count} აქტიური`
+            : `Notifications: ${unreadCount} unread, ${count} active`}
         className="relative p-2 rounded-xl border border-stone-200 bg-gradient-to-r from-stone-50 to-stone-100 hover:border-[#4e0e15]/40 transition-colors cursor-pointer shadow-2xs"
       >
-        <Bell className="w-4 h-4 text-[#4e0e15]" />
+        {quietActive
+          ? <BellOff className="h-4 w-4 text-stone-500" />
+          : <Bell className="w-4 h-4 text-[#4e0e15]" />}
         {unreadCount > 0 && (
           <span
             className={`absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full ${badgeColor} text-white text-[9px] font-black flex items-center justify-center ring-2 ring-white`}

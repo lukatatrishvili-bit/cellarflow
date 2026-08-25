@@ -3,6 +3,7 @@ import { BellRing, ClipboardList, CheckCircle2, Mail, Trash, UserRound } from 'l
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Task, TaskAssignmentInput } from '../lib/wineryState';
+import { tasksForIdentity } from '../lib/workAssignments';
 import { useFormDraft } from '../hooks/useFormDraft';
 import DateInput from './ui/DateInput';
 
@@ -51,6 +52,7 @@ interface TasksTabProps {
   ) => void;
   setToastMessage?: (message: string | null) => void;
   currentUsername?: string;
+  currentUserName?: string;
   prefilledTaskTitle?: string;
   setPrefilledTaskTitle?: (title: string) => void;
   prefilledTaskPriority?: 'high' | 'medium' | 'low';
@@ -80,6 +82,7 @@ export function TasksTab({
   onUpdateTaskNotification,
   setToastMessage,
   currentUsername = '',
+  currentUserName = '',
   prefilledTaskTitle = '',
   setPrefilledTaskTitle = () => {},
   prefilledTaskPriority = 'medium',
@@ -99,6 +102,14 @@ export function TasksTab({
   const [notifyAssignee, setNotifyAssignee] = React.useState(false);
   const [loadingRecipients, setLoadingRecipients] = React.useState(true);
   const [sendingNotificationTaskIds, setSendingNotificationTaskIds] = React.useState<Set<string>>(new Set());
+  const [taskScope, setTaskScope] = React.useState<'mine' | 'all'>('mine');
+  const mineTasks = React.useMemo(
+    () => currentUsername || currentUserName
+      ? tasksForIdentity(tasks, { username: currentUsername, fullName: currentUserName })
+      : tasks,
+    [currentUserName, currentUsername, tasks],
+  );
+  const visibleTasks = taskScope === 'mine' ? mineTasks : tasks;
   const selectedMember = members.find(member => member.username === assignedUserId);
   const selectedChannels = [
     selectedMember?.emailNotificationReady ? 'email' : '',
@@ -169,10 +180,17 @@ export function TasksTab({
 
   React.useEffect(() => {
     if (!focusTaskId) return;
-    const taskElement = document.getElementById(`task-${focusTaskId}`);
-    taskElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    taskElement?.focus({ preventScroll: true });
-  }, [focusTaskId, tasks]);
+    if (taskScope === 'mine' && !mineTasks.some(task => task.id === focusTaskId)) {
+      setTaskScope('all');
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const taskElement = document.getElementById(`task-${focusTaskId}`);
+      taskElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      taskElement?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusTaskId, mineTasks, taskScope]);
 
   const sendTaskNotification = async (task: Task, assigneeUsername: string, isRetry = false) => {
     if (!assigneeUsername || sendingNotificationTaskIds.has(task.id)) return;
@@ -291,14 +309,32 @@ export function TasksTab({
           </h3>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-lg border border-stone-200 bg-white p-1" role="group" aria-label={isKa ? 'დავალებების ხილვადობა' : 'Task visibility'}>
+            <button
+              type="button"
+              onClick={() => setTaskScope('mine')}
+              aria-pressed={taskScope === 'mine'}
+              className={`min-h-8 rounded-md px-3 text-[10px] font-bold ${taskScope === 'mine' ? 'bg-[#4e0e15] text-white' : 'text-stone-500 hover:bg-stone-50'}`}
+            >
+              {isKa ? 'ჩემი' : 'Mine'} · {mineTasks.filter(task => task.status === 'pending').length}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTaskScope('all')}
+              aria-pressed={taskScope === 'all'}
+              className={`min-h-8 rounded-md px-3 text-[10px] font-bold ${taskScope === 'all' ? 'bg-[#4e0e15] text-white' : 'text-stone-500 hover:bg-stone-50'}`}
+            >
+              {isKa ? 'გუნდი' : 'Team'} · {tasks.filter(task => task.status === 'pending').length}
+            </button>
+          </div>
           <div className="px-3 py-1.5 bg-rose-50 border border-rose-200/50 rounded-lg text-center">
             <span className="text-[9px] text-rose-800 font-mono uppercase font-bold block">{isKa ? 'აქტიური' : 'Active'}</span>
-            <strong className="text-sm font-serif font-bold text-rose-700 block">{tasks.filter(t => t.status === 'pending').length}</strong>
+            <strong className="text-sm font-serif font-bold text-rose-700 block">{visibleTasks.filter(t => t.status === 'pending').length}</strong>
           </div>
           <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-150 rounded-lg text-center">
             <span className="text-[9px] text-emerald-800 font-mono uppercase font-bold block">{isKa ? 'დასრულებული' : 'Finished'}</span>
-            <strong className="text-sm font-serif font-bold text-emerald-600 block">{tasks.filter(t => t.status === 'completed').length}</strong>
+            <strong className="text-sm font-serif font-bold text-emerald-600 block">{visibleTasks.filter(t => t.status === 'completed').length}</strong>
           </div>
         </div>
       </div>
@@ -444,11 +480,11 @@ export function TasksTab({
           <div className="bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
             <h4 className="font-serif font-bold text-sm text-[#4e0e15] flex items-center justify-between">
               <span>{isKa ? 'მიმდინარე დავალებები' : 'Pending Directives'}</span>
-              <span className="text-[10px] font-mono text-slate-400 font-normal">{tasks.filter(t => t.status === 'pending').length} {isKa ? 'დარჩენილი დავალება' : 'tasks remaining'}</span>
+              <span className="text-[10px] font-mono text-slate-400 font-normal">{visibleTasks.filter(t => t.status === 'pending').length} {isKa ? 'დარჩენილი დავალება' : 'tasks remaining'}</span>
             </h4>
 
             <div className="space-y-3">
-              {tasks.filter(t => t.status === 'pending').map((task) => (
+              {visibleTasks.filter(t => t.status === 'pending').map((task) => (
                 <div
                   key={task.id}
                   id={`task-${task.id}`}
@@ -544,20 +580,22 @@ export function TasksTab({
                 </div>
               ))}
 
-              {tasks.filter(t => t.status === 'pending').length === 0 && (
+              {visibleTasks.filter(t => t.status === 'pending').length === 0 && (
                 <div className="text-center py-10 text-[#4e0e15]/40 italic font-mono text-xs">
                   <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-2" />
-                  {isKa ? 'ყველა დავალება შესრულებულია! მარანი მოწესრიგებულია.' : 'All cellar directives completed! Cellar sanitation is stellar.'}
+                  {taskScope === 'mine'
+                    ? (isKa ? 'თქვენთვის ღია დავალება არ არის.' : 'You have no open assigned tasks.')
+                    : (isKa ? 'გუნდის ყველა დავალება შესრულებულია.' : 'All team tasks are complete.')}
                 </div>
               )}
             </div>
           </div>
 
-          {tasks.filter(t => t.status === 'completed').length > 0 && (
+          {visibleTasks.filter(t => t.status === 'completed').length > 0 && (
             <div className="bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-3">
               <span className="text-[10px] font-mono text-slate-400 uppercase tracking-wider block font-semibold">{isKa ? 'დასრულებულის არქივი' : 'Completed Records Archive'}</span>
               <div className="space-y-2 max-h-48 overflow-y-auto">
-                {tasks.filter(t => t.status === 'completed').map(task => (
+                {visibleTasks.filter(t => t.status === 'completed').map(task => (
                   <div key={task.id} className="flex justify-between items-center text-xs bg-stone-50 px-3.5 py-2.5 rounded-lg border border-stone-200/60 text-slate-400">
                     <div className="flex items-center gap-2 line-through">
                       <span className="font-medium">{task.title}</span>

@@ -160,6 +160,44 @@ describe('DashboardTab role-aware actions', () => {
     expect(markup).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""/);
   });
 
+  it('shows an operational role its own actionable work and reachable business queue items', () => {
+    const props = dashboardProps('Winemaker');
+    props.tasks = [
+      ...props.tasks,
+      {
+        id: 'task-other',
+        title: 'Another person task',
+        priority: 'high',
+        dueDate: '2026-07-11',
+        assignedTo: 'Other Person',
+        assignedUserId: 'other',
+        status: 'pending',
+        description: '',
+      },
+    ];
+    props.purchaseOrders = [{
+      id: 'po-1',
+      orderNumber: 'PO-2026-01',
+      supplierName: 'Cellar Supply',
+      status: 'ordered',
+      orderDate: '2026-07-01',
+      expectedDate: '2026-07-10',
+      currency: 'GEL',
+      lines: [],
+      notes: '',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      createdBy: 'qa-user',
+    }];
+    props.onOpenWorkItem = vi.fn();
+
+    const markup = renderToStaticMarkup(React.createElement(DashboardTab, props));
+
+    expect(markup).toContain('Today’s work and risks');
+    expect(markup).toContain('Review lab results');
+    expect(markup).toContain('PO-2026-01');
+    expect(markup).not.toContain('Another person task');
+  });
+
   it('keeps a new empty workspace compact instead of repeating zero-value sections', () => {
     const props = dashboardProps('Owner/Admin');
     props.tasks = [];

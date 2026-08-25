@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   advanceRecallCase,
+  allowedProductionPlanStatuses,
   allowedPurchaseOrderStatuses,
   applyPurchaseOrderReceipt,
   buildRecallTrace,
@@ -10,6 +11,7 @@ import {
   detectProductionPlanConflicts,
   nextPurchaseOrderReceiptReference,
   nextSopDueDate,
+  productionPlanTransitionIssue,
   purchaseOrderTotal,
   type ProductionPlanItem,
   type QualitySop,
@@ -121,6 +123,25 @@ describe('operations control utilities', () => {
     expect(codes).toContain('dependency_cycle');
   });
 
+  it('keeps production status transitions sequential and blocks unmet prerequisites', () => {
+    const prerequisite: ProductionPlanItem = {
+      id: 'prepare', title: 'Prepare vessel', kind: 'sanitation', status: 'in_progress', startDate: '2026-08-13', endDate: '2026-08-13',
+      assignedTo: 'ana', vesselIds: [], notes: '', dependencyIds: [], createdAt: '', createdBy: 'ana',
+    };
+    const transfer: ProductionPlanItem = {
+      id: 'transfer', title: 'Transfer lot', kind: 'transfer', status: 'planned', startDate: '2026-08-14', endDate: '2026-08-14',
+      assignedTo: 'ana', vesselIds: [], notes: '', dependencyIds: ['prepare'], createdAt: '', createdBy: 'ana',
+    };
+
+    expect(productionPlanTransitionIssue(transfer, 'ready', [prerequisite, transfer])).toMatch(/Complete prerequisite/);
+    expect(allowedProductionPlanStatuses(transfer, [prerequisite, transfer])).not.toContain('ready');
+    expect(productionPlanTransitionIssue(transfer, 'completed', [prerequisite, transfer])).toMatch(/cannot move/);
+
+    const completedPrerequisite = { ...prerequisite, status: 'completed' as const };
+    expect(productionPlanTransitionIssue(transfer, 'ready', [completedPrerequisite, transfer])).toBeNull();
+    expect(allowedProductionPlanStatuses(transfer, [completedPrerequisite, transfer])).toContain('ready');
+  });
+
   it('advances recalls only after every containment task is complete', () => {
     const recall = {
       id: 'recall-1', lotId: 'lot-1', title: 'Recall lot-1', reason: 'Cork issue', status: 'active' as const,
@@ -154,6 +175,33 @@ describe('operations control utilities', () => {
       }],
     });
     expect(queue[0]).toMatchObject({ source: 'recall', priority: 'critical', targetTab: 'recall', targetId: 'recall-1' });
+  });
+
+  it('builds a role-scoped queue and preserves exact record targets', () => {
+    const queue = buildTodayQueue({
+      today: '2026-08-13',
+      currentUsername: 'ana',
+      currentUserName: 'Ana K.',
+      tasks: [
+        { id: 'mine', title: 'Mine', priority: 'high', dueDate: '2026-08-13', assignedTo: 'Ana K.', status: 'pending', description: '' },
+        { id: 'theirs', title: 'Theirs', priority: 'high', dueDate: '2026-08-13', assignedTo: 'Nino', assignedUserId: 'nino', status: 'pending', description: '' },
+      ],
+      sops: [sop({ id: 'mine-sop', owner: 'ana', nextDueDate: '2026-08-13' }), sop({ id: 'their-sop', owner: 'nino', nextDueDate: '2026-08-13' })],
+      purchaseOrders: [],
+      productionPlans: [],
+      approvals: [],
+      recallCases: [],
+      visibility: {
+        includeTeamWork: false,
+        purchaseOrders: false,
+        productionPlans: false,
+        approvals: 'none',
+        recalls: false,
+      },
+    });
+
+    expect(queue.map(item => item.id)).toEqual(['task:mine', 'sop:mine-sop']);
+    expect(queue.map(item => item.targetId)).toEqual(['mine', 'mine-sop']);
   });
 });
 

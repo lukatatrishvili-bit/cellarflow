@@ -55,11 +55,20 @@ const location: StorageLocation = {
   targetHumidity: 65,
 };
 
+const vessel = {
+  id: 'TANK-SAP-1', type: 'stainless_steel' as const, shape: 'vertical' as const,
+  capacity: 1_000, currentVolume: 900, assignedLotId: lot.id,
+  cleaningStatus: 'clean' as const, lastCleaned: '2026-10-01', temperature: 14,
+  coolingJacketActive: false, targetTemperature: null, lastOperation: 'Aging',
+};
+
 function props(overrides: Partial<ComponentProps<typeof BottlingTab>> = {}): ComponentProps<typeof BottlingTab> {
   return {
     lang: 'en',
     lots: [lot],
     onUpdateLots: vi.fn(),
+    vessels: [vessel],
+    onUpdateVessels: vi.fn(),
     history: [run],
     onUpdateHistory: vi.fn(),
     inventory: [packaging],

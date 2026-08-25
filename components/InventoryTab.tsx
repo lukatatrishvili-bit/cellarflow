@@ -33,6 +33,7 @@ interface Props {
   canPostInvoiceCosts?: boolean;
   accountingCurrency?: string;
   onApplyInvoiceReceiptCommandResponse?: (response: InvoiceReceiptCommandResponse) => void;
+  onOpenProcurement?: () => void;
 }
 
 export function InventoryTab({
@@ -46,6 +47,7 @@ export function InventoryTab({
   canPostInvoiceCosts = true,
   accountingCurrency = 'GEL',
   onApplyInvoiceReceiptCommandResponse,
+  onOpenProcurement,
 }: Props) {
   const ka = lang === 'ka';
   const catLabel = (cat: string) => inventoryCategoryLabel(cat, lang);
@@ -62,13 +64,11 @@ export function InventoryTab({
   const [itemCost, setItemCost] = useState(15.0);
   const [itemSupplier, setItemSupplier] = useState('');
   const [itemDetails, setItemDetails] = useState('');
-  const [itemInitialStock, setItemInitialStock] = useState(25);
   const [showInvoiceImporter, setShowInvoiceImporter] = useState(false);
 
   // Editing item state
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [editStock, setEditStock] = useState(0);
   const [editMinThresh, setEditMinThresh] = useState(0);
   const [editUnit, setEditUnit] = useState('');
   const [editCost, setEditCost] = useState(0);
@@ -167,7 +167,7 @@ export function InventoryTab({
       id: `inv-${Date.now()}`,
       name: itemName,
       category: selectedCategory,
-      stock: itemInitialStock,
+      stock: 0,
       minThreshold: itemMinThresh,
       unit: itemUnit,
       costPerUnit: itemCost,
@@ -179,7 +179,6 @@ export function InventoryTab({
 
     // Reset Form
     setItemName('');
-    setItemInitialStock(25);
     setItemMinThresh(10);
     setItemUnit('kg');
     setItemCost(15.0);
@@ -196,9 +195,8 @@ export function InventoryTab({
         return {
           ...item,
           name: editName,
-          stock: editStock,
           minThreshold: editMinThresh,
-          unit: editUnit,
+          unit: item.stock > 0 ? item.unit : editUnit,
           costPerUnit: editCost,
           supplierName: editSupplier,
           details: editDetails
@@ -215,7 +213,6 @@ export function InventoryTab({
     if (!canUpdateInventory) return;
     setEditingItemId(item.id);
     setEditName(item.name);
-    setEditStock(item.stock);
     setEditMinThresh(item.minThreshold);
     setEditUnit(item.unit);
     setEditCost(item.costPerUnit);
@@ -226,27 +223,24 @@ export function InventoryTab({
   // Delete an item
   const handleDeleteItem = (id: string, name: string) => {
     if (!canDeleteInventory) return;
+    const item = inventory.find(candidate => candidate.id === id);
+    const isReferenced = cellarOps.some(operation => (
+      operation.recordKind !== 'reversal'
+      && !operation.reversedByCommandId
+      && (operation.materialId === id || operation.materials?.some(material => material.materialId === id))
+    ));
+    if (!item || item.stock !== 0 || isReferenced) {
+      alert(ka
+        ? 'პროდუქტი ვერ წაიშლება, სანამ მას აქვს ნაშთი ან გამოყენების ისტორია. შეცვალეთ მხოლოდ სპეციფიკაცია ან გააუქმეთ გამოყენება შესაბამისი ოპერაციიდან.'
+        : 'This material cannot be deleted while it has stock or usage history. Edit its specifications or reverse the linked operation instead.');
+      return;
+    }
     const confirmDelete = window.confirm(ka
       ? `დარწმუნებული ხართ, რომ გსურთ „${name}" წაშლა ინვენტარიდან? ეს მოქმედება შეუქცევადია.`
       : `Are you sure you want to delete "${name}" from your stockpile inventory? This action is irreversible.`);
     if (confirmDelete) {
       onUpdateInventory(inventory.filter(item => item.id !== id));
     }
-  };
-
-  // Adjust stock inline (+ or -)
-  const adjustStockInline = (itemId: string, current: number, amount: number) => {
-    if (!canUpdateInventory) return;
-    const updated = inventory.map(item => {
-      if (item.id === itemId) {
-        return {
-          ...item,
-          stock: parseFloat(Math.max(0, current + amount).toFixed(1))
-        };
-      }
-      return item;
-    });
-    onUpdateInventory(updated);
   };
 
   // Filter items in the currently active category
@@ -304,6 +298,14 @@ export function InventoryTab({
         </div>
         {(canCreateInventory || canUpdateInventory) && (
         <div className="flex gap-2">
+          {onOpenProcurement && canUpdateInventory && (
+          <button
+            onClick={onOpenProcurement}
+            className="px-3.5 py-1.5 text-xs font-semibold text-[#4e0e15] bg-white hover:bg-stone-50 rounded-lg border border-[#d9cabb] transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <Building2 className="w-4 h-4" /> {ka ? 'შესყიდვის ორდერი' : 'Purchase Order'}
+          </button>
+          )}
           {canPostInvoiceCosts && <button
             onClick={() => setShowInvoiceImporter(current => !current)}
             className="px-3.5 py-1.5 text-xs font-semibold text-[#4e0e15] bg-[#f4ece5] hover:bg-[#eadfd5] rounded-lg border border-[#d9cabb] transition-colors cursor-pointer flex items-center gap-1.5"
@@ -475,7 +477,7 @@ export function InventoryTab({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                <div className="md:col-span-6">
+                <div className="md:col-span-9">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
                     {ka ? 'პროდუქტის სახელი *' : 'Material / Product Name *'}
                   </label>
@@ -486,19 +488,6 @@ export function InventoryTab({
                     value={itemName}
                     onChange={(e) => setItemName(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] font-medium focus:bg-white outline-none"
-                  />
-                </div>
-                <div className="md:col-span-3">
-                  <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    {ka ? 'საწყისი მარაგი' : 'Initial Stock Level'}
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    required
-                    value={itemInitialStock}
-                    onChange={(e) => setItemInitialStock(parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] font-mono focus:bg-white outline-none"
                   />
                 </div>
                 <div className="md:col-span-3">
@@ -517,6 +506,12 @@ export function InventoryTab({
                     <option value="liters">{ka ? 'ლიტრი' : 'liters (Liters)'}</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[10px] font-semibold text-sky-900">
+                {ka
+                  ? 'ახალი პროდუქტი შეიქმნება 0 ნაშთით. რეალური მიღება აღრიცხეთ ინვოისით ან შესყიდვის ორდერიდან.'
+                  : 'New materials start at zero. Receive real stock through an invoice or purchase order.'}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -629,18 +624,27 @@ export function InventoryTab({
                         <div className="grid grid-cols-2 gap-2">
                           <div>
                             <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'მიმდინარე მარაგი' : 'Current Stock'}</label>
-                            <input
-                              type="number" step="0.1" value={editStock} onChange={(e) => setEditStock(parseFloat(e.target.value) || 0)}
-                              className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-mono"
-                            />
+                            <div className="w-full rounded border border-stone-200 bg-stone-100 px-2.5 py-1 text-xs font-mono text-stone-600">
+                              {item.stock} {item.unit}
+                            </div>
                           </div>
                           <div>
                             <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'ერთეული' : 'Units'}</label>
                             <input
                               type="text" value={editUnit} onChange={(e) => setEditUnit(e.target.value)}
+                              disabled={item.stock > 0}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded"
                             />
                           </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'ერთეულის მიმდინარე ფასი' : 'Current Unit Cost'}</label>
+                          <input
+                            type="number" min="0" step="0.01" value={editCost}
+                            onChange={(e) => setEditCost(parseFloat(e.target.value) || 0)}
+                            className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-mono"
+                          />
                         </div>
 
                         <div className="grid grid-cols-3 gap-2">
@@ -774,7 +778,7 @@ export function InventoryTab({
                       )}
                     </div>
 
-                    {/* Stock Refill / Reduce micro adjustments bar */}
+                    {/* Stock changes are posted by traceable receipt/consumption workflows. */}
                     <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-dashed border-[#e8dfd5] pt-2 text-[10px] gap-2">
                       {lowStock ? (
                         <span className="text-red-650 font-bold uppercase animate-pulse flex items-center gap-0.5">
@@ -786,22 +790,22 @@ export function InventoryTab({
                         </span>
                       )}
 
-                      {canUpdateInventory && (
+                      {canUpdateInventory && (canPostInvoiceCosts || onOpenProcurement) && (
                       <div className="flex w-full sm:w-auto items-center gap-1 shrink-0">
-                        <button
-                          title={ka ? 'მარაგის ხელით შესწორება (-რაოდ.)' : 'Manual stock correction (-Qty)'}
-                          onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? -50 : -2.5)}
+                        {canPostInvoiceCosts && <button
+                          title={ka ? 'მიღება ინვოისით' : 'Receive from invoice'}
+                          onClick={() => setShowInvoiceImporter(true)}
+                          className="flex-1 sm:flex-none px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer"
+                        >
+                          {ka ? 'ინვოისით მიღება' : 'Receive invoice'}
+                        </button>}
+                        {onOpenProcurement && <button
+                          title={ka ? 'შესყიდვის ორდერის შექმნა' : 'Create purchase order'}
+                          onClick={onOpenProcurement}
                           className="flex-1 sm:flex-none px-2 py-1 bg-stone-100 text-stone-700 text-[10px] font-bold rounded-lg hover:bg-stone-200 border border-stone-200 cursor-pointer"
                         >
-                          − {ka ? 'შესწორება' : 'Adjust'}
-                        </button>
-                        <button
-                          title={ka ? 'მარაგის მიღება (+რაოდ.)' : 'Receive Stock (+Qty)'}
-                          onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? 100 : 5)}
-                          className="flex-1 sm:flex-none px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer flex items-center justify-center gap-0.5"
-                        >
-                          + {ka ? 'მიღება' : 'Receive'}
-                        </button>
+                          {ka ? 'შესყიდვა' : 'Purchase'}
+                        </button>}
                       </div>
                       )}
                     </div>

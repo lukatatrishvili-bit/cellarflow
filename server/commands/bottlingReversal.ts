@@ -57,6 +57,7 @@ export async function executeBottlingReversalCommand(
       const applied = applyBottlingReversalCommand(
         {
           lots: Array.isArray(storedData.lots) ? storedData.lots as any[] : [],
+          vessels: Array.isArray(storedData.vessels) ? storedData.vessels as any[] : [],
           bottlingRuns: Array.isArray(storedData.bottlingRuns) ? storedData.bottlingRuns as any[] : [],
           inventory: Array.isArray(storedData.inventory) ? storedData.inventory as any[] : [],
           costEntries: Array.isArray(storedData.costEntries) ? storedData.costEntries as any[] : [],

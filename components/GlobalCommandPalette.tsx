@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
+  AlertOctagon,
   Boxes,
   ClipboardList,
   FileSpreadsheet,
   FileText,
   Grape,
+  ListChecks,
   PackageSearch,
   Search,
   Settings,
@@ -130,10 +132,13 @@ export default function GlobalCommandPalette({
   const commands = useMemo<CommandItem[]>(() => {
     const allModuleCommands: Array<CommandItem & { moduleId: string; tabId?: string }> = [
       { id: 'module-dashboard', moduleId: 'portal', kind: 'module', title: ka ? 'დღეს' : 'Today', subtitle: ka ? 'დღევანდელი სამუშაოს გახსნა' : 'Open today’s priorities', keywords: 'today dashboard portal home overview დღეს მთავარი', icon: BarChart3, run: () => jump('portal') },
+      { id: 'module-work', moduleId: 'work', kind: 'module', title: ka ? 'სამუშაო რიგი' : 'Work Queue', subtitle: ka ? 'სრული სამუშაო რიგი და დამტკიცებები' : 'Open the complete queue and approvals', keywords: 'work queue tasks approvals today სამუშაო რიგი დამტკიცება', icon: ListChecks, run: () => jump('work') },
       { id: 'module-vineyard', moduleId: 'vazi', kind: 'module', title: ka ? 'ვენახი' : 'Vineyard', subtitle: ka ? 'ვაზის მოდულის გახსნა' : 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray ვენახი', icon: Sprout, run: () => jump('vazi') },
       { id: 'module-cellar', moduleId: 'gvino', tabId: 'dashboard', kind: 'module', title: ka ? 'მარანი' : 'Cellar', subtitle: ka ? 'ღვინის მოდულის გახსნა' : 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels მარანი', icon: Wine, run: () => jump('gvino', 'dashboard') },
       { id: 'module-sales', moduleId: 'sales', kind: 'module', title: ka ? 'გაყიდვები' : 'Sales', subtitle: ka ? 'შეკვეთები, ჯავშნები, გატანა' : 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers გაყიდვები', icon: ShoppingCart, run: () => jump('sales') },
       { id: 'module-storage', moduleId: 'storage', kind: 'module', title: ka ? 'საწყობი' : 'Storage', subtitle: ka ? 'მზა პროდუქციის მარაგი' : 'Finished goods stock', keywords: 'storage warehouse stock bottles inventory finished goods საწყობი', icon: Warehouse, run: () => jump('storage') },
+      { id: 'module-recall', moduleId: 'recall', kind: 'module', title: ka ? 'პროდუქტის გაწვევა' : 'Product Recall', subtitle: ka ? 'გაყიდული პროდუქტის მიკვლევა და შეკავება' : 'Trace and contain affected finished goods', keywords: 'recall containment trace customers dispatch გაწვევა შეკავება', icon: AlertOctagon, run: () => jump('recall') },
+      { id: 'module-procurement', moduleId: 'procurement', kind: 'module', title: ka ? 'შესყიდვა' : 'Purchasing', subtitle: ka ? 'მომწოდებლები, შეკვეთები და მიღება' : 'Suppliers, purchase orders, and receiving', keywords: 'procurement purchasing suppliers purchase orders receiving შესყიდვა მომწოდებელი', icon: ShoppingCart, run: () => jump('procurement') },
       { id: 'module-analytics', moduleId: 'analytics', kind: 'module', title: ka ? 'ანალიტიკა' : 'Analytics', subtitle: ka ? 'წლების შედარების ანგარიშები' : 'Year comparison reports', keywords: 'analytics reports year comparison vintage margin ანალიტიკა', icon: BarChart3, run: () => jump('analytics') },
       { id: 'module-docs', moduleId: 'docs', kind: 'module', title: ka ? 'დოკუმენტები' : 'Documents', subtitle: ka ? 'ოფიციალური დოკუმენტები და ექსპორტი' : 'Official documents and exports', keywords: 'documents reports official forms exports დოკუმენტები', icon: FileSpreadsheet, run: () => jump('docs') },
       { id: 'module-settings', moduleId: 'settings', kind: 'module', title: ka ? 'პარამეტრები' : 'Settings', subtitle: ka ? 'პროფილი და კომპანიის პარამეტრები' : 'Profile and company settings', keywords: 'settings profile company users პარამეტრები', icon: Settings, run: () => jump('settings') },

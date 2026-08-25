@@ -7,6 +7,7 @@ import { canAccess } from '../permissions';
 import {
   getAiNotificationAccountStatus,
   getAiNotificationPreference,
+  notificationPreferenceIsMuted,
   setAiNotificationPreference,
 } from '../aiNotificationPreferences';
 import {
@@ -61,6 +62,8 @@ async function preferencePayload(organizationId: string, username: string) {
     preference: {
       emailEnabled: preference.emailEnabled,
       pushEnabled: preference.pushEnabled,
+      notificationsEnabled: preference.notificationsEnabled,
+      notificationsPausedUntil: preference.notificationsPausedUntil || null,
     },
     account: {
       ...account,
@@ -84,14 +87,32 @@ router.put('/preferences', checkWineryScope('read'), async (req, res) => {
   const pushEnabled = typeof req.body?.pushEnabled === 'boolean'
     ? req.body.pushEnabled
     : current.pushEnabled;
+  const notificationsEnabled = typeof req.body?.notificationsEnabled === 'boolean'
+    ? req.body.notificationsEnabled
+    : current.notificationsEnabled;
+  let notificationsPausedUntil: string | null = current.notificationsPausedUntil || null;
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'notificationsPausedUntil')) {
+    if (req.body.notificationsPausedUntil === null || req.body.notificationsPausedUntil === '') {
+      notificationsPausedUntil = null;
+    } else if (typeof req.body.notificationsPausedUntil === 'string') {
+      const pauseEnd = new Date(req.body.notificationsPausedUntil);
+      const maximumPauseEnd = Date.now() + 31 * 24 * 60 * 60 * 1_000;
+      if (Number.isNaN(pauseEnd.getTime()) || pauseEnd.getTime() <= Date.now() || pauseEnd.getTime() > maximumPauseEnd) {
+        return res.status(400).json({ error: 'Notification pause must end within the next 31 days.' });
+      }
+      notificationsPausedUntil = pauseEnd.toISOString();
+    } else {
+      return res.status(400).json({ error: 'Notification pause end time is invalid.' });
+    }
+  }
   const account = await getAiNotificationAccountStatus(session.organizationId, session.username);
-  if (emailEnabled && !process.env.SMTP_HOST?.trim()) {
+  if (req.body?.emailEnabled === true && !process.env.SMTP_HOST?.trim()) {
     return res.status(409).json({ error: 'Email notifications are not configured for this deployment.' });
   }
-  if (emailEnabled && (!account.emailVerified || !account.hasEmail)) {
+  if (req.body?.emailEnabled === true && (!account.emailVerified || !account.hasEmail)) {
     return res.status(409).json({ error: 'Verify your account email before enabling email notifications.' });
   }
-  if (pushEnabled && (!account.pushConfigured || account.pushSubscriptionCount === 0)) {
+  if (req.body?.pushEnabled === true && (!account.pushConfigured || account.pushSubscriptionCount === 0)) {
     return res.status(409).json({
       error: 'Register this browser before enabling browser push notifications.',
     });
@@ -103,6 +124,8 @@ router.put('/preferences', checkWineryScope('read'), async (req, res) => {
     pushEnabled,
     minimumSeverity: current.minimumSeverity,
     inAppMinimumSeverity: current.inAppMinimumSeverity,
+    notificationsEnabled,
+    notificationsPausedUntil,
   });
   return res.json(await preferencePayload(session.organizationId, session.username));
 });
@@ -188,6 +211,14 @@ router.post('/tasks', checkWineryScope('write'), async (req, res) => {
     getAiNotificationPreference(session.organizationId, assigneeUsername),
     getAiNotificationAccountStatus(session.organizationId, assigneeUsername),
   ]);
+  if (notificationPreferenceIsMuted(preference)) {
+    return res.status(409).json({
+      code: 'notification_suppressed',
+      error: preference.notificationsEnabled
+        ? `The selected assignee paused notifications until ${preference.notificationsPausedUntil}.`
+        : 'The selected assignee has turned off notifications.',
+    });
+  }
   const channels: TaskNotificationChannel[] = [];
   if (
     preference.emailEnabled

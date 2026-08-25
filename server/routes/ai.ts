@@ -78,6 +78,7 @@ import type { Language } from '../../lib/i18n';
 import {
   getAiNotificationAccountStatus,
   getAiNotificationPreference,
+  notificationPreferenceIsMuted,
   setAiNotificationPreference,
 } from '../aiNotificationPreferences';
 import {
@@ -386,6 +387,8 @@ async function currentNotificationFindings(workspace: Workspace, lang: Language)
   minimumSeverity: AiSeverity;
   personalMinimumSeverity: AiSeverity;
   effectiveMinimumSeverity: AiSeverity;
+  notificationsEnabled: boolean;
+  notificationsPausedUntil?: string;
   findings: AiFindingRecord[];
 }> {
   const { snapshot, findings } = evaluateRules(snapshotFor(workspace, lang));
@@ -394,11 +397,12 @@ async function currentNotificationFindings(workspace: Workspace, lang: Language)
     > severityRank(snapshot.config.minimumSeverity)
     ? preference.inAppMinimumSeverity
     : snapshot.config.minimumSeverity;
+  const notificationsMuted = notificationPreferenceIsMuted(preference);
 
   // Notification projection re-evaluates pure rules against the latest
   // snapshot, but never persists finding lifecycle state or spends a model call.
   const merged = mergeFindings(storedFindings(workspace), findings, { config: snapshot.config });
-  const routed = snapshot.config.monitoringEnabled
+  const routed = snapshot.config.monitoringEnabled && !notificationsMuted
     ? filterFindingsRoutedToRole(merged.records, workspace.role)
       .filter((finding) => OPEN_NOTIFICATION_STATUSES.has(finding.status))
       .filter((finding) => isAreaEnabled(finding.area, snapshot.config))
@@ -416,6 +420,10 @@ async function currentNotificationFindings(workspace: Workspace, lang: Language)
     minimumSeverity: snapshot.config.minimumSeverity,
     personalMinimumSeverity: preference.inAppMinimumSeverity,
     effectiveMinimumSeverity,
+    notificationsEnabled: preference.notificationsEnabled,
+    ...(preference.notificationsPausedUntil
+      ? { notificationsPausedUntil: preference.notificationsPausedUntil }
+      : {}),
     findings: routed,
   };
 }
@@ -454,6 +462,8 @@ router.get('/notifications', async (req, res) => {
     minimumSeverity: current.minimumSeverity,
     personalMinimumSeverity: current.personalMinimumSeverity,
     effectiveMinimumSeverity: current.effectiveMinimumSeverity,
+    notificationsEnabled: current.notificationsEnabled,
+    notificationsPausedUntil: current.notificationsPausedUntil || null,
     total: presented.length,
     unread: presented.filter((finding) => finding.unread).length,
     overflow: Math.max(0, presented.length - limit),

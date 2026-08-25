@@ -7,6 +7,7 @@ import type {
   InventoryItem,
   SalesDispatchRecord,
   SalesOrderRecord,
+  Vessel,
   WineLot,
 } from '../wineryState';
 import {
@@ -26,6 +27,7 @@ export interface BottlingReversalCommandPayload extends CommandReversalReference
 
 export interface BottlingReversalCommandState {
   lots: WineLot[];
+  vessels: Vessel[];
   bottlingRuns: BottlingRunRecord[];
   inventory: InventoryItem[];
   costEntries: CostEntry[];
@@ -46,6 +48,7 @@ export interface BottlingReversalCommandResult {
   originalRun: BottlingRunRecord;
   reversalRun: BottlingRunRecord;
   updatedLot: WineLot;
+  updatedVessel?: Vessel;
   updatedInventoryItems: InventoryItem[];
   reversalCostEntries: CostEntry[];
   updatedOriginalCostEntries: CostEntry[];
@@ -152,7 +155,7 @@ export function parseBottlingReversalCommandPayload(value: unknown): BottlingRev
 }
 
 function assertState(state: BottlingReversalCommandState): void {
-  if (!state || !Array.isArray(state.lots) || !Array.isArray(state.bottlingRuns)
+  if (!state || !Array.isArray(state.lots) || !Array.isArray(state.vessels) || !Array.isArray(state.bottlingRuns)
     || !Array.isArray(state.inventory) || !Array.isArray(state.costEntries)
     || !Array.isArray(state.storageLocations) || !Array.isArray(state.stockMovements)
     || !Array.isArray(state.salesOrders) || !Array.isArray(state.salesDispatches)
@@ -302,12 +305,50 @@ export function applyBottlingReversalCommand(
     );
   }
   const expectedVolume = Math.max(0, round1(original.previousLotVolumeL - original.volumeBottledL));
-  const expectedStage = expectedVolume <= 0.5 ? 'bottled' : original.previousLotStage;
+  const expectedStage = expectedVolume <= EPSILON ? 'bottled' : original.previousLotStage;
   if (!sameNumber(lot.currentVolume, expectedVolume) || lot.stage !== expectedStage
     || lot.lastModified !== original.createdAt
     || (lot.lastCommandId !== undefined && lot.lastCommandId !== original.commandId)
     || lot.history?.[0]?.sourceRef !== original.id || lot.history?.[0]?.type !== 'bottling') {
     dependencyConflict(`Wine lot ${lot.id}`);
+  }
+
+  let sourceVessel: Vessel | undefined;
+  if (original.sourceVesselId) {
+    if (original.previousSourceVesselVolumeL === undefined
+      || original.previousSourceVesselAssignedLotId === undefined
+      || original.previousSourceVesselCleaningStatus === undefined
+      || original.previousSourceVesselLastOperation === undefined
+      || !Number.isFinite(original.previousSourceVesselVolumeL)
+      || original.previousSourceVesselVolumeL < 0) {
+      throw new BottlingReversalCommandError(
+        'bottling_reversal_snapshot_missing',
+        'The bottling run does not contain a complete source-vessel restoration snapshot.',
+        409,
+      );
+    }
+    sourceVessel = currentState.vessels.find(vessel => vessel.id === original.sourceVesselId);
+    if (!sourceVessel) {
+      throw new BottlingReversalCommandError(
+        'bottling_reversal_resource_missing',
+        `Source vessel ${original.sourceVesselId} no longer exists.`,
+        409,
+      );
+    }
+    const expectedVesselVolume = Math.max(0, round1(original.previousSourceVesselVolumeL - original.volumeBottledL));
+    const expectedAssignedLotId = expectedVesselVolume <= EPSILON
+      ? null
+      : original.previousSourceVesselAssignedLotId;
+    const expectedCleaningStatus = expectedVesselVolume <= EPSILON
+      ? 'cleaning_needed'
+      : original.previousSourceVesselCleaningStatus;
+    if (!sameNumber(sourceVessel.currentVolume, expectedVesselVolume)
+      || sourceVessel.assignedLotId !== expectedAssignedLotId
+      || sourceVessel.cleaningStatus !== expectedCleaningStatus
+      || sourceVessel.lastModified !== original.createdAt
+      || (sourceVessel.lastCommandId !== undefined && sourceVessel.lastCommandId !== original.commandId)) {
+      dependencyConflict(`Source vessel ${sourceVessel.id}`);
+    }
   }
 
   const deductions = original.packagingDeductions || {};
@@ -382,6 +423,15 @@ export function applyBottlingReversalCommand(
       sourceRef: payload.reversalRunId,
     }, ...(lot.history || [])],
   };
+  const updatedVessel: Vessel | undefined = sourceVessel ? {
+    ...sourceVessel,
+    currentVolume: original.previousSourceVesselVolumeL as number,
+    assignedLotId: original.previousSourceVesselAssignedLotId as string | null,
+    cleaningStatus: original.previousSourceVesselCleaningStatus as Vessel['cleaningStatus'],
+    lastOperation: original.previousSourceVesselLastOperation as string,
+    lastCommandId: context.commandId,
+    lastModified: timestamp,
+  } : undefined;
   const updatedInventoryItems: InventoryItem[] = [];
   const inventory = currentState.inventory.map(item => {
     const quantity = deductions[item.id] || 0;
@@ -473,6 +523,13 @@ export function applyBottlingReversalCommand(
     totalBottles: original.totalBottles,
     totalCeramic: original.totalCeramic,
     volumeBottledL: original.volumeBottledL,
+    ...(original.sourceVesselId ? {
+      sourceVesselId: original.sourceVesselId,
+      previousSourceVesselVolumeL: original.previousSourceVesselVolumeL,
+      previousSourceVesselAssignedLotId: original.previousSourceVesselAssignedLotId,
+      previousSourceVesselCleaningStatus: original.previousSourceVesselCleaningStatus,
+      previousSourceVesselLastOperation: original.previousSourceVesselLastOperation,
+    } : {}),
     ...(original.packagingMaterialIds ? { packagingMaterialIds: { ...original.packagingMaterialIds } } : {}),
     ...(original.packagingDeductions ? { packagingDeductions: { ...original.packagingDeductions } } : {}),
     ...(original.bottlesPerBox ? { bottlesPerBox: original.bottlesPerBox } : {}),
@@ -494,6 +551,9 @@ export function applyBottlingReversalCommand(
     state: {
       ...currentState,
       lots: currentState.lots.map(item => item.id === updatedLot.id ? updatedLot : item),
+      vessels: updatedVessel
+        ? currentState.vessels.map(item => item.id === updatedVessel.id ? updatedVessel : item)
+        : currentState.vessels,
       bottlingRuns: [
         reversalRun,
         updatedOriginal,
@@ -509,6 +569,7 @@ export function applyBottlingReversalCommand(
       originalRun: updatedOriginal,
       reversalRun,
       updatedLot,
+      ...(updatedVessel ? { updatedVessel } : {}),
       updatedInventoryItems,
       reversalCostEntries,
       updatedOriginalCostEntries,
