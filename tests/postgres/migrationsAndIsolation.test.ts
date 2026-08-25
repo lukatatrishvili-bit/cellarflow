@@ -607,6 +607,20 @@ describe('cellar.bottling PostgreSQL transaction', () => {
         createdAt: '2025-10-01',
         history: [],
       }],
+      vessels: [{
+        id: 'TANK-A',
+        type: 'stainless_steel',
+        shape: 'vertical',
+        capacity: 300,
+        currentVolume: 200,
+        assignedLotId: 'LOT-A',
+        cleaningStatus: 'clean',
+        lastCleaned: '2026-07-01',
+        temperature: 16,
+        coolingJacketActive: false,
+        targetTemperature: null,
+        lastOperation: 'Filled',
+      }],
       bottlingRuns: [],
       inventory: [{
         id: 'BOTTLE',
@@ -633,6 +647,7 @@ describe('cellar.bottling PostgreSQL transaction', () => {
     return {
       runId: `${runPrefix}-bot-${suffix}`,
       lotId: 'LOT-A',
+      sourceVesselId: 'TANK-A',
       date: '2026-07-20',
       lotNumber: `PG-${suffix}`,
       operator: 'Integration Winemaker',
@@ -667,6 +682,7 @@ describe('cellar.bottling PostgreSQL transaction', () => {
     expect(stored.version).toBe(2);
     expect(data.bottlingRuns).toHaveLength(1);
     expect(data.lots[0].currentVolume).toBe(125);
+    expect(data.vessels[0].currentVolume).toBe(125);
     expect(data.inventory[0].stock).toBe(400);
     expect(data.costEntries).toHaveLength(2);
     expect(data.stockMovements).toHaveLength(1);
@@ -706,6 +722,7 @@ describe('cellar.bottling PostgreSQL transaction', () => {
     expect(stored.version).toBe(2);
     expect(data.bottlingRuns).toHaveLength(1);
     expect(data.lots[0].currentVolume).toBe(125);
+    expect(data.vessels[0].currentVolume).toBe(125);
     expect(data.inventory[0].stock).toBe(50);
     expect(data.costEntries).toHaveLength(2);
     expect(data.stockMovements).toHaveLength(1);
@@ -749,6 +766,7 @@ describe('cellar.bottling PostgreSQL transaction', () => {
     expect(stored.version).toBe(3);
     expect(data.bottlingRuns).toHaveLength(2);
     expect(data.lots[0]).toMatchObject({ currentVolume: 200, stage: 'aging' });
+    expect(data.vessels[0]).toMatchObject({ currentVolume: 200, assignedLotId: 'LOT-A' });
     expect(data.inventory[0].stock).toBe(500);
     expect(data.costEntries).toHaveLength(4);
     expect(data.stockMovements).toHaveLength(2);
@@ -793,6 +811,7 @@ describe('cellar.bottling PostgreSQL transaction', () => {
     expect(rejection.reason).toMatchObject({ code: 'bottling_run_already_reversed', statusCode: 409 });
     expect(stored.version).toBe(3);
     expect(data.bottlingRuns).toHaveLength(2);
+    expect(data.vessels[0]).toMatchObject({ currentVolume: 200, assignedLotId: 'LOT-A' });
     expect(data.inventory[0].stock).toBe(500);
     expect(data.costEntries).toHaveLength(4);
     expect(data.stockMovements).toHaveLength(2);
