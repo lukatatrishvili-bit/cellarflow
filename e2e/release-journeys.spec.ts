@@ -141,8 +141,22 @@ test('winemaker can work with lots and vessels from one focused cellar workspace
   await workspace.getByRole('button', { name: 'By vessel', exact: true }).click();
   await expect(workspace.getByText('Vessel register', { exact: true })).toBeVisible();
   await expect(workspace.getByRole('button', { name: 'By vessel', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(workspace.getByRole('img', { name: '0% full' }).first()).toBeVisible();
   await expect(workspace.getByRole('button', { name: 'Receive transfer', exact: true })).toBeVisible();
   await expect(workspace).not.toContainText('Thermal Intelligence Loop');
+
+  await workspace.getByRole('button', { name: 'Cellar plan', exact: true }).click();
+  const cellarPlan = workspace.getByTestId('cellar-plan');
+  await expect(cellarPlan).toContainText('Physical vessel layout');
+  const firstPlanVessel = cellarPlan.getByRole('button', { name: 'Q-01 · 0% full', exact: true });
+  const initialPlanPosition = await firstPlanVessel.getAttribute('style');
+  await cellarPlan.getByRole('button', { name: 'Edit plan', exact: true }).click();
+  await expect(cellarPlan.getByRole('button', { name: 'Save plan', exact: true })).toBeVisible();
+  await expect(cellarPlan.getByRole('button', { name: 'Auto arrange', exact: true })).toBeVisible();
+  await firstPlanVessel.press('ArrowRight');
+  await cellarPlan.getByRole('button', { name: 'Save plan', exact: true }).click();
+  await expect(cellarPlan.getByRole('button', { name: 'Edit plan', exact: true })).toBeVisible();
+  expect(await firstPlanVessel.getAttribute('style')).not.toBe(initialPlanPosition);
 });
 
 test('owner can open business containment and cellar planning workflows', async ({ page }) => {
@@ -167,8 +181,7 @@ test('owner can open business containment and cellar planning workflows', async 
   await expect(page.getByRole('heading', { name: 'Purchasing and receiving' })).toBeVisible();
 
   await navigation.getByRole('button', { name: 'Cellar' }).click();
-  await page.getByRole('button', { name: /More tools/ }).click();
-  await page.getByRole('button', { name: 'Planner', exact: true }).click();
+  await page.getByRole('button', { name: 'Production plan', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Visual production schedule' })).toBeVisible();
 });
 

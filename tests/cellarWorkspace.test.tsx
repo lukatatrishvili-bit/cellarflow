@@ -94,6 +94,8 @@ describe('CellarWorkspace', () => {
     expect(markup).toContain('Vessel register');
     expect(markup).toContain('Main cellar · Row A');
     expect(markup).toContain('Mukuzani Saperavi');
+    expect(markup).toContain('Cellar plan');
+    expect(markup).toContain('aria-label="72% full"');
     expect(markup).toContain('recorded setpoint 16°C');
     expect(markup).not.toContain('Active Cooling');
     expect(markup).not.toContain('Thermal Intelligence Loop');

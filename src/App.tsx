@@ -1090,6 +1090,7 @@ export default function App() {
       id: 'production',
       label: isKa ? 'მიმდინარე წარმოება' : 'Current production',
       tabs: [
+        { id: 'planner', label: isKa ? 'წარმოების გეგმა' : 'Production plan', icon: CalendarRange },
         { id: 'operations', label: isKa ? 'მოვლა და გაზომვები' : 'Treatments & checks', icon: Workflow },
         { id: 'fermentation', label: t.fermentation, icon: Activity },
         { id: 'transfers', label: t.transfers, icon: GitCommit },
@@ -1106,7 +1107,6 @@ export default function App() {
         { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
         { id: 'inventory', label: t.inventory, icon: Boxes },
         { id: 'quality', label: isKa ? 'ხარისხი' : 'Quality SOPs', icon: ShieldCheck },
-        { id: 'planner', label: isKa ? 'გეგმა' : 'Planner', icon: CalendarRange },
         { id: 'tasks', label: t.tasks, icon: ClipboardList },
         { id: 'notes', label: t.notes, icon: FileText },
         { id: 'calculators', label: t.calculators, icon: TestTube },
@@ -2501,7 +2501,7 @@ export default function App() {
             </div>
 
             {!state.isSidebarCollapsed && (
-              <div className="app-sidebar-summary hidden lg:block mb-4 p-4 dark:border-stone-800 dark:bg-stone-900/90">
+              <div className="app-sidebar-summary hidden lg:block mb-3 p-3 dark:border-stone-800 dark:bg-stone-900/90">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
@@ -2520,23 +2520,23 @@ export default function App() {
                   </span>
                 </div>
                 {(canViewModule('gvino', 'tasks') || canViewModule('gvino', 'fermentation')) && (
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
                     {canViewModule('gvino', 'tasks') && (
-                      <button type="button" onClick={() => state.setActiveTab('tasks')} className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-                        <span className="block text-stone-400">{t.tasks || 'Tasks'}</span>
-                        <strong className="text-lg text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
+                      <button type="button" onClick={() => state.setActiveTab('tasks')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
+                        <span className="text-stone-400">{t.tasks || 'Tasks'}</span>
+                        <strong className="text-sm text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
                       </button>
                     )}
                     {canViewModule('gvino', 'fermentation') && (
-                      <button type="button" onClick={() => state.setActiveTab('fermentation')} className="rounded-xl bg-stone-50 p-2 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-                        <span className="block text-stone-400">{isKa ? 'დუღილი' : 'Ferments'}</span>
-                        <strong className="text-lg text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
+                      <button type="button" onClick={() => state.setActiveTab('fermentation')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
+                        <span className="text-stone-400">{isKa ? 'დუღილი' : 'Ferments'}</span>
+                        <strong className="text-sm text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
                       </button>
                     )}
                   </div>
                 )}
                 {canViewModule('gvino', 'vessels') && (
-                <div className="mt-3">
+                <div className="mt-2.5">
                   <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
                     <span>{isKa ? 'ტევადობა' : 'Capacity'}</span>
                     <span>{cellarCapacityPct}%</span>
@@ -2547,7 +2547,7 @@ export default function App() {
                       style={{ width: `${Math.min(100, cellarCapacityPct)}%` }}
                     />
                   </div>
-                  <span className="mt-2 block text-[10px] font-semibold text-stone-400">
+                  <span className="mt-1.5 block text-[9px] font-semibold text-stone-400">
                     {isKa
                       ? `${occupiedTanksCount} დაკავებული ჭურჭელი · საშ. ${averageOccupiedTemp} °C`
                       : `${occupiedTanksCount} occupied vessels · avg ${averageOccupiedTemp} °C`}

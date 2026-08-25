@@ -14,6 +14,8 @@ import {
   FileText,
   Filter,
   FlaskConical,
+  List,
+  Map as MapIcon,
   MapPin,
   Package,
   Plus,
@@ -39,9 +41,12 @@ import { stageLabel, vesselTypeLabel, wineClassLabel } from '../lib/enumLabels';
 import { nextActionForWineLot } from '../lib/lotNextAction';
 import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
 import WineLotsTrace, { type WineLotsTraceProps } from './WineLotsTrace';
+import CellarPlan from './CellarPlan';
+import VesselFill from './VesselFill';
 import { PageHeader, StatusBadge } from './ui/primitives';
 
 type WorkspaceMode = 'lots' | 'vessels';
+type VesselPresentation = 'register' | 'plan';
 type ContextTab = 'activity' | 'analysis' | 'details';
 type WorkspaceFilter = 'all' | 'attention' | 'fermenting' | 'available' | 'cleaning';
 
@@ -234,6 +239,7 @@ export default function CellarWorkspace({
   ], [canViewLots, canViewVessels]);
   const normalizedInitialMode = availableModes.includes(initialMode) ? initialMode : (availableModes[0] || 'lots');
   const [mode, setMode] = useState<WorkspaceMode>(normalizedInitialMode);
+  const [vesselPresentation, setVesselPresentation] = useState<VesselPresentation>('register');
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState<WorkspaceFilter>('all');
   const [contextTab, setContextTab] = useState<ContextTab>('activity');
@@ -317,10 +323,19 @@ export default function CellarWorkspace({
   const switchMode = (nextMode: WorkspaceMode) => {
     if (!availableModes.includes(nextMode)) return;
     setMode(nextMode);
+    if (nextMode === 'vessels') setVesselPresentation('register');
     setFilter('all');
     setContextTab('activity');
     setShowQvevriRecords(false);
     onCanonicalize?.();
+  };
+
+  const showVesselPlan = () => {
+    setMode('vessels');
+    setVesselPresentation('plan');
+    setSearchTerm('');
+    setFilter('all');
+    setShowQvevriRecords(false);
   };
 
   const openLot = (lotId: string) => {
@@ -505,16 +520,24 @@ export default function CellarWorkspace({
 
       <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm dark:border-stone-800 dark:bg-stone-900">
         <div className="flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between lg:p-4">
-          <div className="inline-flex w-fit rounded-xl bg-stone-100 p-1 dark:bg-stone-950" aria-label={ka ? 'მარნის ხედვა' : 'Cellar view'}>
-            {canViewLots && (
-              <button type="button" aria-pressed={mode === 'lots'} onClick={() => switchMode('lots')} className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-black ${mode === 'lots' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-100' : 'text-stone-500'}`}>
-                <Wine className="h-4 w-4" /> {ka ? 'პარტიებით' : 'By lot'}
-              </button>
-            )}
-            {canViewVessels && (
-              <button type="button" aria-pressed={mode === 'vessels'} onClick={() => switchMode('vessels')} className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-black ${mode === 'vessels' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-100' : 'text-stone-500'}`}>
-                <Container className="h-4 w-4" /> {ka ? 'ჭურჭლებით' : 'By vessel'}
-              </button>
+          <div className="flex flex-wrap gap-2">
+            <div className="inline-flex w-fit rounded-xl bg-stone-100 p-1 dark:bg-stone-950" aria-label={ka ? 'მარნის ხედვა' : 'Cellar view'}>
+              {canViewLots && (
+                <button type="button" aria-pressed={mode === 'lots'} onClick={() => switchMode('lots')} className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-black ${mode === 'lots' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-100' : 'text-stone-500'}`}>
+                  <Wine className="h-4 w-4" /> {ka ? 'პარტიებით' : 'By lot'}
+                </button>
+              )}
+              {canViewVessels && (
+                <button type="button" aria-pressed={mode === 'vessels'} onClick={() => switchMode('vessels')} className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-black ${mode === 'vessels' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-100' : 'text-stone-500'}`}>
+                  <Container className="h-4 w-4" /> {ka ? 'ჭურჭლებით' : 'By vessel'}
+                </button>
+              )}
+            </div>
+            {mode === 'vessels' && canViewVessels && (
+              <div className="inline-flex w-fit rounded-xl border border-stone-200 bg-white p-1 dark:border-stone-800 dark:bg-stone-900" aria-label={ka ? 'ჭურჭლების წარმოდგენა' : 'Vessel presentation'}>
+                <button type="button" aria-pressed={vesselPresentation === 'register'} onClick={() => setVesselPresentation('register')} className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-[10px] font-black ${vesselPresentation === 'register' ? 'bg-stone-100 text-[#651522] dark:bg-stone-800 dark:text-amber-100' : 'text-stone-400'}`}><List className="h-3.5 w-3.5" />{ka ? 'რეესტრი' : 'Register'}</button>
+                <button type="button" aria-pressed={vesselPresentation === 'plan'} onClick={showVesselPlan} className={`inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-[10px] font-black ${vesselPresentation === 'plan' ? 'bg-stone-100 text-[#651522] dark:bg-stone-800 dark:text-amber-100' : 'text-stone-400'}`}><MapIcon className="h-3.5 w-3.5" />{ka ? 'მარნის გეგმა' : 'Cellar plan'}</button>
+              </div>
             )}
           </div>
           <div className="flex flex-1 flex-col gap-2 sm:flex-row lg:max-w-2xl">
@@ -550,6 +573,21 @@ export default function CellarWorkspace({
         </div>
       </section>
 
+      {mode === 'vessels' && vesselPresentation === 'plan' ? (
+        <CellarPlan
+          lang={lang}
+          vessels={vessels}
+          lots={lots}
+          selectedVesselId={selectedVesselId}
+          onSelectVessel={setSelectedVesselId}
+          onOpenVessel={vesselId => {
+            setSelectedVesselId(vesselId);
+            setVesselPresentation('register');
+          }}
+          onUpdateVessels={onUpdateVessels}
+          canUpdate={canUpdateVessel}
+        />
+      ) : (
       <div className="grid gap-4 xl:grid-cols-[minmax(16rem,0.34fr)_minmax(0,1fr)]">
         <aside className="overflow-hidden rounded-2xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
           <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3 dark:border-stone-800">
@@ -580,7 +618,10 @@ export default function CellarWorkspace({
               const fill = vessel.capacity > 0 ? Math.round((vessel.currentVolume / vessel.capacity) * 100) : 0;
               return (
                 <button key={vessel.id} type="button" onClick={() => openVessel(vessel.id)} className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${selected ? 'bg-[#f6edef] dark:bg-[#351a20]' : 'hover:bg-stone-50 dark:hover:bg-stone-950/40'}`}>
-                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${signal.tone === 'danger' ? 'bg-rose-500' : signal.tone === 'warning' ? 'bg-amber-400' : signal.tone === 'ready' ? 'bg-emerald-500' : 'bg-stone-300'}`} />
+                  <span className={`relative shrink-0 ${selected ? 'text-[#651522]' : 'text-stone-500'}`}>
+                    <VesselFill fillPct={fill} wineClass={lot?.wineClass || 'red'} qvevri={vessel.type === 'qvevri'} width={30} height={40} />
+                    <span className={`absolute -right-0.5 top-0 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-stone-900 ${signal.tone === 'danger' ? 'bg-rose-500' : signal.tone === 'warning' ? 'bg-amber-400' : signal.tone === 'ready' ? 'bg-emerald-500' : 'bg-stone-300'}`} />
+                  </span>
                   <span className="min-w-0 flex-1">
                     <strong className="block truncate text-xs text-stone-900 dark:text-stone-100">{vessel.id}</strong>
                     <span className="mt-0.5 block truncate text-[10px] text-stone-400">{vesselTypeLabel(vessel.type, lang)} · {lot?.name || (ka ? 'თავისუფალი' : 'unassigned')}</span>
@@ -688,6 +729,7 @@ export default function CellarWorkspace({
           )}
         </main>
       </div>
+      )}
 
       {showAddVessel && canCreateVessel && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-950/50 p-4" onMouseDown={() => setShowAddVessel(false)}>
