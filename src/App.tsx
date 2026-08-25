@@ -40,10 +40,9 @@ const AuditTrailTab = lazyRetry(() => import('../components/AuditTrailTab'));
 const LotPassport = lazyRetry(() => import('../components/LotPassport'));
 const VaziModule = lazyRetry(() => import('../components/VaziModule'));
 const WineryDashboardTab = lazyRetry(() => import('../components/WineryDashboardTab'));
-const TanksVessels = lazyRetry(() => import('../components/TanksVessels'));
+const CellarWorkspace = lazyRetry(() => import('../components/CellarWorkspace'));
 const QvevriPassportTab = lazyRetry(() => import('../components/QvevriPassportTab'));
 const GrapeReceivingTab = lazyRetry(() => import('../components/GrapeReceivingTab'));
-const WineLotsTrace = lazyRetry(() => import('../components/WineLotsTrace'));
 const LotLineageGraphTab = lazyRetry(() => import('../components/LotLineageGraphTab'));
 const CellarOperationsTab = lazyRetry(() => import('../components/CellarOperationsTab'));
 const TransfersTab = lazyRetry(() => import('../components/TransfersTab'));
@@ -98,7 +97,6 @@ import type { CellarScanTarget } from '../components/ScanToAction';
 // Core Lucide Icons mapping
 import {
   LayoutDashboard,
-  Container,
   Grape,
   Workflow,
   Wine,
@@ -272,6 +270,12 @@ export default function App() {
     setPrefilledSourceId('');
     setPrefilledDestId('');
   }, [setPrefilledSourceId, setPrefilledDestId]);
+  const openTransferFromVessel = useCallback((vesselId: string, role: 'source' | 'destination' = 'source') => {
+    setPrefilledSourceId(role === 'source' ? vesselId : '');
+    setPrefilledDestId(role === 'destination' ? vesselId : '');
+    setActiveModule('gvino');
+    setActiveTab('transfers');
+  }, [setActiveModule, setActiveTab, setPrefilledDestId, setPrefilledSourceId]);
   const navigateCellarWorkflow = useCallback(
     (tab: 'transfers' | 'bottling' | 'vessels') => setActiveTab(tab),
     [setActiveTab],
@@ -297,10 +301,6 @@ export default function App() {
     setToastMessage(scanLanguage === 'ka' ? `${target.id} პარტიის პასპორტი გაიხსნა.` : `${target.id} lot passport opened.`);
   }, [currentUserForScan, scanLanguage, setActiveModule, setActiveTab, setPassportLotId, setPrefilledOpVesselId, setSelectedTankId, setToastMessage]);
 
-  const qvevriCount = useMemo(
-    () => state.vessels.filter(vessel => vessel.type === 'qvevri').length,
-    [state.vessels],
-  );
   const scanVesselIds = useMemo(() => state.vessels.map(vessel => vessel.id), [state.vessels]);
   const scanLotIds = useMemo(() => state.lots.map(lot => lot.id), [state.lots]);
 
@@ -1083,8 +1083,7 @@ export default function App() {
       label: isKa ? 'ღვინის გზა' : 'Wine lifecycle',
       tabs: [
         { id: 'intake', label: t.grape_intake || 'Grape Intake', icon: Grape },
-        { id: 'lots', label: t.wine_lots, icon: Wine },
-        { id: 'vessels', label: t.tanks, icon: Container },
+        { id: 'cellar', label: isKa ? 'მარანი' : 'Cellar workspace', icon: Wine },
       ],
     },
     {
@@ -1118,6 +1117,9 @@ export default function App() {
   const canViewModule = (moduleId: string, tabId?: string) => (
     canViewUserDestination(state.currentUser, moduleId, tabId)
   );
+  const activeWineryNavTab = state.activeTab === 'lots' || state.activeTab === 'vessels'
+    ? 'cellar'
+    : state.activeTab;
   const taskDeepLinkId = normalizedPathname === '/tasks'
     ? new URLSearchParams(browserRoute.slice(browserRoute.indexOf('?'))).get('task')?.trim() || undefined
     : undefined;
@@ -1129,7 +1131,7 @@ export default function App() {
     .filter((group) => group.tabs.length > 0);
   useEffect(() => {
     const activeGroup = accessibleWineryTabGroups.find(group => (
-      group.tabs.some(tab => tab.id === state.activeTab)
+      group.tabs.some(tab => tab.id === activeWineryNavTab)
     ));
     if (!activeGroup?.collapsible) return;
     setExpandedWineryGroups(previous => {
@@ -1138,7 +1140,7 @@ export default function App() {
       next.add(activeGroup.id);
       return next;
     });
-  }, [accessibleWineryTabGroups, state.activeTab]);
+  }, [accessibleWineryTabGroups, activeWineryNavTab]);
   useEffect(() => {
     if (!state.isLoggedIn || !taskDeepLinkId) return;
     if (!canViewModule('gvino', 'tasks')) {
@@ -1204,9 +1206,17 @@ export default function App() {
     ],
   );
 
-  const activePermissionModule = permissionModuleFor(state.activeModule, state.activeTab);
-  const canManageCurrentArea = canAccess(state.currentUser.role, activePermissionModule, 'create')
-    || canAccess(state.currentUser.role, activePermissionModule, 'update');
+  const isCellarWorkspaceDestination = state.activeModule === 'gvino'
+    && ['cellar', 'lots', 'vessels'].includes(state.activeTab);
+  const activePermissionModule = isCellarWorkspaceDestination
+    ? (canViewModule('gvino', 'lots') ? 'lots' : 'vessels')
+    : permissionModuleFor(state.activeModule, state.activeTab);
+  const canManageCurrentArea = isCellarWorkspaceDestination
+    ? canAccess(state.currentUser.role, 'lots', 'update')
+      || canAccess(state.currentUser.role, 'vessels', 'create')
+      || canAccess(state.currentUser.role, 'vessels', 'update')
+    : canAccess(state.currentUser.role, activePermissionModule, 'create')
+      || canAccess(state.currentUser.role, activePermissionModule, 'update');
   const shouldShowReadOnlyNotice = state.isLoggedIn
     && canViewModule(state.activeModule, state.activeTab)
     && !canManageCurrentArea
@@ -1291,7 +1301,7 @@ export default function App() {
   const activeModuleGroup = moduleGroups.find(group => group.modules.some(mod => mod.id === state.activeModule)) || moduleGroups[0];
   const activeWineryTab = accessibleWineryTabGroups
     .flatMap(group => group.tabs)
-    .find(tab => tab.id === state.activeTab);
+    .find(tab => tab.id === activeWineryNavTab);
   useEffect(() => {
     if (!state.isLoggedIn) return;
     if (state.activeModule === 'gvino' && state.activeTab === 'qvevri') {
@@ -2476,7 +2486,7 @@ export default function App() {
               </label>
               <select
                 id="mobile-winery-section"
-                value={state.activeTab}
+                value={activeWineryNavTab}
                 onChange={(event) => state.setActiveTab(event.target.value)}
                 className="w-full border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm font-bold text-stone-800 dark:bg-stone-950 dark:border-stone-700 dark:text-stone-100"
               >
@@ -2590,7 +2600,7 @@ export default function App() {
                   {isExpanded && <div className="space-y-1">
                     {group.tabs.map(tab => {
                       const Icon = tab.icon;
-                      const isActive = state.activeTab === tab.id;
+                      const isActive = activeWineryNavTab === tab.id;
                       return (
                         <button
                           key={tab.id}
@@ -2696,21 +2706,51 @@ export default function App() {
               </Suspense>
             )}
 
-            {/* B. VESSELS TAB */}
-            {state.activeTab === 'vessels' && (
+            {/* B. UNIFIED CELLAR WORKSPACE (legacy lot/vessel routes remain compatible) */}
+            {['cellar', 'lots', 'vessels'].includes(state.activeTab) && (
               <div className="space-y-4 text-stone-800 animate-fade-in">
-                <TanksVessels
+                <CellarWorkspace
                   lang={state.lang}
-                  vessels={state.vessels}
                   lots={state.lots}
+                  vessels={state.vessels}
+                  operations={state.cellarOps}
+                  initialMode={state.activeTab === 'vessels' ? 'vessels' : 'lots'}
+                  initialVesselId={state.selectedTankId}
+                  onCanonicalize={() => {
+                    if (state.activeTab !== 'cellar') state.setActiveTab('cellar');
+                  }}
+                  canViewLots={canViewModule('gvino', 'lots')}
+                  canViewVessels={canViewModule('gvino', 'vessels')}
+                  onUpdateLots={state.setLots}
                   onUpdateVessels={state.setVessels}
-                  currentUserName={state.currentUser.fullName || state.currentUser.username}
                   {...cellarPermissions.vessels}
                   canExecuteTransfer={cellarPermissions.transfers.canExecuteTransfer}
-                  onSelectTank={state.setSelectedTankId}
-                  selectedTankId={state.selectedTankId}
+                  canCreateLot={canAccess(state.currentUser.role, 'lots', 'create')}
+                  canUpdateLot={canAccess(state.currentUser.role, 'lots', 'update')}
+                  onOpenPassport={state.setPassportLotId}
+                  fermLogs={state.fermLogs}
+                  labLogs={state.labLogs}
+                  costEntries={state.costEntries}
+                  bottlingRuns={state.bottlingRuns}
+                  stockMovements={state.stockMovements}
+                  salesOrders={state.salesOrders}
+                  salesDispatches={state.salesDispatches}
+                  currency={state.companyProfile.currency || 'GEL'}
                   setActiveTab={state.setActiveTab}
-                  qvevriCount={qvevriCount}
+                  setSelectedTankId={state.setSelectedTankId}
+                  setCalculatorLotId={state.setCalculatorLotId}
+                  setCalculatorLotIdA={state.setCalculatorLotIdA}
+                  setChartLotId={state.setChartLotId}
+                  setLabLotId={state.setLabLotId}
+                  currentUserName={state.currentUser.fullName || state.currentUser.username}
+                  currentUsername={state.currentUser.username}
+                  auditLogs={state.auditLogs}
+                  onUpdateAuditLogs={state.setAuditLogs}
+                  onApplyLotStageTransitionCommandResponse={state.applyLotStageTransitionCommandResponse}
+                  setToastMessage={state.setToastMessage}
+                  onOpenVesselDetails={state.setSelectedTankId}
+                  onLogOperation={cellarPermissions.operations.canLogCellarOperation ? openVesselOperation : undefined}
+                  onPlanTransfer={cellarPermissions.transfers.canExecuteTransfer ? openTransferFromVessel : undefined}
                   renderQvevriRecords={renderQvevriRecords}
                 />
               </div>
@@ -2743,39 +2783,6 @@ export default function App() {
                 onPrefillConsumed={clearIntakePrefill}
                 {...cellarPermissions.intake}
                 setActiveTab={state.setActiveTab}
-                setToastMessage={state.setToastMessage}
-              />
-            )}
-
-            {/* C. WINE LOTS TAB */}
-            {state.activeTab === 'lots' && (
-              <WineLotsTrace
-                lang={state.lang}
-                lots={state.lots}
-                onUpdateLots={state.setLots}
-                canCreateLot={canAccess(state.currentUser.role, 'lots', 'create')}
-                canUpdateLot={canAccess(state.currentUser.role, 'lots', 'update')}
-                onOpenPassport={state.setPassportLotId}
-                vessels={state.vessels}
-                fermLogs={state.fermLogs}
-                labLogs={state.labLogs}
-                costEntries={state.costEntries}
-                bottlingRuns={state.bottlingRuns}
-                stockMovements={state.stockMovements}
-                salesOrders={state.salesOrders}
-                salesDispatches={state.salesDispatches}
-                currency={state.companyProfile.currency || 'GEL'}
-                setActiveTab={state.setActiveTab}
-                setSelectedTankId={state.setSelectedTankId}
-                setCalculatorLotId={state.setCalculatorLotId}
-                setCalculatorLotIdA={state.setCalculatorLotIdA}
-                setChartLotId={state.setChartLotId}
-                setLabLotId={state.setLabLotId}
-                currentUserName={state.currentUser.fullName}
-                currentUsername={state.currentUser.username}
-                auditLogs={state.auditLogs}
-                onUpdateAuditLogs={state.setAuditLogs}
-                onApplyLotStageTransitionCommandResponse={state.applyLotStageTransitionCommandResponse}
                 setToastMessage={state.setToastMessage}
               />
             )}

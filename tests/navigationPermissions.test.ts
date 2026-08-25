@@ -39,6 +39,8 @@ describe('permission-aware app navigation', () => {
       // Cross-module surface: reachable, but it only ever renders findings from
       // areas this role can read (lab, in this case).
       'intelligence',
+      // The shared workspace filters its lot and vessel rows by owner module.
+      'cellar',
       'lots',
       'lineage',
       'labs',

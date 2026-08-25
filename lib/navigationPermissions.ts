@@ -4,6 +4,7 @@ export const WINERY_TAB_IDS = [
   'dashboard',
   'intelligence',
   'intake',
+  'cellar',
   'lots',
   'lineage',
   'vessels',
@@ -29,7 +30,7 @@ export type WineryTabId = (typeof WINERY_TAB_IDS)[number];
  * role can reach at least one operational destination, and their contents are
  * filtered per record by the module that actually owns each row.
  */
-export const AGGREGATE_WINERY_TAB_IDS: readonly WineryTabId[] = ['dashboard', 'intelligence'];
+export const AGGREGATE_WINERY_TAB_IDS: readonly WineryTabId[] = ['dashboard', 'intelligence', 'cellar'];
 
 const OPERATIONAL_WINERY_TAB_IDS = WINERY_TAB_IDS.filter(
   (tabId) => !AGGREGATE_WINERY_TAB_IDS.includes(tabId),
@@ -90,6 +91,12 @@ export function canViewAppDestination(role: unknown, moduleId: string, tabId?: s
     && tabId !== 'qvevri'
     && !(WINERY_TAB_IDS as readonly string[]).includes(tabId)
   ) return false;
+
+  // The unified cellar workspace safely filters lot and vessel records by
+  // their owning permission. A user may open it when either register is visible.
+  if (moduleId === 'gvino' && tabId === 'cellar') {
+    return canAccess(role, 'lots', 'view') || canAccess(role, 'vessels', 'view');
+  }
 
   // The cellar overview and the intelligence centre are aggregate surfaces.
   // They are useful whenever at least one operational cellar destination is

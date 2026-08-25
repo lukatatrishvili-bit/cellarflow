@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
-import type { WineLot, WinemakingStage, WineSugarCategory, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord, DailyFermLog, MaraniOSAuditLog } from '../lib/wineryState';
+import type { WineLot, WinemakingStage, WineSugarCategory, Vessel, LabAnalysis, BottlingRunRecord, SalesOrderRecord, SalesDispatchRecord, DailyFermLog, MaraniOSAuditLog, CellarOperationType } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import { stageLabel, vesselTypeLabel, wineClassLabel } from '../lib/enumLabels';
@@ -34,7 +34,7 @@ import {
 } from '../lib/commands/client';
 import { localISODate } from '../lib/weatherApi';
 
-interface Props {
+export interface WineLotsTraceProps {
   lang: Language;
   lots: WineLot[];
   onUpdateLots: (newLots: WineLot[]) => void;
@@ -62,6 +62,15 @@ interface Props {
   onUpdateAuditLogs?: (logs: MaraniOSAuditLog[]) => void;
   onApplyLotStageTransitionCommandResponse?: (response: LotStageTransitionCommandResponse) => void;
   setToastMessage?: (message: string) => void;
+  /** Render only the focused lot workspace; the parent owns the entity list. */
+  embedded?: boolean;
+  /** Controlled lot focus used by the unified cellar workspace. */
+  focusedLotId?: string | null;
+  onFocusedLotIdChange?: (lotId: string | null) => void;
+  /** Keep the command surface and edit workflow without legacy duplicate panels. */
+  compact?: boolean;
+  onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
+  onPlanTransfer?: (vesselId: string, role?: 'source' | 'destination') => void;
 }
 
 export function commitWineLotMutationIfAllowed(
@@ -102,9 +111,20 @@ export function WineLotsTrace({
   onUpdateAuditLogs,
   onApplyLotStageTransitionCommandResponse,
   setToastMessage,
-}: Props) {
+  embedded = false,
+  focusedLotId,
+  onFocusedLotIdChange,
+  compact = false,
+  onLogOperation,
+  onPlanTransfer,
+}: WineLotsTraceProps) {
   const t = translations[lang];
-  const [selectedLotId, setSelectedLotId] = useState<string | null>(lots[0]?.id || null);
+  const [internalSelectedLotId, setInternalSelectedLotId] = useState<string | null>(lots[0]?.id || null);
+  const selectedLotId = focusedLotId === undefined ? internalSelectedLotId : focusedLotId;
+  const setSelectedLotId = (lotId: string | null) => {
+    setInternalSelectedLotId(lotId);
+    onFocusedLotIdChange?.(lotId);
+  };
   const [filterClass, setFilterClass] = useState<string>('all');
   const [filterVintage, setFilterVintage] = useState<string>('all');
 
@@ -334,9 +354,9 @@ export function WineLotsTrace({
 
   return (
     <>
-    <div className="grid grid-cols-1 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
+    <div className={embedded ? 'space-y-4' : 'grid grid-cols-1 gap-8 xl:grid-cols-3 2xl:grid-cols-4'}>
       {isReadOnly && (
-        <div role="status" className="xl:col-span-3 2xl:col-span-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+        <div role="status" className={`${embedded ? '' : 'xl:col-span-3 2xl:col-span-4'} rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100`}>
           <strong className="block text-xs font-bold">{readOnlyNotice.title}</strong>
           <span className="mt-0.5 block text-[11px] leading-relaxed">
             {readOnlyNotice.body}
@@ -344,7 +364,7 @@ export function WineLotsTrace({
         </div>
       )}
       {/* List Panel */}
-      <div className="xl:col-span-1 space-y-4">
+      <div className={embedded ? 'hidden' : 'space-y-4 xl:col-span-1'}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold font-serif text-[#4e0e15] flex items-center gap-1">
             <ListFilter className="w-4 h-4" />
@@ -499,9 +519,9 @@ export function WineLotsTrace({
       </div>
 
       {/* Details/Timeline Trace Panel */}
-      <div className="xl:col-span-2 2xl:col-span-3 space-y-6">
+      <div className={embedded ? 'space-y-4' : 'space-y-6 xl:col-span-2 2xl:col-span-3'}>
         {selectedLot ? (
-          <div className="p-8 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 rounded-3xl shadow-xs text-stone-900 dark:text-stone-200 space-y-8">
+          <div className={`${embedded ? 'space-y-4' : 'space-y-8 rounded-3xl border border-[#e8dfd5] bg-white p-8 shadow-xs dark:border-stone-800 dark:bg-stone-900'} text-stone-900 dark:text-stone-200`}>
             <WineLotCommandCenter
               lang={lang}
               lot={selectedLot}
@@ -523,6 +543,9 @@ export function WineLotsTrace({
               setActiveTab={setActiveTab}
               setSelectedTankId={setSelectedTankId}
               setCalculatorLotId={setCalculatorLotId}
+              setLabLotId={setLabLotId}
+              onLogOperation={onLogOperation}
+              onPlanTransfer={onPlanTransfer}
             />
             {/* Header info */}
             <div className="hidden">
@@ -675,7 +698,7 @@ export function WineLotsTrace({
                   </button>
                 </div>
               </form>
-            ) : (
+            ) : !compact ? (
               <>
 
             {/* General Chemistry specs summary */}
@@ -914,7 +937,7 @@ export function WineLotsTrace({
               </div>
             </div>
           </>
-        )}
+        ) : null}
       </div>
     ) : (
           <div className="p-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">

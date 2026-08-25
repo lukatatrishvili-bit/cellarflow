@@ -122,6 +122,29 @@ test('dashboard initialization does not lock module navigation', async ({ page }
   await expect(today).toHaveAttribute('aria-current', 'page');
 });
 
+test('winemaker can work with lots and vessels from one focused cellar workspace', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto('/');
+  await signIn(page, fixture.owner);
+
+  const navigation = page.getByRole('navigation', { name: 'Module navigation' });
+  await navigation.getByRole('button', { name: 'Cellar' }).click();
+  await page.getByRole('button', { name: 'Cellar workspace', exact: true }).click();
+
+  const workspace = page.getByTestId('cellar-workspace');
+  await expect(workspace.getByRole('heading', { name: 'Wine and vessels' })).toBeVisible();
+  await expect(workspace.getByRole('button', { name: 'By lot', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(workspace).toContainText('Quick actions');
+  await expect(workspace).not.toContainText('Stock now');
+  await expect(workspace).not.toContainText('Lot cost');
+
+  await workspace.getByRole('button', { name: 'By vessel', exact: true }).click();
+  await expect(workspace.getByText('Vessel register', { exact: true })).toBeVisible();
+  await expect(workspace.getByRole('button', { name: 'By vessel', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(workspace.getByRole('button', { name: 'Receive transfer', exact: true })).toBeVisible();
+  await expect(workspace).not.toContainText('Thermal Intelligence Loop');
+});
+
 test('owner can open business containment and cellar planning workflows', async ({ page }) => {
   const fixture = await resetFixture(page);
   await page.goto('/');

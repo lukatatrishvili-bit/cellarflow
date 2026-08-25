@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   ArrowRight,
-  BadgeDollarSign,
+  ArrowRightLeft,
   Activity,
   Calculator,
   CircleAlert,
@@ -12,13 +12,13 @@ import {
   MapPin,
   PackageCheck,
   Pencil,
-  ShoppingCart,
-  Warehouse,
+  Wrench,
   Wine,
   FileText,
 } from 'lucide-react';
 import type {
   BottlingRunRecord,
+  CellarOperationType,
   LabAnalysis,
   SalesDispatchRecord,
   SalesOrderRecord,
@@ -29,8 +29,6 @@ import type {
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
 import type { Language } from '../lib/i18n';
-import { isActiveReservation, isActiveSalesDispatch } from '../lib/sales';
-import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
 import { stageLabel as sharedStageLabel, vesselTypeLabel } from '../lib/enumLabels';
 import {
   stagesForCurrentLot,
@@ -61,16 +59,9 @@ interface Props {
   setActiveTab?: (tab: string) => void;
   setSelectedTankId?: (tankId: string | null) => void;
   setCalculatorLotId?: (lotId: string) => void;
-}
-
-const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-
-function money(n: number, currency: string): string {
-  return `${n.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${currency}`;
-}
-
-function signedMovement(m: StockMovement): number {
-  return m.direction === 'in' ? m.bottles : -m.bottles;
+  setLabLotId?: (lotId: string) => void;
+  onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
+  onPlanTransfer?: (vesselId: string, role?: 'source' | 'destination') => void;
 }
 
 function MetricCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -110,12 +101,6 @@ export default function WineLotCommandCenter({
   lot,
   vessels,
   labLogs,
-  costEntries,
-  bottlingRuns,
-  stockMovements,
-  salesOrders,
-  salesDispatches,
-  currency,
   nextAction,
   onEdit,
   onNextAction,
@@ -124,6 +109,9 @@ export default function WineLotCommandCenter({
   setActiveTab,
   setSelectedTankId,
   setCalculatorLotId,
+  setLabLotId,
+  onLogOperation,
+  onPlanTransfer,
 }: Props) {
   const ka = lang === 'ka';
   const stageLabel = (stage: WinemakingStage) => sharedStageLabel(stage, lang);
@@ -132,22 +120,19 @@ export default function WineLotCommandCenter({
     .filter(log => log.lotId === lot.id)
     .slice()
     .sort((a, b) => b.date.localeCompare(a.date))[0];
-  const bottled = bottlingRuns
-    .filter(run => run.lotId === lot.id && isActiveBottlingRun(run))
-    .reduce((acc, run) => acc + (run.totalBottles || 0) + (run.totalCeramic || 0), 0);
-  const stockOnHand = Math.max(0, stockMovements
-    .filter(m => m.lotId === lot.id)
-    .reduce((acc, m) => acc + signedMovement(m), 0));
-  const reserved = salesOrders
-    .filter(order => order.lotId === lot.id && isActiveReservation(order))
-    .reduce((acc, order) => acc + (order.bottles || 0), 0);
-  const dispatches = salesDispatches.filter(d => d.lotId === lot.id && isActiveSalesDispatch(d));
-  const dispatched = dispatches.reduce((acc, d) => acc + (d.bottles || 0), 0);
-  const revenue = dispatches.reduce((acc, d) => acc + (d.revenue || 0), 0);
-  const totalCost = costEntries
-    .filter(entry => entry.lotId === lot.id)
-    .reduce((acc, entry) => acc + (entry.amount || 0), 0);
-  const costPerBottle = bottled > 0 ? round2(totalCost / bottled) : null;
+  const vesselVolume = containingVessels.reduce((total, vessel) => total + vessel.currentVolume, 0);
+  const volumeDifference = Math.round((lot.currentVolume - vesselVolume) * 100) / 100;
+  const averageTemperature = containingVessels.length
+    ? containingVessels.reduce((total, vessel) => total + vessel.temperature, 0) / containingVessels.length
+    : null;
+  const highestFill = containingVessels.reduce((highest, vessel) => (
+    Math.max(highest, vessel.capacity > 0 ? (vessel.currentVolume / vessel.capacity) * 100 : 0)
+  ), 0);
+  const operationAction = containingVessels.length === 1 && onLogOperation
+    ? () => onLogOperation(containingVessels[0].id)
+    : setActiveTab
+      ? () => setActiveTab('operations')
+      : undefined;
   const stageOrder = stagesForCurrentLot(lot.wineClass, lot.stage);
   const currentStageIndex = Math.max(0, stageOrder.indexOf(lot.stage));
   const progressPct = Math.round(((currentStageIndex + 1) / stageOrder.length) * 100);
@@ -254,14 +239,25 @@ export default function WineLotCommandCenter({
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
+        <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
           <MetricCard label={ka ? 'მიმდინარე მოცულობა' : 'Current volume'} value={`${lot.currentVolume.toLocaleString()} L`} hint={`${lot.initialVolume.toLocaleString()} L ${ka ? 'საწყისი' : 'initial'}`} />
-          <MetricCard label={ka ? 'ჩამოსხმული' : 'Bottled'} value={`${bottled.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={bottled > 0 ? (ka ? 'მზა პროდუქცია' : 'finished goods') : (ka ? 'ჯერ არ ჩამოსხმულა' : 'not bottled yet')} />
-          <MetricCard label={ka ? 'მარაგი ახლა' : 'Stock now'} value={`${stockOnHand.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={reserved > 0 ? `${reserved.toLocaleString()} ${ka ? 'დაჯავშნილი' : 'reserved'}` : (ka ? 'დაუჯავშნავი' : 'unreserved')} />
-          <MetricCard label={ka ? 'გატანილი' : 'Dispatched'} value={`${dispatched.toLocaleString()} ${ka ? 'ბოთ.' : 'btl'}`} hint={revenue > 0 ? money(revenue, currency) : (ka ? 'გაყიდვები ჯერ არ არის' : 'no sales yet')} />
-          <MetricCard label={ka ? 'პარტიის ხარჯი' : 'Lot cost'} value={money(totalCost, currency)} hint={costPerBottle != null ? `${costPerBottle} ${currency}/${ka ? 'ბოთ.' : 'btl'}` : (ka ? 'ხარჯი/ბოთ. მოლოდინში' : 'cost/btl pending')} />
-          <MetricCard label={ka ? 'ბოლო pH' : 'Latest pH'} value={latestLab ? String(latestLab.ph) : '—'} hint={latestLab ? latestLab.date : (ka ? 'ანალიზი ჯერ არ არის' : 'no lab yet')} />
-          <MetricCard label={`${ka ? 'თავისუფალი' : 'Free'} SO₂`} value={latestLab ? `${latestLab.freeSo2} mg/L` : '—'} hint={latestLab && latestLab.freeSo2 < 15 ? (ka ? 'საჭიროებს შემოწმებას' : 'needs review') : (ka ? 'ბოლო ანალიზი' : 'latest lab')} />
+          <MetricCard
+            label={ka ? 'განთავსება' : 'Placement'}
+            value={containingVessels.length ? `${containingVessels.length} ${ka ? 'ჭურჭელი' : containingVessels.length === 1 ? 'vessel' : 'vessels'}` : '—'}
+            hint={Math.abs(volumeDifference) > 0.1
+              ? `${ka ? 'მოცულობის სხვაობა' : 'volume difference'} ${volumeDifference.toLocaleString()} L`
+              : `${vesselVolume.toLocaleString()} L ${ka ? 'შეჯერებულია' : 'reconciled'}`}
+          />
+          <MetricCard
+            label={ka ? 'ტემპერატურა' : 'Temperature'}
+            value={averageTemperature == null ? '—' : `${averageTemperature.toFixed(1)}°C`}
+            hint={containingVessels.length ? `${ka ? 'უმაღლესი შევსება' : 'highest fill'} ${Math.round(highestFill)}%` : (ka ? 'ჭურჭელი არ არის მიბმული' : 'no vessel assigned')}
+          />
+          <MetricCard
+            label={ka ? 'ბოლო ანალიზი' : 'Latest analysis'}
+            value={latestLab ? `pH ${latestLab.ph}` : '—'}
+            hint={latestLab ? `SO₂ ${latestLab.freeSo2} mg/L · ${latestLab.date}` : (ka ? 'ანალიზი ჯერ არ არის' : 'no lab yet')}
+          />
         </div>
 
         <div className="mt-5 rounded-2xl border border-stone-200 bg-white/55 p-3 dark:border-stone-800 dark:bg-stone-950/30">
@@ -319,15 +315,15 @@ export default function WineLotCommandCenter({
 
           <div className="rounded-2xl border border-stone-200 bg-white/65 p-4 dark:border-stone-800 dark:bg-stone-950/30">
             <h3 className="flex items-center gap-1.5 text-xs font-black text-stone-700 dark:text-amber-100">
-              <Wine className="h-4 w-4 text-[#4e0e15]" /> {ka ? 'შემდეგი სასარგებლო ქმედებები' : 'Next useful actions'}
+              <Wine className="h-4 w-4 text-[#4e0e15]" /> {ka ? 'სწრაფი მოქმედებები' : 'Quick actions'}
             </h3>
             <div className="mt-3 flex flex-wrap gap-2">
-              <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => setActiveTab('labs') : undefined}>{ka ? 'ლაბორატორია' : 'Lab'}</ActionChip>
-              <ActionChip icon={Calculator} onClick={setActiveTab && setCalculatorLotId ? () => { setCalculatorLotId(lot.id); setActiveTab('calculators'); } : undefined}>{ka ? 'კალკულატორი' : 'Calculator'}</ActionChip>
-              <ActionChip icon={PackageCheck} onClick={setActiveTab ? () => setActiveTab('bottling') : undefined}>{ka ? 'ჩამოსხმა' : 'Bottling'}</ActionChip>
-              <ActionChip icon={Warehouse} onClick={setActiveTab ? () => setActiveTab('inventory') : undefined}>{ka ? 'პროდუქტები' : 'Materials'}</ActionChip>
-              <ActionChip icon={ShoppingCart} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'გაყიდვების კვალი' : 'Trace sales'}</ActionChip>
-              <ActionChip icon={BadgeDollarSign} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'ღირებულების კვალი' : 'Trace value'}</ActionChip>
+              <ActionChip icon={Wrench} onClick={operationAction}>{ka ? 'ოპერაცია' : 'Operation'}</ActionChip>
+              <ActionChip icon={ArrowRightLeft} onClick={containingVessels.length === 1 && onPlanTransfer ? () => onPlanTransfer(containingVessels[0].id) : setActiveTab && containingVessels.length ? () => setActiveTab('transfers') : undefined}>{ka ? 'გადატანა' : 'Transfer'}</ActionChip>
+              <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => { setLabLotId?.(lot.id); setActiveTab('labs'); } : undefined}>{ka ? 'ლაბორატორია' : 'Lab'}</ActionChip>
+              {lot.stage === 'filtration'
+                ? <ActionChip icon={PackageCheck} onClick={setActiveTab ? () => setActiveTab('bottling') : undefined}>{ka ? 'ჩამოსხმა' : 'Bottling'}</ActionChip>
+                : <ActionChip icon={Calculator} onClick={setActiveTab && setCalculatorLotId ? () => { setCalculatorLotId(lot.id); setActiveTab('calculators'); } : undefined}>{ka ? 'კალკულატორი' : 'Calculator'}</ActionChip>}
             </div>
           </div>
         </div>
