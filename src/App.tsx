@@ -31,6 +31,7 @@ import {
 } from '../lib/workflowPermissions';
 import type { BillingFeature } from '../lib/billing/planCatalog';
 import type { CellarOperation, CellarOperationType } from '../lib/wineryState';
+import type { ProductionPlanItem } from '../lib/operationsControl';
 
 // Heavy modules are code-split
 const DashboardTab = lazyRetry(() => import('../components/DashboardTab'));
@@ -232,6 +233,7 @@ export default function App() {
   const [showSyncTroubleshooter, setShowSyncTroubleshooter] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [prefilledOpType, setPrefilledOpType] = useState<CellarOperationType | undefined>();
+  const [prefilledTransferVolume, setPrefilledTransferVolume] = useState<number | undefined>();
   const [operationReturnVesselId, setOperationReturnVesselId] = useState<string | null>(null);
   const [recentlyLoggedOperationId, setRecentlyLoggedOperationId] = useState<string | null>(null);
   // Stable identity, so ToastHost's memo actually holds across App re-renders.
@@ -269,10 +271,12 @@ export default function App() {
   const clearTransferPrefill = useCallback(() => {
     setPrefilledSourceId('');
     setPrefilledDestId('');
+    setPrefilledTransferVolume(undefined);
   }, [setPrefilledSourceId, setPrefilledDestId]);
   const openTransferFromVessel = useCallback((vesselId: string, role: 'source' | 'destination' = 'source') => {
     setPrefilledSourceId(role === 'source' ? vesselId : '');
     setPrefilledDestId(role === 'destination' ? vesselId : '');
+    setPrefilledTransferVolume(undefined);
     setActiveModule('gvino');
     setActiveTab('transfers');
   }, [setActiveModule, setActiveTab, setPrefilledDestId, setPrefilledSourceId]);
@@ -1373,6 +1377,79 @@ export default function App() {
     setActiveModule('gvino');
     setActiveTab(tab);
   }, [setActiveModule, setActiveTab]);
+
+  const openProductionPlanWork = (item: ProductionPlanItem) => {
+    const openDestination = (module: string, tab?: string): boolean => {
+      if (!canViewModule(module, tab)) {
+        state.setToastMessage(isKa
+          ? 'თქვენს როლს ამ სამუშაო სივრცეზე წვდომა არ აქვს.'
+          : 'Your workspace role does not have access to this work area.');
+        return false;
+      }
+      state.setActiveModule(module as any);
+      if (tab) state.setActiveTab(tab);
+      return true;
+    };
+
+    if (item.kind === 'harvest') {
+      openDestination('vazi');
+      return;
+    }
+    if (item.kind === 'procurement') {
+      openDestination('procurement');
+      return;
+    }
+    if (item.kind === 'dispatch') {
+      openDestination('sales');
+      return;
+    }
+    if (item.kind === 'intake') {
+      if (!openDestination('gvino', 'intake')) return;
+      const generatedHarvestId = item.notes.match(/harvest:([^\s]+)/)?.[1];
+      const harvest = state.harvests.find(record => (
+        record.id === generatedHarvestId
+        || (Boolean(item.blockId) && record.blockId === item.blockId
+          && (!item.lotId || record.associatedLotId === item.lotId))
+      ));
+      state.setPrefilledIntakeHarvestId(harvest?.id || null);
+      return;
+    }
+    if (item.kind === 'transfer') {
+      if (!openDestination('gvino', 'transfers')) return;
+      state.setPrefilledSourceId(item.vesselIds[0] || '');
+      state.setPrefilledDestId(item.vesselIds[1] || '');
+      setPrefilledTransferVolume(item.quantityLiters);
+      return;
+    }
+    if (item.kind === 'lab') {
+      if (!openDestination('gvino', 'labs')) return;
+      state.setLabLotId(item.lotId || '');
+      state.setLabTankId(item.vesselIds[0] || '');
+      return;
+    }
+    if (item.kind === 'sanitation') {
+      if (!openDestination('gvino', 'operations')) return;
+      setPrefilledOpVesselId(item.vesselIds[0] || '');
+      setPrefilledOpType('cleaning');
+      return;
+    }
+    if (item.kind === 'other') {
+      if (!openDestination('gvino', 'tasks')) return;
+      state.setPrefilledTaskTitle(item.title);
+      state.setPrefilledTaskPriority(item.status === 'blocked' ? 'high' : 'medium');
+      state.setPrefilledTaskDesc([
+        item.notes,
+        item.lotId ? (isKa ? 'პარტია: ' : 'Lot: ') + item.lotId : '',
+        item.vesselIds.length ? (isKa ? 'ჭურჭელი: ' : 'Vessel: ') + item.vesselIds.join(', ') : '',
+      ].filter(Boolean).join('\n'));
+      return;
+    }
+    const tabByKind: Partial<Record<ProductionPlanItem['kind'], string>> = {
+      fermentation: 'fermentation',
+      bottling: 'bottling',
+    };
+    openDestination('gvino', tabByKind[item.kind] || 'cellar');
+  };
 
   // Loading gate — MUST come after every hook above. React requires an
   // unconditional, stable hook order across renders; early-returning before a
@@ -2853,6 +2930,7 @@ export default function App() {
                 {...cellarPermissions.transfers}
                 prefilledSourceId={state.prefilledSourceId}
                 prefilledDestId={state.prefilledDestId}
+                prefilledVolume={prefilledTransferVolume}
                 pastTransfers={state.transfers}
                 onUpdateTransfers={state.setTransfers}
                 onUpdateCostEntries={state.setCostEntries}
@@ -3021,6 +3099,14 @@ export default function App() {
                 canUpdate={canAccess(state.currentUser.role, 'planning', 'update')}
                 canDelete={canAccess(state.currentUser.role, 'planning', 'delete')}
                 focusPlanId={workflowFocus?.tab === 'planner' ? workflowFocus.targetId : undefined}
+                onOpenLot={canViewModule('gvino', 'lots') ? state.setPassportLotId : undefined}
+                onOpenVessel={canViewModule('gvino', 'vessels') ? (vesselId) => {
+                  state.setActiveModule('gvino');
+                  state.setActiveTab('cellar');
+                  state.setSelectedTankId(vesselId);
+                } : undefined}
+                onOpenBlock={canViewModule('vazi') ? () => state.setActiveModule('vazi') : undefined}
+                onOpenWorkflow={openProductionPlanWork}
                 setToastMessage={state.setToastMessage}
               />
             )}

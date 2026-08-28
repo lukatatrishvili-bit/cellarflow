@@ -53,6 +53,6 @@ describe('work queue record destinations', () => {
     expect(markup).toContain('id="plan-transfer"');
     expect(markup).toContain('Next step is blocked');
     expect(markup).toContain('Complete prerequisite work first: Prepare vessel.');
-    expect(markup).toMatch(/<option[^>]*disabled=""[^>]*>ready<\/option>/);
+    expect(markup).toMatch(/<option[^>]*value="ready"[^>]*disabled=""/);
   });
 });

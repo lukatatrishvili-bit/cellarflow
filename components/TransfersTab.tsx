@@ -65,6 +65,7 @@ interface Props {
   onAddCellarOperation?: (input: CellarOperationInput) => string;
   prefilledSourceId?: string;
   prefilledDestId?: string;
+  prefilledVolume?: number;
   clearPrefilled?: () => void;
   pastTransfers: CellarTransferRecord[];
   onUpdateTransfers: (transfers: CellarTransferRecord[]) => void;
@@ -82,7 +83,7 @@ type TransferRecord = CellarTransferRecord;
 export function TransfersTab({
   lang, vessels, lots, inventory = [], costEntries = [], currency = 'GEL',
   onUpdateVessels, onUpdateLots, onAddCellarOperation,
-  prefilledSourceId, prefilledDestId, clearPrefilled, pastTransfers, onUpdateTransfers,
+  prefilledSourceId, prefilledDestId, prefilledVolume, clearPrefilled, pastTransfers, onUpdateTransfers,
   onUpdateCostEntries,
   onApplyTransferCommandResponse, onApplyTransferReversalCommandResponse,
   canExecuteTransfer = true,
@@ -155,7 +156,9 @@ export function TransfersTab({
       // Auto-set transfer volume to source's volume as a sensible default
       const srcVessel = vessels.find(v => v.id === prefilledSourceId);
       if (srcVessel) {
-        setTransferVol(srcVessel.currentVolume);
+        setTransferVol(prefilledVolume && prefilledVolume > 0
+          ? Math.min(prefilledVolume, srcVessel.currentVolume)
+          : srcVessel.currentVolume);
       }
     }
     if (prefilledDestId) {
@@ -164,7 +167,7 @@ export function TransfersTab({
     if (prefilledSourceId || prefilledDestId) {
       clearPrefilled?.();
     }
-  }, [prefilledSourceId, prefilledDestId, vessels, clearPrefilled]);
+  }, [prefilledSourceId, prefilledDestId, prefilledVolume, vessels, clearPrefilled]);
 
   const saveTransfers = (newXfers: TransferRecord[]) => {
     onUpdateTransfers(newXfers);

@@ -182,7 +182,24 @@ test('owner can open business containment and cellar planning workflows', async 
 
   await navigation.getByRole('button', { name: 'Cellar' }).click();
   await page.getByRole('button', { name: 'Production plan', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Visual production schedule' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Operational production plan' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Work agenda' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Missing links', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add work', exact: true }).click();
+  const lotPicker = page.getByLabel('Wine lot');
+  await lotPicker.selectOption({ index: 1 });
+  const vesselPicker = page.getByLabel('Source or destination vessel');
+  await vesselPicker.selectOption({ index: 1 });
+  await page.getByRole('button', { name: 'Add vessel', exact: true }).click();
+  await vesselPicker.selectOption({ index: 1 });
+  await page.getByRole('button', { name: 'Add vessel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Add to plan', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Add to plan', exact: true }).click();
+  await page.getByRole('button', { name: 'Start transfer', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Winery Liquid Movement & Pomace Blending Panel' })).toBeVisible();
+  await expect(page.getByText('Step 1: Select Source Vessel')).toBeVisible();
+  await expect(page.getByRole('spinbutton').first()).toHaveValue('2500');
 });
 
 test('owner can pause every notification channel and resume immediately', async ({ page }) => {
