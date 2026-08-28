@@ -3060,6 +3060,8 @@ export default function App() {
                 lots={state.lots}
                 blocks={state.blocks}
                 harvests={state.harvests}
+                fermentationLogs={state.fermLogs}
+                labLogs={state.labLogs}
                 canCreate={canAccess(state.currentUser.role, 'planning', 'create')}
                 canUpdate={canAccess(state.currentUser.role, 'planning', 'update')}
                 canDelete={canAccess(state.currentUser.role, 'planning', 'delete')}

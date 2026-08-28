@@ -1,11 +1,12 @@
 import React from 'react';
 import {
-  AlertTriangle, ArrowRight, CalendarDays, CalendarRange, Check, CheckCircle2,
-  ChevronDown, CircleDot, Clock3, ExternalLink, Grape, ListChecks, Package,
-  Plus, Search, Sparkles, Sprout, Trash2, Warehouse, Waves, Wine, Wrench, X,
+  AlertTriangle, ArrowRight, BarChart3, CalendarClock, CalendarDays, CalendarRange,
+  Check, CheckCircle2, ChevronDown, CircleDot, Clock3, Columns3, ExternalLink,
+  Grape, Lightbulb, ListChecks, Package, Pencil, Plus, Save, Search, Sparkles,
+  Sprout, Trash2, Warehouse, Waves, Wine, Wrench, X,
 } from 'lucide-react';
 import type { Language } from '../lib/language';
-import type { HarvestRecord, Vessel, VineyardBlock, WineLot } from '../lib/wineryState';
+import type { DailyFermLog, HarvestRecord, LabAnalysis, Vessel, VineyardBlock, WineLot } from '../lib/wineryState';
 import {
   allowedProductionPlanStatuses,
   detectProductionPlanConflicts,
@@ -15,6 +16,12 @@ import {
   type ProductionPlanKind,
   type ProductionPlanStatus,
 } from '../lib/operationsControl';
+import {
+  alignPlanAfterDependencies,
+  buildProductionPlanSuggestions,
+  forecastProductionPlan,
+  type ProductionPlanSuggestion,
+} from '../lib/productionPlanner';
 import { localISODate } from '../lib/weatherApi';
 
 interface ProductionPlannerTabProps {
@@ -26,6 +33,8 @@ interface ProductionPlannerTabProps {
   lots: WineLot[];
   blocks: VineyardBlock[];
   harvests: HarvestRecord[];
+  fermentationLogs: DailyFermLog[];
+  labLogs: LabAnalysis[];
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
@@ -37,7 +46,7 @@ interface ProductionPlannerTabProps {
   setToastMessage?: (message: string | null) => void;
 }
 
-type PlannerView = 'agenda' | 'calendar';
+type PlannerView = 'agenda' | 'flow' | 'calendar';
 type PlannerFilter = 'open' | 'attention' | 'completed' | 'all';
 
 const kinds: ProductionPlanKind[] = ['harvest', 'intake', 'transfer', 'fermentation', 'lab', 'bottling', 'sanitation', 'procurement', 'dispatch', 'other'];
@@ -166,6 +175,8 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
   const [search, setSearch] = React.useState('');
   const [showCreate, setShowCreate] = React.useState(false);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
+  const [showInsights, setShowInsights] = React.useState(false);
+  const [editDraft, setEditDraft] = React.useState<ProductionPlanItem | null>(null);
   const [title, setTitle] = React.useState('');
   const [kind, setKind] = React.useState<ProductionPlanKind>('transfer');
   const [startDate, setStartDate] = React.useState(today());
@@ -190,6 +201,14 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
   const lotsById = React.useMemo(() => new Map(props.lots.map(lot => [lot.id, lot])), [props.lots]);
   const vesselsById = React.useMemo(() => new Map(props.vessels.map(vessel => [vessel.id, vessel])), [props.vessels]);
   const blocksById = React.useMemo(() => new Map(props.blocks.map(block => [block.id, block])), [props.blocks]);
+  const suggestions = React.useMemo(() => buildProductionPlanSuggestions({
+    today: today(),
+    lots: props.lots,
+    vessels: props.vessels,
+    fermentationLogs: props.fermentationLogs,
+    labLogs: props.labLogs,
+    productionPlans: props.productionPlans,
+  }), [props.fermentationLogs, props.labLogs, props.lots, props.productionPlans, props.vessels]);
 
   React.useEffect(() => {
     if (!props.focusPlanId) return;
@@ -317,6 +336,27 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
     closeCreate();
   };
 
+  const acceptSuggestion = (suggestion: ProductionPlanSuggestion) => {
+    const createdAt = new Date().toISOString();
+    const item: ProductionPlanItem = {
+      id: 'plan-' + suggestion.id + '-' + createdAt.replace(/[^0-9]/g, '').slice(0, 17),
+      title: ka ? suggestion.title.ka : suggestion.title.en,
+      kind: suggestion.kind,
+      status: 'planned',
+      startDate: suggestion.startDate,
+      endDate: suggestion.endDate,
+      assignedTo: props.currentUsername,
+      ...(suggestion.lotId ? { lotId: suggestion.lotId } : {}),
+      vesselIds: suggestion.vesselIds,
+      notes: ka ? suggestion.notes.ka : suggestion.notes.en,
+      dependencyIds: [],
+      createdAt,
+      createdBy: props.currentUsername,
+    };
+    props.onUpdateProductionPlans(current => [item, ...current]);
+    props.setToastMessage?.(ka ? 'რეკომენდებული სამუშაო გეგმაში დაემატა.' : 'Suggested work added to the plan.');
+  };
+
   const generateHarvestPlan = () => {
     const existingHarvestIds = new Set(
       props.productionPlans
@@ -361,6 +401,59 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
   const update = (id: string, patch: Partial<ProductionPlanItem>) => props.onUpdateProductionPlans(
     current => current.map(item => item.id === id ? { ...item, ...patch, lastModified: new Date().toISOString() } : item),
   );
+
+  const operationalDataIssue = (item: ProductionPlanItem): string | null => {
+    const requiredLinkIssue = readinessIssue(item, ka);
+    if (requiredLinkIssue) return requiredLinkIssue;
+    const selectedVessels = item.vesselIds
+      .map(id => vesselsById.get(id))
+      .filter((vessel): vessel is Vessel => Boolean(vessel));
+    if (
+      item.lotId
+      && selectedVessels[0]?.assignedLotId
+      && selectedVessels[0].assignedLotId !== item.lotId
+      && ['transfer', 'fermentation', 'lab', 'bottling'].includes(item.kind)
+    ) {
+      return ka ? 'არჩეული წყარო ჭურჭელი სხვა პარტიას ეკუთვნის' : 'The selected source vessel belongs to another lot';
+    }
+    if (item.kind !== 'transfer' || selectedVessels.length < 2) return null;
+    const quantity = item.quantityLiters || 0;
+    if (!(quantity > 0)) return ka ? 'გადასატანი მოცულობა უნდა იყოს ნულზე მეტი' : 'Transfer volume must be greater than zero';
+    if (quantity > selectedVessels[0].currentVolume) {
+      return ka ? 'გეგმიური მოცულობა წყაროში არსებულზე მეტია' : 'Planned volume exceeds the source volume';
+    }
+    const destinationHeadroom = Math.max(0, selectedVessels[1].capacity - selectedVessels[1].currentVolume);
+    if (quantity > destinationHeadroom) {
+      return ka ? 'გეგმიური მოცულობა მიმღების თავისუფალ ტევადობას აღემატება' : 'Planned volume exceeds destination headroom';
+    }
+    return null;
+  };
+
+  const saveEdit = () => {
+    if (!editDraft) return;
+    if (!editDraft.title.trim() || !editDraft.startDate || !editDraft.endDate || editDraft.endDate < editDraft.startDate) {
+      props.setToastMessage?.(ka ? 'შეამოწმეთ სათაური და თარიღები.' : 'Check the title and dates.');
+      return;
+    }
+    const issue = operationalDataIssue(editDraft);
+    if (issue) {
+      props.setToastMessage?.(issue);
+      return;
+    }
+    update(editDraft.id, {
+      title: editDraft.title.trim(),
+      startDate: editDraft.startDate,
+      endDate: editDraft.endDate,
+      assignedTo: editDraft.assignedTo.trim() || props.currentUsername,
+      lotId: editDraft.lotId || undefined,
+      vesselIds: editDraft.vesselIds,
+      blockId: editDraft.blockId || undefined,
+      quantityLiters: editDraft.quantityLiters && editDraft.quantityLiters > 0 ? editDraft.quantityLiters : undefined,
+      notes: editDraft.notes.trim(),
+    });
+    setEditDraft(null);
+    props.setToastMessage?.(ka ? 'სამუშაო განახლდა.' : 'Work updated.');
+  };
 
   const changeStatus = (item: ProductionPlanItem, status: ProductionPlanStatus) => {
     const issue = productionPlanTransitionIssue(item, status, props.productionPlans, conflicts);
@@ -412,7 +505,11 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
     item.status === 'blocked'
     || conflicts.some(conflict => conflict.itemId === item.id)
     || Boolean(readinessIssue(item, ka))
-  ), [conflicts, ka]);
+    || (() => {
+      const nextStatus = nextStatusFor(item.status);
+      return Boolean(nextStatus && productionPlanTransitionIssue(item, nextStatus, props.productionPlans, conflicts));
+    })()
+  ), [conflicts, ka, props.productionPlans]);
 
   const openItems = active.filter(item => !['completed', 'cancelled'].includes(item.status));
   const todayItems = openItems.filter(item => item.startDate <= today() && item.endDate >= today());
@@ -420,6 +517,12 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
   const inProgressCount = openItems.filter(item => item.status === 'in_progress').length;
   const attentionCount = openItems.filter(isAttentionItem).length;
   const unlinkedCount = openItems.filter(item => Boolean(readinessIssue(item, ka))).length;
+  const forecast = forecastProductionPlan({
+    today: today(),
+    productionPlans: props.productionPlans,
+    vessels: props.vessels,
+    attentionItemIds: openItems.filter(isAttentionItem).map(item => item.id),
+  });
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const filteredItems = active.filter(item => {
     if (filter === 'open' && ['completed', 'cancelled'].includes(item.status)) return false;
@@ -470,6 +573,9 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
     const isOverdue = !['completed', 'cancelled'].includes(item.status) && item.endDate < today();
     const critical = item.status === 'blocked' || itemConflicts.some(conflict => conflict.severity === 'critical');
     const focus = props.focusPlanId === item.id;
+    const alignedDates = alignPlanAfterDependencies(item, props.productionPlans);
+    const itemEditDraft = editDraft?.id === item.id ? editDraft : null;
+    const editIssue = itemEditDraft ? operationalDataIssue(itemEditDraft) : null;
     const articleClass = 'group rounded-2xl border bg-white p-4 shadow-sm transition-shadow focus:outline-none focus:ring-2 focus:ring-[#651522] hover:shadow-md dark:bg-stone-900 '
       + (focus
         ? 'border-violet-700 bg-violet-50/40 dark:border-violet-400 dark:bg-violet-950/20'
@@ -585,12 +691,43 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
             <span>{ka ? 'დეტალები და მართვა' : 'Details and controls'}</span><ChevronDown className="h-3.5 w-3.5" />
           </summary>
           <div className="mt-3 grid gap-3 border-t border-stone-100 pt-3 dark:border-stone-800 lg:grid-cols-[1fr_auto]">
+            {itemEditDraft && (
+              <div className="rounded-2xl border border-[#d9c4c8] bg-[#fbf7f8] p-4 dark:border-[#5a2730] dark:bg-[#2b171c] lg:col-span-2">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <label className="space-y-1 md:col-span-2"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'სათაური' : 'Title'}</span><input value={itemEditDraft.title} onChange={event => setEditDraft({ ...itemEditDraft, title: event.target.value })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></label>
+                  <label className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'დაწყება' : 'Start'}</span><input type="date" value={itemEditDraft.startDate} onChange={event => setEditDraft({ ...itemEditDraft, startDate: event.target.value, endDate: itemEditDraft.endDate < event.target.value ? event.target.value : itemEditDraft.endDate })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></label>
+                  <label className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'დასრულება' : 'End'}</span><input type="date" min={itemEditDraft.startDate} value={itemEditDraft.endDate} onChange={event => setEditDraft({ ...itemEditDraft, endDate: event.target.value })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></label>
+                  {!['harvest', 'sanitation', 'procurement', 'other'].includes(item.kind) && (
+                    <label className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'პარტია' : 'Lot'}</span><select value={itemEditDraft.lotId || ''} onChange={event => setEditDraft({ ...itemEditDraft, lotId: event.target.value || undefined, vesselIds: [] })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950"><option value="">{ka ? 'აირჩიეთ' : 'Select'}</option>{props.lots.filter(candidate => !candidate.voidedAt).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.id}</option>)}</select></label>
+                  )}
+                  {['harvest', 'intake'].includes(item.kind) && (
+                    <label className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'ვენახის ბლოკი' : 'Vineyard block'}</span><select value={itemEditDraft.blockId || ''} onChange={event => setEditDraft({ ...itemEditDraft, blockId: event.target.value || undefined })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950"><option value="">{ka ? 'აირჩიეთ' : 'Select'}</option>{props.blocks.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label>
+                  )}
+                  {item.kind === 'transfer' && [0, 1].map(index => (
+                    <label key={index} className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{index === 0 ? (ka ? 'წყარო ჭურჭელი' : 'Source vessel') : (ka ? 'მიმღები ჭურჭელი' : 'Destination vessel')}</span><select value={itemEditDraft.vesselIds[index] || ''} onChange={event => { const next = [...itemEditDraft.vesselIds]; if (event.target.value) next[index] = event.target.value; else next.splice(index, 1); setEditDraft({ ...itemEditDraft, vesselIds: next.slice(0, 2) }); }} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950"><option value="">{ka ? 'აირჩიეთ' : 'Select'}</option>{props.vessels.filter(candidate => !itemEditDraft.vesselIds.some((id, selectedIndex) => selectedIndex !== index && id === candidate.id)).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.id} · {candidate.currentVolume.toLocaleString()}/{candidate.capacity.toLocaleString()} L</option>)}</select></label>
+                  ))}
+                  {['fermentation', 'lab', 'bottling', 'sanitation'].includes(item.kind) && (
+                    <label className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'ჭურჭელი' : 'Vessel'}</span><select value={itemEditDraft.vesselIds[0] || ''} onChange={event => setEditDraft({ ...itemEditDraft, vesselIds: event.target.value ? [event.target.value] : [] })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950"><option value="">{ka ? 'აირჩიეთ' : 'Select'}</option>{props.vessels.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.id} · {candidate.currentVolume.toLocaleString()}/{candidate.capacity.toLocaleString()} L</option>)}</select></label>
+                  )}
+                  <label className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'პასუხისმგებელი' : 'Owner'}</span><input value={itemEditDraft.assignedTo} onChange={event => setEditDraft({ ...itemEditDraft, assignedTo: event.target.value })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></label>
+                  <label className="space-y-1"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'მოცულობა, ლ' : 'Quantity, L'}</span><input type="number" min="0" value={itemEditDraft.quantityLiters || ''} onChange={event => setEditDraft({ ...itemEditDraft, quantityLiters: Number(event.target.value) || undefined })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></label>
+                  <label className="space-y-1 md:col-span-2"><span className="text-[9px] font-black uppercase text-stone-500">{ka ? 'შენიშვნა' : 'Notes'}</span><input value={itemEditDraft.notes} onChange={event => setEditDraft({ ...itemEditDraft, notes: event.target.value })} className="min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></label>
+                </div>
+                <div className="mt-4 flex flex-col gap-3 border-t border-stone-200 pt-3 sm:flex-row sm:items-center sm:justify-between dark:border-stone-700">
+                  <span className={'flex items-center gap-1.5 text-[10px] font-bold ' + (editIssue ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300')}>{editIssue ? <AlertTriangle className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}{editIssue || (ka ? 'სამუშაო მზადაა შესანახად' : 'Work is ready to save')}</span>
+                  <div className="flex gap-2"><button type="button" onClick={() => setEditDraft(null)} className="min-h-10 rounded-xl border border-stone-200 px-3 text-[10px] font-black dark:border-stone-700">{ka ? 'გაუქმება' : 'Cancel'}</button><button type="button" onClick={saveEdit} disabled={Boolean(editIssue)} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#651522] px-4 text-[10px] font-black text-white disabled:opacity-40"><Save className="h-3.5 w-3.5" />{ka ? 'შენახვა' : 'Save changes'}</button></div>
+                </div>
+              </div>
+            )}
             <div>
               {item.notes && <p className="text-xs leading-5 text-stone-600 dark:text-stone-300">{item.notes}</p>}
               {item.dependencyIds.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {item.dependencyIds.map(id => <span key={id} className="rounded-lg bg-stone-100 px-2 py-1 text-[10px] text-stone-600 dark:bg-stone-800 dark:text-stone-300">{props.productionPlans.find(plan => plan.id === id)?.title || id}</span>)}
                 </div>
+              )}
+              {props.canUpdate && alignedDates && itemConflicts.some(conflict => conflict.code === 'dependency_timing') && (
+                <button type="button" onClick={() => update(item.id, alignedDates)} className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-[10px] font-black text-amber-800 hover:border-amber-400 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"><CalendarClock className="h-3.5 w-3.5" />{ka ? 'წინაპირობების შემდეგ გადატანა' : 'Move after prerequisites'}</button>
               )}
               {props.canUpdate && active.length > 1 && (
                 <details className="mt-3">
@@ -609,6 +746,9 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
               )}
             </div>
             <div className="flex items-start gap-2">
+              {props.canUpdate && (
+                <button type="button" aria-label={ka ? item.title + ' რედაქტირება' : 'Edit ' + item.title} onClick={() => setEditDraft(itemEditDraft ? null : { ...item, vesselIds: [...item.vesselIds], dependencyIds: [...item.dependencyIds] })} className="rounded-xl border border-stone-200 p-3 text-stone-500 hover:border-[#651522] hover:text-[#651522] dark:border-stone-700"><Pencil className="h-4 w-4" /></button>
+              )}
               {props.canUpdate && (
                 <select
                   aria-label={(ka ? item.title + ' სტატუსი' : item.title + ' status')}
@@ -665,9 +805,16 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
     { label: ka ? 'კავშირის გარეშე' : 'Missing links', value: unlinkedCount, detail: ka ? 'მონაცემი აკლია' : 'records needed', tone: unlinkedCount ? 'text-amber-700' : 'text-stone-950' },
     { label: ka ? 'შემდეგი 7 დღე' : 'Next 7 days', value: openItems.filter(item => item.startDate > today() && item.startDate <= plusDays(today(), 7)).length, detail: ka ? 'დაგეგმილი' : 'scheduled', tone: 'text-stone-950' },
   ];
+  const flowColumns: Array<{ key: string; label: string; statuses: ProductionPlanStatus[]; tone: string }> = [
+    { key: 'planned', label: ka ? 'დაგეგმილი' : 'Planned', statuses: ['planned'], tone: 'bg-stone-400' },
+    { key: 'ready', label: ka ? 'მზადაა' : 'Ready', statuses: ['ready'], tone: 'bg-violet-500' },
+    { key: 'in-progress', label: ka ? 'მიმდინარეობს' : 'In progress', statuses: ['in_progress'], tone: 'bg-sky-500' },
+    { key: 'blocked', label: ka ? 'დაბლოკილი' : 'Blocked', statuses: ['blocked'], tone: 'bg-rose-500' },
+    ...(['completed', 'all'].includes(filter) ? [{ key: 'closed', label: ka ? 'დახურული' : 'Closed', statuses: ['completed', 'cancelled'] as ProductionPlanStatus[], tone: 'bg-emerald-500' }] : []),
+  ];
 
   return (
-    <div className="space-y-5">
+    <div data-testid="production-planner" className="space-y-5">
       <header className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900 lg:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
@@ -676,6 +823,9 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
             <p className="mt-2 max-w-xl text-xs leading-5 text-stone-500">{ka ? 'დაგეგმეთ მხოლოდ საჭირო ნაბიჯები, გადაამოწმეთ მზადყოფნა და პირდაპირ გახსენით პარტია, ჭურჭელი ან სამუშაო მოდული.' : 'Plan only the work that matters, verify readiness, and open the linked lot, vessel, vineyard or work area directly.'}</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button type="button" aria-expanded={showInsights} onClick={() => setShowInsights(value => !value)} className={'inline-flex min-h-11 items-center gap-2 rounded-xl border px-4 text-xs font-black ' + (showInsights ? 'border-[#651522] bg-[#fbf4f5] text-[#651522] dark:border-amber-300 dark:bg-[#351a20] dark:text-amber-200' : 'border-stone-200 bg-white text-stone-700 hover:border-[#d9c4c8] hover:text-[#651522] dark:border-stone-700 dark:bg-stone-950 dark:text-stone-200')}>
+              <BarChart3 className="h-4 w-4" />{ka ? 'გეგმის ანალიზი' : 'Plan intelligence'}{suggestions.length > 0 && <span className="rounded-full bg-[#651522] px-1.5 py-0.5 text-[9px] text-white dark:bg-amber-300 dark:text-stone-950">{suggestions.length}</span>}
+            </button>
             {props.canCreate && props.harvests.length > 0 && (
               <button type="button" onClick={generateHarvestPlan} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 text-xs font-black text-stone-700 hover:border-emerald-300 hover:text-emerald-800 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-200">
                 <Sparkles className="h-4 w-4" />{ka ? 'მოსავლის სინქრონიზაცია' : 'Sync harvest plan'}
@@ -697,6 +847,39 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
           ))}
         </div>
       </header>
+
+      {showInsights && (
+        <section aria-labelledby="plan-intelligence-title" className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div><div className="flex items-center gap-2"><Lightbulb className="h-4 w-4 text-amber-600" /><h2 id="plan-intelligence-title" className="text-sm font-black text-stone-950 dark:text-white">{ka ? 'ცოცხალი საწარმოო სურათი' : 'Live production picture'}</h2></div><p className="mt-1 text-[11px] leading-5 text-stone-500">{ka ? 'გეგმა, ჭურჭლების მზადყოფნა, დუღილის ჩანაწერები და ლაბორატორია ერთ პროგნოზში.' : 'The plan, vessel readiness, fermentation readings and laboratory evidence in one forecast.'}</p></div>
+            <span className="text-[9px] font-black uppercase tracking-wide text-stone-400">{ka ? 'შემდეგი 14 დღე' : 'Next 14 days'}</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <div className="rounded-2xl bg-stone-50 p-3 dark:bg-stone-950"><span className="text-[9px] font-black uppercase text-stone-400">{ka ? 'გეგმის მზადყოფნა' : 'Plan readiness'}</span><strong className={'mt-1 block text-2xl ' + (forecast.readinessPercent < 70 ? 'text-rose-700' : forecast.readinessPercent < 90 ? 'text-amber-700' : 'text-emerald-700')}>{forecast.readinessPercent}%</strong><span className="text-[9px] text-stone-400">{forecast.openCount} {ka ? 'ღია სამუშაო' : 'open work items'}</span></div>
+            <div className="rounded-2xl bg-stone-50 p-3 dark:bg-stone-950"><span className="text-[9px] font-black uppercase text-stone-400">{ka ? 'პიკური დღე' : 'Peak workload'}</span><strong className="mt-1 block text-base text-stone-950 dark:text-white">{forecast.peakDate || '—'}</strong><span className="text-[9px] text-stone-400">{forecast.peakCount} {ka ? 'პარალელური სამუშაო' : 'parallel work items'}</span></div>
+            <div className="rounded-2xl bg-stone-50 p-3 dark:bg-stone-950"><span className="text-[9px] font-black uppercase text-stone-400">{ka ? 'გეგმიური ნაკადი' : 'Planned flow'}</span><strong className="mt-1 block text-2xl text-stone-950 dark:text-white">{forecast.plannedFlowLiters.toLocaleString()} <small className="text-xs">L</small></strong><span className="text-[9px] text-stone-400">{ka ? 'მოცულობის მქონე სამუშაოები' : 'volume-bearing work'}</span></div>
+            <div className="rounded-2xl bg-stone-50 p-3 dark:bg-stone-950"><span className="text-[9px] font-black uppercase text-stone-400">{ka ? 'მზად ტევადობა' : 'Ready capacity'}</span><strong className="mt-1 block text-2xl text-stone-950 dark:text-white">{forecast.cleanEmptyCapacityLiters.toLocaleString()} <small className="text-xs">L</small></strong><span className="text-[9px] text-stone-400">{ka ? 'სუფთა და ცარიელ ჭურჭლებში' : 'clean, empty vessels'}</span></div>
+          </div>
+          <div className="mt-5 border-t border-stone-100 pt-4 dark:border-stone-800">
+            <div className="flex items-end justify-between gap-3"><div><h3 className="text-xs font-black text-stone-800 dark:text-stone-100">{ka ? 'სისტემიდან აღმოჩენილი სამუშაო' : 'Work detected from live records'}</h3><p className="mt-1 text-[10px] text-stone-400">{ka ? 'არცერთი ჩანაწერი ავტომატურად არ იქმნება — მეღვინე წყვეტს რას დაამატებს.' : 'Nothing is created automatically—the winemaker decides what belongs in the plan.'}</p></div><span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] font-black text-stone-500 dark:bg-stone-800">{suggestions.length}</span></div>
+            {suggestions.length > 0 ? (
+              <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                {suggestions.slice(0, 8).map(suggestion => {
+                  const SuggestionIcon = kindIcons[suggestion.kind];
+                  return (
+                    <article key={suggestion.id} className="flex gap-3 rounded-2xl border border-stone-200 p-3 dark:border-stone-700">
+                      <span className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ' + kindColor(suggestion.kind)}><SuggestionIcon className="h-4 w-4" /></span>
+                      <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h4 className="text-xs font-black text-stone-900 dark:text-white">{ka ? suggestion.title.ka : suggestion.title.en}</h4>{suggestion.priority === 'high' && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[8px] font-black uppercase text-rose-700 dark:bg-rose-950 dark:text-rose-200">{ka ? 'მაღალი' : 'High'}</span>}</div><p className="mt-1 text-[10px] leading-4 text-stone-500">{ka ? suggestion.rationale.ka : suggestion.rationale.en}</p><div className="mt-2 flex flex-wrap gap-1">{suggestion.lotId && <span className="rounded-md bg-stone-100 px-1.5 py-1 text-[9px] font-mono text-stone-500 dark:bg-stone-800">{suggestion.lotId}</span>}{suggestion.vesselIds.map(id => <span key={id} className="rounded-md bg-stone-100 px-1.5 py-1 text-[9px] font-mono text-stone-500 dark:bg-stone-800">{id}</span>)}</div></div>
+                      {props.canCreate && <button type="button" onClick={() => acceptSuggestion(suggestion)} className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-xl border border-[#d9c4c8] px-2.5 text-[9px] font-black text-[#651522] hover:bg-[#fbf4f5] dark:border-[#5a2730] dark:text-amber-200"><Plus className="h-3 w-3" />{ka ? 'დაგეგმვა' : 'Plan it'}</button>}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <div className="mt-3 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/50 p-4 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"><CheckCircle2 className="mr-2 inline h-4 w-4" />{ka ? 'ცოცხალი ჩანაწერებიდან დაუგეგმავი აუცილებელი სამუშაო არ ჩანს.' : 'No unplanned essential work is visible in live records.'}</div>}
+            {suggestions.length > 8 && <p className="mt-2 text-[9px] text-stone-400">{ka ? `კიდევ ${suggestions.length - 8} რეკომენდაცია — დაკავშირებული სამუშაოების დამატების შემდეგ სია ავტომატურად მოკლდება.` : `${suggestions.length - 8} more suggestions—the list contracts automatically as linked work is added.`}</p>}
+          </div>
+        </section>
+      )}
 
       {showCreate && (
         <section className="rounded-3xl border border-[#d9c4c8] bg-[#fbf7f8] p-5 shadow-sm dark:border-[#5a2730] dark:bg-[#2b171c]">
@@ -757,6 +940,7 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
       <section className="flex flex-col gap-3 rounded-2xl border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-900 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex gap-1 rounded-xl bg-stone-100 p-1 dark:bg-stone-950" role="tablist" aria-label={ka ? 'გეგმის ხედი' : 'Plan view'}>
           <button type="button" role="tab" aria-selected={view === 'agenda'} onClick={() => setView('agenda')} className={'inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-[10px] font-black ' + (view === 'agenda' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-200' : 'text-stone-500')}><ListChecks className="h-3.5 w-3.5" />{ka ? 'სამუშაო რიგი' : 'Work agenda'}</button>
+          <button type="button" role="tab" aria-selected={view === 'flow'} onClick={() => setView('flow')} className={'inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-[10px] font-black ' + (view === 'flow' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-200' : 'text-stone-500')}><Columns3 className="h-3.5 w-3.5" />{ka ? 'ნაკადი' : 'Flow'}</button>
           <button type="button" role="tab" aria-selected={view === 'calendar'} onClick={() => setView('calendar')} className={'inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-[10px] font-black ' + (view === 'calendar' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-200' : 'text-stone-500')}><CalendarDays className="h-3.5 w-3.5" />{ka ? '14 დღე' : '14 days'}</button>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row lg:justify-end">
@@ -789,6 +973,39 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+      ) : view === 'flow' ? (
+        <section aria-label={ka ? 'სამუშაოს ნაკადის დაფა' : 'Production flow board'} className="overflow-x-auto pb-2">
+          <div className={'grid min-w-[920px] gap-3 ' + (flowColumns.length === 5 ? 'grid-cols-5' : 'grid-cols-4')}>
+            {flowColumns.map(column => {
+              const columnItems = filteredItems.filter(item => column.statuses.includes(item.status));
+              return (
+                <section key={column.key} aria-labelledby={'flow-' + column.key} className="min-h-72 rounded-2xl border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-950/60">
+                  <div className="mb-3 flex items-center justify-between gap-2"><h2 id={'flow-' + column.key} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wide text-stone-700 dark:text-stone-200"><span className={'h-2 w-2 rounded-full ' + column.tone} />{column.label}</h2><span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-stone-500 dark:bg-stone-900">{columnItems.length}</span></div>
+                  <div className="space-y-2">
+                    {columnItems.map(item => {
+                      const KindIcon = kindIcons[item.kind];
+                      const nextStatus = nextStatusFor(item.status);
+                      const nextIssue = nextStatus ? productionPlanTransitionIssue(item, nextStatus, props.productionPlans, conflicts) : null;
+                      const needsAttention = isAttentionItem(item);
+                      return (
+                        <article key={item.id} className={'rounded-xl border bg-white p-3 shadow-sm dark:bg-stone-900 ' + (needsAttention ? 'border-amber-300 dark:border-amber-800' : 'border-stone-200 dark:border-stone-800')}>
+                          <div className="flex items-start gap-2"><span className={'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ' + kindColor(item.kind)}><KindIcon className="h-3.5 w-3.5" /></span><div className="min-w-0 flex-1"><h3 className="text-[11px] font-black leading-4 text-stone-900 dark:text-white">{item.title}</h3><p className="mt-1 text-[9px] text-stone-400">{item.startDate === item.endDate ? item.startDate : item.startDate + ' — ' + item.endDate}</p></div>{needsAttention && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />}</div>
+                          <div className="mt-2 flex flex-wrap gap-1">{item.lotId && <span className="rounded-md bg-stone-100 px-1.5 py-1 text-[8px] font-mono text-stone-500 dark:bg-stone-800">{item.lotId}</span>}{item.vesselIds.map(id => <span key={id} className="rounded-md bg-stone-100 px-1.5 py-1 text-[8px] font-mono text-stone-500 dark:bg-stone-800">{id}</span>)}</div>
+                          <div className="mt-3 flex gap-1.5 border-t border-stone-100 pt-2 dark:border-stone-800">
+                            <button type="button" onClick={() => { setView('agenda'); window.requestAnimationFrame(() => document.getElementById('plan-' + item.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' })); }} className="min-h-8 flex-1 rounded-lg border border-stone-200 px-2 text-[8px] font-black text-stone-600 hover:text-[#651522] dark:border-stone-700 dark:text-stone-300">{ka ? 'დეტალები' : 'Details'}</button>
+                            {props.onOpenWorkflow && !['completed', 'cancelled'].includes(item.status) && <button type="button" aria-label={ka ? item.title + ' სამუშაო მოდულში გახსნა' : 'Open workflow for ' + item.title} onClick={() => props.onOpenWorkflow?.(item)} className="flex min-h-8 items-center justify-center rounded-lg bg-[#651522] px-2 text-white"><ExternalLink className="h-3 w-3" /></button>}
+                            {props.canUpdate && nextStatus && <button type="button" title={nextIssue || nextStatusLabel(item.status, ka)} aria-label={nextStatusLabel(item.status, ka)} disabled={Boolean(nextIssue || readinessIssue(item, ka))} onClick={() => changeStatus(item, nextStatus)} className="flex min-h-8 items-center justify-center rounded-lg border border-stone-200 px-2 text-emerald-700 disabled:opacity-30 dark:border-stone-700"><Check className="h-3 w-3" /></button>}
+                          </div>
+                        </article>
+                      );
+                    })}
+                    {columnItems.length === 0 && <div className="rounded-xl border border-dashed border-stone-200 p-5 text-center text-[9px] text-stone-400 dark:border-stone-800">{ka ? 'სამუშაო არ არის' : 'No work'}</div>}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         </section>
       ) : (

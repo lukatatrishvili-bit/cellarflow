@@ -202,6 +202,47 @@ test('owner can open business containment and cellar planning workflows', async 
   await expect(page.getByRole('spinbutton').first()).toHaveValue('2500');
 });
 
+test('winemaker can turn live cellar evidence into editable production work', async ({ page }) => {
+  const fixture = await resetFixture(page);
+  await page.goto('/');
+  await signIn(page, fixture.owner);
+
+  const navigation = page.getByRole('navigation', { name: 'Module navigation' });
+  await navigation.getByRole('button', { name: 'Cellar' }).click();
+  await page.getByRole('button', { name: 'Production plan', exact: true }).click();
+
+  const intelligenceButton = page.getByRole('button', { name: /Plan intelligence/ });
+  await expect(intelligenceButton).toContainText('9');
+  await intelligenceButton.click();
+  const intelligence = page.getByRole('region', { name: 'Live production picture' });
+  await expect(intelligence).toContainText('Ready capacity');
+  await expect(intelligence.getByRole('button', { name: 'Plan it' })).toHaveCount(8);
+
+  await intelligence.getByRole('button', { name: 'Plan it' }).first().click();
+  await expect(intelligenceButton).toContainText('8');
+  await page.getByRole('tab', { name: 'Flow' }).click();
+  const flow = page.getByRole('region', { name: 'Production flow board' });
+  await expect(flow.getByRole('heading', { name: 'Planned' })).toBeVisible();
+  await expect(flow).toContainText('AL-24');
+
+  await flow.getByRole('button', { name: 'Details' }).click();
+  const item = page.getByRole('heading', { name: /Fermentation reading · ალექსანდროული/ }).locator('xpath=ancestor::article');
+  await item.getByText('Details and controls').click();
+  await item.getByRole('button', { name: /Edit Fermentation reading/ }).click();
+  await item.getByLabel('Title').fill('Daily fermentation check · AL-24');
+  await item.getByLabel('Start').fill('2026-08-29');
+  await item.getByLabel('End').fill('2026-08-29');
+  await item.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('heading', { name: 'Daily fermentation check · AL-24' })).toBeVisible();
+
+  const accessibility = await new AxeBuilder({ page })
+    .include('[data-testid="production-planner"]')
+    .disableRules(['color-contrast'])
+    .withTags(['wcag2a', 'wcag2aa'])
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+});
+
 test('owner can pause every notification channel and resume immediately', async ({ page }) => {
   const fixture = await resetFixture(page);
   await page.goto('/');
