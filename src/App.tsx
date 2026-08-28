@@ -1378,77 +1378,42 @@ export default function App() {
     setActiveTab(tab);
   }, [setActiveModule, setActiveTab]);
 
-  const openProductionPlanWork = (item: ProductionPlanItem) => {
-    const openDestination = (module: string, tab?: string): boolean => {
-      if (!canViewModule(module, tab)) {
-        state.setToastMessage(isKa
-          ? 'თქვენს როლს ამ სამუშაო სივრცეზე წვდომა არ აქვს.'
-          : 'Your workspace role does not have access to this work area.');
-        return false;
-      }
-      state.setActiveModule(module as any);
-      if (tab) state.setActiveTab(tab);
-      return true;
-    };
-
-    if (item.kind === 'harvest') {
-      openDestination('vazi');
-      return;
-    }
-    if (item.kind === 'procurement') {
-      openDestination('procurement');
-      return;
-    }
-    if (item.kind === 'dispatch') {
-      openDestination('sales');
-      return;
-    }
-    if (item.kind === 'intake') {
-      if (!openDestination('gvino', 'intake')) return;
-      const generatedHarvestId = item.notes.match(/harvest:([^\s]+)/)?.[1];
-      const harvest = state.harvests.find(record => (
-        record.id === generatedHarvestId
-        || (Boolean(item.blockId) && record.blockId === item.blockId
-          && (!item.lotId || record.associatedLotId === item.lotId))
-      ));
-      state.setPrefilledIntakeHarvestId(harvest?.id || null);
-      return;
-    }
-    if (item.kind === 'transfer') {
-      if (!openDestination('gvino', 'transfers')) return;
-      state.setPrefilledSourceId(item.vesselIds[0] || '');
-      state.setPrefilledDestId(item.vesselIds[1] || '');
-      setPrefilledTransferVolume(item.quantityLiters);
-      return;
-    }
-    if (item.kind === 'lab') {
-      if (!openDestination('gvino', 'labs')) return;
-      state.setLabLotId(item.lotId || '');
-      state.setLabTankId(item.vesselIds[0] || '');
-      return;
-    }
-    if (item.kind === 'sanitation') {
-      if (!openDestination('gvino', 'operations')) return;
-      setPrefilledOpVesselId(item.vesselIds[0] || '');
-      setPrefilledOpType('cleaning');
-      return;
-    }
-    if (item.kind === 'other') {
-      if (!openDestination('gvino', 'tasks')) return;
-      state.setPrefilledTaskTitle(item.title);
-      state.setPrefilledTaskPriority(item.status === 'blocked' ? 'high' : 'medium');
-      state.setPrefilledTaskDesc([
-        item.notes,
-        item.lotId ? (isKa ? 'პარტია: ' : 'Lot: ') + item.lotId : '',
-        item.vesselIds.length ? (isKa ? 'ჭურჭელი: ' : 'Vessel: ') + item.vesselIds.join(', ') : '',
-      ].filter(Boolean).join('\n'));
-      return;
-    }
-    const tabByKind: Partial<Record<ProductionPlanItem['kind'], string>> = {
-      fermentation: 'fermentation',
-      bottling: 'bottling',
-    };
-    openDestination('gvino', tabByKind[item.kind] || 'cellar');
+  const openProductionPlanWork = async (item: ProductionPlanItem) => {
+    const { openProductionPlanItem } = await import('../lib/productionPlanNavigation');
+    openProductionPlanItem(item, {
+      lang: state.lang,
+      harvests: state.harvests,
+      navigate: (module, tab) => {
+        if (!canViewModule(module, tab)) {
+          state.setToastMessage(isKa
+            ? 'თქვენს როლს ამ სამუშაო სივრცეზე წვდომა არ აქვს.'
+            : 'Your workspace role does not have access to this work area.');
+          return false;
+        }
+        state.setActiveModule(module as any);
+        if (tab) state.setActiveTab(tab);
+        return true;
+      },
+      setIntakeHarvestId: state.setPrefilledIntakeHarvestId,
+      setTransfer: (sourceId, destinationId, volume) => {
+        state.setPrefilledSourceId(sourceId);
+        state.setPrefilledDestId(destinationId);
+        setPrefilledTransferVolume(volume);
+      },
+      setLab: (lotId, vesselId) => {
+        state.setLabLotId(lotId);
+        state.setLabTankId(vesselId);
+      },
+      setSanitation: vesselId => {
+        setPrefilledOpVesselId(vesselId);
+        setPrefilledOpType('cleaning');
+      },
+      setTaskDraft: (title, priority, description) => {
+        state.setPrefilledTaskTitle(title);
+        state.setPrefilledTaskPriority(priority);
+        state.setPrefilledTaskDesc(description);
+      },
+    });
   };
 
   // Loading gate — MUST come after every hook above. React requires an
