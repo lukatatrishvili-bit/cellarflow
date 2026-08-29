@@ -1836,6 +1836,14 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('purchaseOrders', 'cf_purchase_orders', purchaseOrders); }, [purchaseOrders, isClient]);
   useEffect(() => { handleCollectionUpdate('productionPlans', 'cf_production_plans', productionPlans); }, [productionPlans, isClient]);
   useEffect(() => { handleCollectionUpdate('recallCases', 'cf_recall_cases', recallCases); }, [recallCases, isClient]);
+  // The company profile is one tenant-scoped document, not a record
+  // collection. Reuse the object-aware sync path without registering it as a
+  // collection (the collection registry intentionally covers list/map ledgers).
+  useEffect(() => {
+    const profileSyncKey = 'companyProfile';
+    const profileStorageKey = 'vinea_company_profile';
+    handleCollectionUpdate(profileSyncKey, profileStorageKey, companyProfile);
+  }, [companyProfile, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
@@ -1843,7 +1851,6 @@ export function useWineryState() {
     if (!isClient) return;
     localStorage.setItem('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(currentUser)));
   }, [currentUser, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_company_profile', JSON.stringify(companyProfile)); }, [companyProfile, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_active_module', activeModule); }, [activeModule, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_active_tab', activeTab); }, [activeTab, isClient]);
 
@@ -2475,6 +2482,12 @@ export function useWineryState() {
       dueDate: dueDate || new Date().toISOString().split('T')[0],
       assignedTo: assignment.assignedTo || currentUser.fullName || currentUser.username,
       ...(assignment.assignedUserId ? { assignedUserId: assignment.assignedUserId } : {}),
+      ...(assignment.source ? {
+        source: {
+          ...assignment.source,
+          ...(assignment.source.vesselIds ? { vesselIds: [...assignment.source.vesselIds] } : {}),
+        },
+      } : {}),
       status: 'pending',
       description,
       ...(assignment.notifyAssignee ? {

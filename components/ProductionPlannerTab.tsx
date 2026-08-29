@@ -1,12 +1,12 @@
 import React from 'react';
 import {
   AlertTriangle, ArrowRight, BarChart3, CalendarClock, CalendarDays, CalendarRange,
-  Check, CheckCircle2, ChevronDown, CircleDot, Clock3, Columns3, ExternalLink,
+  Check, CheckCircle2, ChevronDown, CircleDot, ClipboardList, Clock3, Columns3, ExternalLink,
   Grape, Lightbulb, ListChecks, Package, Pencil, Plus, Save, Search, Sparkles,
   Sprout, Trash2, Warehouse, Waves, Wine, Wrench, X,
 } from 'lucide-react';
 import type { Language } from '../lib/language';
-import type { DailyFermLog, HarvestRecord, LabAnalysis, Vessel, VineyardBlock, WineLot } from '../lib/wineryState';
+import type { DailyFermLog, HarvestRecord, LabAnalysis, Task, TaskAssignmentInput, Vessel, VineyardBlock, WineLot } from '../lib/wineryState';
 import {
   allowedProductionPlanStatuses,
   detectProductionPlanConflicts,
@@ -20,6 +20,8 @@ import {
   alignPlanAfterDependencies,
   buildProductionPlanSuggestions,
   forecastProductionPlan,
+  linkedTaskForProductionPlan,
+  taskDraftForProductionPlan,
   type ProductionPlanSuggestion,
 } from '../lib/productionPlanner';
 import { localISODate } from '../lib/weatherApi';
@@ -35,14 +37,24 @@ interface ProductionPlannerTabProps {
   harvests: HarvestRecord[];
   fermentationLogs: DailyFermLog[];
   labLogs: LabAnalysis[];
+  tasks?: Task[];
   canCreate: boolean;
   canUpdate: boolean;
   canDelete: boolean;
+  canCreateTask?: boolean;
   focusPlanId?: string;
   onOpenLot?: (lotId: string) => void;
   onOpenVessel?: (vesselId: string) => void;
   onOpenBlock?: (blockId: string) => void;
   onOpenWorkflow?: (item: ProductionPlanItem) => void;
+  onCreateTask?: (
+    title: string,
+    priority: Task['priority'],
+    dueDate: string,
+    description: string,
+    assignment?: TaskAssignmentInput,
+  ) => Task | void;
+  onOpenTask?: (taskId: string) => void;
   setToastMessage?: (message: string | null) => void;
 }
 
@@ -176,6 +188,12 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
   const [showCreate, setShowCreate] = React.useState(false);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
   const [showInsights, setShowInsights] = React.useState(false);
+  const [showTaskBuilder, setShowTaskBuilder] = React.useState(false);
+  const [selectedTaskPlanIds, setSelectedTaskPlanIds] = React.useState<string[]>([]);
+  const [taskPriorityMode, setTaskPriorityMode] = React.useState<Task['priority'] | 'automatic'>('automatic');
+  const [taskDueMode, setTaskDueMode] = React.useState<'start' | 'end'>('start');
+  const [taskAssigneeMode, setTaskAssigneeMode] = React.useState<'plan' | 'me'>('plan');
+  const [locallyCreatedTaskPlanIds, setLocallyCreatedTaskPlanIds] = React.useState<string[]>([]);
   const [editDraft, setEditDraft] = React.useState<ProductionPlanItem | null>(null);
   const [title, setTitle] = React.useState('');
   const [kind, setKind] = React.useState<ProductionPlanKind>('transfer');
@@ -209,6 +227,46 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
     labLogs: props.labLogs,
     productionPlans: props.productionPlans,
   }), [props.fermentationLogs, props.labLogs, props.lots, props.productionPlans, props.vessels]);
+  const tasks = React.useMemo(() => props.tasks || [], [props.tasks]);
+  const hasLinkedTask = React.useCallback((planId: string) => (
+    locallyCreatedTaskPlanIds.includes(planId) || Boolean(linkedTaskForProductionPlan(tasks, planId))
+  ), [locallyCreatedTaskPlanIds, tasks]);
+  const taskCandidatePlans = React.useMemo(
+    () => active.filter(item => !['completed', 'cancelled'].includes(item.status) && !hasLinkedTask(item.id)),
+    [active, hasLinkedTask],
+  );
+
+  const createTaskForPlan = (
+    item: ProductionPlanItem,
+    options: { priority?: Task['priority'] | 'automatic'; dueDate?: 'start' | 'end'; assignedTo?: string } = {},
+  ): Task | void => {
+    if (!props.onCreateTask || hasLinkedTask(item.id)) return;
+    const draft = taskDraftForProductionPlan(item, props.lang, options);
+    const created = props.onCreateTask(draft.title, draft.priority, draft.dueDate, draft.description, {
+      assignedTo: draft.assignedTo,
+      source: draft.source,
+    });
+    setLocallyCreatedTaskPlanIds(current => current.includes(item.id) ? current : [...current, item.id]);
+    return created;
+  };
+
+  const openTaskBuilder = () => {
+    const preferred = taskCandidatePlans.filter(item => item.startDate <= plusDays(today(), 7)).map(item => item.id);
+    setSelectedTaskPlanIds(preferred.length ? preferred : taskCandidatePlans.map(item => item.id));
+    setShowTaskBuilder(true);
+  };
+
+  const generateSelectedTasks = () => {
+    const selected = taskCandidatePlans.filter(item => selectedTaskPlanIds.includes(item.id));
+    selected.forEach(item => createTaskForPlan(item, {
+      priority: taskPriorityMode,
+      dueDate: taskDueMode,
+      assignedTo: taskAssigneeMode === 'me' ? props.currentUsername : item.assignedTo,
+    }));
+    if (selected.length) props.setToastMessage?.(ka ? `${selected.length} დავალება შეიქმნა და გეგმას დაუკავშირდა.` : `${selected.length} task(s) created and linked to the plan.`);
+    setShowTaskBuilder(false);
+    setSelectedTaskPlanIds([]);
+  };
 
   React.useEffect(() => {
     if (!props.focusPlanId) return;
@@ -576,6 +634,8 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
     const alignedDates = alignPlanAfterDependencies(item, props.productionPlans);
     const itemEditDraft = editDraft?.id === item.id ? editDraft : null;
     const editIssue = itemEditDraft ? operationalDataIssue(itemEditDraft) : null;
+    const linkedTask = linkedTaskForProductionPlan(tasks, item.id);
+    const taskCreated = hasLinkedTask(item.id);
     const articleClass = 'group rounded-2xl border bg-white p-4 shadow-sm transition-shadow focus:outline-none focus:ring-2 focus:ring-[#651522] hover:shadow-md dark:bg-stone-900 '
       + (focus
         ? 'border-violet-700 bg-violet-50/40 dark:border-violet-400 dark:bg-violet-950/20'
@@ -598,6 +658,7 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
               <span className={'rounded-full px-2 py-1 text-[9px] font-black uppercase ' + statusColor(item.status)}>
                 {ka ? statusCopy[item.status].ka : statusCopy[item.status].en}
               </span>
+              {taskCreated && <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-1 text-[9px] font-black text-violet-700 dark:bg-violet-950 dark:text-violet-200"><ClipboardList className="h-3 w-3" />{linkedTask?.status === 'completed' ? (ka ? 'დავალება დასრულდა' : 'Task completed') : (ka ? 'დავალება შექმნილია' : 'Task created')}</span>}
               {isOverdue && <span className="text-[9px] font-black uppercase text-rose-700 dark:text-rose-300">{ka ? 'ვადაგადაცილებული' : 'Overdue'}</span>}
             </div>
             <h3 className="mt-2 text-sm font-black text-stone-950 dark:text-white">{item.title}</h3>
@@ -746,6 +807,12 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
               )}
             </div>
             <div className="flex items-start gap-2">
+              {taskCreated && linkedTask && props.onOpenTask && (
+                <button type="button" onClick={() => props.onOpenTask?.(linkedTask.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 text-[10px] font-black text-violet-700 hover:border-violet-400 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-200"><ClipboardList className="h-3.5 w-3.5" />{ka ? 'დავალება' : 'Open task'}</button>
+              )}
+              {!taskCreated && props.canCreateTask && props.onCreateTask && !['completed', 'cancelled'].includes(item.status) && (
+                <button type="button" onClick={() => { createTaskForPlan(item); props.setToastMessage?.(ka ? 'დავალება შეიქმნა და გეგმას დაუკავშირდა.' : 'Task created and linked to the plan.'); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-violet-200 px-3 text-[10px] font-black text-violet-700 hover:bg-violet-50 dark:border-violet-900 dark:text-violet-200"><Plus className="h-3.5 w-3.5" />{ka ? 'დავალების შექმნა' : 'Create task'}</button>
+              )}
               {props.canUpdate && (
                 <button type="button" aria-label={ka ? item.title + ' რედაქტირება' : 'Edit ' + item.title} onClick={() => setEditDraft(itemEditDraft ? null : { ...item, vesselIds: [...item.vesselIds], dependencyIds: [...item.dependencyIds] })} className="rounded-xl border border-stone-200 p-3 text-stone-500 hover:border-[#651522] hover:text-[#651522] dark:border-stone-700"><Pencil className="h-4 w-4" /></button>
               )}
@@ -826,6 +893,11 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
             <button type="button" aria-expanded={showInsights} onClick={() => setShowInsights(value => !value)} className={'inline-flex min-h-11 items-center gap-2 rounded-xl border px-4 text-xs font-black ' + (showInsights ? 'border-[#651522] bg-[#fbf4f5] text-[#651522] dark:border-amber-300 dark:bg-[#351a20] dark:text-amber-200' : 'border-stone-200 bg-white text-stone-700 hover:border-[#d9c4c8] hover:text-[#651522] dark:border-stone-700 dark:bg-stone-950 dark:text-stone-200')}>
               <BarChart3 className="h-4 w-4" />{ka ? 'გეგმის ანალიზი' : 'Plan intelligence'}{suggestions.length > 0 && <span className="rounded-full bg-[#651522] px-1.5 py-0.5 text-[9px] text-white dark:bg-amber-300 dark:text-stone-950">{suggestions.length}</span>}
             </button>
+            {props.canCreateTask && props.onCreateTask && (
+              <button type="button" aria-expanded={showTaskBuilder} onClick={() => showTaskBuilder ? setShowTaskBuilder(false) : openTaskBuilder()} disabled={taskCandidatePlans.length === 0 && !showTaskBuilder} className={'inline-flex min-h-11 items-center gap-2 rounded-xl border px-4 text-xs font-black disabled:cursor-not-allowed disabled:opacity-45 ' + (showTaskBuilder ? 'border-violet-500 bg-violet-50 text-violet-800 dark:border-violet-400 dark:bg-violet-950/30 dark:text-violet-200' : 'border-stone-200 bg-white text-stone-700 hover:border-violet-300 hover:text-violet-700 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-200')}>
+                <ClipboardList className="h-4 w-4" />{ka ? 'დავალებების შექმნა' : 'Generate tasks'}{taskCandidatePlans.length > 0 && <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[9px] text-white">{taskCandidatePlans.length}</span>}
+              </button>
+            )}
             {props.canCreate && props.harvests.length > 0 && (
               <button type="button" onClick={generateHarvestPlan} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-stone-200 bg-white px-4 text-xs font-black text-stone-700 hover:border-emerald-300 hover:text-emerald-800 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-200">
                 <Sparkles className="h-4 w-4" />{ka ? 'მოსავლის სინქრონიზაცია' : 'Sync harvest plan'}
@@ -847,6 +919,33 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
           ))}
         </div>
       </header>
+
+      {showTaskBuilder && (
+        <section aria-labelledby="plan-task-builder-title" className="rounded-3xl border border-violet-200 bg-violet-50/40 p-5 shadow-sm dark:border-violet-900 dark:bg-violet-950/20">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div><div className="flex items-center gap-2"><ClipboardList className="h-4 w-4 text-violet-700 dark:text-violet-300" /><h2 id="plan-task-builder-title" className="text-sm font-black text-stone-950 dark:text-white">{ka ? 'გეგმიდან დავალებების გენერაცია' : 'Generate operational tasks'}</h2></div><p className="mt-1 max-w-2xl text-[11px] leading-5 text-stone-500">{ka ? 'თითოეული დავალება შეინახავს კავშირს საწარმოო სამუშაოსთან, პარტიასთან, ჭურჭელთან და ვენახის ბლოკთან. უკვე დაკავშირებული სამუშაოები ავტომატურად გამოტოვებულია.' : 'Every task keeps a durable link to its production work, lot, vessels and vineyard block. Work that already has a task is skipped automatically.'}</p></div>
+            <button type="button" onClick={() => setShowTaskBuilder(false)} aria-label={ka ? 'დახურვა' : 'Close'} className="self-end rounded-xl p-2 text-stone-400 hover:bg-white dark:hover:bg-stone-900"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+              {taskCandidatePlans.map(item => {
+                const selected = selectedTaskPlanIds.includes(item.id);
+                const draft = taskDraftForProductionPlan(item, props.lang, { priority: taskPriorityMode, dueDate: taskDueMode, assignedTo: taskAssigneeMode === 'me' ? props.currentUsername : item.assignedTo });
+                return <label key={item.id} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 ${selected ? 'border-violet-300 bg-white dark:border-violet-700 dark:bg-stone-900' : 'border-stone-200 bg-white/50 dark:border-stone-800 dark:bg-stone-950/40'}`}><input type="checkbox" checked={selected} onChange={event => setSelectedTaskPlanIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} className="mt-1 h-4 w-4 accent-violet-700" /><span className="min-w-0 flex-1"><strong className="block text-xs text-stone-900 dark:text-white">{item.title}</strong><span className="mt-1 block text-[9px] font-bold text-stone-400">{draft.dueDate} · {draft.priority === 'high' ? (ka ? 'მაღალი' : 'high') : draft.priority === 'medium' ? (ka ? 'საშუალო' : 'medium') : (ka ? 'დაბალი' : 'low')} · {draft.assignedTo || (ka ? 'პასუხისმგებელი არაა მითითებული' : 'unassigned')}</span><span className="mt-1 block truncate font-mono text-[8px] text-stone-400">{[item.lotId, ...item.vesselIds, item.blockId].filter(Boolean).join(' · ') || (ka ? 'სისტემურ ობიექტთან კავშირის გარეშე' : 'no system object link')}</span></span></label>;
+              })}
+              {taskCandidatePlans.length === 0 && <div className="rounded-2xl border border-dashed border-violet-200 bg-white/60 p-6 text-center text-xs text-violet-700 dark:border-violet-900 dark:bg-stone-950/40 dark:text-violet-200"><CheckCircle2 className="mx-auto mb-2 h-5 w-5" />{ka ? 'ყველა ღია სამუშაო უკვე დაკავშირებულია დავალებასთან.' : 'Every open plan item already has a linked task.'}</div>}
+            </div>
+            <div className="space-y-3 rounded-2xl border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-900">
+              <div className="flex items-center justify-between gap-2"><strong className="text-[10px] font-black uppercase text-stone-600 dark:text-stone-200">{ka ? 'გენერაციის პარამეტრები' : 'Generation options'}</strong><span className="rounded-full bg-violet-100 px-2 py-1 text-[9px] font-black text-violet-700 dark:bg-violet-950 dark:text-violet-200">{selectedTaskPlanIds.length}</span></div>
+              <label className="block space-y-1"><span className="text-[9px] font-black uppercase text-stone-400">{ka ? 'პრიორიტეტი' : 'Priority'}</span><select value={taskPriorityMode} onChange={event => setTaskPriorityMode(event.target.value as Task['priority'] | 'automatic')} className="min-h-10 w-full rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950"><option value="automatic">{ka ? 'ავტომატური — თარიღით და სტატუსით' : 'Automatic — by date and status'}</option><option value="high">{ka ? 'მაღალი' : 'High'}</option><option value="medium">{ka ? 'საშუალო' : 'Medium'}</option><option value="low">{ka ? 'დაბალი' : 'Low'}</option></select></label>
+              <label className="block space-y-1"><span className="text-[9px] font-black uppercase text-stone-400">{ka ? 'დავალების ვადა' : 'Task due date'}</span><select value={taskDueMode} onChange={event => setTaskDueMode(event.target.value as 'start' | 'end')} className="min-h-10 w-full rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950"><option value="start">{ka ? 'სამუშაოს დაწყების დღე' : 'Plan start date'}</option><option value="end">{ka ? 'სამუშაოს დასრულების დღე' : 'Plan end date'}</option></select></label>
+              <label className="block space-y-1"><span className="text-[9px] font-black uppercase text-stone-400">{ka ? 'პასუხისმგებელი' : 'Assignee'}</span><select value={taskAssigneeMode} onChange={event => setTaskAssigneeMode(event.target.value as 'plan' | 'me')} className="min-h-10 w-full rounded-xl border border-stone-200 bg-stone-50 px-3 text-xs dark:border-stone-700 dark:bg-stone-950"><option value="plan">{ka ? 'გეგმაში მითითებული პირი' : 'Owner from each plan item'}</option><option value="me">{ka ? 'მე' : 'Assign all to me'}</option></select></label>
+              <div className="flex gap-2"><button type="button" onClick={() => setSelectedTaskPlanIds(taskCandidatePlans.map(item => item.id))} className="min-h-9 flex-1 rounded-xl border border-stone-200 text-[9px] font-black text-stone-500 dark:border-stone-700">{ka ? 'ყველას არჩევა' : 'Select all'}</button><button type="button" onClick={() => setSelectedTaskPlanIds([])} className="min-h-9 flex-1 rounded-xl border border-stone-200 text-[9px] font-black text-stone-500 dark:border-stone-700">{ka ? 'გასუფთავება' : 'Clear'}</button></div>
+              <button type="button" onClick={generateSelectedTasks} disabled={selectedTaskPlanIds.length === 0} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 text-xs font-black text-white hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-40"><ClipboardList className="h-4 w-4" />{ka ? `${selectedTaskPlanIds.length} დავალების შექმნა` : `Create ${selectedTaskPlanIds.length} task(s)`}</button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {showInsights && (
         <section aria-labelledby="plan-intelligence-title" className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">

@@ -147,15 +147,23 @@ test('winemaker can work with lots and vessels from one focused cellar workspace
 
   await workspace.getByRole('button', { name: 'Cellar plan', exact: true }).click();
   const cellarPlan = workspace.getByTestId('cellar-plan');
-  await expect(cellarPlan).toContainText('Physical vessel layout');
+  await expect(cellarPlan).toContainText('Digital cellar plan');
+  await expect(cellarPlan.getByRole('tab', { name: /Main cellar/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).toHaveValue('100');
+  await expect(cellarPlan.getByRole('combobox', { name: 'Find vessel on plan' })).toBeVisible();
   const firstPlanVessel = cellarPlan.getByRole('button', { name: 'Q-01 · 0% full', exact: true });
   const initialPlanPosition = await firstPlanVessel.getAttribute('style');
-  await cellarPlan.getByRole('button', { name: 'Edit plan', exact: true }).click();
-  await expect(cellarPlan.getByRole('button', { name: 'Save plan', exact: true })).toBeVisible();
-  await expect(cellarPlan.getByRole('button', { name: 'Auto arrange', exact: true })).toBeVisible();
+  await cellarPlan.getByRole('button', { name: 'Edit layout', exact: true }).click();
+  await expect(cellarPlan.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
+  await expect(cellarPlan.getByRole('button', { name: 'Arrange floor', exact: true })).toBeVisible();
+  await expect(cellarPlan.getByRole('checkbox', { name: 'Snap to grid' })).toBeChecked();
+  await cellarPlan.getByRole('button', { name: 'Work area', exact: true }).click();
+  await cellarPlan.getByRole('textbox', { name: 'Object label' }).fill('E2E fermentation bay');
+  await cellarPlan.getByRole('combobox', { name: 'Area use' }).selectOption('fermentation');
   await firstPlanVessel.press('ArrowRight');
-  await cellarPlan.getByRole('button', { name: 'Save plan', exact: true }).click();
-  await expect(cellarPlan.getByRole('button', { name: 'Edit plan', exact: true })).toBeVisible();
+  await cellarPlan.getByRole('button', { name: 'Save layout', exact: true }).click();
+  await expect(cellarPlan.getByRole('button', { name: 'Edit layout', exact: true })).toBeVisible();
+  await expect(cellarPlan.getByRole('button', { name: 'E2E fermentation bay · Work area' })).toBeVisible();
   expect(await firstPlanVessel.getAttribute('style')).not.toBe(initialPlanPosition);
 });
 

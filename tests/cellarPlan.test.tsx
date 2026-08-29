@@ -65,20 +65,42 @@ describe('CellarPlan', () => {
   it('renders liquid levels, operational layers, and an explicit edit entry point', () => {
     const markup = renderPlan();
 
-    expect(markup).toContain('Cellar plan');
+    expect(markup).toContain('Digital cellar plan');
     expect(markup).toContain('aria-label="TK-1 · 80% full"');
-    expect(markup).toContain('Contents');
+    expect(markup).toContain('Wine');
     expect(markup).toContain('Temp.');
     expect(markup).toContain('Hygiene');
-    expect(markup).toContain('Edit plan');
+    expect(markup).toContain('Work');
+    expect(markup).toContain('Edit layout');
+    expect(markup).toContain('Fit');
+    expect(markup).toContain('Floor pulse');
+    expect(markup).toContain('Navigator');
     expect(markup).toContain('Open vessel');
+  });
+
+  it('draws scaled winery work areas and utilities without obscuring vessel controls', () => {
+    const markup = renderPlan({
+      floors: [{
+        id: 'cellar-floor-main', name: 'Main cellar', level: 0, widthMeters: 30, heightMeters: 18, gridMeters: 1,
+        planObjects: [
+          { id: 'fermentation-zone', kind: 'zone', label: 'Fermentation bay', zoneUse: 'fermentation', xMeters: 8, yMeters: 6, widthMeters: 8, heightMeters: 5 },
+          { id: 'wash-point', kind: 'water', label: 'Wash point', xMeters: 15, yMeters: 4, widthMeters: 1, heightMeters: 1 },
+        ],
+      }],
+      onUpdateFloors: vi.fn(),
+    });
+
+    expect(markup).toContain('Fermentation bay');
+    expect(markup).toContain('Wash point');
+    expect(markup).toContain('Areas');
+    expect(markup).toContain('pointer-events-none');
   });
 
   it('keeps layout mutation controls out of read-only workspaces', () => {
     const markup = renderPlan({ canUpdate: false });
 
-    expect(markup).not.toContain('Edit plan');
-    expect(markup).not.toContain('Save plan');
-    expect(markup).toContain('Physical vessel layout');
+    expect(markup).not.toContain('Edit layout');
+    expect(markup).not.toContain('Floor settings');
+    expect(markup).toContain('scaled, multi-floor workspace');
   });
 });

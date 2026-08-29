@@ -1,6 +1,6 @@
 import { isPhysicalFermentationReading } from './fermentationIntegrity';
 import type { ProductionPlanItem, ProductionPlanKind } from './operationsControl';
-import type { DailyFermLog, LabAnalysis, Vessel, WineLot } from './wineryState';
+import type { DailyFermLog, LabAnalysis, Task, Vessel, WineLot } from './wineryState';
 
 export type ProductionPlanSuggestionReason =
   | 'fermentation_reading_due'
@@ -40,6 +40,63 @@ interface SuggestionInput {
 }
 
 const isOpen = (item: ProductionPlanItem): boolean => !['completed', 'cancelled'].includes(item.status);
+
+export interface ProductionPlanTaskDraft {
+  title: string;
+  priority: Task['priority'];
+  dueDate: string;
+  description: string;
+  assignedTo: string;
+  source: NonNullable<Task['source']>;
+}
+
+export function linkedTaskForProductionPlan(tasks: Task[], planId: string): Task | undefined {
+  return tasks.find(task => task.source?.type === 'production_plan' && task.source.id === planId);
+}
+
+export function taskDraftForProductionPlan(
+  item: ProductionPlanItem,
+  language: 'en' | 'ka',
+  options: {
+    priority?: Task['priority'] | 'automatic';
+    dueDate?: 'start' | 'end';
+    assignedTo?: string;
+    today?: string;
+  } = {},
+): ProductionPlanTaskDraft {
+  const currentDate = options.today || new Date().toISOString().slice(0, 10);
+  const automaticPriority: Task['priority'] = item.status === 'blocked' || item.endDate < currentDate
+    ? 'high'
+    : item.startDate <= currentDate
+      ? 'high'
+      : item.startDate <= plusDays(currentDate, 7) ? 'medium' : 'low';
+  const dueDate = options.dueDate === 'end' ? item.endDate : item.startDate;
+  const links = [
+    item.lotId ? `${language === 'ka' ? 'პარტია' : 'Lot'}: ${item.lotId}` : '',
+    item.vesselIds.length ? `${language === 'ka' ? 'ჭურჭელი' : 'Vessels'}: ${item.vesselIds.join(', ')}` : '',
+    item.blockId ? `${language === 'ka' ? 'ბლოკი' : 'Block'}: ${item.blockId}` : '',
+  ].filter(Boolean);
+  return {
+    title: item.title,
+    priority: options.priority && options.priority !== 'automatic' ? options.priority : automaticPriority,
+    dueDate,
+    assignedTo: options.assignedTo || item.assignedTo,
+    description: [
+      language === 'ka'
+        ? `საწარმოო გეგმა · ${item.startDate}${item.endDate !== item.startDate ? ` — ${item.endDate}` : ''}`
+        : `Production plan · ${item.startDate}${item.endDate !== item.startDate ? ` — ${item.endDate}` : ''}`,
+      ...links,
+      item.notes,
+    ].filter(Boolean).join('\n'),
+    source: {
+      type: 'production_plan',
+      id: item.id,
+      ...(item.lotId ? { lotId: item.lotId } : {}),
+      ...(item.vesselIds.length ? { vesselIds: [...item.vesselIds] } : {}),
+      ...(item.blockId ? { blockId: item.blockId } : {}),
+    },
+  };
+}
 
 function latestDate(dates: string[]): string | null {
   return dates.reduce<string | null>((latest, date) => (!latest || date > latest ? date : latest), null);

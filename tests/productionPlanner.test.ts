@@ -3,9 +3,11 @@ import {
   alignPlanAfterDependencies,
   buildProductionPlanSuggestions,
   forecastProductionPlan,
+  linkedTaskForProductionPlan,
+  taskDraftForProductionPlan,
 } from '../lib/productionPlanner';
 import type { ProductionPlanItem } from '../lib/operationsControl';
-import type { DailyFermLog, LabAnalysis, Vessel, WineLot } from '../lib/wineryState';
+import type { DailyFermLog, LabAnalysis, Task, Vessel, WineLot } from '../lib/wineryState';
 
 const lot = (patch: Partial<WineLot> = {}): WineLot => ({
   id: 'LOT-1',
@@ -154,5 +156,40 @@ describe('production planner intelligence', () => {
       startDate: '2026-08-30',
       endDate: '2026-08-31',
     });
+  });
+
+  it('creates a durable, operationally linked task draft with automatic urgency', () => {
+    const item = plan({
+      id: 'P-TASK',
+      title: 'Rack Saperavi',
+      kind: 'transfer',
+      status: 'blocked',
+      startDate: '2026-08-28',
+      endDate: '2026-08-29',
+      lotId: 'LOT-1',
+      vesselIds: ['T-1', 'T-2'],
+      blockId: 'B-1',
+      notes: 'Verify receiving vessel sanitation.',
+    });
+    const draft = taskDraftForProductionPlan(item, 'en', { today: '2026-08-29', dueDate: 'end' });
+
+    expect(draft).toMatchObject({
+      title: 'Rack Saperavi',
+      priority: 'high',
+      dueDate: '2026-08-29',
+      assignedTo: 'winemaker',
+      source: { type: 'production_plan', id: 'P-TASK', lotId: 'LOT-1', vesselIds: ['T-1', 'T-2'], blockId: 'B-1' },
+    });
+    expect(draft.description).toContain('Verify receiving vessel sanitation.');
+  });
+
+  it('finds the linked task so the planner can prevent duplicate generation', () => {
+    const tasks: Task[] = [{
+      id: 'TASK-1', title: 'Work', priority: 'medium', dueDate: '2026-08-30',
+      assignedTo: 'winemaker', status: 'pending', description: '',
+      source: { type: 'production_plan', id: 'P-1' },
+    }];
+    expect(linkedTaskForProductionPlan(tasks, 'P-1')?.id).toBe('TASK-1');
+    expect(linkedTaskForProductionPlan(tasks, 'P-2')).toBeUndefined();
   });
 });

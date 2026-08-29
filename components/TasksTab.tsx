@@ -1,5 +1,5 @@
 import React from 'react';
-import { BellRing, ClipboardList, CheckCircle2, Mail, Trash, UserRound } from 'lucide-react';
+import { BellRing, ClipboardList, CheckCircle2, ExternalLink, Mail, Trash, UserRound } from 'lucide-react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Task, TaskAssignmentInput } from '../lib/wineryState';
@@ -50,6 +50,7 @@ interface TasksTabProps {
     taskId: string,
     notification: NonNullable<Task['notification']>,
   ) => void;
+  onOpenTaskSource?: (task: Task) => void;
   setToastMessage?: (message: string | null) => void;
   currentUsername?: string;
   currentUserName?: string;
@@ -80,6 +81,7 @@ export function TasksTab({
   onDeleteTask,
   onAddNewTask,
   onUpdateTaskNotification,
+  onOpenTaskSource,
   setToastMessage,
   currentUsername = '',
   currentUserName = '',
@@ -517,6 +519,9 @@ export function TasksTab({
                       {task.description && <p className="text-xs text-stone-550 mt-1 leading-relaxed">{task.description}</p>}
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-[9.5px] font-semibold text-stone-500">
                         <span className="inline-flex items-center gap-1"><UserRound className="h-3 w-3" aria-hidden="true" /> {task.assignedTo || (isKa ? 'დაუნიშნავი' : 'Unassigned')}</span>
+                        {task.source?.type === 'production_plan' && (
+                          <button type="button" onClick={() => onOpenTaskSource?.(task)} disabled={!onOpenTaskSource} className="inline-flex min-h-7 items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 text-[9px] font-bold text-violet-700 enabled:hover:border-violet-400 disabled:cursor-default dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-200"><ExternalLink className="h-3 w-3" aria-hidden="true" />{isKa ? 'საწარმოო გეგმა' : 'Production plan'}</button>
+                        )}
                         {task.notification && (
                           <span
                             title={task.notification.error}

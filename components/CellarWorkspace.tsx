@@ -30,12 +30,15 @@ import {
 import type {
   CellarOperation,
   CellarOperationType,
+  CellarFloor,
   DailyFermLog,
   LabAnalysis,
+  Task,
   Vessel,
   VesselType,
   WineLot,
 } from '../lib/wineryState';
+import type { ProductionPlanItem } from '../lib/operationsControl';
 import type { Language } from '../lib/i18n';
 import { stageLabel, vesselTypeLabel, wineClassLabel } from '../lib/enumLabels';
 import { nextActionForWineLot } from '../lib/lotNextAction';
@@ -56,9 +59,14 @@ export interface CellarWorkspaceProps extends Omit<
 > {
   vessels: Vessel[];
   operations: CellarOperation[];
+  cellarFloors?: CellarFloor[];
+  productionPlans?: ProductionPlanItem[];
+  tasks?: Task[];
   initialMode?: WorkspaceMode;
   initialVesselId?: string | null;
   onUpdateVessels: (vessels: Vessel[]) => void;
+  onUpdateCellarFloors?: (floors: CellarFloor[]) => void;
+  onOpenProductionPlan?: (planId: string) => void;
   onOpenVesselDetails?: (vesselId: string) => void;
   onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
   onCanonicalize?: () => void;
@@ -207,12 +215,17 @@ export default function CellarWorkspace({
   lots: sourceLots,
   vessels: sourceVessels,
   operations,
+  cellarFloors,
+  productionPlans = [],
+  tasks = [],
   fermLogs = [],
   labLogs = [],
   bottlingRuns = [],
   initialMode = 'lots',
   initialVesselId,
   onUpdateVessels,
+  onUpdateCellarFloors,
+  onOpenProductionPlan,
   onOpenVesselDetails,
   onLogOperation,
   onPlanTransfer,
@@ -578,6 +591,9 @@ export default function CellarWorkspace({
           lang={lang}
           vessels={vessels}
           lots={lots}
+          floors={cellarFloors}
+          productionPlans={productionPlans}
+          tasks={tasks}
           selectedVesselId={selectedVesselId}
           onSelectVessel={setSelectedVesselId}
           onOpenVessel={vesselId => {
@@ -585,6 +601,8 @@ export default function CellarWorkspace({
             setVesselPresentation('register');
           }}
           onUpdateVessels={onUpdateVessels}
+          onUpdateFloors={onUpdateCellarFloors}
+          onOpenProductionPlan={onOpenProductionPlan}
           canUpdate={canUpdateVessel}
         />
       ) : (

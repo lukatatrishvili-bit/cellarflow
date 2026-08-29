@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { checksumAttachmentDataUrl, MAX_INLINE_ATTACHMENT_BYTES } from '../lib/attachments';
 import {
   assertSyncPayloadWithinLimits,
+  authorizeSyncPayload,
   buildRecoverableSyncCandidate,
   buildSyncCandidate,
   MAX_SYNC_RECORDS_PER_COLLECTION,
@@ -17,6 +18,62 @@ const baseDb = () => ({
   lots: [],
   auditLogs: [],
   attachments: [],
+});
+
+describe('cellar plan and generated task integrity', () => {
+  const floor = { id: 'ground', name: 'Ground', level: 0, widthMeters: 30, heightMeters: 18, gridMeters: 1 };
+  const task = {
+    id: 'task-plan', title: 'Inspect tank', priority: 'medium', dueDate: '2026-08-30',
+    assignedTo: 'Ana', status: 'pending', description: '',
+  };
+
+  it('validates physical floor dimensions and unique floor ids', () => {
+    expect(() => validateSyncPayload(baseDb(), { companyProfile: { cellarFloors: [floor] } }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(baseDb(), { companyProfile: { cellarFloors: [{ ...floor, widthMeters: 2 }] } }, undefined)).toThrow(/invalid cellar floor/i);
+    expect(() => validateSyncPayload(baseDb(), { companyProfile: { cellarFloors: [floor, floor] } }, undefined)).toThrow(/invalid cellar floor/i);
+  });
+
+  it('validates scaled winery areas and infrastructure objects', () => {
+    const planObjects = [
+      { id: 'zone-fermentation', kind: 'zone', label: 'Fermentation', xMeters: 8, yMeters: 6, widthMeters: 8, heightMeters: 5, rotation: 0, zoneUse: 'fermentation' },
+      { id: 'utility-water', kind: 'water', label: 'Wash point', xMeters: 2, yMeters: 2, widthMeters: 1, heightMeters: 1, rotation: 90 },
+    ];
+    expect(() => validateSyncPayload(baseDb(), { companyProfile: { cellarFloors: [{ ...floor, planObjects }] } }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(baseDb(), { companyProfile: { cellarFloors: [{ ...floor, planObjects: [{ ...planObjects[0], xMeters: 29 }] }] } }, undefined)).toThrow(/invalid plan object/i);
+    expect(() => validateSyncPayload(baseDb(), { companyProfile: { cellarFloors: [{ ...floor, planObjects: [{ ...planObjects[1], zoneUse: 'utility' }] }] } }, undefined)).toThrow(/invalid plan object/i);
+  });
+
+  it('lets vessel operators change only the physical floor plan', () => {
+    const db = { ...baseDb(), companyProfile: { companyName: 'Estate', cellarFloors: [floor] } };
+    expect(authorizeSyncPayload('Winemaker', db, {
+      companyProfile: { companyName: 'Estate', cellarFloors: [{ ...floor, widthMeters: 32 }] },
+    }, undefined)).toBeNull();
+    expect(authorizeSyncPayload('Winemaker', db, {
+      companyProfile: { companyName: 'Changed', cellarFloors: [floor] },
+    }, undefined)).toMatch(/cannot update companyProfile/i);
+  });
+
+  it('rejects unknown floor and production-plan task references', () => {
+    const vessel = {
+      id: 'T-1', capacity: 1_000, currentVolume: 0, assignedLotId: null,
+      cellarFloorId: 'unknown-floor',
+    };
+    expect(() => validateSyncPayload(operationalDb({ companyProfile: { cellarFloors: [floor] } }), { vessels: [vessel] }, undefined)).toThrow(/unknown cellar floor/i);
+    expect(() => validateSyncPayload(operationalDb({ productionPlans: [] }), {
+      tasks: [{ ...task, source: { type: 'production_plan', id: 'missing-plan' } }],
+    }, undefined)).toThrow(/invalid production plan source/i);
+  });
+
+  it('accepts a task linked to an existing production plan and its vessels', () => {
+    const plan = {
+      id: 'plan-1', title: 'Inspect tank', kind: 'lab', status: 'planned',
+      startDate: '2026-08-30', endDate: '2026-08-30', vesselIds: ['T-1'], dependencyIds: [],
+    };
+    const vessel = { id: 'T-1', capacity: 1_000, currentVolume: 0, assignedLotId: null };
+    expect(() => validateSyncPayload(operationalDb({ productionPlans: [plan], vessels: [vessel] }), {
+      tasks: [{ ...task, source: { type: 'production_plan', id: 'plan-1', vesselIds: ['T-1'] } }],
+    }, undefined)).not.toThrow();
+  });
 });
 
 const attachment = (fields: Record<string, any>) => ({

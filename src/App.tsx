@@ -41,7 +41,7 @@ const AuditTrailTab = lazyRetry(() => import('../components/AuditTrailTab'));
 const LotPassport = lazyRetry(() => import('../components/LotPassport'));
 const VaziModule = lazyRetry(() => import('../components/VaziModule'));
 const WineryDashboardTab = lazyRetry(() => import('../components/WineryDashboardTab'));
-const CellarWorkspace = lazyRetry(() => import('../components/CellarWorkspace'));
+const CellarWorkspaceRoute = lazyRetry(() => import('../components/CellarWorkspaceRoute'));
 const QvevriPassportTab = lazyRetry(() => import('../components/QvevriPassportTab'));
 const GrapeReceivingTab = lazyRetry(() => import('../components/GrapeReceivingTab'));
 const LotLineageGraphTab = lazyRetry(() => import('../components/LotLineageGraphTab'));
@@ -1121,6 +1121,11 @@ export default function App() {
   const canViewModule = (moduleId: string, tabId?: string) => (
     canViewUserDestination(state.currentUser, moduleId, tabId)
   );
+  const canViewWineryTasks = canViewModule('gvino', 'tasks');
+  const canViewWineryPlanner = canViewModule('gvino', 'planner');
+  const canViewWineryLots = canViewModule('gvino', 'lots');
+  const canViewWineryVessels = canViewModule('gvino', 'vessels');
+  const canViewWineryFermentation = canViewModule('gvino', 'fermentation');
   const activeWineryNavTab = state.activeTab === 'lots' || state.activeTab === 'vessels'
     ? 'cellar'
     : state.activeTab;
@@ -1147,7 +1152,7 @@ export default function App() {
   }, [accessibleWineryTabGroups, activeWineryNavTab]);
   useEffect(() => {
     if (!state.isLoggedIn || !taskDeepLinkId) return;
-    if (!canViewModule('gvino', 'tasks')) {
+    if (!canViewWineryTasks) {
       state.setToastMessage(isKa
         ? 'თქვენს როლს ამ დავალების ნახვის უფლება არ აქვს.'
         : 'Your workspace role cannot view this task.');
@@ -1213,7 +1218,7 @@ export default function App() {
   const isCellarWorkspaceDestination = state.activeModule === 'gvino'
     && ['cellar', 'lots', 'vessels'].includes(state.activeTab);
   const activePermissionModule = isCellarWorkspaceDestination
-    ? (canViewModule('gvino', 'lots') ? 'lots' : 'vessels')
+    ? (canViewWineryLots ? 'lots' : 'vessels')
     : permissionModuleFor(state.activeModule, state.activeTab);
   const canManageCurrentArea = isCellarWorkspaceDestination
     ? canAccess(state.currentUser.role, 'lots', 'update')
@@ -2269,10 +2274,10 @@ export default function App() {
               productionPlans={state.productionPlans}
               recallCases={state.recallCases}
               queueVisibility={{
-                tasks: canViewModule('gvino', 'tasks'),
+                tasks: canViewWineryTasks,
                 sops: canViewModule('gvino', 'quality'),
                 purchaseOrders: canViewModule('procurement'),
-                productionPlans: canViewModule('gvino', 'planner'),
+                productionPlans: canViewWineryPlanner,
                 approvals: state.currentUser.role === 'Owner/Admin' ? 'all' : 'own',
                 recalls: canViewModule('recall'),
                 includeTeamWork: state.currentUser.role === 'Owner/Admin',
@@ -2561,15 +2566,15 @@ export default function App() {
                     {urgentAlertCount > 0 ? `${urgentAlertCount} ${isKa ? 'გადაუდებელი' : 'urgent'}` : (isKa ? 'სტაბილური' : 'steady')}
                   </span>
                 </div>
-                {(canViewModule('gvino', 'tasks') || canViewModule('gvino', 'fermentation')) && (
+                {(canViewWineryTasks || canViewWineryFermentation) && (
                   <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
-                    {canViewModule('gvino', 'tasks') && (
+                    {canViewWineryTasks && (
                       <button type="button" onClick={() => state.setActiveTab('tasks')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
                         <span className="text-stone-400">{t.tasks || 'Tasks'}</span>
                         <strong className="text-sm text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
                       </button>
                     )}
-                    {canViewModule('gvino', 'fermentation') && (
+                    {canViewWineryFermentation && (
                       <button type="button" onClick={() => state.setActiveTab('fermentation')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
                         <span className="text-stone-400">{isKa ? 'დუღილი' : 'Ferments'}</span>
                         <strong className="text-sm text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
@@ -2577,7 +2582,7 @@ export default function App() {
                     )}
                   </div>
                 )}
-                {canViewModule('gvino', 'vessels') && (
+                {canViewWineryVessels && (
                 <div className="mt-2.5">
                   <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
                     <span>{isKa ? 'ტევადობა' : 'Capacity'}</span>
@@ -2751,48 +2756,12 @@ export default function App() {
             {/* B. UNIFIED CELLAR WORKSPACE (legacy lot/vessel routes remain compatible) */}
             {['cellar', 'lots', 'vessels'].includes(state.activeTab) && (
               <div className="space-y-4 text-stone-800 animate-fade-in">
-                <CellarWorkspace
-                  lang={state.lang}
-                  lots={state.lots}
-                  vessels={state.vessels}
-                  operations={state.cellarOps}
-                  initialMode={state.activeTab === 'vessels' ? 'vessels' : 'lots'}
-                  initialVesselId={state.selectedTankId}
-                  onCanonicalize={() => {
-                    if (state.activeTab !== 'cellar') state.setActiveTab('cellar');
-                  }}
-                  canViewLots={canViewModule('gvino', 'lots')}
-                  canViewVessels={canViewModule('gvino', 'vessels')}
-                  onUpdateLots={state.setLots}
-                  onUpdateVessels={state.setVessels}
-                  {...cellarPermissions.vessels}
-                  canExecuteTransfer={cellarPermissions.transfers.canExecuteTransfer}
-                  canCreateLot={canAccess(state.currentUser.role, 'lots', 'create')}
-                  canUpdateLot={canAccess(state.currentUser.role, 'lots', 'update')}
-                  onOpenPassport={state.setPassportLotId}
-                  fermLogs={state.fermLogs}
-                  labLogs={state.labLogs}
-                  costEntries={state.costEntries}
-                  bottlingRuns={state.bottlingRuns}
-                  stockMovements={state.stockMovements}
-                  salesOrders={state.salesOrders}
-                  salesDispatches={state.salesDispatches}
-                  currency={state.companyProfile.currency || 'GEL'}
-                  setActiveTab={state.setActiveTab}
-                  setSelectedTankId={state.setSelectedTankId}
-                  setCalculatorLotId={state.setCalculatorLotId}
-                  setCalculatorLotIdA={state.setCalculatorLotIdA}
-                  setChartLotId={state.setChartLotId}
-                  setLabLotId={state.setLabLotId}
-                  currentUserName={state.currentUser.fullName || state.currentUser.username}
-                  currentUsername={state.currentUser.username}
-                  auditLogs={state.auditLogs}
-                  onUpdateAuditLogs={state.setAuditLogs}
-                  onApplyLotStageTransitionCommandResponse={state.applyLotStageTransitionCommandResponse}
-                  setToastMessage={state.setToastMessage}
-                  onOpenVesselDetails={state.setSelectedTankId}
-                  onLogOperation={cellarPermissions.operations.canLogCellarOperation ? openVesselOperation : undefined}
-                  onPlanTransfer={cellarPermissions.transfers.canExecuteTransfer ? openTransferFromVessel : undefined}
+                <CellarWorkspaceRoute
+                  state={state}
+                  permissions={cellarPermissions}
+                  onOpenProductionPlan={(planId) => openWorkflowItem('planner', planId)}
+                  onLogOperation={openVesselOperation}
+                  onPlanTransfer={openTransferFromVessel}
                   renderQvevriRecords={renderQvevriRecords}
                 />
               </div>
@@ -3062,18 +3031,22 @@ export default function App() {
                 harvests={state.harvests}
                 fermentationLogs={state.fermLogs}
                 labLogs={state.labLogs}
+                tasks={canViewWineryTasks ? state.tasks : []}
                 canCreate={canAccess(state.currentUser.role, 'planning', 'create')}
                 canUpdate={canAccess(state.currentUser.role, 'planning', 'update')}
                 canDelete={canAccess(state.currentUser.role, 'planning', 'delete')}
+                canCreateTask={canAccess(state.currentUser.role, 'tasks', 'create')}
                 focusPlanId={workflowFocus?.tab === 'planner' ? workflowFocus.targetId : undefined}
-                onOpenLot={canViewModule('gvino', 'lots') ? state.setPassportLotId : undefined}
-                onOpenVessel={canViewModule('gvino', 'vessels') ? (vesselId) => {
+                onOpenLot={canViewWineryLots ? state.setPassportLotId : undefined}
+                onOpenVessel={canViewWineryVessels ? (vesselId) => {
                   state.setActiveModule('gvino');
                   state.setActiveTab('cellar');
                   state.setSelectedTankId(vesselId);
                 } : undefined}
                 onOpenBlock={canViewModule('vazi') ? () => state.setActiveModule('vazi') : undefined}
                 onOpenWorkflow={openProductionPlanWork}
+                onCreateTask={canAccess(state.currentUser.role, 'tasks', 'create') ? state.handleAddNewTask : undefined}
+                onOpenTask={canViewWineryTasks ? (taskId) => openWorkflowItem('tasks', taskId) : undefined}
                 setToastMessage={state.setToastMessage}
               />
             )}
@@ -3130,6 +3103,7 @@ export default function App() {
                 prefilledTaskDesc={state.prefilledTaskDesc}
                 setPrefilledTaskDesc={state.setPrefilledTaskDesc}
                 focusTaskId={taskDeepLinkId || (workflowFocus?.tab === 'tasks' ? workflowFocus.targetId : undefined)}
+                onOpenTaskSource={canViewWineryPlanner ? (task) => task.source && openWorkflowItem('planner', task.source.id) : undefined}
               />
             )}
 

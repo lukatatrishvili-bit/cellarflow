@@ -73,6 +73,8 @@ export interface Vessel {
   targetTemperature: number | null;
   lastOperation: string;
   locationDetails?: string;
+  /** Physical cellar floor used by the visual winery plan. */
+  cellarFloorId?: string;
   xGrid?: number; // 0-100 percentage layout position
   yGrid?: number; // 0-100 percentage layout position
   lastSealedDate?: string; // For Qvevri clay seals
@@ -347,6 +349,8 @@ export interface Task {
   assignedUserId?: string;
   status: 'pending' | 'completed';
   description: string;
+  /** Durable link back to the operational record that created this task. */
+  source?: TaskSourceReference;
   notification?: {
     status: 'sending' | 'sent' | 'partial' | 'failed';
     deliveries?: Array<{
@@ -361,10 +365,19 @@ export interface Task {
   };
 }
 
+export interface TaskSourceReference {
+  type: 'production_plan';
+  id: string;
+  lotId?: string;
+  vesselIds?: string[];
+  blockId?: string;
+}
+
 export interface TaskAssignmentInput {
   assignedUserId?: string;
   assignedTo?: string;
   notifyAssignee?: boolean;
+  source?: TaskSourceReference;
 }
 
 export interface TransferEvent {
@@ -1103,8 +1116,57 @@ export interface CompanyProfile {
    * `resolveAiConfig` in lib/ai/config, never directly.
    */
   aiConfig?: unknown;
+  /** Multi-floor physical cellar plan. Existing wineries default to one main floor. */
+  cellarFloors?: CellarFloor[];
   latitude?: number;
   longitude?: number;
+}
+
+export interface CellarFloor {
+  id: string;
+  name: string;
+  /** Human floor order: basement is commonly -1, ground floor is 0. */
+  level: number;
+  widthMeters: number;
+  heightMeters: number;
+  gridMeters: number;
+  notes?: string;
+  /** Winery-specific spatial objects drawn on this floor's scaled plan. */
+  planObjects?: CellarPlanObject[];
+}
+
+export type CellarZoneUse =
+  | 'general'
+  | 'receiving'
+  | 'fermentation'
+  | 'aging'
+  | 'bottling'
+  | 'laboratory'
+  | 'storage'
+  | 'utility';
+
+export type CellarPlanObjectKind =
+  | 'zone'
+  | 'door'
+  | 'drain'
+  | 'water'
+  | 'power'
+  | 'pump'
+  | 'press';
+
+export interface CellarPlanObject {
+  id: string;
+  kind: CellarPlanObjectKind;
+  label: string;
+  /** Centre point in real-world metres from the plan's top-left corner. */
+  xMeters: number;
+  yMeters: number;
+  /** Physical footprint; zones use both dimensions, fixtures use a compact default. */
+  widthMeters: number;
+  heightMeters: number;
+  /** Clockwise drawing rotation. Kept to right angles for predictable snapping. */
+  rotation?: 0 | 90 | 180 | 270;
+  zoneUse?: CellarZoneUse;
 }
 
 export interface WineAgencyVerificationEvidence {

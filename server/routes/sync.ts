@@ -982,6 +982,57 @@ export function validateSyncPayload(
           if (profile.longitude !== undefined && typeof profile.longitude !== 'number') {
             throw new Error('companyProfile longitude must be a number');
           }
+          if (profile.cellarFloors !== undefined) {
+            if (!Array.isArray(profile.cellarFloors) || profile.cellarFloors.length < 1 || profile.cellarFloors.length > 30) {
+              throw new Error('companyProfile cellarFloors must contain between 1 and 30 floors');
+            }
+            const floorIds = new Set<string>();
+            const planObjectKinds = new Set(['zone', 'door', 'drain', 'water', 'power', 'pump', 'press']);
+            const zoneUses = new Set(['general', 'receiving', 'fermentation', 'aging', 'bottling', 'laboratory', 'storage', 'utility']);
+            for (const floor of profile.cellarFloors) {
+              if (!floor || typeof floor !== 'object' || Array.isArray(floor)
+                || !isValidId(floor.id) || floorIds.has(floor.id)
+                || typeof floor.name !== 'string' || floor.name.trim().length < 1 || floor.name.length > 120
+                || typeof floor.level !== 'number' || !Number.isFinite(floor.level) || floor.level < -20 || floor.level > 100
+                || typeof floor.widthMeters !== 'number' || !Number.isFinite(floor.widthMeters) || floor.widthMeters < 5 || floor.widthMeters > 250
+                || typeof floor.heightMeters !== 'number' || !Number.isFinite(floor.heightMeters) || floor.heightMeters < 5 || floor.heightMeters > 250
+                || typeof floor.gridMeters !== 'number' || !Number.isFinite(floor.gridMeters) || floor.gridMeters < 0.25 || floor.gridMeters > 10
+                || (floor.notes !== undefined && (typeof floor.notes !== 'string' || floor.notes.length > 2_000))) {
+                throw new Error('companyProfile contains an invalid cellar floor');
+              }
+              floorIds.add(floor.id);
+              if (floor.planObjects !== undefined) {
+                if (!Array.isArray(floor.planObjects) || floor.planObjects.length > 250) {
+                  throw new Error('cellar floor planObjects must be an array with at most 250 objects');
+                }
+                const objectIds = new Set<string>();
+                for (const object of floor.planObjects) {
+                  if (!object || typeof object !== 'object' || Array.isArray(object)
+                    || !isValidId(object.id) || objectIds.has(object.id)
+                    || !planObjectKinds.has(object.kind)
+                    || typeof object.label !== 'string' || object.label.trim().length < 1 || object.label.length > 80
+                    || typeof object.xMeters !== 'number' || !Number.isFinite(object.xMeters)
+                    || typeof object.yMeters !== 'number' || !Number.isFinite(object.yMeters)
+                    || typeof object.widthMeters !== 'number' || !Number.isFinite(object.widthMeters) || object.widthMeters < 0.25
+                    || typeof object.heightMeters !== 'number' || !Number.isFinite(object.heightMeters) || object.heightMeters < 0.25
+                    || (object.rotation !== undefined && ![0, 90, 180, 270].includes(object.rotation))
+                    || (object.kind === 'zone' && object.zoneUse !== undefined && !zoneUses.has(object.zoneUse))
+                    || (object.kind !== 'zone' && object.zoneUse !== undefined)) {
+                    throw new Error('cellar floor contains an invalid plan object');
+                  }
+                  const rotated = object.rotation === 90 || object.rotation === 270;
+                  const footprintWidth = rotated ? object.heightMeters : object.widthMeters;
+                  const footprintHeight = rotated ? object.widthMeters : object.heightMeters;
+                  if (footprintWidth > floor.widthMeters || footprintHeight > floor.heightMeters
+                    || object.xMeters < footprintWidth / 2 || object.xMeters > floor.widthMeters - footprintWidth / 2
+                    || object.yMeters < footprintHeight / 2 || object.yMeters > floor.heightMeters - footprintHeight / 2) {
+                    throw new Error('cellar floor contains an invalid plan object');
+                  }
+                  objectIds.add(object.id);
+                }
+              }
+            }
+          }
         }
         continue;
       }
@@ -1050,6 +1101,16 @@ export function validateSyncPayload(
             const capacity = item.capacity !== undefined ? item.capacity : (existingItem ? existingItem.capacity : undefined);
             const currentVolume = item.currentVolume !== undefined ? item.currentVolume : (existingItem ? existingItem.currentVolume : undefined);
             const assignedLotId = item.assignedLotId !== undefined ? item.assignedLotId : (existingItem ? existingItem.assignedLotId : undefined);
+            const cellarFloorId = item.cellarFloorId !== undefined ? item.cellarFloorId : (existingItem ? existingItem.cellarFloorId : undefined);
+            if (cellarFloorId !== undefined) {
+              if (!isValidId(cellarFloorId)) throw new Error(`Vessel ${item.id} has an invalid cellar floor.`);
+              const profile = collections.companyProfile && typeof collections.companyProfile === 'object'
+                ? collections.companyProfile
+                : userDb.companyProfile;
+              if (Array.isArray(profile?.cellarFloors) && !profile.cellarFloors.some((floor: any) => floor?.id === cellarFloorId)) {
+                throw new Error(`Vessel ${item.id} references an unknown cellar floor.`);
+              }
+            }
 
             if (capacity !== undefined) {
               if (typeof capacity !== 'number' || capacity <= 0) {
@@ -2481,6 +2542,29 @@ export function validateSyncPayload(
               && (typeof item.assignedUserId !== 'string' || item.assignedUserId.length > 160)) {
               throw new Error(`Task ${item.id} has an invalid assigned user.`);
             }
+            if (item.source !== undefined) {
+              const source = item.source;
+              if (!source || typeof source !== 'object' || Array.isArray(source)
+                || source.type !== 'production_plan' || !isValidId(source.id)
+                || !effectiveRecord('productionPlans', source.id)) {
+                throw new Error(`Task ${item.id} has an invalid production plan source.`);
+              }
+              const references: Array<[string, unknown, string]> = [
+                ['lotId', source.lotId, 'lots'],
+                ['blockId', source.blockId, 'blocks'],
+              ];
+              for (const [field, value, collection] of references) {
+                if (value !== undefined && (!isValidId(value) || !effectiveRecord(collection, value))) {
+                  throw new Error(`Task ${item.id} source has an invalid ${field}.`);
+                }
+              }
+              if (source.vesselIds !== undefined) {
+                if (!Array.isArray(source.vesselIds) || source.vesselIds.length > 100
+                  || source.vesselIds.some((vesselId: unknown) => !isValidId(vesselId) || !effectiveRecord('vessels', vesselId))) {
+                  throw new Error(`Task ${item.id} source has invalid vessel references.`);
+                }
+              }
+            }
             if (item.notification !== undefined) {
               const notification = item.notification;
               if (!notification || typeof notification !== 'object' || Array.isArray(notification)) {
@@ -3213,6 +3297,14 @@ function syncActionsForCollection(userDb: any, collection: string, incoming: any
   return [...actions];
 }
 
+function isCellarFloorOnlyProfileUpdate(stored: any, incoming: any): boolean {
+  if (!stored || !incoming || typeof stored !== 'object' || typeof incoming !== 'object'
+    || Array.isArray(stored) || Array.isArray(incoming) || incoming.cellarFloors === undefined) return false;
+  const { cellarFloors: _storedFloors, ...storedIdentity } = stored;
+  const { cellarFloors: _incomingFloors, ...incomingIdentity } = incoming;
+  return syncRecordFingerprint(storedIdentity) === syncRecordFingerprint(incomingIdentity);
+}
+
 export function syncMutatesCollection(
   userDb: any,
   collections: Record<string, any>,
@@ -3325,6 +3417,14 @@ export function authorizeSyncPayload(
           }
         }
       }
+      continue;
+    }
+    // Physical layout is an operational vessel concern. Winemakers and cellar
+    // workers may change only cellarFloors without gaining access to legal,
+    // contact, certification, or other company-profile fields.
+    if (collection === 'companyProfile'
+      && canAccess(role, 'vessels', 'update')
+      && isCellarFloorOnlyProfileUpdate(userDb.companyProfile, incoming)) {
       continue;
     }
     const actions = syncActionsForCollection(userDb, collection, incoming);
