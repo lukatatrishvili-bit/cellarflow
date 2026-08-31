@@ -23,8 +23,14 @@ import { gzipSync } from 'node:zlib';
  */
 
 const INITIAL_JS_BUDGET_KB = 600;
-const INITIAL_CSS_BUDGET_KB = 260;
+// The spatial cellar plan intentionally adds a richer tablet interaction
+// surface (pinch/pan, minimap, vessel states, and fullscreen controls). Its
+// utility CSS is globally emitted by Tailwind even though the plan route is
+// lazy. Keep a little raw-size headroom while also enforcing the much more
+// representative transfer-size ceiling below.
+const INITIAL_CSS_BUDGET_KB = 270;
 const INITIAL_JS_GZIP_BUDGET_KB = 190;
+const INITIAL_CSS_GZIP_BUDGET_KB = 40;
 
 const distDir = path.resolve(__dirname, '../dist');
 const indexHtmlPath = path.join(distDir, 'index.html');
@@ -63,6 +69,11 @@ describe.skipIf(!hasBuild)('initial bundle budget', () => {
 
   it(`keeps critical-path CSS under ${INITIAL_CSS_BUDGET_KB} KB raw`, () => {
     expect(sizeKB('.css')).toBeLessThan(INITIAL_CSS_BUDGET_KB);
+  });
+
+  it(`keeps critical-path CSS under ${INITIAL_CSS_GZIP_BUDGET_KB} KB gzip`, () => {
+    const cssRefs = assetRefs.filter(ref => ref.endsWith('.css'));
+    expect(gzipSizeKB(cssRefs)).toBeLessThan(INITIAL_CSS_GZIP_BUDGET_KB);
   });
 
   it('keeps heavy lazy libraries out of the critical path', () => {

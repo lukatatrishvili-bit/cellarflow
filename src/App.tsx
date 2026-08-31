@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
-import WorkspaceShell, { type WorkspaceNavSection } from '../components/WorkspaceShell';
+import type { WorkspaceNavSection } from '../components/WorkspaceShell';
 import { vaziNavigationGroups, type VaziTab } from '../lib/vaziNavigation';
 import type { AiFinding } from '../lib/ai/types';
 import {
@@ -87,6 +87,7 @@ const QualitySopTab = lazyRetry(() => import('../components/QualitySopTab'));
 const ProcurementTab = lazyRetry(() => import('../components/ProcurementTab'));
 const ProductionPlannerTab = lazyRetry(() => import('../components/ProductionPlannerTab'));
 const ScanToAction = lazyRetry(() => import('../components/ScanToAction'));
+const WorkspaceShell = lazyRetry(() => import('../components/WorkspaceShell'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
@@ -2331,6 +2332,7 @@ export default function App() {
           />
         </Suspense>
       ) : (
+        <Suspense fallback={<ModuleLoader />}>
         <WorkspaceShell
           sections={workspaceNavSections}
           mobileLabel={workspaceMobileLabel}
@@ -3131,6 +3133,7 @@ export default function App() {
         </>
         )}
         </WorkspaceShell>
+        </Suspense>
       )}
 
       {/* SYNC TROUBLESHOOTER DIAGNOSTICS & RESOLUTION MODAL */}

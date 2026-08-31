@@ -71,6 +71,9 @@ describe('CellarPlan', () => {
     expect(markup).toContain('Temp.');
     expect(markup).toContain('Hygiene');
     expect(markup).toContain('Work');
+    expect(markup).toContain('X-ray');
+    expect(markup).toContain('Vessel labels');
+    expect(markup).toContain('map-metal-');
     expect(markup).toContain('Edit layout');
     expect(markup).toContain('Fit');
     expect(markup).toContain('Floor pulse');

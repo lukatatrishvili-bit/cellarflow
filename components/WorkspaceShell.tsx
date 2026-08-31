@@ -86,7 +86,7 @@ export default function WorkspaceShell({
           {!collapsed && summary}
 
           <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
-            {!collapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">{sectionsLabel}</span>}
+            {!collapsed && <span className="text-[10px] font-mono text-stone-600 uppercase tracking-[0.15em] font-bold dark:text-stone-400">{sectionsLabel}</span>}
             <button
               onClick={onToggleCollapsed}
               className="ml-auto p-1.5 text-stone-400 hover:text-[#4e0e15] hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
@@ -101,7 +101,7 @@ export default function WorkspaceShell({
             {sections.map(section => (
               <div key={section.id} className="space-y-1">
                 {!collapsed && (
-                  <div className="px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
+                  <div className="px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-600 dark:text-stone-400">
                     {section.label}
                   </div>
                 )}

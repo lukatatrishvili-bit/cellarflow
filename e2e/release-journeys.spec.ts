@@ -153,10 +153,24 @@ test('winemaker can work with lots and vessels from one focused cellar workspace
   await expect(cellarPlan.getByRole('combobox', { name: 'Find vessel on plan' })).toBeVisible();
   const firstPlanVessel = cellarPlan.getByRole('button', { name: 'Q-01 · 0% full', exact: true });
   const initialPlanPosition = await firstPlanVessel.getAttribute('style');
+  const planViewport = cellarPlan.getByLabel('Main cellar interactive plan', { exact: true });
+  await planViewport.hover({ position: { x: 320, y: 160 } });
+  await page.mouse.wheel(0, -150);
+  await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).not.toHaveValue('100');
+  await cellarPlan.getByRole('button', { name: 'Fit', exact: true }).click();
   await cellarPlan.getByRole('button', { name: 'Edit layout', exact: true }).click();
   await expect(cellarPlan.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
   await expect(cellarPlan.getByRole('button', { name: 'Arrange floor', exact: true })).toBeVisible();
   await expect(cellarPlan.getByRole('checkbox', { name: 'Snap to grid' })).toBeChecked();
+  await firstPlanVessel.scrollIntoViewIfNeeded();
+  const vesselBox = await firstPlanVessel.boundingBox();
+  expect(vesselBox).not.toBeNull();
+  await page.mouse.move(vesselBox!.x + vesselBox!.width / 2, vesselBox!.y + vesselBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(vesselBox!.x + vesselBox!.width / 2 + 72, vesselBox!.y + vesselBox!.height / 2 + 34, { steps: 8 });
+  await page.mouse.up();
+  await expect(cellarPlan.getByText('Unsaved changes', { exact: true })).toBeVisible();
+  expect(await firstPlanVessel.getAttribute('style')).not.toBe(initialPlanPosition);
   await cellarPlan.getByRole('button', { name: 'Work area', exact: true }).click();
   await cellarPlan.getByRole('textbox', { name: 'Object label' }).fill('E2E fermentation bay');
   await cellarPlan.getByRole('combobox', { name: 'Area use' }).selectOption('fermentation');
@@ -178,13 +192,13 @@ test('owner can open business containment and cellar planning workflows', async 
   await page.getByRole('menuitem', { name: 'Work Queue', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Today’s work and approvals' })).toBeVisible();
 
-  const business = navigation.getByRole('button', { name: 'Business' });
-  await business.click();
+  const stockAndSales = navigation.getByRole('button', { name: 'Stock & Sales' });
+  await stockAndSales.click();
 
   await page.getByRole('menuitem', { name: 'Product Recall', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Lot containment cockpit' })).toBeVisible();
 
-  await business.click();
+  await stockAndSales.click();
   await page.getByRole('menuitem', { name: 'Purchasing', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Purchasing and receiving' })).toBeVisible();
 
