@@ -3,8 +3,46 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import DashboardLayout, {
   mergeDashboardLayout,
+  orderDashboardWidgets,
   reorderDashboardLayout,
 } from '../components/DashboardLayout';
+
+describe('explicit widget ordering', () => {
+  const widgets = [
+    { id: 'metrics' },
+    { id: 'priority-queue' },
+    { id: 'quick-actions' },
+    { id: 'cellar-pulse' },
+  ];
+
+  it('puts Today’s work ahead of its numbers', () => {
+    const ordered = orderDashboardWidgets(widgets, ['priority-queue', 'quick-actions', 'metrics']);
+
+    expect(ordered.map(w => w.id)).toEqual(['priority-queue', 'quick-actions', 'metrics', 'cellar-pulse']);
+  });
+
+  it('keeps unnamed widgets after the named ones, in their original order', () => {
+    const ordered = orderDashboardWidgets(
+      [{ id: 'b' }, { id: 'unlisted-1' }, { id: 'a' }, { id: 'unlisted-2' }],
+      ['a', 'b'],
+    );
+
+    expect(ordered.map(w => w.id)).toEqual(['a', 'b', 'unlisted-1', 'unlisted-2']);
+  });
+
+  it('leaves the list alone when no ids match', () => {
+    const ordered = orderDashboardWidgets(widgets, ['nothing-here']);
+
+    expect(ordered.map(w => w.id)).toEqual(widgets.map(w => w.id));
+  });
+
+  it('does not mutate the input', () => {
+    const input = [{ id: 'metrics' }, { id: 'priority-queue' }];
+    orderDashboardWidgets(input, ['priority-queue']);
+
+    expect(input.map(w => w.id)).toEqual(['metrics', 'priority-queue']);
+  });
+});
 
 describe('dashboard layout persistence', () => {
   const defaults = [

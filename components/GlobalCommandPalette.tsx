@@ -194,14 +194,14 @@ export default function GlobalCommandPalette({
       },
     })) : [];
 
-    const inventoryCommands = canViewAppDestination(role, 'gvino', 'inventory') ? inventory.map<CommandItem>((item) => ({
+    const inventoryCommands = canViewAppDestination(role, 'inventory') ? inventory.map<CommandItem>((item) => ({
       id: `inventory-${item.id}`,
       kind: 'inventory',
       title: item.name,
       subtitle: `${inventoryCategoryLabel(item.category, lang)} · ${(item.stock || 0).toLocaleString()} ${item.unit}`,
       keywords: `${item.id} ${item.name} ${item.category} ${item.supplierName} inventory additive packaging stock`,
       icon: Boxes,
-      run: () => jump('gvino', 'inventory'),
+      run: () => jump('inventory'),
     })) : [];
 
     const taskCommands = canViewAppDestination(role, 'gvino', 'tasks') ? tasks.map<CommandItem>((task) => ({

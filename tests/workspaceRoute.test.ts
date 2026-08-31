@@ -4,6 +4,7 @@ import {
   applyWorkspaceRoute,
   clearWorkspaceRoute,
   isWorkspaceModule,
+  moduleUsesTabs,
   parseRecordRoute,
   parseWorkspaceRoute,
   recordRouteMatches,
@@ -14,9 +15,53 @@ import {
 import { authRedirectTarget } from '../lib/authRouting';
 import { workspaceRouteCanMirrorPath } from '../hooks/useWorkspaceRoute';
 
+describe('every navigable module is addressable', () => {
+  // WORKSPACE_MODULES drifted once already: Materials was promoted from a
+  // cellar tab to a module of its own, and this list was not updated, so the
+  // screen silently could not be linked to. Every destination the navigation
+  // can reach must be expressible in a URL.
+  const NAVIGABLE_MODULES = [
+    'portal', 'work', 'vazi', 'gvino',
+    'inventory', 'procurement', 'storage', 'sales', 'recall',
+    'docs', 'certification', 'audit', 'costs', 'analytics',
+    'integrations', 'settings',
+  ];
+
+  it.each(NAVIGABLE_MODULES)('%s can be named in a URL', (moduleId) => {
+    expect(isWorkspaceModule(moduleId), `${moduleId} is missing from WORKSPACE_MODULES`).toBe(true);
+    expect(parseWorkspaceRoute(`?module=${moduleId}`).module).toBe(moduleId);
+  });
+
+  it('round-trips a module through the URL', () => {
+    for (const moduleId of NAVIGABLE_MODULES) {
+      const search = applyWorkspaceRoute('', moduleId, 'dashboard');
+      expect(parseWorkspaceRoute(search).module).toBe(moduleId);
+    }
+  });
+});
+
 describe('parsing a destination from the URL', () => {
   it('reads a module and tab', () => {
     expect(parseWorkspaceRoute('?module=gvino&tab=lots')).toEqual({ module: 'gvino', tab: 'lots' });
+  });
+
+  it('addresses the Materials module promoted out of the cellar tabs', () => {
+    expect(parseWorkspaceRoute('?module=inventory')).toEqual({ module: 'inventory', tab: null });
+  });
+
+  it('carries a tab only for the module that has tabs', () => {
+    expect(moduleUsesTabs('gvino')).toBe(true);
+    for (const single of ['portal', 'inventory', 'storage', 'sales', 'docs', 'costs', 'vazi']) {
+      expect(moduleUsesTabs(single), `${single} should not carry a cellar tab`).toBe(false);
+    }
+  });
+
+  it('does not pin a leftover cellar tab onto a single-screen module', () => {
+    // What a stale activeTab used to produce: ?module=inventory&tab=labs
+    const search = applyWorkspaceRoute('', 'inventory', moduleUsesTabs('inventory') ? 'labs' : '');
+
+    expect(search).toBe('?module=inventory');
+    expect(parseWorkspaceRoute(search)).toEqual({ module: 'inventory', tab: null });
   });
 
   it('accepts a search string with or without the leading question mark', () => {

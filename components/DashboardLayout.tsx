@@ -51,7 +51,28 @@ const SIZE_LABEL: Record<DashboardWidgetSpan, { en: string; ka: string; short: s
 };
 
 function storageKey(dashboardId: string) {
-  return `cellarflow:dashboard-layout:${dashboardId}:v1`;
+  // v2: the layout is written on every mount, not only when someone
+  // personalises it, so every existing reader carried a stored copy of the old
+  // default order — which would have masked the new one. Bumping the key lets
+  // the reordered defaults land; a personalised layout has to be set again.
+  return `cellarflow:dashboard-layout:${dashboardId}:v2`;
+}
+
+/**
+ * Sorts widgets into an explicit order by id. Lets a dashboard state the order
+ * it wants as a readable list instead of relying on the position of large JSX
+ * blocks. Ids missing from `order` keep their relative position, after the
+ * ones that are named.
+ */
+export function orderDashboardWidgets<T extends { id: string }>(items: T[], order: string[]): T[] {
+  const rank = (id: string) => {
+    const index = order.indexOf(id);
+    return index === -1 ? order.length : index;
+  };
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => rank(a.item.id) - rank(b.item.id) || a.index - b.index)
+    .map(entry => entry.item);
 }
 
 function isWidgetSpan(value: unknown): value is DashboardWidgetSpan {

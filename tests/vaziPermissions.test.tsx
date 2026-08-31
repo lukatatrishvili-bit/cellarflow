@@ -88,6 +88,10 @@ function vaziProps(
   overrides: Partial<ComponentProps<typeof VaziModule>> = {},
 ): ComponentProps<typeof VaziModule> {
   return {
+    // Navigation lives in the app shell now; the module renders the screen it
+    // is told to render.
+    activeTab: 'dashboard',
+    onTabChange: vi.fn(),
     lang: 'en',
     currentUser: user,
     blocks: [block],
@@ -141,8 +145,9 @@ describe('Vazi permission-aware workspace', () => {
     const markup = renderToStaticMarkup(React.createElement(VaziModule, vaziProps({ blocks: [] })));
 
     expect(markup).not.toContain('Read-only vineyard access');
-    expect(markup).toContain('aria-label="Vazi workspace"');
-    expect(markup).toContain('Field work');
+    // The workspace's own navigation moved into the shared app shell sidebar,
+    // so the module must no longer render a second nav of its own.
+    expect(markup).not.toContain('aria-label="Vazi workspace"');
     expect(markup).toContain(' Add block</button>');
     expect(markup).toContain('No vineyard blocks yet');
   });
@@ -320,8 +325,7 @@ describe('Vazi permission-aware workspace', () => {
     })));
 
     expect(markup).toContain('ვენახზე მხოლოდ ნახვის წვდომა');
-    expect(markup).toContain('aria-label="ვაზის სამუშაო სივრცე"');
-    expect(markup).toContain('საველე სამუშაო');
+    expect(markup).not.toContain('aria-label="ვაზის სამუშაო სივრცე"');
     expect(markup).not.toContain('Read-only vineyard access');
   });
 });

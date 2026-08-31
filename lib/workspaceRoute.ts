@@ -31,6 +31,7 @@ export const WORKSPACE_MODULES = [
   'docs',
   'certification',
   'costs',
+  'inventory',
   'storage',
   'sales',
   'recall',
@@ -53,6 +54,16 @@ const TAB_PATTERN = /^[a-z0-9][a-z0-9_-]{0,39}$/i;
 export interface WorkspaceRoute {
   module: WorkspaceModule | null;
   tab: string | null;
+}
+
+/**
+ * Whether a module's destination includes a tab. Only the cellar drives the
+ * shared `activeTab`; every other module is a single screen, so carrying a tab
+ * for it would publish links like `?module=inventory&tab=labs` — a leftover
+ * cellar tab pinned to a module that has none.
+ */
+export function moduleUsesTabs(module: string): boolean {
+  return module === 'gvino';
 }
 
 export function isWorkspaceModule(value: unknown): value is WorkspaceModule {

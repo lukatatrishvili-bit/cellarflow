@@ -410,7 +410,7 @@ export function useWineryState() {
 
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(createBlankCompanyProfile);
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'work' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'recall' | 'procurement' | 'analytics' | 'master-admin'>('portal');
+  const [activeModule, setActiveModule] = useState<'portal' | 'work' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'inventory' | 'storage' | 'sales' | 'recall' | 'procurement' | 'analytics' | 'master-admin'>('portal');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Datasets

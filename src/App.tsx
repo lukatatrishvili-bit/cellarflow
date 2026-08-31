@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
+import WorkspaceShell, { type WorkspaceNavSection } from '../components/WorkspaceShell';
+import { vaziNavigationGroups, type VaziTab } from '../lib/vaziNavigation';
 import type { AiFinding } from '../lib/ai/types';
 import {
   buildNotificationFeed,
@@ -12,6 +14,7 @@ import {
 } from '../lib/notificationFeed';
 import { useWineryState } from '../hooks/useWineryState';
 import { parseWorkspaceRoute } from '../lib/workspaceRoute';
+import { useWorkspaceRoute } from '../hooks/useWorkspaceRoute';
 import { IndexedDBQueue } from '../lib/syncQueue';
 import { ToastProvider } from '../components/ToastProvider';
 import { usePerformanceManager } from '../hooks/usePerformanceManager';
@@ -111,8 +114,6 @@ import {
   MailCheck,
   Loader2,
   X,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   ChevronDown,
   ClipboardList,
@@ -350,7 +351,6 @@ export default function App() {
       operations: 'operations',
       transfers: 'transfers',
       bottling: 'bottling',
-      inventory: 'inventory',
       fermentation: 'fermentation',
       calculators: 'calculators',
       vessels: 'vessels',
@@ -358,6 +358,11 @@ export default function App() {
     };
     if (targetModule === 'vazi') {
       setActiveModule('vazi');
+      return;
+    }
+    // Materials is its own module now, not a cellar tab.
+    if (targetModule === 'inventory') {
+      setActiveModule('inventory');
       return;
     }
     if (targetModule === 'documents' || targetModule === 'certification') {
@@ -375,9 +380,9 @@ export default function App() {
   const [lineageFocusLotId, setLineageFocusLotId] = useState<string>('');
   const [recallFocusCaseId, setRecallFocusCaseId] = useState<string>('');
   const [workflowFocus, setWorkflowFocus] = useState<{ tab: string; targetId: string } | null>(null);
-  const [expandedWineryGroups, setExpandedWineryGroups] = useState<Set<string>>(
-    () => new Set(['overview', 'wine', 'production']),
-  );
+  // The vineyard's active screen lives here so the shared shell sidebar can
+  // drive it, the same way the cellar's activeTab does.
+  const [vaziTab, setVaziTab] = useState<VaziTab>('dashboard');
   const [focusedAiFindingId, setFocusedAiFindingId] = useState<string | null>(null);
   const locallyReadAiNotificationEvents = useRef<Set<string>>(new Set());
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -458,6 +463,22 @@ export default function App() {
     state.isLoggedIn,
     setActiveModule,
   ]);
+
+  // Keep the open destination and the address bar in step, so a screen can be
+  // linked to, Back returns to the previous one, and a reload lands where the
+  // user was. The master admin console is deliberately excluded: it has no
+  // tenant workspace to address.
+  useWorkspaceRoute({
+    isActive: state.isLoggedIn && !state.currentUser.isMasterAdmin,
+    activeModule: state.activeModule,
+    activeTab: state.activeTab,
+    setActiveModule: state.setActiveModule,
+    setActiveTab: state.setActiveTab,
+    passportLotId: state.passportLotId,
+    setPassportLotId: state.setPassportLotId,
+    selectedTankId: state.selectedTankId,
+    setSelectedTankId: state.setSelectedTankId,
+  });
 
   useEffect(() => {
     document.documentElement.lang = isKa ? 'ka' : 'en';
@@ -1026,7 +1047,12 @@ export default function App() {
       state.setActiveTab('intelligence');
       return;
     }
-    const tabByCategory: Record<Alert['category'], string> = {
+    // Stock alerts open the Materials module; everything else is a cellar tab.
+    if (item.category === 'inventory') {
+      state.setActiveModule('inventory');
+      return;
+    }
+    const tabByCategory: Record<Exclude<Alert['category'], 'inventory'>, string> = {
       so2: 'labs',
       va: 'labs',
       lab: 'labs',
@@ -1034,7 +1060,6 @@ export default function App() {
       temperature: 'vessels',
       cleaning: 'vessels',
       task: 'tasks',
-      inventory: 'inventory',
     };
     state.setActiveModule('gvino');
     state.setActiveTab(item.category === 'intelligence' ? 'intelligence' : tabByCategory[item.category]);
@@ -1074,12 +1099,18 @@ export default function App() {
   const cellarCapacityPct = totalCellarCapacity > 0 ? Math.round((usedCellarVolume / totalCellarCapacity) * 100) : 0;
   const pendingTaskCount = state.tasks.filter(task => task.status !== 'completed').length;
   const urgentAlertCount = alerts.filter(alert => alert.severity === 'critical').length;
+  // Sections group the cellar by what a person is doing, not by which register
+  // owns the data. Every destination sits under a named heading: the previous
+  // collapsible "More tools" group held eight unrelated tabs that could only be
+  // found by hunting through it. Tab ids are untouched, so permissions, deep
+  // links and the command palette keep working unchanged.
   const wineryTabGroups = [
     {
       id: 'overview',
       label: isKa ? 'მიმოხილვა' : 'Overview',
       tabs: [
         { id: 'dashboard', label: t.overview, icon: LayoutDashboard },
+        { id: 'intelligence', label: t.ai_intelligence, icon: BrainCircuitIcon },
       ],
     },
     {
@@ -1088,6 +1119,7 @@ export default function App() {
       tabs: [
         { id: 'intake', label: t.grape_intake || 'Grape Intake', icon: Grape },
         { id: 'cellar', label: isKa ? 'მარანი' : 'Cellar workspace', icon: Wine },
+        { id: 'bottling', label: t.bottling, icon: Package },
       ],
     },
     {
@@ -1095,24 +1127,26 @@ export default function App() {
       label: isKa ? 'მიმდინარე წარმოება' : 'Current production',
       tabs: [
         { id: 'planner', label: isKa ? 'წარმოების გეგმა' : 'Production plan', icon: CalendarRange },
+        { id: 'tasks', label: t.tasks, icon: ClipboardList },
         { id: 'operations', label: isKa ? 'მოვლა და გაზომვები' : 'Treatments & checks', icon: Workflow },
         { id: 'fermentation', label: t.fermentation, icon: Activity },
         { id: 'transfers', label: t.transfers, icon: GitCommit },
         { id: 'labs', label: t.lab_analysis, icon: TestTube },
-        { id: 'bottling', label: t.bottling, icon: Package },
       ],
     },
     {
-      id: 'tools',
-      label: isKa ? 'მეტი ხელსაწყო' : 'More tools',
-      collapsible: true,
+      id: 'quality',
+      label: isKa ? 'ხარისხი და მიკვლევადობა' : 'Quality & traceability',
       tabs: [
-        { id: 'intelligence', label: t.ai_intelligence, icon: BrainCircuitIcon },
-        { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
-        { id: 'inventory', label: t.inventory, icon: Boxes },
         { id: 'quality', label: isKa ? 'ხარისხი' : 'Quality SOPs', icon: ShieldCheck },
-        { id: 'tasks', label: t.tasks, icon: ClipboardList },
+        { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
         { id: 'notes', label: t.notes, icon: FileText },
+      ],
+    },
+    {
+      id: 'resources',
+      label: isKa ? 'ხელსაწყოები' : 'Tools',
+      tabs: [
         { id: 'calculators', label: t.calculators, icon: TestTube },
         { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon },
       ],
@@ -1138,18 +1172,6 @@ export default function App() {
       tabs: group.tabs.filter((tab) => canViewModule('gvino', tab.id)),
     }))
     .filter((group) => group.tabs.length > 0);
-  useEffect(() => {
-    const activeGroup = accessibleWineryTabGroups.find(group => (
-      group.tabs.some(tab => tab.id === activeWineryNavTab)
-    ));
-    if (!activeGroup?.collapsible) return;
-    setExpandedWineryGroups(previous => {
-      if (previous.has(activeGroup.id)) return previous;
-      const next = new Set(previous);
-      next.add(activeGroup.id);
-      return next;
-    });
-  }, [accessibleWineryTabGroups, activeWineryNavTab]);
   useEffect(() => {
     if (!state.isLoggedIn || !taskDeepLinkId) return;
     if (!canViewWineryTasks) {
@@ -1261,28 +1283,34 @@ export default function App() {
       modules: [{ id: 'gvino', label: t.nav_gvino || 'Gvino', icon: Wine }],
     },
     {
+      // Ordered as goods actually move: materials in, then bought, then
+      // bottled stock, then shipped — and recall, which reaches back through
+      // all of it. Costs and Analytics used to sit here too; they report on
+      // the business rather than running it, so they moved to Records.
       id: 'business',
-      label: isKa ? 'ბიზნესი' : 'Business',
+      label: isKa ? 'მარაგი და გაყიდვები' : 'Stock & Sales',
       icon: BadgeDollarSign,
-      primary: 'sales',
+      primary: 'inventory',
       modules: [
-        { id: 'sales', label: t.nav_sales || 'Sales', icon: Truck },
-        { id: 'storage', label: t.nav_storage || 'Storage', icon: Warehouse },
-        { id: 'recall', label: isKa ? 'პროდუქტის გაწვევა' : 'Product Recall', icon: AlertOctagon },
+        { id: 'inventory', label: isKa ? 'მასალები' : 'Materials', icon: Boxes },
         { id: 'procurement', label: isKa ? 'შესყიდვა' : 'Purchasing', icon: ShoppingCart },
-        { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
-        { id: 'analytics', label: t.nav_analytics || 'Analytics', icon: BarChart3 },
+        { id: 'storage', label: isKa ? 'მზა პროდუქცია' : 'Finished goods', icon: Warehouse },
+        { id: 'sales', label: isKa ? 'შეკვეთები და გაგზავნა' : 'Orders & dispatch', icon: Truck },
+        { id: 'recall', label: isKa ? 'პროდუქტის გაწვევა' : 'Product Recall', icon: AlertOctagon },
       ],
     },
     {
+      // Everything you look up or produce a report from, rather than work in.
       id: 'documents',
-      label: isKa ? 'დოკუმენტები' : 'Documents',
+      label: isKa ? 'ჩანაწერები' : 'Records',
       icon: FileSpreadsheet,
       primary: 'docs',
       modules: [
         { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
         { id: 'certification', label: isKa ? 'სერტიფიცირება' : 'Certification', icon: BadgeCheck },
         { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
+        { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
+        { id: 'analytics', label: t.nav_analytics || 'Analytics', icon: BarChart3 },
       ],
     },
     {
@@ -1311,6 +1339,111 @@ export default function App() {
   const activeWineryTab = accessibleWineryTabGroups
     .flatMap(group => group.tabs)
     .find(tab => tab.id === activeWineryNavTab);
+
+  // One sidebar, three sources. The cellar lists its tabs, the vineyard lists
+  // its own, and every other group lists the modules it contains — so the
+  // navigation reads the same wherever you are.
+  const workspaceNavSections: WorkspaceNavSection[] = activeModuleGroup.id === 'cellar'
+    ? accessibleWineryTabGroups.map(group => ({
+      id: group.id,
+      label: group.label,
+      items: group.tabs.map(tab => ({
+        id: tab.id,
+        label: tab.label,
+        icon: tab.icon,
+        active: activeWineryNavTab === tab.id,
+        onSelect: () => state.setActiveTab(tab.id),
+      })),
+    }))
+    : activeModuleGroup.id === 'vineyard'
+      ? vaziNavigationGroups(state.lang)
+        .map(group => ({
+          id: group.id,
+          label: group.label,
+          items: group.items
+            .filter(item => canViewModule('vazi', item.id))
+            .map(item => ({
+              id: item.id,
+              label: item.label,
+              icon: item.icon,
+              active: vaziTab === item.id,
+              onSelect: () => setVaziTab(item.id),
+            })),
+        }))
+        .filter(group => group.items.length > 0)
+      : [{
+        id: activeModuleGroup.id,
+        label: activeModuleGroup.label,
+        items: activeModuleGroup.modules.map(mod => ({
+          id: mod.id,
+          label: mod.label,
+          icon: mod.icon,
+          active: state.activeModule === mod.id,
+          onSelect: () => switchModule(mod.id),
+        })),
+      }];
+  // Cellar-only context card pinned above the sidebar sections.
+  const cellarFocusSummary = (
+    <div className="app-sidebar-summary hidden lg:block mb-3 p-3 dark:border-stone-800 dark:bg-stone-900/90">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
+            {isKa ? 'დღის ფოკუსი' : 'Today focus'}
+          </span>
+          <strong className="mt-1 block text-sm font-black text-stone-900 dark:text-amber-100">
+            {activeWineryTab?.label || activeModuleGroup.label}
+          </strong>
+        </div>
+        <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
+          urgentAlertCount > 0
+            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
+            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
+        }`}>
+          {urgentAlertCount > 0 ? `${urgentAlertCount} ${isKa ? 'გადაუდებელი' : 'urgent'}` : (isKa ? 'სტაბილური' : 'steady')}
+        </span>
+      </div>
+      {(canViewWineryTasks || canViewWineryFermentation) && (
+        <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+          {canViewWineryTasks && (
+            <button type="button" onClick={() => state.setActiveTab('tasks')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
+              <span className="text-stone-400">{t.tasks || 'Tasks'}</span>
+              <strong className="text-sm text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
+            </button>
+          )}
+          {canViewWineryFermentation && (
+            <button type="button" onClick={() => state.setActiveTab('fermentation')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
+              <span className="text-stone-400">{isKa ? 'დუღილი' : 'Ferments'}</span>
+              <strong className="text-sm text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
+            </button>
+          )}
+        </div>
+      )}
+      {canViewWineryVessels && (
+      <div className="mt-2.5">
+        <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
+          <span>{isKa ? 'ტევადობა' : 'Capacity'}</span>
+          <span>{cellarCapacityPct}%</span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
+          <div
+            className={`h-full rounded-full ${cellarCapacityPct > 85 ? 'bg-amber-500' : 'bg-[#4e0e15]'}`}
+            style={{ width: `${Math.min(100, cellarCapacityPct)}%` }}
+          />
+        </div>
+        <span className="mt-1.5 block text-[9px] font-semibold text-stone-400">
+          {isKa
+            ? `${occupiedTanksCount} დაკავებული ჭურჭელი · საშ. ${averageOccupiedTemp} °C`
+            : `${occupiedTanksCount} occupied vessels · avg ${averageOccupiedTemp} °C`}
+        </span>
+      </div>
+      )}
+    </div>
+  );
+  const workspaceMobileLabel = activeModuleGroup.id === 'cellar'
+    ? (isKa ? 'მარნის განყოფილება' : 'Winery section')
+    : activeModuleGroup.id === 'vineyard'
+      ? (isKa ? 'ვენახის განყოფილება' : 'Vineyard section')
+      : activeModuleGroup.label;
   useEffect(() => {
     if (!state.isLoggedIn) return;
     if (state.activeModule === 'gvino' && state.activeTab === 'qvevri') {
@@ -1325,9 +1458,9 @@ export default function App() {
       }
       return;
     }
-    if (state.activeModule === 'gvino' && ['recall', 'procurement'].includes(state.activeTab)) {
+    if (state.activeModule === 'gvino' && ['recall', 'procurement', 'inventory'].includes(state.activeTab)) {
       if (canViewModule(state.activeTab)) {
-        state.setActiveModule(state.activeTab as 'recall' | 'procurement');
+        state.setActiveModule(state.activeTab as 'recall' | 'procurement' | 'inventory');
         return;
       }
       const fallbackTab = firstVisibleWineryTab(state.currentUser.role);
@@ -1347,6 +1480,19 @@ export default function App() {
     // route/role dependencies below are the events this repair effect handles.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.isLoggedIn, state.currentUser.role, state.currentUser.isMasterAdmin, state.activeModule, state.activeTab]);
+
+  // A role that cannot open the vineyard screen it last had is moved to one it
+  // can, the same way the cellar repairs an unreachable tab above.
+  useEffect(() => {
+    if (!state.isLoggedIn) return;
+    if (canViewModule('vazi', vaziTab)) return;
+    const fallback = vaziNavigationGroups(state.lang)
+      .flatMap(group => group.items)
+      .find(item => canViewModule('vazi', item.id));
+    if (fallback) setVaziTab(fallback.id);
+    // canViewModule is render-derived; the scalar role/tab pair is the event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isLoggedIn, state.currentUser.role, vaziTab, state.lang]);
 
   const switchModule = (moduleId: string) => {
     state.setActiveModule(moduleId as any);
@@ -2184,10 +2330,22 @@ export default function App() {
             setToastMessage={state.setToastMessage}
           />
         </Suspense>
-      ) : state.activeModule === 'vazi' ? (
-        <main className="app-content flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6 flex flex-col">
+      ) : (
+        <WorkspaceShell
+          sections={workspaceNavSections}
+          mobileLabel={workspaceMobileLabel}
+          sectionsLabel={isKa ? 'განყოფილებები' : 'Sections'}
+          collapseLabel={isKa ? 'მენიუს ჩაკეცვა' : 'Collapse menu'}
+          expandLabel={isKa ? 'მენიუს გაშლა' : 'Expand menu'}
+          collapsed={state.isSidebarCollapsed}
+          onToggleCollapsed={() => state.setIsSidebarCollapsed(!state.isSidebarCollapsed)}
+          summary={activeModuleGroup.id === 'cellar' ? cellarFocusSummary : undefined}
+        >
+        {state.activeModule === 'vazi' ? (
           <Suspense fallback={<ModuleLoader />}>
             <VaziModule
+              activeTab={vaziTab}
+              onTabChange={setVaziTab}
               lang={state.lang}
               currentUser={state.currentUser}
               blocks={state.blocks}
@@ -2231,8 +2389,7 @@ export default function App() {
               canCreateTask={vineyardPermissions.canCreateTask}
             />
           </Suspense>
-        </main>
-      ) : state.activeModule === 'portal' ? (
+        ) : state.activeModule === 'portal' ? (
         <Suspense fallback={<ModuleLoader />}>
           <DashboardTab
             lang={state.lang}
@@ -2261,7 +2418,7 @@ export default function App() {
           />
         </Suspense>
       ) : state.activeModule === 'work' ? (
-        <main className="app-content mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6">
+        <>
           <Suspense fallback={<ModuleLoader />}>
             <OperationsControlTab
               lang={state.lang}
@@ -2287,7 +2444,7 @@ export default function App() {
               setToastMessage={state.setToastMessage}
             />
           </Suspense>
-        </main>
+        </>
       ) : state.activeModule === 'integrations' ? (
         <Suspense fallback={<ModuleLoader />}>
           <IntegrationHubTab
@@ -2366,6 +2523,22 @@ export default function App() {
             canManageAutomation={canAccess(state.currentUser.role, 'costs', 'update') && billingAllows('production_cost_tracking')}
           />
         </Suspense>
+      ) : state.activeModule === 'inventory' ? (
+        <Suspense fallback={<ModuleLoader />}>
+          <InventoryTab
+            lang={state.lang}
+            inventory={state.inventory}
+            cellarOps={state.cellarOps}
+            onUpdateInventory={state.setInventory}
+            canCreateInventory={canAccess(state.currentUser.role, 'inventory', 'create')}
+            canUpdateInventory={canAccess(state.currentUser.role, 'inventory', 'update')}
+            canDeleteInventory={canAccess(state.currentUser.role, 'inventory', 'delete')}
+            canPostInvoiceCosts={canAccess(state.currentUser.role, 'costs', 'create') && billingAllows('data_import_export')}
+            accountingCurrency={state.companyProfile.currency || 'GEL'}
+            onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
+            onOpenProcurement={openProcurement}
+          />
+        </Suspense>
       ) : state.activeModule === 'storage' ? (
         <Suspense fallback={<ModuleLoader />}>
           <StorageTab
@@ -2422,7 +2595,7 @@ export default function App() {
           />
         </Suspense>
       ) : state.activeModule === 'recall' ? (
-        <main className="app-content mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6">
+        <>
           <Suspense fallback={<ModuleLoader />}>
             <RecallCockpitTab
               lang={state.lang}
@@ -2449,9 +2622,9 @@ export default function App() {
               setToastMessage={state.setToastMessage}
             />
           </Suspense>
-        </main>
+        </>
       ) : state.activeModule === 'procurement' ? (
-        <main className="app-content mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6">
+        <>
           <Suspense fallback={<ModuleLoader />}>
             <ProcurementTab
               lang={state.lang}
@@ -2468,7 +2641,7 @@ export default function App() {
               setToastMessage={state.setToastMessage}
             />
           </Suspense>
-        </main>
+        </>
       ) : state.activeModule === 'analytics' ? (
         billingAllows('advanced_reports') ? (
           <Suspense fallback={<ModuleLoader />}>
@@ -2487,14 +2660,14 @@ export default function App() {
             />
           </Suspense>
         ) : (
-          <main className="mx-auto w-full max-w-3xl flex-1 p-6">
+          <>
             <div className="rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center dark:border-amber-900 dark:bg-amber-950/30">
               <BarChart3 className="mx-auto h-10 w-10 text-amber-700 dark:text-amber-300" />
               <h2 className="mt-4 font-serif text-2xl font-semibold text-stone-950 dark:text-white">{isKa ? 'გაფართოებული ანგარიშები' : 'Advanced reports'}</h2>
               <p className="mx-auto mt-2 max-w-xl text-sm text-stone-600 dark:text-stone-300">{isKa ? 'წლების შედარება და მარჟის გაფართოებული ანალიზი ხელმისაწვდომია Professional გეგმიდან.' : 'Year comparison and advanced margin analysis are available on the Professional plan and above.'}</p>
               <button type="button" onClick={() => window.location.assign('/pricing')} className="mt-5 min-h-11 rounded-xl bg-[#651522] px-5 text-xs font-black text-white">{isKa ? 'გეგმების ნახვა' : 'View plans'}</button>
             </div>
-          </main>
+          </>
         )
       ) : state.activeModule === 'docs' ? (
         <Suspense fallback={<ModuleLoader />}>
@@ -2523,158 +2696,7 @@ export default function App() {
           />
         </Suspense>
       ) : (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 lg:p-6 flex flex-col lg:flex-row gap-6">
-
-          {/* Sticky sidebar */}
-          <aside className={`app-sidebar shrink-0 w-full ${state.isSidebarCollapsed ? 'lg:w-16' : 'lg:w-64'} lg:self-start lg:sticky lg:top-20 lg:max-h-[calc(100dvh-9rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1 lg:pb-2 lg:[scrollbar-gutter:stable] transition-[width] duration-300`}>
-            <div className="lg:hidden rounded-xl border border-stone-200 bg-white p-3 shadow-xs dark:bg-stone-900 dark:border-stone-800">
-              <label htmlFor="mobile-winery-section" className="mb-1.5 block text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">
-                {isKa ? 'მარნის განყოფილება' : 'Winery section'}
-              </label>
-              <select
-                id="mobile-winery-section"
-                value={activeWineryNavTab}
-                onChange={(event) => state.setActiveTab(event.target.value)}
-                className="w-full border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm font-bold text-stone-800 dark:bg-stone-950 dark:border-stone-700 dark:text-stone-100"
-              >
-                {accessibleWineryTabGroups.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.tabs.map((tab) => (
-                      <option key={tab.id} value={tab.id}>{tab.label}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </div>
-
-            {!state.isSidebarCollapsed && (
-              <div className="app-sidebar-summary hidden lg:block mb-3 p-3 dark:border-stone-800 dark:bg-stone-900/90">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
-                      {isKa ? 'დღის ფოკუსი' : 'Today focus'}
-                    </span>
-                    <strong className="mt-1 block text-sm font-black text-stone-900 dark:text-amber-100">
-                      {activeWineryTab?.label || activeModuleGroup.label}
-                    </strong>
-                  </div>
-                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
-                    urgentAlertCount > 0
-                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
-                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
-                  }`}>
-                    {urgentAlertCount > 0 ? `${urgentAlertCount} ${isKa ? 'გადაუდებელი' : 'urgent'}` : (isKa ? 'სტაბილური' : 'steady')}
-                  </span>
-                </div>
-                {(canViewWineryTasks || canViewWineryFermentation) && (
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
-                    {canViewWineryTasks && (
-                      <button type="button" onClick={() => state.setActiveTab('tasks')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-                        <span className="text-stone-400">{t.tasks || 'Tasks'}</span>
-                        <strong className="text-sm text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
-                      </button>
-                    )}
-                    {canViewWineryFermentation && (
-                      <button type="button" onClick={() => state.setActiveTab('fermentation')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-                        <span className="text-stone-400">{isKa ? 'დუღილი' : 'Ferments'}</span>
-                        <strong className="text-sm text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
-                      </button>
-                    )}
-                  </div>
-                )}
-                {canViewWineryVessels && (
-                <div className="mt-2.5">
-                  <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
-                    <span>{isKa ? 'ტევადობა' : 'Capacity'}</span>
-                    <span>{cellarCapacityPct}%</span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-                    <div
-                      className={`h-full rounded-full ${cellarCapacityPct > 85 ? 'bg-amber-500' : 'bg-[#4e0e15]'}`}
-                      style={{ width: `${Math.min(100, cellarCapacityPct)}%` }}
-                    />
-                  </div>
-                  <span className="mt-1.5 block text-[9px] font-semibold text-stone-400">
-                    {isKa
-                      ? `${occupiedTanksCount} დაკავებული ჭურჭელი · საშ. ${averageOccupiedTemp} °C`
-                      : `${occupiedTanksCount} occupied vessels · avg ${averageOccupiedTemp} °C`}
-                  </span>
-                </div>
-                )}
-              </div>
-            )}
-
-            <div className="hidden lg:flex items-center justify-between px-1 pb-2 mb-1 border-b border-[#e8dfd5]/70 dark:border-stone-800">
-              {!state.isSidebarCollapsed && <span className="text-[10px] font-mono text-stone-400 uppercase tracking-[0.15em] font-bold">{isKa ? 'განყოფილებები' : 'Sections'}</span>}
-              <button
-                onClick={() => state.setIsSidebarCollapsed(!state.isSidebarCollapsed)}
-                className="ml-auto p-1.5 text-stone-400 hover:text-[#4e0e15] hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
-                title={state.isSidebarCollapsed ? (isKa ? 'მენიუს გაშლა' : 'Expand menu') : (isKa ? 'მენიუს ჩაკეცვა' : 'Collapse menu')}
-              >
-                {state.isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-              </button>
-            </div>
-
-            <div className="hidden lg:flex lg:flex-col gap-3 lg:overflow-visible">
-              {accessibleWineryTabGroups.map(group => {
-                const isExpanded = !group.collapsible
-                  || state.isSidebarCollapsed
-                  || expandedWineryGroups.has(group.id);
-                return (
-                <div key={group.id} className="space-y-1">
-                  {!state.isSidebarCollapsed && (
-                    group.collapsible ? (
-                      <button
-                        type="button"
-                        onClick={() => setExpandedWineryGroups(previous => {
-                          const next = new Set(previous);
-                          if (next.has(group.id)) next.delete(group.id);
-                          else next.add(group.id);
-                          return next;
-                        })}
-                        aria-expanded={isExpanded}
-                        className="flex w-full items-center justify-between px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
-                      >
-                        <span>{group.label}</span>
-                        <ChevronDown className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                      </button>
-                    ) : (
-                      <div className="px-3 pt-1 pb-0.5 text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
-                        {group.label}
-                      </div>
-                    )
-                  )}
-                  {isExpanded && <div className="space-y-1">
-                    {group.tabs.map(tab => {
-                      const Icon = tab.icon;
-                      const isActive = activeWineryNavTab === tab.id;
-                      return (
-                        <button
-                          key={tab.id}
-                          onClick={() => state.setActiveTab(tab.id)}
-                          title={tab.label}
-                          aria-current={isActive ? 'page' : undefined}
-                          className={`group shrink-0 lg:w-full flex items-center gap-2.5 px-3 py-2 lg:py-2.5 rounded-[10px] text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
-                            state.isSidebarCollapsed ? 'lg:justify-center' : ''
-                          } ${
-                            isActive
-                              ? 'bg-[#f0e6e8] text-[#651522] dark:bg-[#3a171d] dark:text-amber-100'
-                              : 'text-stone-600 hover:text-stone-950 hover:bg-stone-100 dark:text-stone-300 dark:hover:text-stone-100 dark:hover:bg-stone-900'
-                          }`}
-                        >
-                          <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#651522] dark:text-amber-200' : 'text-stone-400 group-hover:text-stone-700 dark:text-stone-500 dark:group-hover:text-stone-300'}`} />
-                          <span className={state.isSidebarCollapsed ? 'lg:hidden' : ''}>{tab.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>}
-                </div>
-              )})}
-            </div>
-          </aside>
-
-          {/* Content Tabs Area */}
-          <section className="app-content flex-1 min-w-0 space-y-4">
+        <>
             {!canViewModule('gvino', state.activeTab) ? (
               <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
                 {isKa
@@ -2985,22 +3007,6 @@ export default function App() {
             )}
 
             {/* H. RAW INVENTORY STOCK */}
-            {state.activeTab === 'inventory' && (
-              <InventoryTab
-                lang={state.lang}
-                inventory={state.inventory}
-                cellarOps={state.cellarOps}
-                onUpdateInventory={state.setInventory}
-                canCreateInventory={canAccess(state.currentUser.role, 'inventory', 'create')}
-                canUpdateInventory={canAccess(state.currentUser.role, 'inventory', 'update')}
-                canDeleteInventory={canAccess(state.currentUser.role, 'inventory', 'delete')}
-                canPostInvoiceCosts={canAccess(state.currentUser.role, 'costs', 'create') && billingAllows('data_import_export')}
-                accountingCurrency={state.companyProfile.currency || 'GEL'}
-                onApplyInvoiceReceiptCommandResponse={state.applyInvoiceReceiptCommandResponse}
-                onOpenProcurement={openProcurement}
-              />
-            )}
-
             {/* H2. RECURRING QUALITY SOPS */}
             {state.activeTab === 'quality' && (
               <QualitySopTab
@@ -3122,9 +3128,9 @@ export default function App() {
 
             </Suspense>
             )}
-          </section>
-
-        </main>
+        </>
+        )}
+        </WorkspaceShell>
       )}
 
       {/* SYNC TROUBLESHOOTER DIAGNOSTICS & RESOLUTION MODAL */}

@@ -5,6 +5,7 @@ import {
   clearWorkspaceRoute,
   parseRecordRoute,
   parseWorkspaceRoute,
+  moduleUsesTabs,
   recordRouteMatches,
   routeCarriesOneShotAction,
   workspaceRouteMatches,
@@ -64,6 +65,14 @@ export function useWorkspaceRoute({
   setSelectedTankId,
 }: WorkspaceRouteOptions): void {
   const hasSyncedInitialRoute = useRef(false);
+  /**
+   * Set while a destination read out of the URL is still on its way into React
+   * state. Both effects run in the same commit, so without this the mirror
+   * below would run with the pre-adoption state and write the *old* destination
+   * over the link the user just opened — losing it before the adopt effect's
+   * update ever landed.
+   */
+  const pendingUrlAdoption = useRef(false);
 
   // Adopt a destination named in the URL, and follow Back/Forward.
   useEffect(() => {
@@ -73,6 +82,7 @@ export function useWorkspaceRoute({
       const route = parseWorkspaceRoute(window.location.search);
       if (route.module) setActiveModule(route.module);
       if (route.tab) setActiveTab(route.tab);
+      pendingUrlAdoption.current = Boolean(route.module || route.tab);
     };
 
     applyFromUrl();
@@ -85,8 +95,24 @@ export function useWorkspaceRoute({
     if (typeof window === 'undefined' || !isActive || !workspaceRouteCanMirrorPath(window.location.pathname)) return;
     const isDefaultDestination = activeModule === 'portal' && activeTab === 'dashboard';
     const parsed = parseWorkspaceRoute(window.location.search);
+    // Only the cellar's destination includes a tab. Everywhere else the shared
+    // activeTab is leftover cellar state and must not reach the address bar.
+    const routeTab = moduleUsesTabs(activeModule) ? activeTab : '';
+
+    // A destination named in the URL wins. Stay silent until state has caught
+    // up with it, then fall through so the address is normalised to exactly
+    // what is open.
+    if (pendingUrlAdoption.current) {
+      const adopted = (!parsed.module || parsed.module === activeModule)
+        && (!parsed.tab || parsed.tab === activeTab);
+      if (!adopted) return;
+      pendingUrlAdoption.current = false;
+      // hasSyncedInitialRoute stays false so this first write replaces rather
+      // than pushes: arriving on a link is not a step in the user's history.
+    }
+
     if (
-      workspaceRouteMatches(window.location.search, activeModule, activeTab)
+      workspaceRouteMatches(window.location.search, activeModule, routeTab)
       || (isDefaultDestination && !parsed.module && !parsed.tab)
     ) {
       hasSyncedInitialRoute.current = true;
@@ -95,7 +121,7 @@ export function useWorkspaceRoute({
 
     const search = isDefaultDestination
       ? clearWorkspaceRoute(window.location.search)
-      : applyWorkspaceRoute(window.location.search, activeModule, activeTab);
+      : applyWorkspaceRoute(window.location.search, activeModule, routeTab);
     const target = `${window.location.pathname}${search}${window.location.hash}`;
 
     if (hasSyncedInitialRoute.current) {

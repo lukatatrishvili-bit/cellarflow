@@ -68,7 +68,24 @@ import {
   SectionCard,
   StatusBadge,
 } from './ui/primitives';
-import DashboardLayout, { type DashboardWidgetSpec } from './DashboardLayout';
+import DashboardLayout, { orderDashboardWidgets, type DashboardWidgetSpec } from './DashboardLayout';
+
+/**
+ * Today is the front door, so it opens with the work rather than a wall of
+ * tiles: the queue first, then the actions that clear it, and only then the
+ * numbers. The cellar and vineyard overviews lead with their own state, so
+ * each surface announces which one you are on.
+ */
+const TODAY_WIDGET_ORDER = [
+  'priority-queue',
+  'quick-actions',
+  'metrics',
+  'laboratory-pulse',
+  'cellar-pulse',
+  'vineyard-pulse',
+  'my-tasks',
+  'recent-activity',
+];
 
 interface DashboardTabProps {
   lang: Language;
@@ -90,7 +107,7 @@ interface DashboardTabProps {
   productionPlans?: ProductionPlanItem[];
   recallCases?: RecallCase[];
   onToggleTaskStatus: (taskId: string) => void;
-  setActiveModule: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit') => void;
+  setActiveModule: (mod: 'portal' | 'vazi' | 'gvino' | 'settings' | 'audit' | 'inventory') => void;
   setActiveTab: (tab: string) => void;
   onOpenOnboarding: () => void;
   onOpenWorkItem?: (tab: string, targetId?: string) => void;
@@ -159,21 +176,25 @@ function metricToneClasses(tone: Tone): string {
   return tones[tone];
 }
 
-function alertDestination(alert: Alert): { tab: string; labelEn: string; labelKa: string } {
+/**
+ * Where an alert should take you. Stock alerts land in the Materials module,
+ * which lives outside the cellar tab set; everything else is a cellar tab.
+ */
+function alertDestination(alert: Alert): { module: 'gvino' | 'inventory'; tab?: string; labelEn: string; labelKa: string } {
   switch (alert.category) {
     case 'task':
-      return { tab: 'tasks', labelEn: 'Open tasks', labelKa: 'დავალებების გახსნა' };
+      return { module: 'gvino', tab: 'tasks', labelEn: 'Open tasks', labelKa: 'დავალებების გახსნა' };
     case 'inventory':
-      return { tab: 'inventory', labelEn: 'Open inventory', labelKa: 'მარაგების გახსნა' };
+      return { module: 'inventory', labelEn: 'Open materials', labelKa: 'მასალების გახსნა' };
     case 'so2':
     case 'va':
     case 'lab':
-      return { tab: 'labs', labelEn: 'Open laboratory', labelKa: 'ლაბორატორიის გახსნა' };
+      return { module: 'gvino', tab: 'labs', labelEn: 'Open laboratory', labelKa: 'ლაბორატორიის გახსნა' };
     case 'cleaning':
     case 'temperature':
-      return { tab: 'vessels', labelEn: 'Open vessels', labelKa: 'ჭურჭლების გახსნა' };
+      return { module: 'gvino', tab: 'vessels', labelEn: 'Open vessels', labelKa: 'ჭურჭლების გახსნა' };
     default:
-      return { tab: 'fermentation', labelEn: 'Open fermentation', labelKa: 'დუღილის გახსნა' };
+      return { module: 'gvino', tab: 'fermentation', labelEn: 'Open fermentation', labelKa: 'დუღილის გახსნა' };
   }
 }
 
@@ -319,6 +340,12 @@ export function DashboardTab({
   const enabledModules = currentUser.enabledModules || DEFAULT_MODULES;
   const enabledWidgets = currentUser.enabledWidgets || DEFAULT_WIDGETS;
   const canViewCellarTab = (tabId: string) => canViewAppDestination(currentUser.role, 'gvino', tabId);
+  const canViewAlertDestination = (alert: Alert) => {
+    const destination = alertDestination(alert);
+    return destination.module === 'inventory'
+      ? canViewAppDestination(currentUser.role, 'inventory')
+      : canViewCellarTab(destination.tab as string);
+  };
   const canViewVineyard = enabledModules.includes('vazi') && canViewAppDestination(currentUser.role, 'vazi');
   const canViewCellar = enabledModules.includes('gvino') && canViewAppDestination(currentUser.role, 'gvino');
   const canViewTasks = canViewCellarTab('tasks');
@@ -335,7 +362,7 @@ export function DashboardTab({
   const canViewAudit = enabledWidgets.includes('audit') && canViewAppDestination(currentUser.role, 'audit');
   const today = localISODate();
 
-  const go = (module: 'vazi' | 'gvino' | 'settings' | 'audit', tab?: string) => () => {
+  const go = (module: 'vazi' | 'gvino' | 'settings' | 'audit' | 'inventory', tab?: string) => () => {
     setActiveModule(module);
     if (tab) setActiveTab(tab);
   };
@@ -447,9 +474,7 @@ export function DashboardTab({
     today,
     lang,
   }), [vessels, lots, fermLogs, labLogs, inventory, userTasks, today, lang]);
-  const visibleAlerts = derivedAlerts.filter((alert) => (
-    canViewCellarTab(alertDestination(alert).tab)
-  ));
+  const visibleAlerts = derivedAlerts.filter(canViewAlertDestination);
   const visibleRiskAlerts = visibleAlerts.filter(alert => alert.category !== 'task');
   const criticalAlerts = visibleRiskAlerts.filter((alert) => alert.severity === 'critical');
 
@@ -514,7 +539,7 @@ export function DashboardTab({
 
   const openCellarAlert = (alert: Alert) => {
     const destination = alertDestination(alert);
-    return go('gvino', destination.tab);
+    return go(destination.module, destination.tab);
   };
   const alertTone = (severity: AlertSeverity): AttentionItem['tone'] => (
     severity === 'critical' ? 'danger' : 'warning'
@@ -530,7 +555,7 @@ export function DashboardTab({
         tone: alertTone(alert.severity),
         icon: alert.severity === 'critical' ? AlertTriangle : ShieldCheck,
         actionLabel: isKa ? destination.labelKa : destination.labelEn,
-        onOpen: canViewCellar ? openCellarAlert(alert) : undefined,
+        onOpen: canViewAlertDestination(alert) ? openCellarAlert(alert) : undefined,
       };
     }),
     ...(fermentsMissingReading.length > 0 && canViewCellarTab('fermentation') ? [{
@@ -906,7 +931,7 @@ export function DashboardTab({
             </button>
           </div>
         )}
-        items={[
+        items={orderDashboardWidgets([
           ...(showDashboardMetrics ? [{
             id: 'metrics',
             label: copy('Today’s metrics', 'დღევანდელი მაჩვენებლები'),
@@ -1369,7 +1394,7 @@ export function DashboardTab({
               </SectionCard>
             ),
           }] : []),
-        ] satisfies DashboardWidgetSpec[]}
+        ] satisfies DashboardWidgetSpec[], TODAY_WIDGET_ORDER)}
       />
     </main>
   );

@@ -36,8 +36,11 @@ const NAV_GROUPS: Record<string, string[]> = {
   dashboard: ['portal', 'work'],
   vineyard: ['vazi'],
   cellar: ['gvino'],
-  business: ['sales', 'storage', 'recall', 'procurement', 'costs', 'analytics'],
-  documents: ['docs', 'certification', 'audit'],
+  // "Stock & Sales" — materials in, goods out. Materials was a cellar tab
+  // until it became a module of its own.
+  business: ['inventory', 'procurement', 'storage', 'sales', 'recall'],
+  // "Records" — everything looked up or reported on, including cost reporting.
+  documents: ['docs', 'certification', 'audit', 'costs', 'analytics'],
   settings: ['integrations', 'settings'],
 };
 
@@ -81,12 +84,126 @@ describe('role navigation matrix — exact per-role group visibility', () => {
     'Winemaker':      ['dashboard', 'cellar', 'business', 'documents', 'settings'],
     'Viticulturist':  ['dashboard', 'vineyard', 'cellar', 'documents', 'settings'],
     'Lab Technician': ['dashboard', 'cellar', 'documents', 'settings'],
-    'Cellar Worker':  ['dashboard', 'cellar', 'documents', 'settings'],
+    // Reaches Stock & Sales for Materials alone — stock lookup is part of the job.
+    'Cellar Worker':  ['dashboard', 'cellar', 'business', 'documents', 'settings'],
     'Read-Only':      ['dashboard', 'vineyard', 'cellar', 'business', 'documents', 'settings'],
   };
 
   it.each([...ALL_ROLES])('%s sees exactly the expected module groups', (role) => {
     expect(visibleGroups(role)).toEqual(EXPECTED[role]);
+  });
+});
+
+describe('role navigation matrix — exact per-role destinations', () => {
+  // Group-level visibility is too coarse to notice a module quietly appearing
+  // inside a group a role already had. This table pins every destination, so
+  // "which roles can see this screen" is reviewed whenever it changes.
+  const EXPECTED_MODULES: Record<(typeof ALL_ROLES)[number], Record<string, string[]>> = {
+    'Owner/Admin': {
+      dashboard: ['portal', 'work'],
+      vineyard: ['vazi'],
+      cellar: ['gvino'],
+      business: ['inventory', 'procurement', 'storage', 'sales', 'recall'],
+      documents: ['docs', 'certification', 'audit', 'costs', 'analytics'],
+      settings: ['integrations', 'settings'],
+    },
+    'Winemaker': {
+      dashboard: ['portal', 'work'],
+      cellar: ['gvino'],
+      business: ['inventory', 'procurement', 'recall'],
+      documents: ['docs', 'certification', 'audit'],
+      settings: ['settings'],
+    },
+    'Viticulturist': {
+      dashboard: ['portal', 'work'],
+      vineyard: ['vazi'],
+      cellar: ['gvino'],
+      documents: ['docs', 'certification', 'audit'],
+      settings: ['settings'],
+    },
+    'Lab Technician': {
+      dashboard: ['portal', 'work'],
+      cellar: ['gvino'],
+      documents: ['docs', 'certification', 'audit'],
+      settings: ['settings'],
+    },
+    'Cellar Worker': {
+      dashboard: ['portal', 'work'],
+      cellar: ['gvino'],
+      business: ['inventory'],
+      documents: ['audit'],
+      settings: ['settings'],
+    },
+    'Read-Only': {
+      dashboard: ['portal', 'work'],
+      vineyard: ['vazi'],
+      cellar: ['gvino'],
+      business: ['inventory', 'procurement', 'storage', 'sales', 'recall'],
+      documents: ['docs', 'certification', 'audit', 'costs', 'analytics'],
+      settings: ['settings'],
+    },
+  };
+
+  it.each([...ALL_ROLES])('%s reaches exactly the expected modules', (role) => {
+    const actual = Object.fromEntries(
+      Object.entries(NAV_GROUPS)
+        .map(([group, destinations]) => [group, destinations.filter((dest) => canViewAppDestination(role, dest))])
+        .filter(([, visible]) => (visible as string[]).length > 0),
+    );
+    expect(actual).toEqual(EXPECTED_MODULES[role]);
+  });
+
+  // The cellar sidebar is the longest branch of the tree, so its per-role
+  // shape is worth pinning too.
+  const EXPECTED_CELLAR_TABS: Record<(typeof ALL_ROLES)[number], number> = {
+    'Owner/Admin': 18,
+    'Winemaker': 18,
+    'Viticulturist': 11,
+    'Lab Technician': 12,
+    'Cellar Worker': 14,
+    'Read-Only': 18,
+  };
+
+  it.each([...ALL_ROLES])('%s sees the expected number of cellar destinations', (role) => {
+    expect(visibleWineryTabIds(role)).toHaveLength(EXPECTED_CELLAR_TABS[role]);
+  });
+
+  it('no operational role sees the full owner tree', () => {
+    const owner = visibleWineryTabIds('Owner/Admin').length;
+    for (const role of ['Viticulturist', 'Lab Technician', 'Cellar Worker'] as const) {
+      expect(visibleWineryTabIds(role).length, `${role} sees as much as the owner`).toBeLessThan(owner);
+    }
+  });
+});
+
+describe('vineyard destinations honour their own permissions', () => {
+  // The project register is gated on 'vineyard_projects', which the sync layer
+  // already enforces. Navigation must use the same permission rather than
+  // lumping every vineyard screen under 'vineyard'.
+  it('maps the project register to its own permission module', () => {
+    expect(permissionModuleFor('vazi', 'projects')).toBe('vineyard_projects');
+  });
+
+  it.each(['dashboard', 'blocks', 'scouting', 'ipm_pheno', 'spraying', 'sampling', 'yield', 'weather'])(
+    'maps the "%s" screen to the vineyard permission',
+    (tab) => {
+      expect(permissionModuleFor('vazi', tab)).toBe('vineyard');
+    },
+  );
+
+  it('keeps every vineyard screen reachable for the roles that own the vineyard', () => {
+    for (const role of ['Owner/Admin', 'Viticulturist', 'Read-Only'] as const) {
+      for (const tab of ['dashboard', 'blocks', 'projects', 'scouting', 'spraying', 'sampling', 'yield', 'weather']) {
+        expect(canViewAppDestination(role, 'vazi', tab), `${role} lost vineyard/${tab}`).toBe(true);
+      }
+    }
+  });
+
+  it('keeps the vineyard closed to roles without it', () => {
+    for (const role of ['Winemaker', 'Lab Technician', 'Cellar Worker'] as const) {
+      expect(canViewAppDestination(role, 'vazi')).toBe(false);
+      expect(canViewAppDestination(role, 'vazi', 'projects')).toBe(false);
+    }
   });
 });
 

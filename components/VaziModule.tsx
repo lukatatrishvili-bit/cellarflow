@@ -14,6 +14,7 @@ import type {
   UserProfile
 } from '../lib/wineryState';
 import type { Language } from '../lib/i18n';
+import type { VaziTab } from '../lib/vaziNavigation';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
 import DateInput from './ui/DateInput';
@@ -155,9 +156,10 @@ type NavigationTarget = {
   tab?: string;
 };
 
-type VaziTab = 'dashboard' | 'blocks' | 'projects' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather' | 'ipm_pheno';
-
 interface VaziModuleProps {
+  /** Active screen, owned by the app shell so its sidebar can drive it. */
+  activeTab: VaziTab;
+  onTabChange: (tab: VaziTab) => void;
   lang: Language;
   currentUser: UserProfile;
   blocks: VineyardBlock[];
@@ -572,8 +574,11 @@ export function VaziModule({
   canUpdateVineyardProject = true,
   canDispatchHarvestToGvino = true,
   canCreateTask = true,
+  activeTab,
+  onTabChange,
 }: VaziModuleProps) {
-  const [vaziTab, setVaziTab] = useState<VaziTab>('dashboard');
+  const vaziTab = activeTab;
+  const setVaziTab = onTabChange;
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [harvestDispatchWeights, setHarvestDispatchWeights] = useState<Record<string, string>>({});
   const [harvestDispatchDates, setHarvestDispatchDates] = useState<Record<string, string>>({});
@@ -1077,46 +1082,6 @@ export function VaziModule({
   const selectedAreaDifferencePercent = selectedBlock?.area
     ? ((selectedMappedArea - selectedBlock.area) / selectedBlock.area) * 100
     : 0;
-  const vaziNavigationGroups: Array<{
-    label: string;
-    items: Array<{ id: VaziTab; label: string; icon: React.ComponentType<{ className?: string }> }>;
-  }> = [
-    {
-      label: lang === 'ka' ? 'მთავარი' : 'Overview',
-      items: [
-        { id: 'dashboard', label: lang === 'ka' ? 'მიმოხილვა' : 'Overview', icon: BarChart3 },
-      ],
-    },
-    {
-      label: lang === 'ka' ? 'ვენახი' : 'Vineyard',
-      items: [
-        { id: 'blocks', label: lang === 'ka' ? 'ნაკვეთები' : 'Blocks', icon: Layers },
-        { id: 'projects', label: lang === 'ka' ? 'ახალი პროექტები' : 'New projects', icon: FileText },
-      ],
-    },
-    {
-      label: lang === 'ka' ? 'საველე სამუშაო' : 'Field work',
-      items: [
-        { id: 'scouting', label: lang === 'ka' ? 'დათვალიერება' : 'Scouting', icon: ShieldAlert },
-        { id: 'ipm_pheno', label: lang === 'ka' ? 'დაცვა / IPM' : 'Protection / IPM', icon: Sprout },
-        { id: 'spraying', label: lang === 'ka' ? 'წამლობა' : 'Spraying', icon: Wind },
-      ],
-    },
-    {
-      label: lang === 'ka' ? 'რთველი' : 'Harvest',
-      items: [
-        { id: 'sampling', label: lang === 'ka' ? 'ნიმუშები' : 'Sampling', icon: FlaskConical },
-        { id: 'yield', label: lang === 'ka' ? 'დაგეგმვა' : 'Planning', icon: TrendingUp },
-      ],
-    },
-    {
-      label: lang === 'ka' ? 'პირობები' : 'Conditions',
-      items: [
-        { id: 'weather', label: lang === 'ka' ? 'ამინდი' : 'Weather', icon: Sun },
-      ],
-    },
-  ];
-
   return (
     <div id="vazi-sandbox" className="space-y-6 text-stone-800 animate-fade-in font-sans">
       <datalist id="vazi-georgian-variety-options">
@@ -1164,49 +1129,15 @@ export function VaziModule({
         </div>
       )}
 
-      {/* Task-oriented Vazi navigation and persistent working context. */}
+      {/* Persistent working context. Navigation itself lives in the app shell's
+          sidebar, shared with every other workspace. */}
       <div className="sticky top-0 z-30 rounded-2xl border border-[#e8dfd5] bg-white/95 p-2 shadow-sm backdrop-blur-md">
-        <div className="flex items-start gap-2">
-          <nav
-            aria-label={lang === 'ka' ? 'ვაზის სამუშაო სივრცე' : 'Vazi workspace'}
-            className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1"
-          >
-            {vaziNavigationGroups.map(group => (
-              <div key={group.label} className="flex shrink-0 flex-col gap-1 border-r border-stone-150 pr-2 last:border-r-0 last:pr-0">
-                <span className="px-2 text-[8px] font-extrabold uppercase tracking-[0.16em] text-stone-400">
-                  {group.label}
-                </span>
-                <div className="flex gap-1">
-                  {group.items.map(tb => {
-                    const Icon = tb.icon;
-                    const isActive = vaziTab === tb.id;
-                    return (
-                      <button
-                        key={tb.id}
-                        type="button"
-                        aria-current={isActive ? 'page' : undefined}
-                        onClick={() => openVaziTab(tb.id)}
-                        className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-2 text-[11px] font-bold transition-colors ${
-                          isActive
-                            ? 'border-[#1e2f23] bg-[#1e2f23] text-white shadow-xs'
-                            : 'border-transparent text-[#615c57] hover:border-stone-200 hover:bg-stone-50 hover:text-[#1b1715]'
-                        }`}
-                      >
-                        <Icon className="h-3.5 w-3.5" />
-                        {tb.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </nav>
-
+        <div className="flex items-start justify-end gap-2">
           {canCreateVineyardRecord && (
             <button
               type="button"
               onClick={() => setShowAddBlockModal(true)}
-              className="mt-3 inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold text-white transition-colors hover:bg-emerald-900"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold text-white transition-colors hover:bg-emerald-900"
             >
               <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{lang === 'ka' ? 'ახალი ნაკვეთი' : 'Add block'}</span>

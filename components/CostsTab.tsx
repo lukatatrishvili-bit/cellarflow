@@ -565,7 +565,7 @@ export function CostsTab({
                 <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
                   <button
                     type="button"
-                    onClick={() => onNavigate?.({ module: 'gvino', tab: 'inventory' })}
+                    onClick={() => onNavigate?.({ module: 'inventory' })}
                     className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-stone-700 hover:bg-stone-50 dark:bg-stone-950 dark:border-stone-800 dark:text-stone-200"
                   >
                     <FlaskConical className="w-3.5 h-3.5" /> {ka ? 'ინვენტარი' : 'Open inventory'}

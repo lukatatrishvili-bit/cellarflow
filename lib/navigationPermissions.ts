@@ -14,7 +14,6 @@ export const WINERY_TAB_IDS = [
   'labs',
   'calculators',
   'bottling',
-  'inventory',
   'quality',
   'planner',
   'tasks',
@@ -50,7 +49,6 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
       case 'labs':
       case 'calculators': return 'lab';
       case 'bottling': return 'bottling';
-      case 'inventory': return 'inventory';
       case 'quality': return 'tasks';
       case 'planner': return 'planning';
       case 'tasks':
@@ -60,6 +58,12 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
     }
   }
 
+  // The vineyard's project register carries its own permission, already
+  // enforced on sync. Navigation honours it too, so a role that cannot write
+  // projects does not get a tab it can do nothing with. Every other vineyard
+  // screen is covered by the module-wide 'vineyard' permission.
+  if (moduleId === 'vazi' && tabId === 'projects') return 'vineyard_projects';
+
   const moduleMap: Record<string, PermissionModule> = {
     portal: 'reports',
     work: 'tasks',
@@ -68,6 +72,10 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
     certification: 'certification',
     audit: 'audit',
     costs: 'costs',
+    // Materials moved out of the cellar tab set and became a top-level module,
+    // alongside Purchasing and Finished goods, the same way recall and
+    // procurement were promoted before it.
+    inventory: 'inventory',
     storage: 'storage',
     sales: 'sales',
     recall: 'recall',
