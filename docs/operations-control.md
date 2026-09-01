@@ -119,6 +119,51 @@ Planning has its own permission module: owners and winemakers can edit;
 viticulturists, lab technicians, and cellar workers can view; read-only users
 can view through the standard read-only policy.
 
+## Winery Plan
+
+**Winery Plan** is a standalone operational module, not only a diagram inside
+the vessel register. Its compact command bar keeps the winery identity, view
+switcher, production planner, and return-to-winery action available while the
+map uses the remaining workspace. Access follows the vessel permission: users
+who can view vessels can open the plan, while layout changes require vessel
+update permission.
+
+Top-down is optimized for quick daily decisions. It supports multi-floor plans,
+real-world room dimensions, zones and utilities, pan/zoom/fullscreen, contents,
+temperature, sanitation and work layers, vessel search, label modes, grid
+snapping, automatic arrangement, and drag placement. A selected vessel can open
+its wine lot or details, record an operation, assign future work, record
+sanitation evidence, or begin a destination-aware transfer directly on the map.
+
+The 3D view uses the same vessel, lot, floor, and percentage coordinates as
+Top-down; it does not maintain a parallel layout. It provides an orbiting WebGL
+room with zoom, camera rotation/reset, fullscreen, fill and sanitation context,
+and a physical editor for:
+
+- closed/open and jacketed tanks, insulated or horizontal tanks, IBCs,
+  barrels, qvevri, concrete, and plastic vessels;
+- width, depth, height, clearance/elevation, arbitrary rotation, X/Y placement,
+  and floor assignment;
+- direct drag placement on the cellar floor; and
+- conservative footprint-overlap warnings before the room is finalized.
+
+The server validates the model, dimensions, elevation, rotation, and saved map
+coordinates. Devices without WebGL receive an explicit fallback and can keep
+working in Top-down.
+
+Planning and execution remain separate. **Assign work** creates a production
+plan item with the exact cellar-operation subtype, responsible person, dates,
+instructions, prerequisites, lot, source/destination vessels, and quantity.
+Opening that item later restores the exact operation form. **Record operation**
+opens the execution workflow immediately. Transfers check destination
+cleanliness and headroom; cleaning an empty vessel requires dated sanitation
+evidence rather than an unaudited status toggle.
+
+The lot relationship is bidirectional: vessel actions open the assigned Wine
+Lot command center, and a lot's **Winery plan** action focuses the vessel that
+currently contains it. This keeps spatial location, traceability, planning, and
+execution connected without duplicating wine-lot ownership.
+
 ## Subscription truth
 
 The catalog now sells only capabilities that exist end-to-end. Data import,

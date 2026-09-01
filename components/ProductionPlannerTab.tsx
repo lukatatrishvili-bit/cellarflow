@@ -3,9 +3,11 @@ import {
   AlertTriangle, ArrowRight, BarChart3, CalendarClock, CalendarDays, CalendarRange,
   Check, CheckCircle2, ChevronDown, CircleDot, ClipboardList, Clock3, Columns3, ExternalLink,
   Grape, Lightbulb, ListChecks, Package, Pencil, Plus, Save, Search, Sparkles,
-  Sprout, Trash2, Warehouse, Waves, Wine, Wrench, X,
+  ClipboardCheck, Sprout, Trash2, Warehouse, Waves, Wine, Wrench, X,
 } from 'lucide-react';
 import type { Language } from '../lib/language';
+import WorkOrdersPanel from './WorkOrdersPanel';
+import type { WorkOrder, WorkOrderTemplate } from '../lib/workOrders';
 import type { DailyFermLog, HarvestRecord, LabAnalysis, Task, TaskAssignmentInput, Vessel, VineyardBlock, WineLot } from '../lib/wineryState';
 import {
   allowedProductionPlanStatuses,
@@ -56,9 +58,21 @@ interface ProductionPlannerTabProps {
   ) => Task | void;
   onOpenTask?: (taskId: string) => void;
   setToastMessage?: (message: string | null) => void;
+  /** Work orders group plan items into one assignment; see lib/workOrders.ts. */
+  workOrders?: WorkOrder[];
+  workOrderTemplates?: WorkOrderTemplate[];
+  onRaiseWorkOrder?: (order: WorkOrder, items: ProductionPlanItem[]) => void;
+  onDeleteWorkOrder?: (orderId: string) => void;
+  onSaveWorkOrderTemplate?: (template: WorkOrderTemplate) => void;
+  assignees?: string[];
 }
 
-type PlannerView = 'agenda' | 'flow' | 'calendar';
+type PlannerView = 'agenda' | 'orders' | 'flow' | 'calendar';
+
+const EMPTY_WORK_ORDERS: WorkOrder[] = [];
+const EMPTY_WORK_ORDER_TEMPLATES: WorkOrderTemplate[] = [];
+const EMPTY_ASSIGNEES: string[] = [];
+const noop = () => {};
 type PlannerFilter = 'open' | 'attention' | 'completed' | 'all';
 
 const kinds: ProductionPlanKind[] = ['harvest', 'intake', 'transfer', 'fermentation', 'lab', 'bottling', 'sanitation', 'procurement', 'dispatch', 'other'];
@@ -1041,6 +1055,7 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
           <button type="button" role="tab" aria-selected={view === 'agenda'} onClick={() => setView('agenda')} className={'inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-[10px] font-black ' + (view === 'agenda' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-200' : 'text-stone-500')}><ListChecks className="h-3.5 w-3.5" />{ka ? 'სამუშაო რიგი' : 'Work agenda'}</button>
           <button type="button" role="tab" aria-selected={view === 'flow'} onClick={() => setView('flow')} className={'inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-[10px] font-black ' + (view === 'flow' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-200' : 'text-stone-500')}><Columns3 className="h-3.5 w-3.5" />{ka ? 'ნაკადი' : 'Flow'}</button>
           <button type="button" role="tab" aria-selected={view === 'calendar'} onClick={() => setView('calendar')} className={'inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-[10px] font-black ' + (view === 'calendar' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-200' : 'text-stone-500')}><CalendarDays className="h-3.5 w-3.5" />{ka ? '14 დღე' : '14 days'}</button>
+          <button type="button" role="tab" aria-selected={view === 'orders'} onClick={() => setView('orders')} className={'inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-[10px] font-black ' + (view === 'orders' ? 'bg-white text-[#651522] shadow-sm dark:bg-stone-800 dark:text-amber-200' : 'text-stone-500')}><ClipboardCheck className="h-3.5 w-3.5" />{ka ? 'ორდერები' : 'Work orders'}</button>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row lg:justify-end">
           <label className="relative min-w-0 sm:max-w-xs sm:flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-stone-400" /><input aria-label={ka ? 'გეგმაში ძიება' : 'Search plan'} value={search} onChange={event => setSearch(event.target.value)} placeholder={ka ? 'პარტია, ჭურჭელი, სამუშაო…' : 'Lot, vessel, work…'} className="min-h-10 w-full rounded-xl border border-stone-200 bg-stone-50 pl-9 pr-3 text-xs dark:border-stone-700 dark:bg-stone-950" /></label>
@@ -1050,7 +1065,27 @@ export default function ProductionPlannerTab(props: ProductionPlannerTabProps) {
         </div>
       </section>
 
-      {view === 'calendar' ? (
+      {view === 'orders' ? (
+        <section className="rounded-2xl border border-stone-200 bg-white p-3 shadow-sm dark:border-stone-800 dark:bg-stone-900">
+          <WorkOrdersPanel
+            lang={props.lang}
+            currentUsername={props.currentUsername}
+            orders={props.workOrders || EMPTY_WORK_ORDERS}
+            templates={props.workOrderTemplates || EMPTY_WORK_ORDER_TEMPLATES}
+            productionPlans={props.productionPlans}
+            vessels={props.vessels}
+            lots={props.lots}
+            assignees={props.assignees || EMPTY_ASSIGNEES}
+            canCreate={props.canCreate && Boolean(props.onRaiseWorkOrder)}
+            canDelete={props.canDelete && Boolean(props.onDeleteWorkOrder)}
+            onRaiseOrder={props.onRaiseWorkOrder || noop}
+            onDeleteOrder={props.onDeleteWorkOrder || noop}
+            onSaveTemplate={props.onSaveWorkOrderTemplate}
+            onWorkItem={props.onOpenWorkflow}
+            setToastMessage={props.setToastMessage}
+          />
+        </section>
+      ) : view === 'calendar' ? (
         <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm dark:border-stone-800 dark:bg-stone-900">
           <div className="flex items-center justify-between border-b border-stone-200 p-3 dark:border-stone-800">
             <button type="button" onClick={() => setWindowStart(plusDays(windowStart, -14))} className="rounded-lg border border-stone-200 px-3 py-2 text-xs dark:border-stone-700">← 14</button>

@@ -1,8 +1,10 @@
 import { signAuditEntries } from '../auditHash';
 import {
   automaticOperationCostEntries,
+  computeBlendTransfers,
   materialCostEntryFromOperation,
   resolveCostAutomationSettings,
+  summarizeLot,
   type CostEntry,
 } from '../costing';
 import { CELLAR_OPERATIONS, isQuickCellarOperation } from '../wineryOperations';
@@ -57,6 +59,9 @@ export interface CellarOperationCommandContext {
 }
 
 export interface CellarOperationCommandResult {
+  /** Topping only: the vessel and lot the make-up wine came out of. */
+  sourceVessel?: Vessel;
+  sourceLot?: WineLot;
   operation: CellarOperation;
   lot: WineLot;
   vessel?: Vessel;
@@ -101,6 +106,8 @@ export type CellarOperationCommandErrorCode =
   | 'cellar_operation_lot_inactive'
   | 'cellar_operation_vessel_not_found'
   | 'cellar_operation_destination_vessel_not_found'
+  | 'cellar_operation_source_vessel_not_found'
+  | 'cellar_operation_source_lot_not_found'
   | 'cellar_operation_vessel_mismatch'
   | 'cellar_operation_same_vessel'
   | 'cellar_operation_volume_inconsistent'
@@ -289,6 +296,31 @@ function parseOperation(value: unknown): CellarOperationInput {
       400,
     );
   }
+  const sourceVesselId = optionalRecordId(input.sourceVesselId, 'operation.sourceVesselId');
+  if (sourceVesselId && !meta.needsSourceVessel) {
+    throw new CellarOperationCommandError(
+      'invalid_cellar_operation_payload',
+      'operation.sourceVesselId is not supported for this operation type.',
+      400,
+    );
+  }
+  const toppingVolumeL = finiteNumber(input.toppingVolumeL, 'operation.toppingVolumeL', EPSILON, MAX_QUANTITY);
+  if (toppingVolumeL !== undefined && !meta.needsSourceVessel) {
+    throw new CellarOperationCommandError(
+      'invalid_cellar_operation_payload',
+      'operation.toppingVolumeL is not supported for this operation type.',
+      400,
+    );
+  }
+  // Topping is the whole point of these two fields, so it may not arrive with
+  // only half of the move described.
+  if (meta.needsSourceVessel && (!sourceVesselId || toppingVolumeL === undefined)) {
+    throw new CellarOperationCommandError(
+      'invalid_cellar_operation_payload',
+      'Topping requires both operation.sourceVesselId and operation.toppingVolumeL.',
+      400,
+    );
+  }
   const volumeAfterL = finiteNumber(input.volumeAfterL, 'operation.volumeAfterL', 0, MAX_QUANTITY);
   if (volumeAfterL !== undefined && !meta.affectsVolume) {
     throw new CellarOperationCommandError(
@@ -324,6 +356,8 @@ function parseOperation(value: unknown): CellarOperationInput {
     lotId: requiredRecordId(input.lotId, 'operation.lotId'),
     vesselId: vesselId || null,
     vesselToId: vesselToId || null,
+    ...(sourceVesselId ? { sourceVesselId } : {}),
+    ...(toppingVolumeL !== undefined ? { toppingVolumeL } : {}),
     ...(volumeAfterL !== undefined ? { volumeAfterL } : {}),
     ...(materialId ? { materialId, dose: dose as number } : {}),
     ...(materials.length ? { materials } : {}),
@@ -390,8 +424,8 @@ export function applyCellarOperationCommand(
     throw new CellarOperationCommandError('cellar_operation_audit_id_conflict', 'Audit record id already exists.', 409);
   }
 
-  const input = payload.operation;
-  const lot = currentState.lots.find(item => item.id === input.lotId);
+  const parsedInput = payload.operation;
+  const lot = currentState.lots.find(item => item.id === parsedInput.lotId);
   if (!lot) {
     throw new CellarOperationCommandError('cellar_operation_lot_not_found', 'The wine lot was not found.', 404);
   }
@@ -403,6 +437,49 @@ export function applyCellarOperationCommand(
     );
   }
   const volumeBeforeL = storedQuantity(lot.currentVolume, `Lot ${lot.id}`);
+
+  // Topping draws from a second vessel. Validate that end here, then derive the
+  // topped volume server-side rather than trusting a total the client worked
+  // out — the client only knows how many litres went in.
+  let toppingSource: { vessel: Vessel; lot: WineLot; volumeL: number } | null = null;
+  if (parsedInput.sourceVesselId) {
+    if (parsedInput.sourceVesselId === parsedInput.vesselId) {
+      throw new CellarOperationCommandError(
+        'cellar_operation_same_vessel',
+        'A vessel cannot be topped from itself.',
+        409,
+      );
+    }
+    const sourceVessel = currentState.vessels.find(item => item.id === parsedInput.sourceVesselId);
+    if (!sourceVessel) {
+      throw new CellarOperationCommandError(
+        'cellar_operation_source_vessel_not_found',
+        'The topping source vessel was not found.',
+        404,
+      );
+    }
+    const sourceLot = currentState.lots.find(item => item.id === sourceVessel.assignedLotId);
+    if (!sourceLot) {
+      throw new CellarOperationCommandError(
+        'cellar_operation_source_lot_not_found',
+        'The topping source vessel holds no lot.',
+        409,
+      );
+    }
+    const drawn = roundedQuantity(parsedInput.toppingVolumeL as number);
+    if (storedQuantity(sourceVessel.currentVolume, `Vessel ${sourceVessel.id}`) + EPSILON < drawn) {
+      throw new CellarOperationCommandError(
+        'cellar_operation_volume_inconsistent',
+        'The topping source does not hold that much wine.',
+        409,
+      );
+    }
+    toppingSource = { vessel: sourceVessel, lot: sourceLot, volumeL: drawn };
+  }
+
+  const input = toppingSource
+    ? { ...parsedInput, volumeAfterL: roundedQuantity(volumeBeforeL + toppingSource.volumeL) }
+    : parsedInput;
 
   let vessel: Vessel | undefined;
   let vesselVolumeBefore: number | undefined;
@@ -676,6 +753,46 @@ export function applyCellarOperationCommand(
     lastCommandId: context.commandId,
     lastOperation: description,
   }, timestamp) : undefined;
+  // The source side of a topping: the same litres leave the source vessel and
+  // its lot, and a proportional share of that lot's cost follows the wine.
+  const updatedSourceVessel = toppingSource ? stamped<Vessel>({
+    ...toppingSource.vessel,
+    currentVolume: roundedQuantity(
+      storedQuantity(toppingSource.vessel.currentVolume, `Vessel ${toppingSource.vessel.id}`) - toppingSource.volumeL,
+    ),
+    lastCommandId: context.commandId,
+    lastOperation: description,
+  }, timestamp) : undefined;
+  const updatedSourceLot = toppingSource ? stamped<WineLot>({
+    ...toppingSource.lot,
+    currentVolume: roundedQuantity(
+      storedQuantity(toppingSource.lot.currentVolume, `Lot ${toppingSource.lot.id}`) - toppingSource.volumeL,
+    ),
+    lastCommandId: context.commandId,
+    history: [{
+      date: input.date,
+      type: operationLabel,
+      description,
+      operator: input.operator,
+      sourceRef: operation.id,
+    }, ...(toppingSource.lot.history || [])],
+  }, timestamp) : undefined;
+  const toppingCostEntries = toppingSource
+    ? computeBlendTransfers({
+      destLotId: lot.id,
+      date: input.date,
+      currency: context.currency || 'GEL',
+      createdBy: input.operator || context.actorUsername,
+      sourceRef: operation.id,
+      components: [{
+        lotId: toppingSource.lot.id,
+        volumeMoved: toppingSource.volumeL,
+        lotTotalCost: summarizeLot(toppingSource.lot.id, currentState.costEntries).total,
+        lotVolume: storedQuantity(toppingSource.lot.currentVolume, `Lot ${toppingSource.lot.id}`),
+      }],
+    })
+    : [];
+
   const updatedInventoryItems = materialRecords.map(({ material, usage }) => stamped<InventoryItem>({
     ...material,
     stock: roundedQuantity(material.stock - usage.quantity),
@@ -695,13 +812,19 @@ export function applyCellarOperationCommand(
 
   return {
     state: {
-      lots: currentState.lots.map(item => item.id === updatedLot.id ? updatedLot : item),
-      vessels: updatedVessel
-        ? currentState.vessels.map(item => item.id === updatedVessel.id ? updatedVessel : item)
-        : currentState.vessels,
+      lots: currentState.lots.map(item => {
+        if (item.id === updatedLot.id) return updatedLot;
+        if (updatedSourceLot && item.id === updatedSourceLot.id) return updatedSourceLot;
+        return item;
+      }),
+      vessels: currentState.vessels.map(item => {
+        if (updatedVessel && item.id === updatedVessel.id) return updatedVessel;
+        if (updatedSourceVessel && item.id === updatedSourceVessel.id) return updatedSourceVessel;
+        return item;
+      }),
       inventory: currentState.inventory.map(item => updatedInventoryById.get(item.id) || item),
       cellarOps: [operation, ...currentState.cellarOps],
-      costEntries: [...costEntries, ...currentState.costEntries],
+      costEntries: [...costEntries, ...toppingCostEntries, ...currentState.costEntries],
       auditLogs: [auditLog, ...currentState.auditLogs],
     },
     result: {
@@ -710,8 +833,10 @@ export function applyCellarOperationCommand(
       ...(updatedVessel ? { vessel: updatedVessel } : {}),
       inventoryItems: updatedInventoryItems,
       ...(updatedInventoryItems[0] ? { inventoryItem: updatedInventoryItems[0] } : {}),
-      costEntries,
+      costEntries: [...costEntries, ...toppingCostEntries],
       ...(costEntries[0] ? { costEntry: costEntries[0] } : {}),
+      ...(updatedSourceLot ? { sourceLot: updatedSourceLot } : {}),
+      ...(updatedSourceVessel ? { sourceVessel: updatedSourceVessel } : {}),
       auditLog,
       receipt: {
         operationId: operation.id,

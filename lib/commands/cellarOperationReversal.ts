@@ -72,6 +72,7 @@ export type CellarOperationReversalCommandErrorCode =
   | 'cellar_operation_not_command_created'
   | 'cellar_operation_already_reversed'
   | 'cellar_operation_reversal_snapshot_missing'
+  | 'cellar_operation_reversal_unsupported'
   | 'cellar_operation_reversal_dependency_conflict'
   | 'cellar_operation_reversal_resource_missing'
   | 'cellar_operation_reversal_id_conflict';
@@ -261,6 +262,18 @@ export function applyCellarOperationReversalCommand(
     throw new CellarOperationReversalCommandError(
       'cellar_operation_already_reversed',
       'The original cellar operation has already been reversed.',
+      409,
+    );
+  }
+  // Topping moves wine between two lots and two vessels; the restoration
+  // snapshot describes one of each, so reversing one would put the topped
+  // barrel back and leave the source short. Refused rather than half-applied —
+  // and physically, wine already in a barrel is taken back out by recording the
+  // move, not by undoing the paperwork.
+  if (original.type === 'topping') {
+    throw new CellarOperationReversalCommandError(
+      'cellar_operation_reversal_unsupported',
+      'A topping cannot be reversed. Record the wine coming back out instead.',
       409,
     );
   }

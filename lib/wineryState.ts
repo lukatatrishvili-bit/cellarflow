@@ -77,6 +77,15 @@ export interface Vessel {
   cellarFloorId?: string;
   xGrid?: number; // 0-100 percentage layout position
   yGrid?: number; // 0-100 percentage layout position
+  /** Visual model and real-world dimensions shared by the 2D and 3D winery plan. */
+  planModel?: VesselPlanModel;
+  planWidthMeters?: number;
+  planDepthMeters?: number;
+  planHeightMeters?: number;
+  /** Clearance beneath the vessel body, for legs, stands, or raised equipment. */
+  planElevationMeters?: number;
+  /** Free-form clockwise rotation used by the 3D editor. */
+  planRotationDegrees?: number;
   lastSealedDate?: string; // For Qvevri clay seals
   soilTemperature?: number; // For Qvevri underground soil temps
   qvevriNumber?: string;
@@ -339,6 +348,19 @@ export interface InventoryItem {
     invoiceReceiptId?: string;
   };
 }
+
+export type VesselPlanModel =
+  | 'closed_top_jacket'
+  | 'closed_top'
+  | 'open_top_jacket'
+  | 'open_top'
+  | 'portable'
+  | 'insulated'
+  | 'horizontal_tank'
+  | 'barrel'
+  | 'qvevri'
+  | 'concrete'
+  | 'plastic';
 
 export interface Task {
   id: string;
@@ -709,7 +731,7 @@ export type CellarOperationType =
   | 'crush_destem' | 'pressing' | 'ferment_start' | 'measurement'
   | 'pumpover' | 'punchdown' | 'racking' | 'blending' | 'sulfitation'
   | 'additive' | 'fining' | 'filtration' | 'stabilization'
-  | 'vessel_filling' | 'bottling' | 'cleaning' | 'correction' | 'custom';
+  | 'vessel_filling' | 'bottling' | 'cleaning' | 'correction' | 'topping' | 'custom';
 
 export interface OperationMaterialUsage {
   materialId: string;
@@ -808,6 +830,14 @@ export interface CellarOperation {
   lotName: string;
   vesselId?: string | null;
   vesselToId?: string | null;
+  /** Topping only: the vessel the make-up wine was drawn from. */
+  sourceVesselId?: string | null;
+  /**
+   * Topping only: litres added. Stored as an amount rather than a resulting
+   * total because a lot spread across many barrels is topped one at a time,
+   * and `volumeAfterL` describes the lot, not the barrel.
+   */
+  toppingVolumeL?: number;
   volumeBeforeL?: number;
   volumeAfterL?: number;
   materialId?: string;
@@ -840,6 +870,8 @@ export interface CellarOperationMeta {
   affectsVolume?: boolean;
   /** Moves liquid to a second vessel. */
   needsVesselTo?: boolean;
+  /** Draws liquid FROM a second vessel — topping's make-up wine. */
+  needsSourceVessel?: boolean;
 }
 
 // Empty seed datasets live in ./wineryDefaults (lazy-loaded so they stay out of

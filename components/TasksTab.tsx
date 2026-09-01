@@ -1,5 +1,5 @@
 import React from 'react';
-import { BellRing, ClipboardList, CheckCircle2, ExternalLink, Mail, Trash, UserRound } from 'lucide-react';
+import { BellRing, ClipboardCheck, ClipboardList, CheckCircle2, ExternalLink, Mail, Trash, UserRound } from 'lucide-react';
 import { translations } from '../lib/i18n';
 import type { Language } from '../lib/i18n';
 import type { Task, TaskAssignmentInput } from '../lib/wineryState';
@@ -51,6 +51,13 @@ interface TasksTabProps {
     notification: NonNullable<Task['notification']>,
   ) => void;
   onOpenTaskSource?: (task: Task) => void;
+  /**
+   * Opens the recorder for the planned work behind this task, with its lot,
+   * vessel and operation type already filled in. Saving there settles the task
+   * and the plan item together — the whole point being that a task is finished
+   * by recording the work, not by ticking a box next to it.
+   */
+  onRecordTaskWork?: (task: Task) => void;
   setToastMessage?: (message: string | null) => void;
   currentUsername?: string;
   currentUserName?: string;
@@ -82,6 +89,7 @@ export function TasksTab({
   onAddNewTask,
   onUpdateTaskNotification,
   onOpenTaskSource,
+  onRecordTaskWork,
   setToastMessage,
   currentUsername = '',
   currentUserName = '',
@@ -519,6 +527,9 @@ export function TasksTab({
                       {task.description && <p className="text-xs text-stone-550 mt-1 leading-relaxed">{task.description}</p>}
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-[9.5px] font-semibold text-stone-500">
                         <span className="inline-flex items-center gap-1"><UserRound className="h-3 w-3" aria-hidden="true" /> {task.assignedTo || (isKa ? 'დაუნიშნავი' : 'Unassigned')}</span>
+                        {task.source?.type === 'production_plan' && onRecordTaskWork && task.status !== 'completed' && (
+                          <button type="button" onClick={() => onRecordTaskWork(task)} className="inline-flex min-h-7 items-center gap-1 rounded-md border border-[#651522] bg-[#651522] px-2 text-[9px] font-bold text-amber-50 hover:bg-[#7a1c2b] dark:border-amber-300/40"><ClipboardCheck className="h-3 w-3" aria-hidden="true" />{isKa ? 'ჩაწერა' : 'Record it'}</button>
+                        )}
                         {task.source?.type === 'production_plan' && (
                           <button type="button" onClick={() => onOpenTaskSource?.(task)} disabled={!onOpenTaskSource} className="inline-flex min-h-7 items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 text-[9px] font-bold text-violet-700 enabled:hover:border-violet-400 disabled:cursor-default dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-200"><ExternalLink className="h-3 w-3" aria-hidden="true" />{isKa ? 'საწარმოო გეგმა' : 'Production plan'}</button>
                         )}

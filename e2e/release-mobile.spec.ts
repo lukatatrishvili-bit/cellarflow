@@ -39,8 +39,9 @@ test('cellar map remains focused and self-contained on a phone', async ({ page }
   await page.getByRole('button', { name: 'By vessel', exact: true }).click();
   await page.getByRole('button', { name: 'Cellar plan', exact: true }).click();
 
-  const plan = page.getByTestId('cellar-plan');
-  await expect(plan.getByText('Digital cellar plan', { exact: true })).toBeVisible();
+  const module = page.getByTestId('winery-plan-module');
+  await expect(module.getByRole('navigation', { name: 'Winery plan navigation' })).toBeVisible();
+  const plan = module.getByTestId('cellar-plan');
   await expect(plan.getByRole('button', { name: 'X-ray', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(plan.getByRole('combobox', { name: 'Vessel labels' })).toHaveValue('lot');
   await expect(plan.getByRole('button', { name: 'Open full screen', exact: true })).toBeVisible();

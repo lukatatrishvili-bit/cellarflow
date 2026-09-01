@@ -74,6 +74,19 @@ describe('cellar plan and generated task integrity', () => {
       tasks: [{ ...task, source: { type: 'production_plan', id: 'plan-1', vesselIds: ['T-1'] } }],
     }, undefined)).not.toThrow();
   });
+
+  it('validates persisted 3D vessel models, dimensions, and map coordinates', () => {
+    const vessel = {
+      id: 'T-3D', capacity: 5_000, currentVolume: 0, assignedLotId: null,
+      planModel: 'closed_top_jacket', planWidthMeters: 1.8, planDepthMeters: 1.8,
+      planHeightMeters: 3.6, planElevationMeters: 0.25, planRotationDegrees: 45,
+      xGrid: 42, yGrid: 58,
+    };
+    expect(() => validateSyncPayload(operationalDb(), { vessels: [vessel] }, undefined)).not.toThrow();
+    expect(() => validateSyncPayload(operationalDb(), { vessels: [{ ...vessel, planModel: 'spaceship' }] }, undefined)).toThrow(/invalid 3D plan model/i);
+    expect(() => validateSyncPayload(operationalDb(), { vessels: [{ ...vessel, planHeightMeters: 200 }] }, undefined)).toThrow(/invalid planHeightMeters/i);
+    expect(() => validateSyncPayload(operationalDb(), { vessels: [{ ...vessel, xGrid: -1 }] }, undefined)).toThrow(/invalid xGrid/i);
+  });
 });
 
 const attachment = (fields: Record<string, any>) => ({
@@ -2065,6 +2078,7 @@ describe('sync payload validation', () => {
     };
     const db = operationalDb({ productionPlans: [] });
     expect(() => validateSyncPayload(db, { productionPlans: [{ ...base, endDate: '2026-08-13' }] }, undefined)).toThrow(/cannot end before/i);
+    expect(() => validateSyncPayload(db, { productionPlans: [{ ...base, operationType: 'teleport' }] }, undefined)).toThrow(/invalid cellar operation type/i);
     expect(() => validateSyncPayload(db, { productionPlans: [{ ...base, dependencyIds: ['missing'] }] }, undefined)).toThrow(/unknown dependency/i);
     const cyclic = operationalDb({ productionPlans: [
       { ...base, id: 'plan-1', dependencyIds: ['plan-2'] },

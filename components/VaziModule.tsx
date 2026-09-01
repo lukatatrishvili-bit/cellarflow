@@ -151,6 +151,21 @@ function riskLevelLabel(level: string, lang: Language): string {
     || level;
 }
 
+/** Risk categories reach the UI with English labels from the risk engine, so
+ *  Georgian needs the local agronomic term; every other language keeps the
+ *  engine label. */
+function riskCategoryLabel(item: { category: string; label: string }, lang: Language): string {
+  if (lang !== 'ka') return item.label;
+  return ({
+    downyMildew: 'ჭრაქი',
+    powderyMildew: 'ოიდიუმი',
+    botrytis: 'ბოტრიტისი',
+    waterStress: 'წყლის სტრესი',
+    harvestReadiness: 'რთველის მზადყოფნა',
+    phiConflict: 'PHI კონფლიქტი',
+  } as Record<string, string>)[item.category] || item.label;
+}
+
 type NavigationTarget = {
   module: 'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics';
   tab?: string;
@@ -1043,14 +1058,10 @@ export function VaziModule({
         risk.items.powderyMildew,
         risk.items.botrytis,
       ].sort((a, b) => b.score - a.score)[0];
-      layerLine = lang === 'ka'
-        ? `${item.label}: ${item.score}/100`
-        : `${item.label}: ${item.level} · ${item.score}/100`;
+      layerLine = `${riskCategoryLabel(item, lang)}: ${riskLevelLabel(item.level, lang)} · ${item.score}/100`;
     } else if (mapOverlay === 'moisture') {
       const item = risk.items.waterStress;
-      layerLine = lang === 'ka'
-        ? `წყლის სტრესი: ${item.score}/100`
-        : `Water stress: ${item.level} · ${item.score}/100`;
+      layerLine = `${riskCategoryLabel(item, lang)}: ${riskLevelLabel(item.level, lang)} · ${item.score}/100`;
     } else {
       layerLine = lang === 'ka'
         ? `ფენოლოგია: ${phenologyLabel(block.currentPhenology, lang)}`
@@ -1082,6 +1093,22 @@ export function VaziModule({
   const selectedAreaDifferencePercent = selectedBlock?.area
     ? ((selectedMappedArea - selectedBlock.area) / selectedBlock.area) * 100
     : 0;
+
+  // "Add block" is the one action the whole module offers from the top of the
+  // page. The dashboard hosts it inside its own toolbar row instead of stacking
+  // a second, near-empty strip above the cards.
+  const addBlockButton = canCreateVineyardRecord ? (
+    <button
+      type="button"
+      onClick={() => setShowAddBlockModal(true)}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold text-white transition-colors hover:bg-emerald-900"
+    >
+      <Plus className="h-3.5 w-3.5" />
+      <span className="hidden sm:inline">{lang === 'ka' ? 'ახალი ნაკვეთი' : 'Add block'}</span>
+    </button>
+  ) : null;
+  const showActiveBlockContext = Boolean(selectedBlock) && !['dashboard', 'blocks', 'projects'].includes(vaziTab);
+  const showVaziContextBar = showActiveBlockContext || (canCreateVineyardRecord && vaziTab !== 'dashboard');
   return (
     <div id="vazi-sandbox" className="space-y-6 text-stone-800 animate-fade-in font-sans">
       <datalist id="vazi-georgian-variety-options">
@@ -1131,48 +1158,45 @@ export function VaziModule({
 
       {/* Persistent working context. Navigation itself lives in the app shell's
           sidebar, shared with every other workspace. */}
-      <div className="sticky top-0 z-30 rounded-2xl border border-[#e8dfd5] bg-white/95 p-2 shadow-sm backdrop-blur-md">
-        <div className="flex items-start justify-end gap-2">
-          {canCreateVineyardRecord && (
-            <button
-              type="button"
-              onClick={() => setShowAddBlockModal(true)}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold text-white transition-colors hover:bg-emerald-900"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{lang === 'ka' ? 'ახალი ნაკვეთი' : 'Add block'}</span>
-            </button>
+      {showVaziContextBar && (
+        <div className="sticky top-0 z-30 rounded-2xl border border-[#e8dfd5] bg-white/95 p-2 shadow-sm backdrop-blur-md">
+          {vaziTab !== 'dashboard' && addBlockButton && (
+            <div className="flex items-start justify-end gap-2">
+              {addBlockButton}
+            </div>
+          )}
+
+          {showActiveBlockContext && selectedBlock && (
+            <div className={`flex flex-wrap items-center gap-2 px-1 ${
+              vaziTab !== 'dashboard' && addBlockButton ? 'mt-2 border-t border-stone-150 pt-2' : ''
+            }`}>
+              <label htmlFor="vazi-active-block" className="text-[9px] font-extrabold uppercase tracking-wider text-stone-500">
+                {lang === 'ka' ? 'აქტიური ნაკვეთი' : 'Active block'}
+              </label>
+              <select
+                id="vazi-active-block"
+                value={selectedBlock.id}
+                onChange={event => setSelectedBlockId(event.target.value)}
+                className="min-w-[12rem] rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-[11px] font-bold text-stone-800 outline-none"
+              >
+                {blocks.map(block => (
+                  <option key={block.id} value={block.id}>{block.name} · {block.grapeVariety}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-stone-500">
+                {selectedBlock.area.toLocaleString()} ha · {phenologyLabel(selectedBlock.currentPhenology, lang)}
+              </span>
+              <button
+                type="button"
+                onClick={() => openVaziTab('blocks', selectedBlock.id)}
+                className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-50"
+              >
+                {lang === 'ka' ? 'ნაკვეთის პროფილი' : 'Block profile'} <ArrowRight className="h-3 w-3" />
+              </button>
+            </div>
           )}
         </div>
-
-        {selectedBlock && !['dashboard', 'blocks', 'projects'].includes(vaziTab) && (
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-stone-150 px-1 pt-2">
-            <label htmlFor="vazi-active-block" className="text-[9px] font-extrabold uppercase tracking-wider text-stone-500">
-              {lang === 'ka' ? 'აქტიური ნაკვეთი' : 'Active block'}
-            </label>
-            <select
-              id="vazi-active-block"
-              value={selectedBlock.id}
-              onChange={event => setSelectedBlockId(event.target.value)}
-              className="min-w-[12rem] rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-[11px] font-bold text-stone-800 outline-none"
-            >
-              {blocks.map(block => (
-                <option key={block.id} value={block.id}>{block.name} · {block.grapeVariety}</option>
-              ))}
-            </select>
-            <span className="text-[10px] text-stone-500">
-              {selectedBlock.area.toLocaleString()} ha · {phenologyLabel(selectedBlock.currentPhenology, lang)}
-            </span>
-            <button
-              type="button"
-              onClick={() => openVaziTab('blocks', selectedBlock.id)}
-              className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-50"
-            >
-              {lang === 'ka' ? 'ნაკვეთის პროფილი' : 'Block profile'} <ArrowRight className="h-3 w-3" />
-            </button>
-          </div>
-        )}
-      </div>
+      )}
 
       {(['spraying', 'scouting', 'sampling', 'yield'] as const).includes(vaziTab as any) && !selectedBlock && (
         <div className="rounded-2xl border border-dashed border-[#e8dfd5] bg-white p-10 text-center shadow-sm">
@@ -1225,6 +1249,7 @@ export function VaziModule({
         <DashboardLayout
           dashboardId={`vazi:${currentUser.username}`}
           lang={lang}
+          toolbar={addBlockButton}
           items={[
             {
               id: 'canopy-radar',
@@ -1262,14 +1287,19 @@ export function VaziModule({
                         </div>
                         <span className="shrink-0 rounded border border-amber-100 bg-amber-50 px-2 py-0.5 font-mono text-[9px] font-bold text-amber-700">{phenologyLabel(b.currentPhenology, lang)}</span>
                       </div>
-                      <div className="mt-2 grid grid-cols-3 gap-1.5 text-[9px]">
-                        <span className="rounded-md bg-stone-50 px-2 py-1 text-stone-600"><strong className="block text-stone-850">{b.area} ha</strong>{b.grapeVariety}</span>
-                        <span className="rounded-md bg-sky-50 px-2 py-1 text-sky-800"><strong className="block">{weather ? `${weather.temp}°C` : '—'}</strong>{lang === 'ka' ? 'ამინდი' : 'Weather'}</span>
-                        <span className="rounded-md bg-rose-50 px-2 py-1 text-rose-800">
-                          <strong className="block capitalize" style={primaryRisk ? { color: vaziRiskColor(primaryRisk.level) } : undefined}>
+                      <span className="mt-1.5 block truncate font-mono text-[9px] text-stone-600">
+                        {b.area} ha · {b.grapeVariety}
+                      </span>
+                      <div className="mt-2 grid grid-cols-2 gap-1.5 text-[9px]">
+                        <span className="flex items-baseline justify-between gap-2 rounded-md bg-sky-50 px-2 py-1 text-sky-800">
+                          <span className="truncate">{lang === 'ka' ? 'ამინდი' : 'Weather'}</span>
+                          <strong className="shrink-0 whitespace-nowrap">{weather ? `${weather.temp}°C` : '—'}</strong>
+                        </span>
+                        <span className="flex items-baseline justify-between gap-2 rounded-md bg-rose-50 px-2 py-1 text-rose-800">
+                          <span className="truncate">{lang === 'ka' ? 'მთავარი რისკი' : 'Top risk'}</span>
+                          <strong className="shrink-0 whitespace-nowrap capitalize" style={primaryRisk ? { color: vaziRiskColor(primaryRisk.level) } : undefined}>
                             {primaryRisk ? riskLevelLabel(primaryRisk.level, lang) : '—'}
                           </strong>
-                          {lang === 'ka' ? 'მთავარი რისკი' : 'Top risk'}
                         </span>
                       </div>
                       <span className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-emerald-800">
@@ -1401,10 +1431,13 @@ export function VaziModule({
                   </div>
                 </div>
 
-                {/* Weather Station Forecast Column */}
-                <div className="2xl:col-span-5 min-h-[330px] bg-stone-50/70 border border-[#e8dfd5] rounded-xl p-4 shadow-inner flex flex-col justify-between 2xl:min-h-[430px]">
+                {/* Live microclimate rail. The column is narrow, so every
+                    reading is a full-width row: labels truncate, values stay on
+                    one line, and the panel grows downward instead of squeezing
+                    four tiles into a strip too tight for their own captions. */}
+                <div className="2xl:col-span-5 min-h-[330px] bg-stone-50/70 border border-[#e8dfd5] rounded-xl p-4 shadow-inner flex flex-col 2xl:min-h-[430px]">
                   {(() => {
-                    const block = blocks.find(x => x.id === selectedBlockId) || blocks[0];
+                    const block = blocks.find(x => x.id === mapSelectedBlockId) || blocks[0];
                     if (!block) return null;
 
                     if (!blockWeather) {
@@ -1426,61 +1459,81 @@ export function VaziModule({
                     }
 
                     const { temp, rainMm, wind, humidity } = blockWeather;
+                    // One risk summary drives the whole rail, so the readings,
+                    // the index rows, and the alert always describe the block
+                    // the map has selected.
+                    const riskRows = mapSelectedRisk
+                      ? [mapSelectedRisk.items.downyMildew, mapSelectedRisk.items.botrytis, mapSelectedRisk.items.waterStress]
+                      : [];
                     const topRisk = mapSelectedRisk
                       ? [mapSelectedRisk.items.downyMildew, mapSelectedRisk.items.powderyMildew, mapSelectedRisk.items.botrytis, mapSelectedRisk.items.waterStress, mapSelectedRisk.items.phiConflict]
                         .sort((a, b) => b.score - a.score)[0]
                       : null;
+                    const readings = [
+                      { key: 'temp', label: lang === 'ka' ? 'ტემპერატურა' : 'Temperature', value: `${temp} °C` },
+                      { key: 'rain', label: lang === 'ka' ? 'წვიმა დღეს' : 'Rain today', value: `${rainMm} mm` },
+                      { key: 'wind', label: lang === 'ka' ? 'ქარის მაქს.' : 'Wind max', value: `${wind} km/h` },
+                      { key: 'humidity', label: lang === 'ka' ? 'ტენიანობა' : 'Humidity', value: `${humidity} %` },
+                    ];
 
                     return (
-                      <div className="flex flex-col justify-between h-full space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <strong className="text-xs font-serif font-black text-emerald-950 block">{block.name} {lang === 'ka' ? 'პროგნოზი' : 'Forecast'}</strong>
-                            <span className="text-[9px] text-stone-500 font-mono">GPS: {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)} • Recorded GDD: {computedGDD}</span>
+                      <div className="flex h-full flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2 border-b border-stone-200/70 pb-2.5">
+                          <div className="min-w-0">
+                            <strong className="block font-serif text-xs font-black leading-snug text-emerald-950">{block.name}</strong>
+                            <span className="mt-0.5 block text-[9px] font-bold uppercase tracking-wider text-stone-500">
+                              {lang === 'ka' ? 'პროგნოზი' : 'Forecast'}
+                            </span>
                           </div>
-                          <span className="text-[9px] font-mono font-bold bg-sky-50 text-sky-800 px-2 py-0.5 rounded border border-sky-200">
+                          <span className="shrink-0 whitespace-nowrap rounded border border-sky-200 bg-sky-50 px-2 py-0.5 font-mono text-[9px] font-bold text-sky-800">
                             {lang === 'ka' ? 'ცოცხალი ამინდი' : 'OPEN-METEO LIVE'}
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-stone-850">
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'ტემპერატურა' : 'Temperature'}</span>
-                            <strong className="text-sm font-black mt-0.5 block">{temp}°C</strong>
-                          </div>
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'წვიმა დღეს' : 'Rain Today'}</span>
-                            <strong className="text-sm font-black mt-0.5 block">{rainMm} mm</strong>
-                          </div>
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'ქარის მაქს.' : 'Wind Max'}</span>
-                            <strong className="text-sm font-black mt-0.5 block">{wind} km/h</strong>
-                          </div>
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">{lang === 'ka' ? 'ტენიანობა' : 'Humidity'}</span>
-                            <strong className="text-sm font-black mt-0.5 block">{humidity}%</strong>
-                          </div>
+                        <div className="flex flex-col gap-0.5 font-mono text-[9px] text-stone-500">
+                          <span className="truncate">GPS {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)}</span>
+                          <span className="truncate">{lang === 'ka' ? 'დაფიქსირებული GDD' : 'Recorded GDD'} {computedGDD}</span>
                         </div>
 
-                        {selectedRisk && (
-                          <div className="grid grid-cols-3 gap-2 text-[10px]">
-                            {[
-                              selectedRisk.items.downyMildew,
-                              selectedRisk.items.botrytis,
-                              selectedRisk.items.waterStress,
-                            ].map(item => (
-                              <div key={item.category} className="rounded-lg border border-stone-200 bg-white p-2">
-                                <span className="block font-mono text-[8px] uppercase tracking-wide text-stone-500">{item.label}</span>
-                                <strong className="mt-1 block text-xs font-black capitalize" style={{ color: vaziRiskColor(item.level) }}>{item.level}</strong>
-                              </div>
-                            ))}
+                        <dl className="divide-y divide-stone-150 overflow-hidden rounded-lg border border-stone-200 bg-white">
+                          {readings.map(reading => (
+                            <div key={reading.key} className="flex items-center justify-between gap-3 px-3 py-2">
+                              <dt className="truncate font-mono text-[9px] uppercase tracking-wide text-slate-500 dark:text-slate-400">{reading.label}</dt>
+                              <dd className="shrink-0 whitespace-nowrap text-sm font-black text-stone-850">{reading.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+
+                        {riskRows.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="block font-mono text-[9px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              {lang === 'ka' ? 'რისკის ინდექსი' : 'Risk index'}
+                            </span>
+                            <dl className="divide-y divide-stone-150 overflow-hidden rounded-lg border border-stone-200 bg-white">
+                              {riskRows.map(item => (
+                                <div key={item.category} className="px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <dt className="truncate text-[10px] font-bold text-stone-700">{riskCategoryLabel(item, lang)}</dt>
+                                    <dd className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10px] font-black capitalize" style={{ color: vaziRiskColor(item.level) }}>
+                                      {riskLevelLabel(item.level, lang)}
+                                      <span className="font-mono text-[9px] font-bold text-stone-400">{item.score}</span>
+                                    </dd>
+                                  </div>
+                                  <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-stone-100">
+                                    <div className="h-full rounded-full" style={{ width: `${item.score}%`, backgroundColor: vaziRiskColor(item.level) }} />
+                                  </div>
+                                </div>
+                              ))}
+                            </dl>
                           </div>
                         )}
 
-                        <div className="p-2.5 bg-amber-50/75 border border-amber-200 text-amber-900 rounded-lg flex items-start gap-2 text-[10px] leading-snug">
+                        <div className="mt-auto flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/75 p-2.5 text-[10px] leading-snug text-amber-900">
                           <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                          <div>
-                            <span className="font-bold block text-[10px] leading-none mb-0.5">Agro-alert: {topRisk ? `${topRisk.label} ${topRisk.level}` : `${block.grapeVariety} block`}</span>
+                          <div className="min-w-0">
+                            <span className="mb-0.5 block text-[10px] font-bold leading-none">
+                              {lang === 'ka' ? 'აგრო-შეტყობინება' : 'Agro-alert'}: {topRisk ? `${riskCategoryLabel(topRisk, lang)} — ${riskLevelLabel(topRisk.level, lang)}` : `${block.grapeVariety} block`}
+                            </span>
                             {topRisk
                               ? `${topRisk.reasons.slice(0, 2).join('; ')}. ${topRisk.nextAction}`
                               : `Temperature ${temp} C, humidity ${humidity}%, rainfall ${rainMm} mm, wind ${wind} km/h.`

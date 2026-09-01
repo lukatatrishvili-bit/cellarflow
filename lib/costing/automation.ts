@@ -26,6 +26,7 @@ export const DEFAULT_OPERATION_COST_PROFILES: Record<CellarOperationType, Operat
   bottling: { laborHours: 4, energyKwh: 20 },
   cleaning: { laborHours: 1, energyKwh: 4 },
   correction: { laborHours: 0.5, energyKwh: 0 },
+  topping: { laborHours: 0.2, energyKwh: 0 },
   custom: { laborHours: 1, energyKwh: 0 },
 };
 

@@ -70,6 +70,8 @@ interface Props {
   pastTransfers: CellarTransferRecord[];
   onUpdateTransfers: (transfers: CellarTransferRecord[]) => void;
   onUpdateCostEntries?: (entries: CostEntry[]) => void;
+  /** Fired once a transfer has actually landed, by whichever write path ran. */
+  onTransferLogged?: () => void;
   onApplyTransferCommandResponse?: (response: TransferCommandResponse) => void;
   onApplyTransferReversalCommandResponse?: (response: TransferReversalCommandResponse) => void;
   canExecuteTransfer?: boolean;
@@ -85,6 +87,7 @@ export function TransfersTab({
   onUpdateVessels, onUpdateLots, onAddCellarOperation,
   prefilledSourceId, prefilledDestId, prefilledVolume, clearPrefilled, pastTransfers, onUpdateTransfers,
   onUpdateCostEntries,
+  onTransferLogged,
   onApplyTransferCommandResponse, onApplyTransferReversalCommandResponse,
   canExecuteTransfer = true,
   canConsumeTransferMaterials = false, canReverseTransfer = true,
@@ -313,6 +316,7 @@ export function TransfersTab({
     setOperationReceipt(localizedReceipt(applied.result));
     queueTransferMaterials(applied.result);
     resetTransferForm();
+    onTransferLogged?.();
   };
 
   const handleExecuteTransfer = async (e: React.FormEvent) => {
@@ -361,6 +365,7 @@ export function TransfersTab({
       setOperationReceipt(localizedReceipt(response.result));
       queueTransferMaterials(response.result);
       resetTransferForm();
+      onTransferLogged?.();
     } catch (error) {
       if (error instanceof CommandRequestError
         && error.code === 'command_store_unavailable'

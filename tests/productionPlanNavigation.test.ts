@@ -31,6 +31,7 @@ function actionHarness(navigateResult = true) {
     setTransfer: vi.fn(),
     setLab: vi.fn(),
     setSanitation: vi.fn(),
+    setOperation: vi.fn(),
     setTaskDraft: vi.fn(),
   };
   return actions;
@@ -53,6 +54,14 @@ describe('production plan navigation', () => {
     openProductionPlanItem(plan({ vesselIds: ['T-101', 'Q-01'] }), actions);
 
     expect(actions.setTransfer).not.toHaveBeenCalled();
+  });
+
+  it('returns dedicated sanitation work to the winery plan vessel context', () => {
+    const actions = actionHarness();
+    openProductionPlanItem(plan({ kind: 'sanitation', vesselIds: ['T-105'] }), actions);
+
+    expect(actions.navigate).toHaveBeenCalledWith('gvino', 'winery-plan');
+    expect(actions.setSanitation).toHaveBeenCalledWith('T-105');
   });
 
   it('carries a generated harvest record into grape intake', () => {
@@ -95,5 +104,52 @@ describe('production plan navigation', () => {
       'high',
       'Photograph the seal.\nLot: LOT-1\nVessel: Q-02',
     );
+  });
+
+  it('opens a map-assigned cellar operation in the operation recorder with its context', () => {
+    const actions = actionHarness();
+    openProductionPlanItem(plan({
+      kind: 'other',
+      operationType: 'sulfitation',
+      lotId: 'LOT-1',
+      vesselIds: ['T-101'],
+    }), actions);
+
+    expect(actions.navigate).toHaveBeenCalledWith('gvino', 'operations');
+    expect(actions.setOperation).toHaveBeenCalledWith('LOT-1', 'T-101', 'sulfitation');
+    expect(actions.setTaskDraft).not.toHaveBeenCalled();
+  });
+
+  // The caller remembers what it sent someone off to do, so the recorder's
+  // save can settle the plan item without a second trip to the planner.
+  it('names the recorder that can settle each kind of work', () => {
+    const cases: Array<[Partial<ProductionPlanItem>, string | null]> = [
+      [{ kind: 'transfer', vesselIds: ['T-101', 'Q-01'] }, 'transfer'],
+      [{ kind: 'lab', lotId: 'LOT-1' }, 'lab'],
+      [{ kind: 'sanitation', vesselIds: ['T-105'] }, 'sanitation'],
+      [{ kind: 'intake', blockId: 'block-1' }, 'intake'],
+      [{ kind: 'other', operationType: 'sulfitation', lotId: 'LOT-1' }, 'operation'],
+    ];
+
+    for (const [patch, expected] of cases) {
+      expect(openProductionPlanItem(plan(patch), actionHarness())).toBe(expected);
+    }
+  });
+
+  it('settles nothing for work that only navigates somewhere', () => {
+    for (const kind of ['harvest', 'procurement', 'dispatch', 'fermentation', 'bottling'] as const) {
+      expect(openProductionPlanItem(plan({ kind }), actionHarness())).toBeNull();
+    }
+    expect(openProductionPlanItem(plan({ kind: 'other' }), actionHarness())).toBeNull();
+  });
+
+  it('settles nothing when the operator cannot open the recorder', () => {
+    const actions = actionHarness(false);
+
+    expect(openProductionPlanItem(plan({ kind: 'transfer' }), actions)).toBeNull();
+    expect(openProductionPlanItem(plan({ kind: 'lab' }), actions)).toBeNull();
+    expect(openProductionPlanItem(plan({ kind: 'sanitation' }), actions)).toBeNull();
+    expect(openProductionPlanItem(plan({ kind: 'intake' }), actions)).toBeNull();
+    expect(openProductionPlanItem(plan({ operationType: 'sulfitation' }), actions)).toBeNull();
   });
 });

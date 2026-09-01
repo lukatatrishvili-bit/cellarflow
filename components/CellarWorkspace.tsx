@@ -229,6 +229,7 @@ export default function CellarWorkspace({
   onOpenVesselDetails,
   onLogOperation,
   onPlanTransfer,
+  onLocateOnWineryPlan,
   onCanonicalize,
   canViewLots = true,
   canViewVessels = true,
@@ -344,6 +345,11 @@ export default function CellarWorkspace({
   };
 
   const showVesselPlan = () => {
+    const focusVesselId = selectedVesselId || vessels[0]?.id;
+    if (focusVesselId && onLocateOnWineryPlan) {
+      onLocateOnWineryPlan(focusVesselId);
+      return;
+    }
     setMode('vessels');
     setVesselPresentation('plan');
     setSearchTerm('');
@@ -600,6 +606,8 @@ export default function CellarWorkspace({
             setSelectedVesselId(vesselId);
             setVesselPresentation('register');
           }}
+          onOpenLot={openLot}
+          onLogOperation={onLogOperation}
           onUpdateVessels={onUpdateVessels}
           onUpdateFloors={onUpdateCellarFloors}
           onOpenProductionPlan={onOpenProductionPlan}
@@ -675,6 +683,7 @@ export default function CellarWorkspace({
                 onFocusedLotIdChange={setSelectedLotId}
                 onLogOperation={onLogOperation}
                 onPlanTransfer={onPlanTransfer}
+                onLocateOnWineryPlan={onLocateOnWineryPlan}
               />
               <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
                 <ContextTabs lang={lang} value={contextTab} onChange={setContextTab} />

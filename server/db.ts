@@ -348,6 +348,11 @@ export interface UserDataState {
   purchaseOrders: any[];
   productionPlans: any[];
   recallCases: any[];
+  /** Named, assigned batches of planned work, and the templates they come from. */
+  workOrders: any[];
+  workOrderTemplates: any[];
+  /** Proposed blends that touch no inventory until they are committed. */
+  blendTrials: any[];
   /** Intelligence-layer findings with their review lifecycle. */
   aiFindings: any[];
   integrationHub?: IntegrationHubState;
@@ -410,6 +415,9 @@ export function createEmptyUserData(): UserDataState {
     purchaseOrders: [],
     productionPlans: [],
     recallCases: [],
+    workOrders: [],
+    workOrderTemplates: [],
+    blendTrials: [],
     aiFindings: [],
     integrationHub: createEmptyIntegrationHubState(),
     terroirSharing: { ...DEFAULT_TERROIR_SHARING_SETTINGS },
@@ -483,6 +491,9 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     purchaseOrders: Array.isArray(data.purchaseOrders) ? data.purchaseOrders : [],
     productionPlans: Array.isArray(data.productionPlans) ? data.productionPlans : [],
     recallCases: Array.isArray(data.recallCases) ? data.recallCases : [],
+    workOrders: Array.isArray(data.workOrders) ? data.workOrders : [],
+    workOrderTemplates: Array.isArray(data.workOrderTemplates) ? data.workOrderTemplates : [],
+    blendTrials: Array.isArray(data.blendTrials) ? data.blendTrials : [],
     aiFindings: Array.isArray(data.aiFindings) ? data.aiFindings : [],
     integrationHub: ensureIntegrationHubState(data.integrationHub),
     terroirSharing: normalizeTerroirSharingSettings(

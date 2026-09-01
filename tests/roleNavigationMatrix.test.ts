@@ -156,12 +156,12 @@ describe('role navigation matrix — exact per-role destinations', () => {
   // The cellar sidebar is the longest branch of the tree, so its per-role
   // shape is worth pinning too.
   const EXPECTED_CELLAR_TABS: Record<(typeof ALL_ROLES)[number], number> = {
-    'Owner/Admin': 18,
-    'Winemaker': 18,
+    'Owner/Admin': 20,
+    'Winemaker': 20,
     'Viticulturist': 11,
-    'Lab Technician': 12,
-    'Cellar Worker': 14,
-    'Read-Only': 18,
+    'Lab Technician': 13,
+    'Cellar Worker': 15,
+    'Read-Only': 20,
   };
 
   it.each([...ALL_ROLES])('%s sees the expected number of cellar destinations', (role) => {

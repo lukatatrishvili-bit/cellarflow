@@ -1,6 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWorkspaceRoute } from './useWorkspaceRoute';
 import { normalizeSupportedLanguage, type Language } from '../lib/language';
+import type { SidebarMode } from '../lib/workspaceNavigation';
+import type { WorkOrder, WorkOrderTemplate } from '../lib/workOrders';
+import type { BlendTrial } from '../lib/blendTrials';
+import {
+  fulfilProductionPlanItem,
+  planFulfilmentMessage,
+  type PendingPlanFulfilment,
+  type PlanFulfilmentKind,
+} from '../lib/planFulfilment';
 import {
   SyncQueueManager,
   IndexedDBQueue,
@@ -177,6 +186,7 @@ export function isWineryDatabaseSnapshot(value: unknown): value is Record<string
     'costEntries', 'storageLocations', 'stockMovements', 'invoiceReceipts', 'inventoryMovements', 'salesDispatches',
     'salesOrders', 'supplierPayments', 'certificationRecords', 'attachments',
     'crmLeads', 'aiDrafts', 'qualitySops', 'purchaseOrders', 'productionPlans', 'recallCases',
+    'workOrders', 'workOrderTemplates', 'blendTrials',
   ];
   return arrayKeys.every(key => Array.isArray(candidate[key]))
     && Boolean(candidate.winePricing && typeof candidate.winePricing === 'object' && !Array.isArray(candidate.winePricing))
@@ -411,7 +421,11 @@ export function useWineryState() {
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(createBlankCompanyProfile);
 
   const [activeModule, setActiveModule] = useState<'portal' | 'work' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'inventory' | 'storage' | 'sales' | 'recall' | 'procurement' | 'analytics' | 'master-admin'>('portal');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  // Three states, not two: 'full' labels every destination, 'rail' keeps the
+  // icons and their grouping in 56px, 'hidden' gives the whole width to the
+  // content for the wide tables. Persisted, and migrated from the old boolean
+  // so anyone who had the sidebar collapsed lands in 'rail'.
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>('full');
 
   // Datasets
   const [vessels, setVessels] = useState<Vessel[]>([]);
@@ -455,6 +469,42 @@ export function useWineryState() {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [productionPlans, setProductionPlans] = useState<ProductionPlanItem[]>([]);
   const [recallCases, setRecallCases] = useState<RecallCase[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [workOrderTemplates, setWorkOrderTemplates] = useState<WorkOrderTemplate[]>([]);
+  const [blendTrials, setBlendTrials] = useState<BlendTrial[]>([]);
+
+  // Planned work an operator has been sent off to record. The planner sets it;
+  // whichever recorder saves the matching record settles it.
+  const [pendingPlanFulfilment, setPendingPlanFulfilment] = useState<PendingPlanFulfilment | null>(null);
+  const [planRecordSignal, setPlanRecordSignal] = useState<{ kind: PlanFulfilmentKind; at: string } | null>(null);
+
+  /**
+   * Announce that a recorder just wrote something. Deliberately a signal rather
+   * than a direct settle: several save paths hand the server's own projection
+   * back through `updateAllStates`, and settling inline would compute the next
+   * plan and task arrays from the very state those writes are about to replace.
+   * Resolving in an effect means it always runs against what actually landed.
+   */
+  const signalPlanRecord = (kind: PlanFulfilmentKind): void => {
+    setPlanRecordSignal({ kind, at: new Date().toISOString() });
+  };
+
+  useEffect(() => {
+    if (!planRecordSignal) return;
+    setPlanRecordSignal(null);
+    const settled = fulfilProductionPlanItem({
+      fulfilment: pendingPlanFulfilment,
+      kind: planRecordSignal.kind,
+      items: productionPlans,
+      tasks,
+      completedAt: planRecordSignal.at,
+    });
+    if (!settled.closed) return;
+    setProductionPlans(settled.items);
+    setTasks(settled.tasks);
+    setPendingPlanFulfilment(null);
+    setToastMessage(planFulfilmentMessage(settled.closed, lang === 'ka' ? 'ka' : 'en'));
+  }, [planRecordSignal, pendingPlanFulfilment, productionPlans, tasks, lang, setToastMessage]);
 
   // FermentationTab owns its own daily-reading form state and commit handler.
   const [chartLotId, setChartLotId] = useState<string>('');
@@ -630,6 +680,9 @@ export function useWineryState() {
     setSafe(setPurchaseOrders, data.purchaseOrders, 'purchaseOrders', 'cf_purchase_orders');
     setSafe(setProductionPlans, data.productionPlans, 'productionPlans', 'cf_production_plans');
     setSafe(setRecallCases, data.recallCases, 'recallCases', 'cf_recall_cases');
+    setSafe(setWorkOrders, data.workOrders, 'workOrders', 'cf_work_orders');
+    setSafe(setWorkOrderTemplates, data.workOrderTemplates, 'workOrderTemplates', 'cf_work_order_templates');
+    setSafe(setBlendTrials, data.blendTrials, 'blendTrials', 'cf_blend_trials');
     setSafe(setCompanyProfile, data.companyProfile, 'companyProfile', 'vinea_company_profile');
     const syncedAt = new Date().toISOString();
     setLastSyncAt(syncedAt);
@@ -653,7 +706,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
         companyProfile
       };
 
@@ -998,10 +1051,16 @@ export function useWineryState() {
         ? [result.costEntry]
         : [];
     updateAllStates({
-      lots: lots.map(item => item.id === result.lot.id ? result.lot : item),
-      vessels: result.vessel
-        ? vessels.map(item => item.id === result.vessel?.id ? result.vessel as Vessel : item)
-        : vessels,
+      lots: lots.map(item => {
+        if (item.id === result.lot.id) return result.lot;
+        if (result.sourceLot && item.id === result.sourceLot.id) return result.sourceLot;
+        return item;
+      }),
+      vessels: vessels.map(item => {
+        if (result.vessel && item.id === result.vessel.id) return result.vessel;
+        if (result.sourceVessel && item.id === result.sourceVessel.id) return result.sourceVessel;
+        return item;
+      }),
       inventory: inventory.map(item => changedInventoryById.get(item.id) || item),
       cellarOps: cellarOps.some(item => item.id === result.operation.id)
         ? cellarOps
@@ -1241,6 +1300,9 @@ export function useWineryState() {
     setPurchaseOrders([]);
     setProductionPlans([]);
     setRecallCases([]);
+    setWorkOrders([]);
+    setWorkOrderTemplates([]);
+    setBlendTrials([]);
   };
 
   const handleAuthRegister = async (profileData: RegistrationProfileData): Promise<boolean> => {
@@ -1275,7 +1337,7 @@ export function useWineryState() {
           vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
           blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
           samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
+          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
           companyProfile
         } : {});
         if (initialDB) {
@@ -1475,6 +1537,9 @@ export function useWineryState() {
       setPurchaseOrders(parseCached('cf_purchase_orders', []));
       setProductionPlans(parseCached('cf_production_plans', []));
       setRecallCases(parseCached('cf_recall_cases', []));
+      setWorkOrders(parseCached('cf_work_orders', []));
+      setWorkOrderTemplates(parseCached('cf_work_order_templates', []));
+      setBlendTrials(parseCached('cf_blend_trials', []));
 
       setBlocks(parseCached('vinea_blocks', defaults.initialVineyardBlocks));
       setVineyardProjects(parseCached('vinea_projects', defaults.initialVineyardPlantingProjects));
@@ -1490,7 +1555,12 @@ export function useWineryState() {
     };
 
     const hasLocalSession = localStorage.getItem('vinea_is_logged_in') === 'true';
-    setIsSidebarCollapsed(localStorage.getItem('cf_sidebar_collapsed') === 'true');
+    const storedSidebarMode = localStorage.getItem('cf_sidebar_mode');
+    if (storedSidebarMode === 'full' || storedSidebarMode === 'rail' || storedSidebarMode === 'hidden') {
+      setSidebarMode(storedSidebarMode);
+    } else if (localStorage.getItem('cf_sidebar_collapsed') === 'true') {
+      setSidebarMode('rail');
+    }
     setLastSyncAt(localStorage.getItem('vinea_last_sync_at'));
 
     setIsLoggedIn(hasLocalSession);
@@ -1721,6 +1791,9 @@ export function useWineryState() {
       purchaseOrders: setPurchaseOrders,
       productionPlans: setProductionPlans,
       recallCases: setRecallCases,
+      workOrders: setWorkOrders,
+      workOrderTemplates: setWorkOrderTemplates,
+      blendTrials: setBlendTrials,
     };
 
     // One serialization for this call, reused by every branch below. It was
@@ -1797,7 +1870,7 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
         companyProfile
       };
 
@@ -1836,6 +1909,9 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('purchaseOrders', 'cf_purchase_orders', purchaseOrders); }, [purchaseOrders, isClient]);
   useEffect(() => { handleCollectionUpdate('productionPlans', 'cf_production_plans', productionPlans); }, [productionPlans, isClient]);
   useEffect(() => { handleCollectionUpdate('recallCases', 'cf_recall_cases', recallCases); }, [recallCases, isClient]);
+  useEffect(() => { handleCollectionUpdate('workOrders', 'cf_work_orders', workOrders); }, [workOrders, isClient]);
+  useEffect(() => { handleCollectionUpdate('workOrderTemplates', 'cf_work_order_templates', workOrderTemplates); }, [workOrderTemplates, isClient]);
+  useEffect(() => { handleCollectionUpdate('blendTrials', 'cf_blend_trials', blendTrials); }, [blendTrials, isClient]);
   // The company profile is one tenant-scoped document, not a record
   // collection. Reuse the object-aware sync path without registering it as a
   // collection (the collection registry intentionally covers list/map ledgers).
@@ -1844,7 +1920,7 @@ export function useWineryState() {
     const profileStorageKey = 'vinea_company_profile';
     handleCollectionUpdate(profileSyncKey, profileStorageKey, companyProfile);
   }, [companyProfile, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
+  useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_mode', sidebarMode); }, [sidebarMode, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
   useEffect(() => {
@@ -2268,6 +2344,17 @@ export function useWineryState() {
     const hasVolumeChange = input.volumeAfterL != null && Number.isFinite(input.volumeAfterL);
     const volumeAfterL = hasVolumeChange ? Math.max(0, input.volumeAfterL as number) : undefined;
 
+    // This fallback path only runs when the command bindings are absent, and it
+    // cannot express topping: it sets a lot's new total onto one vessel, which
+    // for a lot spread across barrels is wrong. Refusing beats approximating —
+    // the recorder's command path handles topping properly.
+    if (input.type === 'topping') {
+      setToastMessage(lang === 'ka'
+        ? 'დოლივა ჩაიწერება ოპერაციების ფორმიდან.'
+        : 'Record topping from the operations recorder.');
+      return '';
+    }
+
     const opId = createUniqueRecordId('op', cellarOps.map(item => item.id));
     const operator = input.operator || currentUser.fullName;
     const dateOnly = (input.date || new Date().toISOString()).slice(0, 10);
@@ -2409,6 +2496,7 @@ export function useWineryState() {
     };
 
     setLabLogs(previous => [newLab, ...previous]);
+    signalPlanRecord('lab');
     const automaticLabCost = automaticLabCostEntry({
       analysisId: newLab.id,
       date: newLab.date,
@@ -2519,7 +2607,7 @@ export function useWineryState() {
       harvests, irrigationLogs, fertilizerLogs, auditLogs, bottlingRuns, transfers,
       grapeIntakes, cellarOps, costEntries, storageLocations, stockMovements,
       salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments,
-      crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases,
+      crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
     };
     const capturedAt = new Date().toISOString();
     const versionedRecords = records.map(record => {
@@ -2890,6 +2978,9 @@ export function useWineryState() {
       qualitySops: db.qualitySops || qualitySops,
       purchaseOrders: db.purchaseOrders || purchaseOrders,
       productionPlans: db.productionPlans || productionPlans,
+      workOrders: db.workOrders || workOrders,
+      workOrderTemplates: db.workOrderTemplates || workOrderTemplates,
+      blendTrials: db.blendTrials || blendTrials,
       recallCases: db.recallCases || recallCases,
       companyProfile: db.companyProfile || companyProfile
     };
@@ -2927,7 +3018,8 @@ export function useWineryState() {
     currentUser, setCurrentUser,
     companyProfile, setCompanyProfile,
     activeModule, setActiveModule,
-    isSidebarCollapsed, setIsSidebarCollapsed,
+    sidebarMode, setSidebarMode,
+    pendingPlanFulfilment, setPendingPlanFulfilment, signalPlanRecord,
 
     // Data
     vessels, setVessels,
@@ -2968,6 +3060,9 @@ export function useWineryState() {
     qualitySops, setQualitySops,
     purchaseOrders, setPurchaseOrders,
     productionPlans, setProductionPlans,
+    workOrders, setWorkOrders,
+    workOrderTemplates, setWorkOrderTemplates,
+    blendTrials, setBlendTrials,
     recallCases, setRecallCases,
 
     // Inputs

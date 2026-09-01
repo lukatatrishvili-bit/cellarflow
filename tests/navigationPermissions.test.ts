@@ -13,6 +13,7 @@ describe('permission-aware app navigation', () => {
     // Legacy qvevri links still degrade into the consolidated Vessels area.
     expect(permissionModuleFor('gvino', 'qvevri')).toBe('vessels');
     expect(permissionModuleFor('gvino', 'calculators')).toBe('lab');
+    expect(permissionModuleFor('gvino', 'winery-plan')).toBe('vessels');
     expect(permissionModuleFor('gvino', 'ai')).toBe('tasks');
     expect(permissionModuleFor('work')).toBe('tasks');
     expect(permissionModuleFor('docs')).toBe('official_docs');
@@ -45,6 +46,7 @@ describe('permission-aware app navigation', () => {
       'lineage',
       'labs',
       'calculators',
+      'blendtrials',
       'quality',
       'planner',
       'tasks',

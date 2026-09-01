@@ -9,6 +9,7 @@ import {
   FlaskConical,
   GitMerge,
   LockKeyhole,
+  MapPinned,
   MapPin,
   PackageCheck,
   Pencil,
@@ -62,6 +63,7 @@ interface Props {
   setLabLotId?: (lotId: string) => void;
   onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
   onPlanTransfer?: (vesselId: string, role?: 'source' | 'destination') => void;
+  onLocateOnWineryPlan?: (vesselId: string) => void;
 }
 
 function MetricCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -112,6 +114,7 @@ export default function WineLotCommandCenter({
   setLabLotId,
   onLogOperation,
   onPlanTransfer,
+  onLocateOnWineryPlan,
 }: Props) {
   const ka = lang === 'ka';
   const stageLabel = (stage: WinemakingStage) => sharedStageLabel(stage, lang);
@@ -319,6 +322,7 @@ export default function WineLotCommandCenter({
             </h3>
             <div className="mt-3 flex flex-wrap gap-2">
               <ActionChip icon={Wrench} onClick={operationAction}>{ka ? 'ოპერაცია' : 'Operation'}</ActionChip>
+              <ActionChip icon={MapPinned} onClick={containingVessels.length && onLocateOnWineryPlan ? () => onLocateOnWineryPlan(containingVessels[0].id) : undefined}>{ka ? 'მარნის გეგმაზე' : 'Winery plan'}</ActionChip>
               <ActionChip icon={ArrowRightLeft} onClick={containingVessels.length === 1 && onPlanTransfer ? () => onPlanTransfer(containingVessels[0].id) : setActiveTab && containingVessels.length ? () => setActiveTab('transfers') : undefined}>{ka ? 'გადატანა' : 'Transfer'}</ActionChip>
               <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => { setLabLotId?.(lot.id); setActiveTab('labs'); } : undefined}>{ka ? 'ლაბორატორია' : 'Lab'}</ActionChip>
               {lot.stage === 'filtration'

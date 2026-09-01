@@ -126,7 +126,8 @@ const OP_ICONS: Record<CellarOperationType, React.ComponentType<{ className?: st
   crush_destem: Grape, pressing: Droplets, ferment_start: FlaskConical, measurement: Thermometer,
   pumpover: RefreshCw, punchdown: ArrowDownToLine, racking: ArrowRightLeft, blending: Combine,
   sulfitation: ShieldCheck, additive: Beaker, fining: Filter, filtration: Filter, stabilization: Snowflake,
-  vessel_filling: Container, bottling: Package, cleaning: Sparkles, correction: Wrench, custom: Plus,
+  vessel_filling: Container, bottling: Package, cleaning: Sparkles, correction: Wrench,
+  topping: ArrowDownToLine, custom: Plus,
 };
 
 interface CellarOperationFormDraft {
@@ -135,6 +136,7 @@ interface CellarOperationFormDraft {
   lotId: string;
   vesselId: string;
   vesselToId: string;
+  sourceVesselId: string;
   materialDrafts: MaterialUsageDraft[];
   volumeAfter: string;
   date: string;
@@ -180,6 +182,7 @@ export function CellarOperationsTab({
   const [lotId, setLotId] = useState('');
   const [vesselId, setVesselId] = useState('');
   const [vesselToId, setVesselToId] = useState('');
+  const [sourceVesselId, setSourceVesselId] = useState('');
   const [materialDrafts, setMaterialDrafts] = useState<MaterialUsageDraft[]>([]);
   const [volumeAfter, setVolumeAfter] = useState('');
   const [date, setDate] = useState(today);
@@ -218,6 +221,7 @@ export function CellarOperationsTab({
     lotId,
     vesselId,
     vesselToId,
+    sourceVesselId,
     materialDrafts,
     volumeAfter,
     date,
@@ -237,6 +241,7 @@ export function CellarOperationsTab({
     type,
     vesselId,
     vesselToId,
+    sourceVesselId,
     volumeAfter,
   ]);
   const restoreOperationDraft = React.useCallback((draft: CellarOperationFormDraft) => {
@@ -251,6 +256,7 @@ export function CellarOperationsTab({
     setLotId(lots.some(item => item.id === draft.lotId) ? draft.lotId : '');
     setVesselId(vessels.some(item => item.id === draft.vesselId) ? draft.vesselId : '');
     setVesselToId(vessels.some(item => item.id === draft.vesselToId) ? draft.vesselToId : '');
+    setSourceVesselId(vessels.some(item => item.id === draft.sourceVesselId) ? draft.sourceVesselId : '');
     setMaterialDrafts(Array.isArray(draft.materialDrafts) ? draft.materialDrafts : []);
     setVolumeAfter(draft.volumeAfter || '');
     setDate(/^\d{4}-\d{2}-\d{2}$/.test(draft.date) ? draft.date : today);
@@ -274,6 +280,7 @@ export function CellarOperationsTab({
       || (draft.lotId && draft.lotId !== defaultLot?.id)
       || (draft.vesselId && draft.vesselId !== defaultVessel)
       || draft.vesselToId
+      || draft.sourceVesselId
       || draft.materialDrafts.length
       || draft.volumeAfter
       || draft.date !== today
@@ -299,6 +306,7 @@ export function CellarOperationsTab({
     setLotId(input.lotId);
     setVesselId(input.vesselId || '');
     setVesselToId(input.vesselToId || '');
+    setSourceVesselId(input.sourceVesselId || '');
     setMaterialDrafts(materialUsagesToDrafts(
       input.materials?.length
         ? input.materials
@@ -387,7 +395,7 @@ export function CellarOperationsTab({
       const holding = vessels.find(v => v.assignedLotId === lot.id);
       setVesselId(holding ? holding.id : '');
     }
-    setVolumeAfter(meta.affectsVolume ? String(round1(lot.currentVolume)) : '');
+    setVolumeAfter(meta.affectsVolume && !meta.needsSourceVessel ? String(round1(lot.currentVolume)) : '');
   }, [lotId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When switching to a volume op, seed the "after" field with the current volume.
@@ -397,9 +405,10 @@ export function CellarOperationsTab({
       skipRestoredTypeDefaultsRef.current = false;
       return;
     }
-    if (meta.affectsVolume && lot && !volumeAfter) setVolumeAfter(String(round1(lot.currentVolume)));
-    if (!meta.affectsVolume) setVolumeAfter('');
+    if (meta.affectsVolume && !meta.needsSourceVessel && lot && !volumeAfter) setVolumeAfter(String(round1(lot.currentVolume)));
+    if (!meta.affectsVolume || meta.needsSourceVessel) setVolumeAfter('');
     if (!meta.needsVesselTo) setVesselToId('');
+    if (!meta.needsSourceVessel) setSourceVesselId('');
   }, [type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const volNum = volumeAfter === '' ? null : parseFloat(volumeAfter);
@@ -662,7 +671,9 @@ export function CellarOperationsTab({
       lotId: lot.id,
       vesselId: vesselId || null,
       vesselToId: meta.needsVesselTo ? (vesselToId || null) : null,
-      volumeAfterL: meta.affectsVolume && volNum != null ? volNum : undefined,
+      sourceVesselId: meta.needsSourceVessel ? (sourceVesselId || null) : null,
+      volumeAfterL: meta.affectsVolume && !meta.needsSourceVessel && volNum != null ? volNum : undefined,
+      toppingVolumeL: meta.needsSourceVessel && volNum != null ? volNum : undefined,
       materials: materials.length ? materials : undefined,
       laborHours: automationSettings.enabled ? laborHoursNum : undefined,
       energyKwh: automationSettings.enabled ? energyKwhNum : undefined,
@@ -861,6 +872,23 @@ export function CellarOperationsTab({
                 </p>
               )}
 
+              {canUseOperationVessels && meta.needsSourceVessel && (
+                <div>
+                  <label className={labelCls}>{ka ? 'დოლივის წყარო' : 'Topping source'}</label>
+                  <select value={sourceVesselId} onChange={e => setSourceVesselId(e.target.value)} className={inputCls}>
+                    <option value="">{ka ? '— აირჩიეთ —' : '— select —'}</option>
+                    {vessels.filter(v => v.id !== vesselId && v.assignedLotId && v.currentVolume > 0).map(v => (
+                      <option key={v.id} value={v.id}>{v.id} — {round1(v.currentVolume)} L {ka ? 'ხელმისაწვდომი' : 'available'}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] font-semibold text-stone-500">
+                    {ka
+                      ? 'დაამატეთ ახალი მოცულობა ქვემოთ — იგივე ლიტრი წყაროდან ჩამოიწერება.'
+                      : 'Enter the new volume below — the same litres come off the source.'}
+                  </p>
+                </div>
+              )}
+
               {canUseOperationVessels && meta.needsVesselTo && (
                 <div>
                   <label className={labelCls}>{ka ? 'ჭურჭელი (-ში)' : 'Vessel (to)'}</label>
@@ -933,7 +961,22 @@ export function CellarOperationsTab({
                 </div>
               )}
 
-              {meta.affectsVolume && (
+              {meta.needsSourceVessel ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelCls}>{ka ? 'დამატებული (ლ)' : 'Litres added'}</label>
+                    <input type="number" step="0.1" min={0} value={volumeAfter} onChange={e => setVolumeAfter(e.target.value)} className={inputCls} />
+                  </div>
+                  <div className="flex items-end pb-2 text-[11px] font-mono text-stone-500">
+                    {sourceVesselId && volNum != null && volNum > 0 && (
+                      <span>
+                        {sourceVesselId} → {vesselId || '—'} ·{' '}
+                        <strong className="text-[#4e0e15] dark:text-amber-300">{round1(volNum)} L</strong>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : meta.affectsVolume && (
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className={labelCls}>{ka ? 'მოცულობა მერე (ლ)' : 'Volume after (L)'}</label>

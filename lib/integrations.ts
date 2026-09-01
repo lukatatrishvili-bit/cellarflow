@@ -1,3 +1,5 @@
+import { parseCsvRows } from './csv';
+
 export const ONE_C_CONNECTOR_ID = 'one_c_accounting';
 
 export type IntegrationConnectorKind = '1c_accounting';
@@ -1174,43 +1176,6 @@ function csvToRecords(csv: string): CollectionRecord[] {
     });
     return record;
   });
-}
-
-function parseCsvRows(csv: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let inQuotes = false;
-  for (let i = 0; i < csv.length; i += 1) {
-    const char = csv[i];
-    const next = csv[i + 1];
-    if (char === '"' && inQuotes && next === '"') {
-      cell += '"';
-      i += 1;
-      continue;
-    }
-    if (char === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (char === ',' && !inQuotes) {
-      row.push(cell);
-      cell = '';
-      continue;
-    }
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && next === '\n') i += 1;
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = '';
-      continue;
-    }
-    cell += char;
-  }
-  row.push(cell);
-  rows.push(row);
-  return rows;
 }
 
 function csvEscape(value: unknown): string {

@@ -1111,6 +1111,27 @@ export function validateSyncPayload(
                 throw new Error(`Vessel ${item.id} references an unknown cellar floor.`);
               }
             }
+            const planModel = item.planModel !== undefined ? item.planModel : existingItem?.planModel;
+            if (planModel !== undefined && ![
+              'closed_top_jacket', 'closed_top', 'open_top_jacket', 'open_top', 'portable',
+              'insulated', 'horizontal_tank', 'barrel', 'qvevri', 'concrete', 'plastic',
+            ].includes(planModel)) {
+              throw new Error(`Vessel ${item.id} has an invalid 3D plan model.`);
+            }
+            for (const [field, min, max] of [
+              ['planWidthMeters', 0.2, 20],
+              ['planDepthMeters', 0.2, 20],
+              ['planHeightMeters', 0.2, 30],
+              ['planElevationMeters', -10, 15],
+              ['planRotationDegrees', 0, 359],
+              ['xGrid', 0, 100],
+              ['yGrid', 0, 100],
+            ] as const) {
+              const value = item[field] !== undefined ? item[field] : existingItem?.[field];
+              if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)) {
+                throw new Error(`Vessel ${item.id} has an invalid ${field} value.`);
+              }
+            }
 
             if (capacity !== undefined) {
               if (typeof capacity !== 'number' || capacity <= 0) {
@@ -2403,6 +2424,13 @@ export function validateSyncPayload(
             if (!['harvest', 'intake', 'transfer', 'fermentation', 'lab', 'bottling', 'sanitation', 'procurement', 'dispatch', 'other'].includes(item.kind)) {
               throw new Error(`Production plan ${item.id} has invalid kind.`);
             }
+            if (item.operationType !== undefined && ![
+              'crush_destem', 'pressing', 'ferment_start', 'measurement', 'pumpover', 'punchdown',
+              'racking', 'blending', 'sulfitation', 'additive', 'fining', 'filtration',
+              'stabilization', 'vessel_filling', 'bottling', 'cleaning', 'correction', 'custom',
+            ].includes(item.operationType)) {
+              throw new Error(`Production plan ${item.id} has invalid cellar operation type.`);
+            }
             if (!['planned', 'ready', 'blocked', 'in_progress', 'completed', 'cancelled'].includes(item.status)) {
               throw new Error(`Production plan ${item.id} has invalid status.`);
             }
@@ -2528,6 +2556,112 @@ export function validateSyncPayload(
               if (item.containmentTaskIds.length === 0 || incompleteTaskIds.length > 0) {
                 throw new Error(`Recall case ${item.id} cannot advance until every containment task is completed.`);
               }
+            }
+          }
+
+          else if (key === 'workOrders') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Work order ${item.id} requires a title.`);
+            }
+            if (typeof item.assignedTo !== 'string' || item.assignedTo.length > 160) {
+              throw new Error(`Work order ${item.id} has an invalid assignee.`);
+            }
+            if (typeof item.dueDate !== 'string' || Number.isNaN(Date.parse(item.dueDate))) {
+              throw new Error(`Work order ${item.id} requires a valid due date.`);
+            }
+            if (!Array.isArray(item.itemIds) || item.itemIds.length > 500) {
+              throw new Error(`Work order ${item.id} has an invalid item list.`);
+            }
+            // An order is a container, so its contents must exist. Duplicates
+            // would make the derived progress count the same work twice.
+            const seenItemIds = new Set<string>();
+            for (const planId of item.itemIds) {
+              if (!isValidId(planId) || !effectiveRecord('productionPlans', planId)) {
+                throw new Error(`Work order ${item.id} references unknown production plan ${planId}.`);
+              }
+              if (seenItemIds.has(planId)) {
+                throw new Error(`Work order ${item.id} lists production plan ${planId} more than once.`);
+              }
+              seenItemIds.add(planId);
+            }
+            if (item.templateId !== undefined
+              && (!isValidId(item.templateId) || !effectiveRecord('workOrderTemplates', item.templateId))) {
+              throw new Error(`Work order ${item.id} references an unknown template.`);
+            }
+            if (item.notes !== undefined && (typeof item.notes !== 'string' || item.notes.length > 4_000)) {
+              throw new Error(`Work order ${item.id} has invalid notes.`);
+            }
+          }
+
+          else if (key === 'workOrderTemplates') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Work order template ${item.id} requires a title.`);
+            }
+            if (!Array.isArray(item.items) || item.items.length > 100) {
+              throw new Error(`Work order template ${item.id} has an invalid item list.`);
+            }
+            for (const templateItem of item.items) {
+              if (!templateItem || typeof templateItem !== 'object' || Array.isArray(templateItem)) {
+                throw new Error(`Work order template ${item.id} has a malformed item.`);
+              }
+              if (typeof templateItem.title !== 'string' || !templateItem.title.trim() || templateItem.title.length > 200) {
+                throw new Error(`Work order template ${item.id} has an item without a title.`);
+              }
+              if (typeof templateItem.dayOffset !== 'number' || !Number.isInteger(templateItem.dayOffset)
+                || Math.abs(templateItem.dayOffset) > 365) {
+                throw new Error(`Work order template ${item.id} has an out-of-range day offset.`);
+              }
+            }
+            if (item.recurrence !== undefined) {
+              const recurrence = item.recurrence;
+              if (!recurrence || typeof recurrence !== 'object' || Array.isArray(recurrence)) {
+                throw new Error(`Work order template ${item.id} has a malformed recurrence.`);
+              }
+              // A non-advancing interval would ask the generator for an endless
+              // run of occurrences on the same date.
+              if (typeof recurrence.every !== 'number' || !Number.isInteger(recurrence.every)
+                || recurrence.every < 1 || recurrence.every > 365) {
+                throw new Error(`Work order template ${item.id} has an invalid recurrence interval.`);
+              }
+              if (!['day', 'week'].includes(recurrence.unit)) {
+                throw new Error(`Work order template ${item.id} has an invalid recurrence unit.`);
+              }
+              if (recurrence.until !== undefined
+                && (typeof recurrence.until !== 'string' || Number.isNaN(Date.parse(recurrence.until)))) {
+                throw new Error(`Work order template ${item.id} has an invalid recurrence end date.`);
+              }
+            }
+          }
+
+          else if (key === 'blendTrials') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Blend trial ${item.id} requires a title.`);
+            }
+            if (!['draft', 'accepted', 'discarded'].includes(item.status)) {
+              throw new Error(`Blend trial ${item.id} has invalid status.`);
+            }
+            if (!Array.isArray(item.components) || item.components.length > 50) {
+              throw new Error(`Blend trial ${item.id} has an invalid component list.`);
+            }
+            const trialLotIds = new Set<string>();
+            for (const component of item.components) {
+              if (!component || typeof component !== 'object' || Array.isArray(component)) {
+                throw new Error(`Blend trial ${item.id} has a malformed component.`);
+              }
+              if (!isValidId(component.lotId) || !effectiveRecord('lots', component.lotId)) {
+                throw new Error(`Blend trial ${item.id} references an unknown lot.`);
+              }
+              if (trialLotIds.has(component.lotId)) {
+                throw new Error(`Blend trial ${item.id} lists lot ${component.lotId} more than once.`);
+              }
+              trialLotIds.add(component.lotId);
+              if (typeof component.volumeL !== 'number' || !Number.isFinite(component.volumeL)
+                || component.volumeL < 0) {
+                throw new Error(`Blend trial ${item.id} has an invalid component volume.`);
+              }
+            }
+            if (item.notes !== undefined && (typeof item.notes !== 'string' || item.notes.length > 4_000)) {
+              throw new Error(`Blend trial ${item.id} has invalid notes.`);
             }
           }
 

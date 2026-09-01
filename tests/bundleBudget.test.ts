@@ -11,8 +11,8 @@ import { gzipSync } from 'node:zlib';
  * exceljs, RxDB storage) are intentionally excluded — they may grow. It catches
  * a heavy library or translation dictionary accidentally imported into App.tsx.
  *
- * Baseline as of 2026-08-12: ~572 KB raw / ~170 KB gzip JS and ~236 KB raw CSS,
- * against ceilings of 600 / 190 / 260. The raw-JS margin had previously eroded
+ * Baseline as of 2026-08-12: ~572 KB raw / ~170 KB gzip JS and ~236 KB raw CSS.
+ * The raw-JS margin had previously eroded
  * to 43 bytes, which made the guard useless — any honest change tripped it, and
  * the failure looked like an unrelated regression. It was recovered by letting
  * lucide-react split with its consumers instead of forcing every icon in the
@@ -22,13 +22,26 @@ import { gzipSync } from 'node:zlib';
  * Skips when dist/ is absent (unit-test runs without a build).
  */
 
-const INITIAL_JS_BUDGET_KB = 600;
+// Raised 600 → 620 on 2026-09-01 after the authenticated shell gained direct
+// plan-fulfilment, scan-to-due-work and winery-plan routing. Those coordinators
+// must be ready before a destination chunk opens, adding ~8 KB raw but less
+// than the existing 190 KB compressed transfer ceiling. Keep the gzip ceiling
+// fixed: a heavy eager dependency will still fail the user-visible budget.
+const INITIAL_JS_BUDGET_KB = 620;
 // The spatial cellar plan intentionally adds a richer tablet interaction
 // surface (pinch/pan, minimap, vessel states, and fullscreen controls). Its
 // utility CSS is globally emitted by Tailwind even though the plan route is
 // lazy. Keep a little raw-size headroom while also enforcing the much more
 // representative transfer-size ceiling below.
-const INITIAL_CSS_BUDGET_KB = 270;
+//
+// Raised 270 → 276 on 2026-09-01 for the work-order, blend-trial and bulk-import
+// panels — same cause: Tailwind emits their utilities globally even though all
+// three routes are lazily loaded. Deliberately a small bump, and the gzip
+// ceiling below was NOT moved: it still passes at ~36 KB, which is the number
+// that describes what anyone actually downloads. If this needs raising again
+// without the gzip figure moving, the right response is to look at why the
+// utility surface is growing, not to add another six.
+const INITIAL_CSS_BUDGET_KB = 276;
 const INITIAL_JS_GZIP_BUDGET_KB = 190;
 const INITIAL_CSS_GZIP_BUDGET_KB = 40;
 

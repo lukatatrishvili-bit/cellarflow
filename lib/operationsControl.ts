@@ -1,6 +1,7 @@
 import type {
   BottlingRunRecord,
   CellarOperation,
+  CellarOperationType,
   CellarTransferRecord,
   GrapeIntakeRecord,
   HarvestRecord,
@@ -131,6 +132,12 @@ export interface ProductionPlanItem {
   id: string;
   title: string;
   kind: ProductionPlanKind;
+  /**
+   * Optional executable cellar-operation subtype. Generic production-plan
+   * kinds remain useful for calendars and conflict detection; this link keeps
+   * a plan created from the winery map actionable in the operation recorder.
+   */
+  operationType?: CellarOperationType;
   status: ProductionPlanStatus;
   startDate: string;
   endDate: string;

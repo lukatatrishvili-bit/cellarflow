@@ -5,6 +5,7 @@ export const WINERY_TAB_IDS = [
   'intelligence',
   'intake',
   'cellar',
+  'winery-plan',
   'lots',
   'lineage',
   'vessels',
@@ -13,6 +14,7 @@ export const WINERY_TAB_IDS = [
   'fermentation',
   'labs',
   'calculators',
+  'blendtrials',
   'bottling',
   'quality',
   'planner',
@@ -43,10 +45,12 @@ export function permissionModuleFor(moduleId: string, tabId?: string): Permissio
       case 'lineage': return 'lots';
       case 'vessels':
       case 'qvevri': return 'vessels';
+      case 'winery-plan': return 'vessels';
       case 'operations': return 'operations';
       case 'transfers': return 'transfers';
       case 'fermentation': return 'fermentation';
       case 'labs':
+      case 'blendtrials':
       case 'calculators': return 'lab';
       case 'bottling': return 'bottling';
       case 'quality': return 'tasks';

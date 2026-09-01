@@ -198,6 +198,9 @@ const SYNC_COLLECTION_MODULES: Record<string, PermissionModule> = {
   purchaseOrders: 'procurement',
   productionPlans: 'planning',
   recallCases: 'recall',
+  workOrders: 'planning',
+  workOrderTemplates: 'planning',
+  blendTrials: 'lots',
 };
 
 export function moduleForSyncCollection(collection: string): PermissionModule | null {

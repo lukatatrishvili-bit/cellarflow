@@ -27,6 +27,13 @@ import {
   cx,
 } from './ui/primitives';
 import type { Language } from '../lib/i18n';
+import type { Vessel, WineLot } from '../lib/wineryState';
+import CellarImportPanel from './CellarImportPanel';
+
+// Stable empties: CellarImportPanel is memoized, so fresh literals here would
+// defeat the boundary on every hub render.
+const EMPTY_VESSELS: Vessel[] = [];
+const EMPTY_LOTS: WineLot[] = [];
 import type {
   ConnectorConfigInput,
   FieldMappingInput,
@@ -50,6 +57,12 @@ import {
 interface IntegrationHubTabProps {
   lang?: Language;
   setToastMessage: (msg: string | null) => void;
+  /** Bulk CSV onboarding, shown only where the role may write these records. */
+  vessels?: Vessel[];
+  lots?: WineLot[];
+  canImportCellarRecords?: boolean;
+  onImportVessels?: (vessels: Vessel[]) => void;
+  onImportLots?: (lots: WineLot[]) => void;
 }
 
 interface HubResponse {
@@ -99,7 +112,15 @@ function downloadArtifact(job: IntegrationSyncJob): void {
   URL.revokeObjectURL(url);
 }
 
-export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationHubTabProps) {
+export function IntegrationHubTab({
+  lang = 'en',
+  setToastMessage,
+  vessels,
+  lots,
+  canImportCellarRecords,
+  onImportVessels,
+  onImportLots,
+}: IntegrationHubTabProps) {
   const ka = lang === 'ka';
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -384,6 +405,18 @@ export function IntegrationHubTab({ lang = 'en', setToastMessage }: IntegrationH
           </ActionButton>
         }
       />
+
+      {onImportVessels && onImportLots && (
+        <CellarImportPanel
+          lang={lang}
+          vessels={vessels || EMPTY_VESSELS}
+          lots={lots || EMPTY_LOTS}
+          canImport={Boolean(canImportCellarRecords)}
+          onImportVessels={onImportVessels}
+          onImportLots={onImportLots}
+          setToastMessage={setToastMessage}
+        />
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <MetricCard

@@ -28,12 +28,17 @@ export interface VaziNavGroup {
 
 export function vaziNavigationGroups(lang: Language): VaziNavGroup[] {
   const ka = lang === 'ka';
+  // Four headings, matching the cellar's shape. "Conditions" used to hold
+  // weather alone and "Overview" the dashboard alone — two headings for two
+  // items, which in the rail means two dividers earning nothing. Both are
+  // things you glance at rather than work in, so they share one.
   return [
     {
       id: 'overview',
       label: ka ? 'მთავარი' : 'Overview',
       items: [
         { id: 'dashboard', label: ka ? 'მიმოხილვა' : 'Overview', icon: BarChart3 },
+        { id: 'weather', label: ka ? 'ამინდი' : 'Weather', icon: Sun },
       ],
     },
     {
@@ -59,13 +64,6 @@ export function vaziNavigationGroups(lang: Language): VaziNavGroup[] {
       items: [
         { id: 'sampling', label: ka ? 'ნიმუშები' : 'Sampling', icon: FlaskConical },
         { id: 'yield', label: ka ? 'დაგეგმვა' : 'Planning', icon: TrendingUp },
-      ],
-    },
-    {
-      id: 'conditions',
-      label: ka ? 'პირობები' : 'Conditions',
-      items: [
-        { id: 'weather', label: ka ? 'ამინდი' : 'Weather', icon: Sun },
       ],
     },
   ];

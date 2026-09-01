@@ -50,9 +50,7 @@ export interface ProductionPlanTaskDraft {
   source: NonNullable<Task['source']>;
 }
 
-export function linkedTaskForProductionPlan(tasks: Task[], planId: string): Task | undefined {
-  return tasks.find(task => task.source?.type === 'production_plan' && task.source.id === planId);
-}
+export { linkedTaskForProductionPlan } from './planFulfilment';
 
 export function taskDraftForProductionPlan(
   item: ProductionPlanItem,

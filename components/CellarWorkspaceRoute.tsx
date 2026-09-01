@@ -13,6 +13,7 @@ interface CellarWorkspaceRouteProps {
   onOpenProductionPlan: (planId: string) => void;
   onLogOperation: NonNullable<CellarWorkspaceProps['onLogOperation']>;
   onPlanTransfer: NonNullable<CellarWorkspaceProps['onPlanTransfer']>;
+  onLocateOnWineryPlan: NonNullable<CellarWorkspaceProps['onLocateOnWineryPlan']>;
   renderQvevriRecords: NonNullable<CellarWorkspaceProps['renderQvevriRecords']>;
 }
 
@@ -23,6 +24,7 @@ export default function CellarWorkspaceRoute({
   onOpenProductionPlan,
   onLogOperation,
   onPlanTransfer,
+  onLocateOnWineryPlan,
   renderQvevriRecords,
 }: CellarWorkspaceRouteProps) {
   const role = state.currentUser.role;
@@ -73,6 +75,7 @@ export default function CellarWorkspaceRoute({
       onOpenVesselDetails={state.setSelectedTankId}
       onLogOperation={permissions.operations.canLogCellarOperation ? onLogOperation : undefined}
       onPlanTransfer={permissions.transfers.canExecuteTransfer ? onPlanTransfer : undefined}
+      onLocateOnWineryPlan={canView('winery-plan') ? onLocateOnWineryPlan : undefined}
       renderQvevriRecords={renderQvevriRecords}
     />
   );

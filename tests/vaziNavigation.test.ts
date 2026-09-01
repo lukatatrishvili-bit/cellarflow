@@ -10,13 +10,13 @@ describe('vazi navigation groups', () => {
   it('labels every section in English', () => {
     const labels = vaziNavigationGroups('en').map(group => group.label);
 
-    expect(labels).toEqual(['Overview', 'Vineyard', 'Field work', 'Harvest', 'Conditions']);
+    expect(labels).toEqual(['Overview', 'Vineyard', 'Field work', 'Harvest']);
   });
 
   it('labels every section in Georgian', () => {
     const labels = vaziNavigationGroups('ka').map(group => group.label);
 
-    expect(labels).toEqual(['მთავარი', 'ვენახი', 'საველე სამუშაო', 'რთველი', 'პირობები']);
+    expect(labels).toEqual(['მთავარი', 'ვენახი', 'საველე სამუშაო', 'რთველი']);
   });
 
   it('keeps every vineyard screen reachable exactly once', () => {
@@ -24,6 +24,7 @@ describe('vazi navigation groups', () => {
 
     expect(ids).toEqual([
       'dashboard',
+      'weather',
       'blocks',
       'projects',
       'scouting',
@@ -31,9 +32,16 @@ describe('vazi navigation groups', () => {
       'spraying',
       'sampling',
       'yield',
-      'weather',
     ]);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('earns every heading it prints', () => {
+    // A section of one is a divider with a caption — it costs a rule in the
+    // rail and a heading in the full sidebar to say nothing the item does not.
+    for (const group of vaziNavigationGroups('en')) {
+      expect(group.items.length).toBeGreaterThan(1);
+    }
   });
 
   it('gives every destination a label and an icon in both languages', () => {

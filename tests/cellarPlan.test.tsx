@@ -78,7 +78,33 @@ describe('CellarPlan', () => {
     expect(markup).toContain('Fit');
     expect(markup).toContain('Floor pulse');
     expect(markup).toContain('Navigator');
-    expect(markup).toContain('Open vessel');
+    expect(markup).toContain('Vessel details');
+  });
+
+  it('exposes lot, operation, scheduling, and transfer actions from a selected vessel', () => {
+    const markup = renderPlan({
+      onOpenLot: vi.fn(),
+      onLogOperation: vi.fn(),
+      onScheduleOperation: vi.fn(),
+      onPlanTransfer: vi.fn(),
+    });
+
+    expect(markup).toContain('Open wine lot');
+    expect(markup).toContain('Record operation');
+    expect(markup).toContain('Assign work');
+    expect(markup).toContain('Start transfer');
+  });
+
+  it('records sanitation as evidence for an empty vessel instead of a status toggle', () => {
+    const dirty = vessel('TK-DIRTY', { currentVolume: 0, assignedLotId: null, cleaningStatus: 'cleaning_needed' });
+    const markup = renderPlan({
+      vessels: [dirty],
+      selectedVesselId: dirty.id,
+      onRecordSanitation: vi.fn(),
+    });
+
+    expect(markup).toContain('Record sanitation');
+    expect(markup).not.toContain('Mark clean');
   });
 
   it('draws scaled winery work areas and utilities without obscuring vessel controls', () => {

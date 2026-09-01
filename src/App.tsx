@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
-import type { WorkspaceNavSection } from '../components/WorkspaceShell';
+import type { SidebarMode, WorkspaceNavSection } from '../lib/workspaceNavigation';
 import { vaziNavigationGroups, type VaziTab } from '../lib/vaziNavigation';
 import type { AiFinding } from '../lib/ai/types';
 import {
@@ -33,7 +33,10 @@ import {
   vineyardWorkflowPermissions,
 } from '../lib/workflowPermissions';
 import type { BillingFeature } from '../lib/billing/planCatalog';
-import type { CellarOperation, CellarOperationType } from '../lib/wineryState';
+import type { CellarOperation, CellarOperationType, Task } from '../lib/wineryState';
+import type { WorkOrder, WorkOrderTemplate } from '../lib/workOrders';
+import type { BlendTrial } from '../lib/blendTrials';
+import { dueWorkForVessel } from '../lib/dueWork';
 import type { ProductionPlanItem } from '../lib/operationsControl';
 
 // Heavy modules are code-split
@@ -45,6 +48,7 @@ const LotPassport = lazyRetry(() => import('../components/LotPassport'));
 const VaziModule = lazyRetry(() => import('../components/VaziModule'));
 const WineryDashboardTab = lazyRetry(() => import('../components/WineryDashboardTab'));
 const CellarWorkspaceRoute = lazyRetry(() => import('../components/CellarWorkspaceRoute'));
+const WineryPlanTab = lazyRetry(() => import('../components/WineryPlanTab'));
 const QvevriPassportTab = lazyRetry(() => import('../components/QvevriPassportTab'));
 const GrapeReceivingTab = lazyRetry(() => import('../components/GrapeReceivingTab'));
 const LotLineageGraphTab = lazyRetry(() => import('../components/LotLineageGraphTab'));
@@ -88,6 +92,7 @@ const ProcurementTab = lazyRetry(() => import('../components/ProcurementTab'));
 const ProductionPlannerTab = lazyRetry(() => import('../components/ProductionPlannerTab'));
 const ScanToAction = lazyRetry(() => import('../components/ScanToAction'));
 const WorkspaceShell = lazyRetry(() => import('../components/WorkspaceShell'));
+const BlendTrialsPanel = lazyRetry(() => import('../components/BlendTrialsPanel'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
@@ -141,7 +146,11 @@ import {
   AlertOctagon,
   ShoppingCart,
   CalendarRange,
+  MapPinned,
   ScanLine,
+  Sparkles,
+  Calculator,
+  Beaker,
 } from 'lucide-react';
 
 function ModuleLoader() {
@@ -237,6 +246,8 @@ export default function App() {
   const [prefilledOpType, setPrefilledOpType] = useState<CellarOperationType | undefined>();
   const [prefilledTransferVolume, setPrefilledTransferVolume] = useState<number | undefined>();
   const [operationReturnVesselId, setOperationReturnVesselId] = useState<string | null>(null);
+  const [operationReturnTab, setOperationReturnTab] = useState<'vessels' | 'winery-plan'>('vessels');
+  const [wineryPlanFocusVesselId, setWineryPlanFocusVesselId] = useState<string | null>(null);
   const [recentlyLoggedOperationId, setRecentlyLoggedOperationId] = useState<string | null>(null);
   // Stable identity, so ToastHost's memo actually holds across App re-renders.
   const openSyncTroubleshooter = useCallback(() => setShowSyncTroubleshooter(true), []);
@@ -282,16 +293,100 @@ export default function App() {
     setActiveModule('gvino');
     setActiveTab('transfers');
   }, [setActiveModule, setActiveTab, setPrefilledDestId, setPrefilledSourceId]);
+  const openTransferFromWineryPlan = useCallback((sourceVesselId: string, destinationVesselId?: string) => {
+    setPrefilledSourceId(sourceVesselId);
+    setPrefilledDestId(destinationVesselId || '');
+    setPrefilledTransferVolume(undefined);
+    setWineryPlanFocusVesselId(sourceVesselId);
+    setActiveModule('gvino');
+    setActiveTab('transfers');
+  }, [setActiveModule, setActiveTab, setPrefilledDestId, setPrefilledSourceId]);
+  const openWineryPlanForVessel = useCallback((vesselId: string) => {
+    setWineryPlanFocusVesselId(vesselId);
+    setSelectedTankId(null);
+    setActiveModule('gvino');
+    setActiveTab('winery-plan');
+  }, [setActiveModule, setActiveTab, setSelectedTankId]);
   const navigateCellarWorkflow = useCallback(
     (tab: 'transfers' | 'bottling' | 'vessels') => setActiveTab(tab),
     [setActiveTab],
   );
   const openProcurement = useCallback(() => setActiveModule('procurement'), [setActiveModule]);
+  const openProductionPlanWork = useCallback(async (item: ProductionPlanItem) => {
+    const { openProductionPlanItem } = await import('../lib/productionPlanNavigation');
+    // Remember what this operator was sent off to do. Whichever recorder saves
+    // the matching record settles the plan item and its task, so recording the
+    // work is the completion rather than the first of three status updates.
+    const fulfilmentKind = openProductionPlanItem(item, {
+      lang: state.lang,
+      harvests: state.harvests,
+      navigate: (module, tab) => {
+        if (!canViewUserDestination(state.currentUser, module, tab)) {
+          state.setToastMessage(isKa
+            ? 'თქვენს როლს ამ სამუშაო სივრცეზე წვდომა არ აქვს.'
+            : 'Your workspace role does not have access to this work area.');
+          return false;
+        }
+        state.setActiveModule(module as any);
+        if (tab) state.setActiveTab(tab);
+        return true;
+      },
+      setIntakeHarvestId: state.setPrefilledIntakeHarvestId,
+      setTransfer: (sourceId, destinationId, volume) => {
+        state.setPrefilledSourceId(sourceId);
+        state.setPrefilledDestId(destinationId);
+        setPrefilledTransferVolume(volume);
+      },
+      setLab: (lotId, vesselId) => {
+        state.setLabLotId(lotId);
+        state.setLabTankId(vesselId);
+      },
+      setSanitation: vesselId => {
+        setWineryPlanFocusVesselId(vesselId);
+      },
+      setOperation: (_lotId, vesselId, operationType) => {
+        setPrefilledOpVesselId(vesselId);
+        setPrefilledOpType(operationType);
+      },
+      setTaskDraft: (title, priority, description) => {
+        state.setPrefilledTaskTitle(title);
+        state.setPrefilledTaskPriority(priority);
+        state.setPrefilledTaskDesc(description);
+      },
+    });
+    state.setPendingPlanFulfilment(fulfilmentKind
+      ? { planItemId: item.id, kind: fulfilmentKind, openedAt: new Date().toISOString() }
+      : null);
+    // The state facade is reallocated every render; the listed dependencies are
+    // the values this actually reads, and every `set*` on it is a stable setter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    state.lang, state.harvests, state.currentUser, isKa,
+    state.setToastMessage, state.setActiveModule, state.setActiveTab,
+    state.setPrefilledIntakeHarvestId, state.setPrefilledSourceId, state.setPrefilledDestId,
+    state.setLabLotId, state.setLabTankId,
+    state.setPrefilledTaskTitle, state.setPrefilledTaskPriority, state.setPrefilledTaskDesc,
+    state.setPendingPlanFulfilment,
+    setPrefilledTransferVolume, setWineryPlanFocusVesselId, setPrefilledOpVesselId, setPrefilledOpType,
+  ]);
+
   const closeScanner = useCallback(() => setIsScannerOpen(false), []);
   const handleScanResolve = useCallback((target: CellarScanTarget) => {
     setActiveModule('gvino');
     if (target.kind === 'vessel') {
       if (canViewUserDestination(currentUserForScan, 'gvino', 'operations')) {
+        const due = dueWorkForVessel({
+          vesselId: target.id,
+          items: state.productionPlans,
+          today: new Date().toISOString().slice(0, 10),
+        });
+        if (due) {
+          void openProductionPlanWork(due);
+          setToastMessage(scanLanguage === 'ka'
+            ? `${target.id}: ${due.title}`
+            : `${target.id} — due now: ${due.title}`);
+          return;
+        }
         setPrefilledOpVesselId(target.id);
         setPrefilledOpType(undefined);
         setActiveTab('operations');
@@ -305,7 +400,7 @@ export default function App() {
     setPassportLotId(target.id);
     setActiveTab('lots');
     setToastMessage(scanLanguage === 'ka' ? `${target.id} პარტიის პასპორტი გაიხსნა.` : `${target.id} lot passport opened.`);
-  }, [currentUserForScan, scanLanguage, setActiveModule, setActiveTab, setPassportLotId, setPrefilledOpVesselId, setSelectedTankId, setToastMessage]);
+  }, [currentUserForScan, scanLanguage, setActiveModule, setActiveTab, setPassportLotId, setPrefilledOpVesselId, setSelectedTankId, setToastMessage, state.productionPlans, openProductionPlanWork]);
 
   const scanVesselIds = useMemo(() => state.vessels.map(vessel => vessel.id), [state.vessels]);
   const scanLotIds = useMemo(() => state.lots.map(lot => lot.id), [state.lots]);
@@ -314,27 +409,44 @@ export default function App() {
     setSelectedTankId(null);
     setRecentlyLoggedOperationId(null);
   }, [setSelectedTankId]);
-  const openVesselOperation = useCallback((vesselId: string, operationType?: CellarOperationType) => {
+  const openVesselOperation = useCallback((vesselId: string, operationType?: CellarOperationType, returnTab: 'vessels' | 'winery-plan' = 'vessels') => {
     setPrefilledOpVesselId(vesselId);
     setPrefilledOpType(operationType);
     setOperationReturnVesselId(vesselId);
+    setOperationReturnTab(returnTab);
+    if (returnTab === 'winery-plan') setWineryPlanFocusVesselId(vesselId);
     setRecentlyLoggedOperationId(null);
     setSelectedTankId(null);
     setActiveModule('gvino');
     setActiveTab('operations');
   }, [setActiveModule, setActiveTab, setPrefilledOpVesselId, setSelectedTankId]);
+  // The state facade is reallocated every render; the signal on it is not.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const signalTransferRecorded = useCallback(() => state.signalPlanRecord('transfer'), [state.signalPlanRecord]);
+
   const handleVesselOperationLogged = useCallback((operation: Pick<CellarOperation, 'id' | 'vesselId'>) => {
+    // Settling planned work comes first: it is true whether or not this
+    // operation was started from a vessel and needs to return to one.
+    state.signalPlanRecord('operation');
     if (!operationReturnVesselId) return;
     const vesselId = operation.vesselId || operationReturnVesselId;
     setOperationReturnVesselId(null);
     setRecentlyLoggedOperationId(operation.id);
     setActiveModule('gvino');
-    setActiveTab('vessels');
-    setSelectedTankId(vesselId);
-  }, [operationReturnVesselId, setActiveModule, setActiveTab, setSelectedTankId]);
+    setActiveTab(operationReturnTab);
+    if (operationReturnTab === 'winery-plan') {
+      setWineryPlanFocusVesselId(vesselId);
+      setSelectedTankId(null);
+    } else {
+      setSelectedTankId(vesselId);
+    }
+    // Same facade caveat as above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [operationReturnTab, operationReturnVesselId, setActiveModule, setActiveTab, setSelectedTankId, state.signalPlanRecord]);
   useEffect(() => {
     if (state.activeTab !== 'operations' && !state.selectedTankId && operationReturnVesselId) {
       setOperationReturnVesselId(null);
+      setOperationReturnTab('vessels');
     }
   }, [operationReturnVesselId, state.activeTab, state.selectedTankId]);
   const consumeAiFindingFocus = useCallback(() => setFocusedAiFindingId(null), []);
@@ -719,6 +831,19 @@ export default function App() {
 
   // Nav bar: which dropdown is open — a module-group id, 'settings', 'mobile', or null.
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  // The cellar focus card used to be permanent sidebar furniture — ~150px of
+  // vertical space above the sections on every cellar screen. It still opens by
+  // default, but it folds to its headline and the choice sticks.
+  const [isCellarFocusOpen, setIsCellarFocusOpen] = useState(
+    () => typeof window === 'undefined' || window.localStorage?.getItem('cf_cellar_focus_open') !== 'false',
+  );
+  const toggleCellarFocus = useCallback(() => {
+    setIsCellarFocusOpen(open => {
+      const next = !open;
+      if (typeof window !== 'undefined') window.localStorage?.setItem('cf_cellar_focus_open', String(next));
+      return next;
+    });
+  }, []);
   const navRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!openMenu) return;
@@ -1101,10 +1226,12 @@ export default function App() {
   const pendingTaskCount = state.tasks.filter(task => task.status !== 'completed').length;
   const urgentAlertCount = alerts.filter(alert => alert.severity === 'critical').length;
   // Sections group the cellar by what a person is doing, not by which register
-  // owns the data. Every destination sits under a named heading: the previous
-  // collapsible "More tools" group held eight unrelated tabs that could only be
-  // found by hunting through it. Tab ids are untouched, so permissions, deep
-  // links and the command palette keep working unchanged.
+  // owns the data. Four headings of three-to-five, rather than one of six next
+  // to a two-item "Tools" catch-all — a heading you can hold in your head is
+  // worth more than a perfectly literal taxonomy. The two AI screens sit
+  // together under Overview instead of a group apart, and lab analysis joined
+  // the calculators it feeds. Tab ids are untouched, so permissions, deep links
+  // and the command palette keep working unchanged.
   const wineryTabGroups = [
     {
       id: 'overview',
@@ -1112,6 +1239,7 @@ export default function App() {
       tabs: [
         { id: 'dashboard', label: t.overview, icon: LayoutDashboard },
         { id: 'intelligence', label: t.ai_intelligence, icon: BrainCircuitIcon },
+        { id: 'ai', label: t.ai_assistant, icon: Sparkles },
       ],
     },
     {
@@ -1120,36 +1248,35 @@ export default function App() {
       tabs: [
         { id: 'intake', label: t.grape_intake || 'Grape Intake', icon: Grape },
         { id: 'cellar', label: isKa ? 'მარანი' : 'Cellar workspace', icon: Wine },
+        { id: 'winery-plan', label: isKa ? 'მარნის გეგმა' : 'Winery plan', icon: MapPinned },
         { id: 'bottling', label: t.bottling, icon: Package },
       ],
     },
     {
       id: 'production',
-      label: isKa ? 'მიმდინარე წარმოება' : 'Current production',
+      label: isKa ? 'წარმოება' : 'Production',
       tabs: [
         { id: 'planner', label: isKa ? 'წარმოების გეგმა' : 'Production plan', icon: CalendarRange },
         { id: 'tasks', label: t.tasks, icon: ClipboardList },
         { id: 'operations', label: isKa ? 'მოვლა და გაზომვები' : 'Treatments & checks', icon: Workflow },
         { id: 'fermentation', label: t.fermentation, icon: Activity },
         { id: 'transfers', label: t.transfers, icon: GitCommit },
-        { id: 'labs', label: t.lab_analysis, icon: TestTube },
       ],
     },
     {
+      // The bench: measuring the wine, the maths you do on the result, and the
+      // paper trail that proves both. Lab analysis used to sit under production
+      // and the calculators under a two-item "Tools" catch-all, so the work of
+      // one afternoon was split across three headings.
       id: 'quality',
-      label: isKa ? 'ხარისხი და მიკვლევადობა' : 'Quality & traceability',
+      label: isKa ? 'ხარისხი და ლაბორატორია' : 'Quality & lab',
       tabs: [
+        { id: 'labs', label: t.lab_analysis, icon: TestTube },
+        { id: 'calculators', label: t.calculators, icon: Calculator },
+        { id: 'blendtrials', label: isKa ? 'კუპაჟის ცდები' : 'Blend trials', icon: Beaker },
         { id: 'quality', label: isKa ? 'ხარისხი' : 'Quality SOPs', icon: ShieldCheck },
         { id: 'lineage', label: t.lineage || 'Lineage', icon: GitMerge },
         { id: 'notes', label: t.notes, icon: FileText },
-      ],
-    },
-    {
-      id: 'resources',
-      label: isKa ? 'ხელსაწყოები' : 'Tools',
-      tabs: [
-        { id: 'calculators', label: t.calculators, icon: TestTube },
-        { id: 'ai', label: t.ai_assistant, icon: BrainCircuitIcon },
       ],
     },
   ];
@@ -1160,6 +1287,7 @@ export default function App() {
   const canViewWineryPlanner = canViewModule('gvino', 'planner');
   const canViewWineryLots = canViewModule('gvino', 'lots');
   const canViewWineryVessels = canViewModule('gvino', 'vessels');
+  const canViewWineryPlan = canViewModule('gvino', 'winery-plan');
   const canViewWineryFermentation = canViewModule('gvino', 'fermentation');
   const activeWineryNavTab = state.activeTab === 'lots' || state.activeTab === 'vessels'
     ? 'cellar'
@@ -1256,15 +1384,26 @@ export default function App() {
     && state.activeModule !== 'master-admin'
     && state.activeModule !== 'settings'
     && !(state.activeModule === 'gvino' && state.activeTab === 'dashboard');
+  // Every group carries named sections, so the sidebar is the same thing
+  // everywhere: the second level. Stock & Sales, Records and Today used to
+  // repeat their module list in a top-bar dropdown *and* in the sidebar — the
+  // same five items twice on one screen. The dropdowns are gone; the group
+  // button lands you on its primary module and the sidebar carries the rest.
   const moduleGroups = [
     {
       id: 'dashboard',
       label: t.today,
       icon: LayoutDashboard,
       primary: 'portal',
-      modules: [
-        { id: 'portal', label: t.today, icon: LayoutDashboard },
-        { id: 'work', label: isKa ? 'სამუშაო რიგი' : 'Work Queue', icon: ListChecks },
+      sections: [
+        {
+          id: 'today',
+          label: t.today,
+          modules: [
+            { id: 'portal', label: t.today, icon: LayoutDashboard },
+            { id: 'work', label: isKa ? 'სამუშაო რიგი' : 'Work Queue', icon: ListChecks },
+          ],
+        },
       ],
     },
     {
@@ -1273,7 +1412,13 @@ export default function App() {
       icon: Sprout,
       primary: 'vazi',
       requires: 'vazi',
-      modules: [{ id: 'vazi', label: t.nav_vazi || 'Vazi', icon: Sprout }],
+      sections: [
+        {
+          id: 'vineyard',
+          label: isKa ? 'ვენახი' : 'Vineyard',
+          modules: [{ id: 'vazi', label: t.nav_vazi || 'Vazi', icon: Sprout }],
+        },
+      ],
     },
     {
       id: 'cellar',
@@ -1281,37 +1426,68 @@ export default function App() {
       icon: Wine,
       primary: 'gvino',
       requires: 'gvino',
-      modules: [{ id: 'gvino', label: t.nav_gvino || 'Gvino', icon: Wine }],
+      sections: [
+        {
+          id: 'cellar',
+          label: isKa ? 'მარანი' : 'Cellar',
+          modules: [{ id: 'gvino', label: t.nav_gvino || 'Gvino', icon: Wine }],
+        },
+      ],
     },
     {
-      // Ordered as goods actually move: materials in, then bought, then
-      // bottled stock, then shipped — and recall, which reaches back through
-      // all of it. Costs and Analytics used to sit here too; they report on
-      // the business rather than running it, so they moved to Records.
+      // Split the way goods actually move, so the sidebar reads as a direction
+      // rather than a list. Recall sits with outbound because that is where a
+      // recall starts — from what shipped.
       id: 'business',
       label: isKa ? 'მარაგი და გაყიდვები' : 'Stock & Sales',
       icon: BadgeDollarSign,
       primary: 'inventory',
-      modules: [
-        { id: 'inventory', label: isKa ? 'მასალები' : 'Materials', icon: Boxes },
-        { id: 'procurement', label: isKa ? 'შესყიდვა' : 'Purchasing', icon: ShoppingCart },
-        { id: 'storage', label: isKa ? 'მზა პროდუქცია' : 'Finished goods', icon: Warehouse },
-        { id: 'sales', label: isKa ? 'შეკვეთები და გაგზავნა' : 'Orders & dispatch', icon: Truck },
-        { id: 'recall', label: isKa ? 'პროდუქტის გაწვევა' : 'Product Recall', icon: AlertOctagon },
+      sections: [
+        {
+          id: 'inbound',
+          label: isKa ? 'შემომავალი' : 'Inbound',
+          modules: [
+            { id: 'inventory', label: isKa ? 'მასალები' : 'Materials', icon: Boxes },
+            { id: 'procurement', label: isKa ? 'შესყიდვა' : 'Purchasing', icon: ShoppingCart },
+          ],
+        },
+        {
+          id: 'outbound',
+          label: isKa ? 'გამავალი' : 'Outbound',
+          modules: [
+            { id: 'storage', label: isKa ? 'მზა პროდუქცია' : 'Finished goods', icon: Warehouse },
+            { id: 'sales', label: isKa ? 'შეკვეთები და გაგზავნა' : 'Orders & dispatch', icon: Truck },
+            { id: 'recall', label: isKa ? 'პროდუქტის გაწვევა' : 'Product Recall', icon: AlertOctagon },
+          ],
+        },
       ],
     },
     {
-      // Everything you look up or produce a report from, rather than work in.
+      // Everything you look up or produce a report from, rather than work in —
+      // but proving something happened and measuring how it went are different
+      // jobs, so they no longer share one undivided list.
       id: 'documents',
       label: isKa ? 'ჩანაწერები' : 'Records',
       icon: FileSpreadsheet,
       primary: 'docs',
-      modules: [
-        { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
-        { id: 'certification', label: isKa ? 'სერტიფიცირება' : 'Certification', icon: BadgeCheck },
-        { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
-        { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
-        { id: 'analytics', label: t.nav_analytics || 'Analytics', icon: BarChart3 },
+      sections: [
+        {
+          id: 'compliance',
+          label: isKa ? 'შესაბამისობა' : 'Compliance',
+          modules: [
+            { id: 'docs', label: t.nav_docs || 'Official Documents', icon: FileSpreadsheet },
+            { id: 'certification', label: isKa ? 'სერტიფიცირება' : 'Certification', icon: BadgeCheck },
+            { id: 'audit', label: t.nav_audit || 'Audit Trail', icon: FileText },
+          ],
+        },
+        {
+          id: 'reports',
+          label: isKa ? 'ანგარიშები' : 'Reports',
+          modules: [
+            { id: 'analytics', label: t.nav_analytics || 'Analytics', icon: BarChart3 },
+            { id: 'costs', label: t.nav_costs || 'Costs', icon: Coins },
+          ],
+        },
       ],
     },
     {
@@ -1319,16 +1495,25 @@ export default function App() {
       label: state.currentUser.isMasterAdmin ? 'System' : (t.nav_settings || 'Settings'),
       icon: state.currentUser.isMasterAdmin ? ShieldAlert : ClipboardList,
       primary: 'integrations',
-      modules: [
-        { id: 'integrations', label: isKa ? 'ინტეგრაციები' : 'Integration Hub', icon: PlugZap },
-        { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList },
-        { id: 'master-admin', label: 'System Console', icon: ShieldAlert },
+      sections: [
+        {
+          id: 'settings',
+          label: state.currentUser.isMasterAdmin ? 'System' : (t.nav_settings || 'Settings'),
+          modules: [
+            { id: 'integrations', label: isKa ? 'ინტეგრაციები' : 'Integration Hub', icon: PlugZap },
+            { id: 'settings', label: t.nav_settings || 'Settings', icon: ClipboardList },
+            { id: 'master-admin', label: 'System Console', icon: ShieldAlert },
+          ],
+        },
       ],
     },
   ].map(group => {
-    const modules = group.modules.filter(mod => canViewModule(mod.id));
+    const sections = group.sections
+      .map(section => ({ ...section, modules: section.modules.filter(mod => canViewModule(mod.id)) }))
+      .filter(section => section.modules.length > 0);
+    const modules = sections.flatMap(section => section.modules);
     const primary = modules.some(mod => mod.id === group.primary) ? group.primary : modules[0]?.id || group.primary;
-    return { ...group, modules, primary };
+    return { ...group, sections, modules, primary };
   }).filter(group => {
     const enabledModules = state.currentUser.enabledModules || ['vazi', 'gvino'];
     if (group.requires === 'vazi' && !enabledModules.includes('vazi')) return false;
@@ -1372,38 +1557,48 @@ export default function App() {
             })),
         }))
         .filter(group => group.items.length > 0)
-      : [{
-        id: activeModuleGroup.id,
-        label: activeModuleGroup.label,
-        items: activeModuleGroup.modules.map(mod => ({
+      : activeModuleGroup.sections.map(section => ({
+        id: section.id,
+        label: section.label,
+        items: section.modules.map(mod => ({
           id: mod.id,
           label: mod.label,
           icon: mod.icon,
           active: state.activeModule === mod.id,
           onSelect: () => switchModule(mod.id),
         })),
-      }];
-  // Cellar-only context card pinned above the sidebar sections.
+      }));
+  // Cellar-only context card above the sidebar sections — collapsible, so the
+  // sections start near the top of the viewport when it is not wanted.
   const cellarFocusSummary = (
-    <div className="app-sidebar-summary hidden lg:block mb-3 p-3 dark:border-stone-800 dark:bg-stone-900/90">
-      <div className="flex items-center justify-between gap-3">
-        <div>
+    <div className="app-sidebar-summary hidden md:block mb-3 p-3 dark:border-stone-800 dark:bg-stone-900/90">
+      <button
+        type="button"
+        onClick={toggleCellarFocus}
+        aria-expanded={isCellarFocusOpen}
+        className="flex w-full cursor-pointer items-center justify-between gap-2 text-left"
+        title={isCellarFocusOpen ? (isKa ? 'ჩაკეცვა' : 'Collapse') : (isKa ? 'გაშლა' : 'Expand')}
+      >
+        <span className="min-w-0">
           <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
             {isKa ? 'დღის ფოკუსი' : 'Today focus'}
           </span>
-          <strong className="mt-1 block text-sm font-black text-stone-900 dark:text-amber-100">
+          <strong className="mt-0.5 block truncate text-sm font-black text-stone-900 dark:text-amber-100">
             {activeWineryTab?.label || activeModuleGroup.label}
           </strong>
-        </div>
-        <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
-          urgentAlertCount > 0
-            ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
-            : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
-        }`}>
-          {urgentAlertCount > 0 ? `${urgentAlertCount} ${isKa ? 'გადაუდებელი' : 'urgent'}` : (isKa ? 'სტაბილური' : 'steady')}
         </span>
-      </div>
-      {(canViewWineryTasks || canViewWineryFermentation) && (
+        <span className="flex shrink-0 items-center gap-1">
+          <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
+            urgentAlertCount > 0
+              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
+              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
+          }`}>
+            {urgentAlertCount > 0 ? `${urgentAlertCount} ${isKa ? 'გადაუდებელი' : 'urgent'}` : (isKa ? 'სტაბილური' : 'steady')}
+          </span>
+          <ChevronDown className={`w-3.5 h-3.5 text-stone-400 transition-transform ${isCellarFocusOpen ? '' : '-rotate-90'}`} />
+        </span>
+      </button>
+      {isCellarFocusOpen && (canViewWineryTasks || canViewWineryFermentation) && (
         <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
           {canViewWineryTasks && (
             <button type="button" onClick={() => state.setActiveTab('tasks')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
@@ -1419,7 +1614,7 @@ export default function App() {
           )}
         </div>
       )}
-      {canViewWineryVessels && (
+      {isCellarFocusOpen && canViewWineryVessels && (
       <div className="mt-2.5">
         <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
           <span>{isKa ? 'ტევადობა' : 'Capacity'}</span>
@@ -1440,6 +1635,11 @@ export default function App() {
       )}
     </div>
   );
+  const sidebarModeLabels: Record<SidebarMode, string> = {
+    full: isKa ? 'მენიუს გაშლა' : 'Expand menu',
+    rail: isKa ? 'მენიუს შევიწროება' : 'Narrow menu',
+    hidden: isKa ? 'მენიუს დამალვა' : 'Hide menu',
+  };
   const workspaceMobileLabel = activeModuleGroup.id === 'cellar'
     ? (isKa ? 'მარნის განყოფილება' : 'Winery section')
     : activeModuleGroup.id === 'vineyard'
@@ -1530,43 +1730,66 @@ export default function App() {
     setActiveTab(tab);
   }, [setActiveModule, setActiveTab]);
 
-  const openProductionPlanWork = async (item: ProductionPlanItem) => {
-    const { openProductionPlanItem } = await import('../lib/productionPlanNavigation');
-    openProductionPlanItem(item, {
-      lang: state.lang,
-      harvests: state.harvests,
-      navigate: (module, tab) => {
-        if (!canViewModule(module, tab)) {
-          state.setToastMessage(isKa
-            ? 'თქვენს როლს ამ სამუშაო სივრცეზე წვდომა არ აქვს.'
-            : 'Your workspace role does not have access to this work area.');
-          return false;
-        }
-        state.setActiveModule(module as any);
-        if (tab) state.setActiveTab(tab);
-        return true;
-      },
-      setIntakeHarvestId: state.setPrefilledIntakeHarvestId,
-      setTransfer: (sourceId, destinationId, volume) => {
-        state.setPrefilledSourceId(sourceId);
-        state.setPrefilledDestId(destinationId);
-        setPrefilledTransferVolume(volume);
-      },
-      setLab: (lotId, vesselId) => {
-        state.setLabLotId(lotId);
-        state.setLabTankId(vesselId);
-      },
-      setSanitation: vesselId => {
-        setPrefilledOpVesselId(vesselId);
-        setPrefilledOpType('cleaning');
-      },
-      setTaskDraft: (title, priority, description) => {
-        state.setPrefilledTaskTitle(title);
-        state.setPrefilledTaskPriority(priority);
-        state.setPrefilledTaskDesc(description);
-      },
-    });
-  };
+
+  // Who this winery actually assigns work to, taken from the work it has
+  // already scheduled rather than a second fetch of the member list.
+  const planAssignees = useMemo(() => {
+    const names = new Set<string>();
+    for (const item of state.productionPlans) if (item.assignedTo) names.add(item.assignedTo);
+    for (const task of state.tasks) if (task.assignedTo) names.add(task.assignedTo);
+    names.delete(state.currentUser.username);
+    return [...names].sort();
+  }, [state.productionPlans, state.tasks, state.currentUser.username]);
+
+  const raiseWorkOrder = useCallback((order: WorkOrder, items: ProductionPlanItem[]) => {
+    // Items first: an order whose plan items have not landed yet would render
+    // as entirely "deleted" for a frame, and the server rejects an order that
+    // references plans it cannot see.
+    state.setProductionPlans(current => [...items, ...current]);
+    state.setWorkOrders(current => [order, ...current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.setProductionPlans, state.setWorkOrders]);
+
+  const saveBlendTrial = useCallback((trial: BlendTrial) => {
+    state.setBlendTrials(current => [trial, ...current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.setBlendTrials]);
+
+  const deleteBlendTrial = useCallback((trialId: string) => {
+    state.setBlendTrials(current => current.filter(trial => trial.id !== trialId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.setBlendTrials]);
+
+  const saveWorkOrderTemplate = useCallback((template: WorkOrderTemplate) => {
+    state.setWorkOrderTemplates(current => [template, ...current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.setWorkOrderTemplates]);
+
+  const deleteWorkOrder = useCallback((orderId: string) => {
+    // Only the grouping goes. The planned work itself is a record of intent
+    // someone else may already be acting on, so it stays until it is settled
+    // or explicitly cancelled in the planner.
+    state.setWorkOrders(current => current.filter(order => order.id !== orderId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.setWorkOrders]);
+
+  // Bulk onboarding writes vessels and lots wholesale, so it needs create
+  // rights on both rather than either alone.
+  const canImportCellarRecords = canAccess(state.currentUser.role, 'vessels', 'create')
+    && canAccess(state.currentUser.role, 'lots', 'create');
+
+  const recordTaskWork = useCallback((task: Task) => {
+    const item = task.source && state.productionPlans.find(plan => plan.id === task.source!.id);
+    if (!item) {
+      state.setToastMessage(isKa
+        ? 'ამ დავალების საწარმოო გეგმა ვეღარ მოიძებნა.'
+        : 'The production plan behind this task no longer exists.');
+      return;
+    }
+    void openProductionPlanWork(item);
+    // Same facade caveat as above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.productionPlans, state.setToastMessage, isKa, openProductionPlanWork]);
 
   // Loading gate — MUST come after every hook above. React requires an
   // unconditional, stable hook order across renders; early-returning before a
@@ -1816,65 +2039,21 @@ export default function App() {
               {moduleGroups.filter(g => g.id !== 'settings').map(group => {
                 const Icon = group.icon;
                 const isActive = activeModuleGroup.id === group.id;
-                const hasSub = group.modules.length > 1;
-                const tabClass = `relative px-3 py-2 rounded-[10px] flex items-center gap-1.5 cursor-pointer transition-colors duration-150 font-bold text-[11px] ${isActive ? 'text-[#651522] dark:text-amber-100' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800'}`;
-                const pill = isActive ? (
-                  <motion.span layoutId="module-nav-pill" className="absolute inset-0 bg-[#f0e6e8] rounded-[10px] dark:bg-[#3a171d]" transition={{ type: 'spring', stiffness: 480, damping: 38 }} />
-                ) : null;
-                if (!hasSub) {
-                  return (
-                    <button key={group.id} onClick={() => switchModule(group.primary)} title={group.label} aria-label={group.label} aria-current={isActive ? 'page' : undefined} className={tabClass}>
-                      {pill}
-                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-[#651522] dark:text-amber-200' : 'text-stone-500 dark:text-stone-400'}`} />
-                      <span className="relative z-10 hidden lg:inline">{group.label}</span>
-                    </button>
-                  );
-                }
                 return (
-                  <div key={group.id} className="relative">
-                    <button
-                      onClick={() => setOpenMenu(openMenu === group.id ? null : group.id)}
-                      title={group.label}
-                      aria-label={group.label}
-                      aria-haspopup="menu"
-                      aria-expanded={openMenu === group.id}
-                      aria-current={isActive ? 'page' : undefined}
-                      className={tabClass}
-                    >
-                      {pill}
-                      <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-[#651522] dark:text-amber-200' : 'text-stone-500 dark:text-stone-400'}`} />
-                      <span className="relative z-10 hidden lg:inline">{group.label}</span>
-                      <ChevronDown className={`relative z-10 w-3 h-3 transition-transform ${openMenu === group.id ? 'rotate-180' : ''} ${isActive ? 'text-amber-200' : 'text-stone-400'}`} />
-                    </button>
-                    <AnimatePresence>
-                      {openMenu === group.id && (
-                        <motion.div
-                          role="menu"
-                          initial={{ opacity: 0, y: -6, scale: 0.97 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: -6, scale: 0.97 }}
-                          transition={{ duration: 0.15 }}
-                          className="absolute left-0 top-full mt-2 z-50 min-w-[190px] p-1 bg-white border border-stone-200 rounded-xl shadow-xl dark:bg-[#1a1113] dark:border-stone-800"
-                        >
-                          {group.modules.map(mod => {
-                            const ModIcon = mod.icon;
-                            const modActive = state.activeModule === mod.id;
-                            return (
-                              <button
-                                key={mod.id}
-                                role="menuitem"
-                                onClick={() => { switchModule(mod.id); setOpenMenu(null); }}
-                                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[11px] font-bold tracking-wide cursor-pointer transition-colors ${modActive ? 'bg-[#4e0e15] text-amber-50' : 'text-stone-700 hover:bg-[#FAF8F5] dark:text-stone-200 dark:hover:bg-stone-800'}`}
-                              >
-                                <ModIcon className={`w-3.5 h-3.5 ${modActive ? 'text-amber-300' : 'text-[#4e0e15] dark:text-amber-300'}`} />
-                                {mod.label}
-                              </button>
-                            );
-                          })}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
+                  <button
+                    key={group.id}
+                    onClick={() => switchModule(group.primary)}
+                    title={group.label}
+                    aria-label={group.label}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`relative px-3 py-2 rounded-[10px] flex items-center gap-1.5 cursor-pointer transition-colors duration-150 font-bold text-[11px] ${isActive ? 'text-[#651522] dark:text-amber-100' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800'}`}
+                  >
+                    {isActive && (
+                      <motion.span layoutId="module-nav-pill" className="absolute inset-0 bg-[#f0e6e8] rounded-[10px] dark:bg-[#3a171d]" transition={{ type: 'spring', stiffness: 480, damping: 38 }} />
+                    )}
+                    <Icon className={`relative z-10 w-3.5 h-3.5 ${isActive ? 'text-[#651522] dark:text-amber-200' : 'text-stone-500 dark:text-stone-400'}`} />
+                    <span className="relative z-10 hidden lg:inline">{group.label}</span>
+                  </button>
                 );
               })}
             </nav>
@@ -2337,10 +2516,9 @@ export default function App() {
           sections={workspaceNavSections}
           mobileLabel={workspaceMobileLabel}
           sectionsLabel={isKa ? 'განყოფილებები' : 'Sections'}
-          collapseLabel={isKa ? 'მენიუს ჩაკეცვა' : 'Collapse menu'}
-          expandLabel={isKa ? 'მენიუს გაშლა' : 'Expand menu'}
-          collapsed={state.isSidebarCollapsed}
-          onToggleCollapsed={() => state.setIsSidebarCollapsed(!state.isSidebarCollapsed)}
+          modeLabels={sidebarModeLabels}
+          mode={state.sidebarMode}
+          onModeChange={state.setSidebarMode}
           summary={activeModuleGroup.id === 'cellar' ? cellarFocusSummary : undefined}
         >
         {state.activeModule === 'vazi' ? (
@@ -2452,6 +2630,11 @@ export default function App() {
           <IntegrationHubTab
             lang={state.lang}
             setToastMessage={state.setToastMessage}
+            vessels={state.vessels}
+            lots={state.lots}
+            canImportCellarRecords={canImportCellarRecords}
+            onImportVessels={canImportCellarRecords ? state.setVessels : undefined}
+            onImportLots={canImportCellarRecords ? state.setLots : undefined}
           />
         </Suspense>
       ) : state.activeModule === 'settings' ? (
@@ -2786,9 +2969,43 @@ export default function App() {
                   onOpenProductionPlan={(planId) => openWorkflowItem('planner', planId)}
                   onLogOperation={openVesselOperation}
                   onPlanTransfer={openTransferFromVessel}
+                  onLocateOnWineryPlan={openWineryPlanForVessel}
                   renderQvevriRecords={renderQvevriRecords}
                 />
               </div>
+            )}
+
+            {/* B0. STANDALONE SPATIAL WINERY OPERATIONS */}
+            {state.activeTab === 'winery-plan' && canViewWineryPlan && (
+              <WineryPlanTab
+                lang={state.lang}
+                vessels={state.vessels}
+                lots={state.lots}
+                floors={state.companyProfile.cellarFloors}
+                productionPlans={state.productionPlans}
+                tasks={canViewWineryTasks ? state.tasks : []}
+                currentUsername={state.currentUser.username}
+                wineryName={state.companyProfile.wineryName || state.companyProfile.companyName}
+                initialVesselId={wineryPlanFocusVesselId}
+                onSelectedVesselChange={setWineryPlanFocusVesselId}
+                onUpdateVessels={state.setVessels}
+                onUpdateFloors={canAccess(state.currentUser.role, 'vessels', 'update')
+                  ? (floors) => state.setCompanyProfile(current => ({ ...current, cellarFloors: floors }))
+                  : undefined}
+                onUpdateProductionPlans={state.setProductionPlans}
+                onOpenVessel={state.setSelectedTankId}
+                onOpenLot={canViewWineryLots ? state.setPassportLotId : undefined}
+                onLogOperation={cellarPermissions.operations.canLogCellarOperation
+                  ? (vesselId, operationType) => openVesselOperation(vesselId, operationType, 'winery-plan')
+                  : undefined}
+                onStartTransfer={cellarPermissions.transfers.canExecuteTransfer ? openTransferFromWineryPlan : undefined}
+                onOpenProductionPlan={canViewWineryPlanner ? (planId) => openWorkflowItem('planner', planId) : undefined}
+                onOpenPlanner={canViewWineryPlanner ? () => state.setActiveTab('planner') : undefined}
+                onBackToWinery={() => state.setActiveTab('cellar')}
+                canUpdateLayout={cellarPermissions.vessels.canUpdateVessel}
+                canScheduleWork={canAccess(state.currentUser.role, 'planning', 'create')}
+                setToastMessage={state.setToastMessage}
+              />
             )}
 
             {/* B1. GRAPE RECEIVING / INTAKE */}
@@ -2894,6 +3111,7 @@ export default function App() {
                 onUpdateCostEntries={state.setCostEntries}
                 onApplyTransferCommandResponse={state.applyTransferCommandResponse}
                 onApplyTransferReversalCommandResponse={state.applyTransferReversalCommandResponse}
+                onTransferLogged={signalTransferRecorded}
                 clearPrefilled={clearTransferPrefill}
               />
             )}
@@ -2991,6 +3209,24 @@ export default function App() {
             )}
 
             {/* G. WINEMAKING CALCULATORS */}
+            {state.activeTab === 'blendtrials' && (
+              <Suspense fallback={<ModuleLoader />}>
+                <BlendTrialsPanel
+                  lang={state.lang}
+                  currentUsername={state.currentUser.username}
+                  trials={state.blendTrials}
+                  lots={state.lots}
+                  labLogs={state.labLogs}
+                  costEntries={state.costEntries}
+                  currency={state.companyProfile.currency}
+                  canEdit={canAccess(state.currentUser.role, 'lots', 'update')}
+                  onSaveTrial={saveBlendTrial}
+                  onDeleteTrial={deleteBlendTrial}
+                  setToastMessage={state.setToastMessage}
+                />
+              </Suspense>
+            )}
+
             {state.activeTab === 'calculators' && (
               <Suspense fallback={<ModuleLoader />}>
                 <EnoCalculators
@@ -3056,6 +3292,12 @@ export default function App() {
                 onCreateTask={canAccess(state.currentUser.role, 'tasks', 'create') ? state.handleAddNewTask : undefined}
                 onOpenTask={canViewWineryTasks ? (taskId) => openWorkflowItem('tasks', taskId) : undefined}
                 setToastMessage={state.setToastMessage}
+                workOrders={state.workOrders}
+                workOrderTemplates={state.workOrderTemplates}
+                assignees={planAssignees}
+                onRaiseWorkOrder={canAccess(state.currentUser.role, 'planning', 'create') ? raiseWorkOrder : undefined}
+                onDeleteWorkOrder={canAccess(state.currentUser.role, 'planning', 'delete') ? deleteWorkOrder : undefined}
+                onSaveWorkOrderTemplate={canAccess(state.currentUser.role, 'planning', 'create') ? saveWorkOrderTemplate : undefined}
               />
             )}
 
@@ -3112,6 +3354,7 @@ export default function App() {
                 setPrefilledTaskDesc={state.setPrefilledTaskDesc}
                 focusTaskId={taskDeepLinkId || (workflowFocus?.tab === 'tasks' ? workflowFocus.targetId : undefined)}
                 onOpenTaskSource={canViewWineryPlanner ? (task) => task.source && openWorkflowItem('planner', task.source.id) : undefined}
+                onRecordTaskWork={recordTaskWork}
               />
             )}
 

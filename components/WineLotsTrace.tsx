@@ -71,6 +71,7 @@ export interface WineLotsTraceProps {
   compact?: boolean;
   onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
   onPlanTransfer?: (vesselId: string, role?: 'source' | 'destination') => void;
+  onLocateOnWineryPlan?: (vesselId: string) => void;
 }
 
 export function commitWineLotMutationIfAllowed(
@@ -117,6 +118,7 @@ export function WineLotsTrace({
   compact = false,
   onLogOperation,
   onPlanTransfer,
+  onLocateOnWineryPlan,
 }: WineLotsTraceProps) {
   const t = translations[lang];
   const [internalSelectedLotId, setInternalSelectedLotId] = useState<string | null>(lots[0]?.id || null);
@@ -546,6 +548,7 @@ export function WineLotsTrace({
               setLabLotId={setLabLotId}
               onLogOperation={onLogOperation}
               onPlanTransfer={onPlanTransfer}
+              onLocateOnWineryPlan={onLocateOnWineryPlan}
             />
             {/* Header info */}
             <div className="hidden">

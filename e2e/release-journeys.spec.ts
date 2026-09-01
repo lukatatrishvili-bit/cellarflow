@@ -118,7 +118,6 @@ test('dashboard initialization does not lock module navigation', async ({ page }
   await expect(cellar).toHaveAttribute('aria-current', 'page');
 
   await today.click();
-  await page.getByRole('menuitem', { name: 'Today', exact: true }).click();
   await expect(today).toHaveAttribute('aria-current', 'page');
 });
 
@@ -146,8 +145,14 @@ test('winemaker can work with lots and vessels from one focused cellar workspace
   await expect(workspace).not.toContainText('Thermal Intelligence Loop');
 
   await workspace.getByRole('button', { name: 'Cellar plan', exact: true }).click();
-  const cellarPlan = workspace.getByTestId('cellar-plan');
-  await expect(cellarPlan).toContainText('Digital cellar plan');
+  const wineryPlan = page.getByTestId('winery-plan-module');
+  await expect(wineryPlan.getByRole('navigation', { name: 'Winery plan navigation' })).toBeVisible();
+  await expect(wineryPlan.getByRole('button', { name: 'Top-down', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await wineryPlan.getByRole('button', { name: '3D', exact: true }).click();
+  await expect(wineryPlan.getByTestId('winery-plan-3d')).toBeVisible();
+  await expect(wineryPlan.getByRole('button', { name: 'Edit 3D map', exact: true })).toBeVisible();
+  await wineryPlan.getByRole('button', { name: 'Top-down', exact: true }).click();
+  const cellarPlan = wineryPlan.getByTestId('cellar-plan');
   await expect(cellarPlan.getByRole('tab', { name: /Main cellar/ })).toHaveAttribute('aria-selected', 'true');
   await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).toHaveValue('100');
   await expect(cellarPlan.getByRole('combobox', { name: 'Find vessel on plan' })).toBeVisible();
@@ -187,23 +192,20 @@ test('owner can open business containment and cellar planning workflows', async 
   await signIn(page, fixture.owner);
 
   const navigation = page.getByRole('navigation', { name: 'Module navigation' });
-  const today = navigation.getByRole('button', { name: 'Today' });
-  await today.click();
-  await page.getByRole('menuitem', { name: 'Work Queue', exact: true }).click();
+  const workspaceNav = page.getByRole('complementary');
+  await navigation.getByRole('button', { name: 'Today' }).click();
+  await workspaceNav.getByRole('button', { name: 'Work Queue', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Today’s work and approvals' })).toBeVisible();
 
-  const stockAndSales = navigation.getByRole('button', { name: 'Stock & Sales' });
-  await stockAndSales.click();
-
-  await page.getByRole('menuitem', { name: 'Product Recall', exact: true }).click();
+  await navigation.getByRole('button', { name: 'Stock & Sales' }).click();
+  await workspaceNav.getByRole('button', { name: 'Product Recall', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Lot containment cockpit' })).toBeVisible();
 
-  await stockAndSales.click();
-  await page.getByRole('menuitem', { name: 'Purchasing', exact: true }).click();
+  await workspaceNav.getByRole('button', { name: 'Purchasing', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Purchasing and receiving' })).toBeVisible();
 
   await navigation.getByRole('button', { name: 'Cellar' }).click();
-  await page.getByRole('button', { name: 'Production plan', exact: true }).click();
+  await workspaceNav.getByRole('button', { name: 'Production plan', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Operational production plan' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Work agenda' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText('Missing links', { exact: true })).toBeVisible();

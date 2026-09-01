@@ -107,6 +107,53 @@ export function vesselsOnFloor(vessels: Vessel[], floors: CellarFloor[], floorId
   return vessels.filter(vessel => floorIdForVessel(vessel, floors) === floorId);
 }
 
+export interface CellarPlanPosition { x: number; y: number }
+
+const planCoordinateKey = (position: CellarPlanPosition) => `${Math.round(position.x)}:${Math.round(position.y)}`;
+const clampPlanCoordinate = (value: number) => Math.max(3, Math.min(97, value));
+
+export function automaticCellarPlanPositions(vessels: Vessel[]): Record<string, CellarPlanPosition> {
+  const count = Math.max(1, vessels.length);
+  const columns = Math.min(7, Math.max(2, Math.ceil(Math.sqrt(count * 1.6))));
+  const rows = Math.max(1, Math.ceil(count / columns));
+  return Object.fromEntries(vessels.map((vessel, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return [vessel.id, {
+      x: columns === 1 ? 50 : 9 + (column / (columns - 1)) * 82,
+      y: rows === 1 ? 50 : 13 + (row / (rows - 1)) * 74,
+    }];
+  }));
+}
+
+export function deriveCellarPlanPositions(vessels: Vessel[]): Record<string, CellarPlanPosition> {
+  const fallback = automaticCellarPlanPositions(vessels);
+  const used = new Set<string>();
+  const result: Record<string, CellarPlanPosition> = {};
+  const pending: Vessel[] = [];
+  vessels.forEach(vessel => {
+    const x = Number(vessel.xGrid);
+    const y = Number(vessel.yGrid);
+    const candidate = { x: clampPlanCoordinate(x), y: clampPlanCoordinate(y) };
+    const valid = Number.isFinite(x) && Number.isFinite(y) && !used.has(planCoordinateKey(candidate));
+    if (!valid) pending.push(vessel);
+    else {
+      result[vessel.id] = candidate;
+      used.add(planCoordinateKey(candidate));
+    }
+  });
+  const free = Object.values(fallback).filter(position => !used.has(planCoordinateKey(position)));
+  pending.forEach((vessel, index) => {
+    const position = free[index] || {
+      x: clampPlanCoordinate(10 + ((index * 17) % 80)),
+      y: clampPlanCoordinate(14 + ((index * 23) % 72)),
+    };
+    result[vessel.id] = position;
+    used.add(planCoordinateKey(position));
+  });
+  return result;
+}
+
 export function snapPlanPosition(
   position: { x: number; y: number },
   floor: Pick<CellarFloor, 'widthMeters' | 'heightMeters' | 'gridMeters'>,

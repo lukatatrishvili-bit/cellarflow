@@ -31,6 +31,10 @@ export const CELLAR_OPERATIONS: CellarOperationMeta[] = [
   { key: 'bottling', en: 'Bottling', ka: 'ჩამოსხმა', affectsVolume: true },
   { key: 'cleaning', en: 'Cleaning / sanitation', ka: 'წმენდა / სანიტარია' },
   { key: 'correction', en: 'Correction', ka: 'კორექცია' },
+  // Not the same as vessel filling: that fills an empty container through a
+  // dedicated workflow. Topping is the weekly job of replacing what a working
+  // barrel has lost, drawn from a topping vessel.
+  { key: 'topping', en: 'Topping', ka: 'დოლივა (შევსება)', affectsVolume: true, needsSourceVessel: true },
   { key: 'custom', en: 'Custom operation', ka: 'სხვა ოპერაცია' },
 ];
 

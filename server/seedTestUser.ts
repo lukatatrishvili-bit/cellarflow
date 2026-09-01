@@ -955,6 +955,9 @@ export function getSeederData(orgId: string): UserDataState {
     purchaseOrders: [],
     productionPlans: [],
     recallCases: [],
+    workOrders: [],
+    workOrderTemplates: [],
+    blendTrials: [],
     aiFindings: [],
   };
 }

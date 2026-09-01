@@ -101,6 +101,13 @@ describe('CellarWorkspace', () => {
     expect(markup).not.toContain('Thermal Intelligence Loop');
   });
 
+  it('links a wine lot back to its physical vessel on the standalone winery plan', () => {
+    const markup = renderWorkspace({ onLocateOnWineryPlan: vi.fn() });
+
+    expect(markup).toContain('Winery plan');
+    expect(markup).toContain('Where it is now');
+  });
+
   it('filters the available perspectives and mutations by permission', () => {
     const lotOnly = renderWorkspace({
       canViewLots: true,
