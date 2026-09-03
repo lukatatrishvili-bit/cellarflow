@@ -41,7 +41,18 @@ const INITIAL_JS_BUDGET_KB = 620;
 // that describes what anyone actually downloads. If this needs raising again
 // without the gzip figure moving, the right response is to look at why the
 // utility surface is growing, not to add another six.
-const INITIAL_CSS_BUDGET_KB = 276;
+//
+// Raised 276 → 282 on 2026-09-03 for the unified winery plan. Taking the note
+// above seriously, the emitted rules were diffed against the previous build
+// rather than assumed: +53 / -16, every one of them a colour or layout utility
+// for chrome that did not exist before (the layer legend, the headline-figure
+// filter state, and the transfer and batch banners), with no library or
+// dictionary leaking onto the critical path. Redundant opacity variants found
+// in that diff were consolidated first, which gave 1.2 KB back. What remains is
+// the cost of the surface itself: 274.5 → 277.6 KB raw, and 36.2 → 36.6 KB
+// gzip, so the figure anyone downloads moved by under half a kilobyte and the
+// ceiling below still stands untouched.
+const INITIAL_CSS_BUDGET_KB = 282;
 const INITIAL_JS_GZIP_BUDGET_KB = 190;
 const INITIAL_CSS_GZIP_BUDGET_KB = 40;
 

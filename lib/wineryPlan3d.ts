@@ -1,5 +1,8 @@
 import type { CellarFloor, Vessel, VesselPlanModel } from './wineryState';
 
+/** Only a floor's extent matters for placing vessels on it. */
+export type PlanFloorExtent = Pick<CellarFloor, 'widthMeters' | 'heightMeters'>;
+
 export interface VesselPlan3dSettings {
   model: VesselPlanModel;
   widthMeters: number;
@@ -84,7 +87,7 @@ export function applyVesselPlan3dSettings(vessel: Vessel, settings: VesselPlan3d
   };
 }
 
-export function vesselPlanWorldPosition(vessel: Vessel, floor: CellarFloor): { x: number; z: number } {
+export function vesselPlanWorldPosition(vessel: Vessel, floor: PlanFloorExtent): { x: number; z: number } {
   const xPct = clamp(finite(vessel.xGrid, 50), 0, 100);
   const yPct = clamp(finite(vessel.yGrid, 50), 0, 100);
   return {
@@ -93,7 +96,7 @@ export function vesselPlanWorldPosition(vessel: Vessel, floor: CellarFloor): { x
   };
 }
 
-export function vesselPlanGridPosition(x: number, z: number, floor: CellarFloor): { xGrid: number; yGrid: number } {
+export function vesselPlanGridPosition(x: number, z: number, floor: PlanFloorExtent): { xGrid: number; yGrid: number } {
   return {
     xGrid: clamp(((x + floor.widthMeters / 2) / floor.widthMeters) * 100, 0, 100),
     yGrid: clamp(((z + floor.heightMeters / 2) / floor.heightMeters) * 100, 0, 100),
@@ -101,7 +104,7 @@ export function vesselPlanGridPosition(x: number, z: number, floor: CellarFloor)
 }
 
 /** Conservative circular footprint check; it remains valid under arbitrary rotation. */
-export function vesselPlanCollisions(vessels: Vessel[], floor: CellarFloor): Map<string, string[]> {
+export function vesselPlanCollisions(vessels: Vessel[], floor: PlanFloorExtent): Map<string, string[]> {
   const collisions = new Map<string, string[]>();
   for (let leftIndex = 0; leftIndex < vessels.length; leftIndex += 1) {
     const left = vessels[leftIndex];

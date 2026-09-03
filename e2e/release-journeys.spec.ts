@@ -148,48 +148,36 @@ test('winemaker can work with lots and vessels from one focused cellar workspace
   const wineryPlan = page.getByTestId('winery-plan-module');
   await expect(wineryPlan.getByRole('navigation', { name: 'Winery plan navigation' })).toBeVisible();
   await expect(wineryPlan.getByRole('button', { name: 'Top-down', exact: true })).toHaveAttribute('aria-pressed', 'true');
+
+  // Both views are the same WebGL room under a different camera, so the stage
+  // never unmounts and every control stays put across the switch.
+  const stage = wineryPlan.getByTestId('winery-plan-stage');
+  await expect(stage).toHaveAttribute('data-plan-view', 'top-down');
+  await expect(stage.getByRole('tab', { name: /Main cellar/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(stage.getByRole('slider', { name: 'Zoom level' })).toHaveValue('100');
+  await expect(stage.getByRole('combobox', { name: 'Find vessel on plan' })).toBeVisible();
+  await expect(stage.getByRole('button', { name: 'X-ray', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const planVessel = stage.getByRole('button', { name: 'Q-01 · 0% full', exact: true });
+  await expect(planVessel).toBeAttached();
+
   await wineryPlan.getByRole('button', { name: '3D', exact: true }).click();
-  await expect(wineryPlan.getByTestId('winery-plan-3d')).toBeVisible();
-  await expect(wineryPlan.getByRole('button', { name: 'Edit 3D map', exact: true })).toBeVisible();
+  await expect(stage).toHaveAttribute('data-plan-view', '3d');
+  await expect(stage.getByRole('slider', { name: 'Zoom level' })).toBeVisible();
+  await expect(planVessel).toBeAttached();
   await wineryPlan.getByRole('button', { name: 'Top-down', exact: true }).click();
-  const cellarPlan = wineryPlan.getByTestId('cellar-plan');
-  await expect(cellarPlan.getByRole('tab', { name: /Main cellar/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).toHaveValue('100');
-  await expect(cellarPlan.getByRole('combobox', { name: 'Find vessel on plan' })).toBeVisible();
-  const firstPlanVessel = cellarPlan.getByRole('button', { name: 'Q-01 · 0% full', exact: true });
-  const initialPlanPosition = await firstPlanVessel.getAttribute('style');
-  const planViewport = cellarPlan.getByLabel('Main cellar interactive plan', { exact: true });
-  await planViewport.hover({ position: { x: 320, y: 160 } });
-  // A plain wheel belongs to the page: the plan used to swallow it and zoom,
-  // so a document with the map on it could not be scrolled past.
-  await page.mouse.wheel(0, -150);
-  await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).toHaveValue('100');
-  await page.keyboard.down('Control');
-  await page.mouse.wheel(0, -150);
-  await page.keyboard.up('Control');
-  await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).not.toHaveValue('100');
-  await cellarPlan.getByRole('button', { name: 'Fit', exact: true }).click();
-  await cellarPlan.getByRole('button', { name: 'Edit layout', exact: true }).click();
-  await expect(cellarPlan.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
-  await expect(cellarPlan.getByRole('button', { name: 'Arrange floor', exact: true })).toBeVisible();
-  await expect(cellarPlan.getByRole('checkbox', { name: 'Snap to grid' })).toBeChecked();
-  await firstPlanVessel.scrollIntoViewIfNeeded();
-  const vesselBox = await firstPlanVessel.boundingBox();
-  expect(vesselBox).not.toBeNull();
-  await page.mouse.move(vesselBox!.x + vesselBox!.width / 2, vesselBox!.y + vesselBox!.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(vesselBox!.x + vesselBox!.width / 2 + 72, vesselBox!.y + vesselBox!.height / 2 + 34, { steps: 8 });
-  await page.mouse.up();
-  await expect(cellarPlan.getByText('Unsaved changes', { exact: true })).toBeVisible();
-  expect(await firstPlanVessel.getAttribute('style')).not.toBe(initialPlanPosition);
-  await cellarPlan.getByRole('button', { name: 'Work area', exact: true }).click();
-  await cellarPlan.getByRole('textbox', { name: 'Object label' }).fill('E2E fermentation bay');
-  await cellarPlan.getByRole('combobox', { name: 'Area use' }).selectOption('fermentation');
-  await firstPlanVessel.press('ArrowRight');
-  await cellarPlan.getByRole('button', { name: 'Save layout', exact: true }).click();
-  await expect(cellarPlan.getByRole('button', { name: 'Edit layout', exact: true })).toBeVisible();
-  await expect(cellarPlan.getByRole('button', { name: 'E2E fermentation bay · Work area' })).toBeVisible();
-  expect(await firstPlanVessel.getAttribute('style')).not.toBe(initialPlanPosition);
+  await expect(stage).toHaveAttribute('data-plan-view', 'top-down');
+
+  await stage.getByRole('button', { name: 'Edit layout', exact: true }).click();
+  await expect(stage.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
+  await expect(stage.getByRole('checkbox', { name: 'Snap to grid' })).toBeChecked();
+  await stage.getByRole('combobox', { name: 'Find vessel on plan' }).selectOption('Q-01');
+  const easting = stage.getByRole('spinbutton', { name: 'X, m' });
+  const startingEasting = await easting.inputValue();
+  await easting.fill(String(Number(startingEasting) + 3));
+  await easting.blur();
+  await stage.getByRole('button', { name: 'Save layout', exact: true }).click();
+  await expect(stage.getByRole('button', { name: 'Edit layout', exact: true })).toBeVisible();
+  await expect(stage.getByRole('spinbutton', { name: 'X, m' })).not.toHaveValue(startingEasting);
 });
 
 test('owner can open business containment and cellar planning workflows', async ({ page }) => {

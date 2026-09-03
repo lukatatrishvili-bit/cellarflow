@@ -20,6 +20,29 @@ const vessels: Vessel[] = [{
   coolingJacketActive: false, targetTemperature: null, lastOperation: 'Sanitized',
 }];
 
+function renderTab(): string {
+  return renderToStaticMarkup(<WineryPlanTab
+    lang="en"
+    vessels={vessels}
+    lots={[lot]}
+    productionPlans={[]}
+    currentUsername="ana"
+    wineryName="Gorge Wine Company"
+    onUpdateVessels={vi.fn()}
+    onUpdateProductionPlans={vi.fn()}
+    onOpenVessel={vi.fn()}
+    onOpenLot={vi.fn()}
+    onLogOperation={vi.fn()}
+    onStartTransfer={vi.fn()}
+    onStartFilling={vi.fn()}
+    onOpenBottling={vi.fn()}
+    onOpenPlanner={vi.fn()}
+    onBackToWinery={vi.fn()}
+    canUpdateLayout
+    canScheduleWork
+  />);
+}
+
 describe('WineryPlanTab', () => {
   it('uses an immersive top navigation while keeping every operational shortcut in reach', () => {
     const markup = renderToStaticMarkup(<WineryPlanTab
@@ -56,5 +79,18 @@ describe('WineryPlanTab', () => {
     expect(markup).toContain('Start transfer');
     expect(markup).toContain('data-operation-type="bottling"');
     expect(markup).toContain('data-view-transition="top-down"');
+  });
+
+  it('offers the headline figures as filters over the room', () => {
+    const markup = renderTab();
+
+    // Each figure is a control, not a caption: pressing one spotlights the
+    // vessels behind the number.
+    expect(markup).toContain('Spotlight the vessels holding wine');
+    expect(markup).toContain('Spotlight the empty, clean vessels');
+    expect(markup).toContain('Spotlight the vessels carrying a lot');
+    expect(markup).toContain('Spotlight the vessels with work booked');
+    expect(markup).toContain('press a figure to filter the room');
+    expect(markup).toContain('aria-pressed="false"');
   });
 });

@@ -3206,6 +3206,7 @@ export default function App() {
                 floors={state.companyProfile.cellarFloors}
                 productionPlans={state.productionPlans}
                 tasks={canViewWineryTasks ? state.tasks : []}
+                transfers={state.transfers}
                 currentUsername={state.currentUser.username}
                 wineryName={state.companyProfile.wineryName || state.companyProfile.companyName}
                 initialVesselId={wineryPlanFocusVesselId}

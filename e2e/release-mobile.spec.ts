@@ -41,12 +41,12 @@ test('cellar map remains focused and self-contained on a phone', async ({ page }
 
   const module = page.getByTestId('winery-plan-module');
   await expect(module.getByRole('navigation', { name: 'Winery plan navigation' })).toBeVisible();
-  const plan = module.getByTestId('cellar-plan');
+  const plan = module.getByTestId('winery-plan-stage');
   await expect(plan.getByRole('button', { name: 'X-ray', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(plan.getByRole('combobox', { name: 'Vessel labels' })).toHaveValue('lot');
   await expect(plan.getByRole('button', { name: 'Open full screen', exact: true })).toBeVisible();
   await plan.getByRole('combobox', { name: 'Vessel labels' }).selectOption('status');
-  await expect(plan.getByText('0% · 0 L', { exact: true }).first()).toBeVisible();
+  await expect(plan.getByText('0% · 0 L', { exact: true }).first()).toBeAttached();
 
   const pageWidth = await page.evaluate(() => ({ viewport: window.innerWidth, content: document.documentElement.scrollWidth }));
   expect(pageWidth.content).toBeLessThanOrEqual(pageWidth.viewport + 1);

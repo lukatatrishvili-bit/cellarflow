@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { useReducedMotion } from 'motion/react';
 import {
   ArrowRightLeft,
   Box,
@@ -20,6 +20,7 @@ import type {
   CellarFloor,
   CellarOperationType,
   Task,
+  CellarTransferRecord,
   Vessel,
   WineLot,
 } from '../lib/wineryState';
@@ -32,11 +33,11 @@ import {
   type WineryPlanDraftIssueCode,
 } from '../lib/wineryPlan';
 import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
+import type { PlanFocus } from '../lib/wineryScene';
 import { localISODate } from '../lib/weatherApi';
-import CellarPlan from './CellarPlan';
+import WineryPlanStage from './WineryPlanStage';
 import DateInput from './ui/DateInput';
 
-const WineryPlan3D = React.lazy(() => import('./WineryPlan3D'));
 const BatchToppingDialog = React.lazy(() => import('./BatchToppingDialog'));
 
 interface WineryPlanTabProps {
@@ -46,6 +47,8 @@ interface WineryPlanTabProps {
   floors?: CellarFloor[];
   productionPlans: ProductionPlanItem[];
   tasks?: Task[];
+  /** Recent transfers, so the plan can show the routes wine has been taking. */
+  transfers?: CellarTransferRecord[];
   currentUsername: string;
   wineryName?: string;
   initialVesselId?: string | null;
@@ -89,12 +92,32 @@ const issueCopy: Record<WineryPlanDraftIssueCode, { en: string; ka: string }> = 
   vessel_conflict: { en: 'This vessel already has overlapping planned work.', ka: 'ამ ჭურჭელზე იმავე პერიოდში სხვა სამუშაოა დაგეგმილი.' },
 };
 
-function Metric({ label, value, tone = 'text-stone-100' }: { label: string; value: string; tone?: string }) {
+/**
+ * A headline figure that doubles as a filter. Pressing one spotlights the
+ * vessels behind the number and dims the rest of the room, so the strip reads
+ * as a way of interrogating the cellar rather than a caption on it.
+ */
+function Metric({
+  label, value, tone = 'text-stone-100', active, hint, onClick,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  active: boolean;
+  hint: string;
+  onClick: () => void;
+}) {
   return (
-    <div className="min-w-[8rem] border-l border-white/10 px-4 py-2 first:border-l-0">
-      <span className="block text-[8px] font-black uppercase tracking-[0.14em] text-slate-400">{label}</span>
+    <button
+      type="button"
+      aria-pressed={active}
+      title={hint}
+      onClick={onClick}
+      className={`min-w-[8rem] border-l border-white/10 px-4 py-2 text-left transition-colors first:border-l-0 ${active ? 'bg-amber-400/15' : 'hover:bg-white/5'}`}
+    >
+      <span className={`block text-[8px] font-black uppercase tracking-[0.14em] ${active ? 'text-amber-200' : 'text-slate-400'}`}>{label}</span>
       <strong className={`mt-0.5 block text-sm font-black ${tone}`}>{value}</strong>
-    </div>
+    </button>
   );
 }
 
@@ -105,6 +128,7 @@ export default function WineryPlanTab({
   floors,
   productionPlans,
   tasks = [],
+  transfers = [],
   currentUsername,
   wineryName,
   initialVesselId,
@@ -138,12 +162,13 @@ export default function WineryPlanTab({
   const [scheduleVesselId, setScheduleVesselId] = React.useState<string | null>(null);
   const [sanitationVesselId, setSanitationVesselId] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<'top-down' | '3d'>('top-down');
-  const [viewDirection, setViewDirection] = React.useState(1);
+  const [focus, setFocus] = React.useState<PlanFocus | null>(null);
+  const toggleFocus = (next: PlanFocus) => setFocus(current => (current === next ? null : next));
   React.useEffect(() => {
-    // Warm the Three.js chunk while the user reads the plan. The actual canvas
-    // remains unmounted until requested, but the first perspective change no
-    // longer stalls on a network/parse boundary.
-    const preload = () => { void import('./WineryPlan3D'); };
+    // Warm the Three.js chunk while the shell paints. Both views are the same
+    // WebGL room, so this is the cost of the plan itself rather than of an
+    // optional extra, and it must not block first paint.
+    const preload = () => { void import('./WineryPlanCanvas'); };
     const idleWindow = window as Window & {
       requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
       cancelIdleCallback?: (handle: number) => void;
@@ -166,8 +191,9 @@ export default function WineryPlanTab({
   };
   const switchView = (next: 'top-down' | '3d') => {
     if (next === viewMode) return;
-    setViewDirection(next === '3d' ? 1 : -1);
-    React.startTransition(() => setViewMode(next));
+    // Nothing unmounts: the stage keeps its WebGL room and flies the camera
+    // between the overhead plan and the orbiting walkthrough.
+    setViewMode(next);
   };
 
   const [batchVesselIds, setBatchVesselIds] = React.useState<string[] | null>(null);
@@ -209,76 +235,80 @@ export default function WineryPlanTab({
       </nav>
 
       <div className="flex overflow-x-auto border-b border-white/10 bg-[#1e3040] text-slate-100">
-        <Metric label={ka ? 'ღვინო მარანში' : 'Wine in cellar'} value={`${occupied.reduce((sum, vessel) => sum + vessel.currentVolume, 0).toLocaleString()} L`} />
-        <Metric label={ka ? 'სუფთა ტევადობა' : 'Clean capacity'} value={`${cleanCapacity.toLocaleString()} L`} tone="text-emerald-300" />
-        <Metric label={ka ? 'აქტიური პარტიები' : 'Active lots'} value={String(activeLotIds.size)} tone="text-amber-200" />
-        <Metric label={ka ? 'ღია სამუშაო' : 'Open work'} value={String(openPlans.length)} tone={openPlans.length ? 'text-violet-300' : undefined} />
+        <Metric
+          label={ka ? 'ღვინო მარანში' : 'Wine in cellar'}
+          value={`${occupied.reduce((sum, vessel) => sum + vessel.currentVolume, 0).toLocaleString()} L`}
+          active={focus === 'occupied'}
+          hint={ka ? 'ღვინით სავსე ჭურჭლის გამოყოფა' : 'Spotlight the vessels holding wine'}
+          onClick={() => toggleFocus('occupied')}
+        />
+        <Metric
+          label={ka ? 'სუფთა ტევადობა' : 'Clean capacity'}
+          value={`${cleanCapacity.toLocaleString()} L`}
+          tone="text-emerald-300"
+          active={focus === 'available'}
+          hint={ka ? 'ცარიელი, სუფთა ჭურჭლის გამოყოფა' : 'Spotlight the empty, clean vessels'}
+          onClick={() => toggleFocus('available')}
+        />
+        <Metric
+          label={ka ? 'აქტიური პარტიები' : 'Active lots'}
+          value={String(activeLotIds.size)}
+          tone="text-amber-200"
+          active={focus === 'lots'}
+          hint={ka ? 'პარტიის მქონე ჭურჭლის გამოყოფა' : 'Spotlight the vessels carrying a lot'}
+          onClick={() => toggleFocus('lots')}
+        />
+        <Metric
+          label={ka ? 'ღია სამუშაო' : 'Open work'}
+          value={String(openPlans.length)}
+          tone={openPlans.length ? 'text-violet-300' : undefined}
+          active={focus === 'work'}
+          hint={ka ? 'დაგეგმილი სამუშაოს მქონე ჭურჭლის გამოყოფა' : 'Spotlight the vessels with work booked'}
+          onClick={() => toggleFocus('work')}
+        />
         <p className="ml-auto hidden max-w-xl items-center px-4 text-[9px] font-semibold leading-4 text-slate-400 2xl:flex">
-          {ka
-            ? 'აირჩიეთ ჭურჭელი პარტიის გასახსნელად, სამუშაოს დასანიშნად ან პირდაპირი გადატანის დასაწყებად.'
-            : 'Select a vessel to open its lot, assign work, record an operation, or begin a direct transfer.'}
+          {focus
+            ? (ka
+              ? 'ფილტრი აქტიურია — დანარჩენი ჭურჭელი დაბინდულია. თავიდან დააჭირეთ გასასუფთავებლად.'
+              : 'Filter on: the rest of the room is dimmed. Press the figure again to clear it.')
+            : (ka
+              ? 'აირჩიეთ ჭურჭელი პარტიის გასახსნელად, ან დააჭირეთ ციფრს რუკაზე გასაფილტრად.'
+              : 'Select a vessel to open its lot or record work — or press a figure to filter the room.')}
         </p>
       </div>
 
-      <div className="relative min-h-[690px] overflow-hidden bg-slate-900" data-view-transition={viewMode}>
-        <AnimatePresence initial={false} mode="wait" custom={viewDirection}>
-          <motion.div
-            key={viewMode}
-            custom={viewDirection}
-            initial={reduceMotion ? false : { opacity: 0, scale: viewDirection > 0 ? 0.985 : 1.015, filter: 'blur(5px)' }}
-            animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-            exit={reduceMotion ? { opacity: 0, pointerEvents: 'none' } : { opacity: 0, scale: viewDirection > 0 ? 1.012 : 0.988, filter: 'blur(4px)', pointerEvents: 'none' }}
-            transition={reduceMotion ? { duration: 0.01 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-            className="w-full origin-center transform-gpu"
-          >
-            {viewMode === 'top-down' ? <CellarPlan
-              lang={lang}
-              vessels={vessels}
-              lots={lots}
-              floors={floors}
-              productionPlans={productionPlans}
-              tasks={tasks}
-              selectedVesselId={selectedVesselId}
-              onSelectVessel={selectVessel}
-              onOpenVessel={onOpenVessel}
-              onOpenLot={onOpenLot}
-              onLogOperation={onLogOperation}
-              onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
-              onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
-              onPlanTransfer={onStartTransfer}
-              onStartFilling={onStartFilling}
-              onOpenBottling={onOpenBottling}
-              onRecordTransfer={onRecordTransfer ? (sourceId, destinationId) => onRecordTransfer(sourceId, destinationId) : undefined}
-              onBatchTopping={onBatchTopping
-                ? (vesselIds) => { setBatchError(null); setBatchVesselIds(vesselIds); }
-                : undefined}
-              onOpenProductionPlan={onOpenProductionPlan}
-              onUpdateVessels={onUpdateVessels}
-              onUpdateFloors={onUpdateFloors}
-              canUpdate={canUpdateLayout}
-              immersive
-            /> : <React.Suspense fallback={<div className="flex min-h-[690px] items-center justify-center bg-slate-800 text-xs font-black text-slate-200"><Box className="mr-2 h-5 w-5 animate-pulse" />{ka ? '3D მარნის ჩატვირთვა…' : 'Loading 3D winery…'}</div>}>
-              <WineryPlan3D
-                lang={lang}
-                vessels={vessels}
-                lots={lots}
-                floors={floors}
-                selectedVesselId={selectedVesselId}
-                onSelectVessel={selectVessel}
-                onUpdateVessels={onUpdateVessels}
-                onOpenVessel={onOpenVessel}
-                onOpenLot={onOpenLot}
-                onLogOperation={onLogOperation}
-                onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
-                onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
-                onPlanTransfer={onStartTransfer}
-                onStartFilling={onStartFilling}
-                onOpenBottling={onOpenBottling}
-                canUpdate={canUpdateLayout}
-              />
-            </React.Suspense>}
-          </motion.div>
-        </AnimatePresence>
+      <div className="relative overflow-hidden bg-slate-900" data-view-transition={viewMode}>
+        <WineryPlanStage
+          lang={lang}
+          view={viewMode}
+          vessels={vessels}
+          lots={lots}
+          floors={floors}
+          productionPlans={productionPlans}
+          tasks={tasks}
+          transfers={transfers}
+          selectedVesselId={selectedVesselId}
+          onSelectVessel={selectVessel}
+          onUpdateVessels={onUpdateVessels}
+          onUpdateFloors={onUpdateFloors}
+          onOpenVessel={onOpenVessel}
+          onOpenLot={onOpenLot}
+          onLogOperation={onLogOperation}
+          onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
+          onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
+          onPlanTransfer={onStartTransfer}
+          onStartFilling={onStartFilling}
+          onOpenBottling={onOpenBottling}
+          onRecordTransfer={onRecordTransfer ? (sourceId, destinationId) => onRecordTransfer(sourceId, destinationId) : undefined}
+          onBatchTopping={onBatchTopping
+            ? (vesselIds) => { setBatchError(null); setBatchVesselIds(vesselIds); }
+            : undefined}
+          onOpenProductionPlan={onOpenProductionPlan}
+          focus={focus}
+          onFocusChange={setFocus}
+          canUpdate={canUpdateLayout}
+          reduceMotion={Boolean(reduceMotion)}
+        />
       </div>
 
       {batchVesselIds && onBatchTopping && (
