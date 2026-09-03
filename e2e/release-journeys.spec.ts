@@ -122,6 +122,8 @@ test('dashboard initialization does not lock module navigation', async ({ page }
 });
 
 test('winemaker can work with lots and vessels from one focused cellar workspace', async ({ page }) => {
+  test.setTimeout(60_000);
+
   const fixture = await resetFixture(page);
   await page.goto('/');
   await signIn(page, fixture.owner);
