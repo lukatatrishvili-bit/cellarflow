@@ -1,22 +1,182 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Thermometer, RefreshCw } from 'lucide-react';
+import {
+  ArrowDownToLine,
+  ArrowRightLeft,
+  Beaker,
+  Droplets,
+  Filter,
+  FlaskConical,
+  Grape,
+  MoreHorizontal,
+  Package,
+  ShieldCheck,
+  Snowflake,
+  Sparkles,
+  Thermometer,
+  RefreshCw,
+  Wrench,
+  X,
+} from 'lucide-react';
 import type { Language } from '../lib/i18n';
-import type { Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
+import type { CellarOperation, CellarOperationType, Vessel, WineLot, DailyFermLog } from '../lib/wineryState';
+import { stageLabel } from '../lib/enumLabels';
+import { isPhysicalFermentationReading } from '../lib/fermentationIntegrity';
+import { isActiveCellarOperation } from '../lib/cellarOperationIntegrity';
+import { CELLAR_OPERATIONS } from '../lib/wineryOperations';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import QvevriCrossSection from './QvevriCrossSection';
 import { ambientMotionEnabled, prefersReducedMotion } from './motion';
 import { useFocusTrap } from './useFocusTrap';
+import DateInput from './ui/DateInput';
 
 const WINE_COLORS: Record<string, { liquid: string; surface: string }> = {
   red: { liquid: '#5a1020', surface: '#7c1c30' },
   amber: { liquid: '#b06a16', surface: '#d18e2b' },
+  qvevri: { liquid: '#9a5b23', surface: '#c17a35' },
   white: { liquid: '#c2a448', surface: '#dabf6a' },
   rose: { liquid: '#c05a6e', surface: '#d8808f' },
   sparkling: { liquid: '#cdb06a', surface: '#e6d089' },
   fortified: { liquid: '#65220f', surface: '#86371f' },
   base_wine: { liquid: '#94875a', surface: '#afa273' },
 };
+
+interface VesselOperationMeta {
+  en: string;
+  ka: string;
+  descriptionEn: string;
+  descriptionKa: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const VESSEL_OPERATION_META: Partial<Record<CellarOperationType, VesselOperationMeta>> = {
+  crush_destem: {
+    en: 'Crush / destem', ka: 'დაჭყლეტა / დაგრეხა',
+    descriptionEn: 'Record fruit processing against this lot and vessel.',
+    descriptionKa: 'ჩაწერეთ ყურძნის დამუშავება ამ პარტიასა და ჭურჭელზე.',
+    icon: Grape,
+  },
+  pressing: {
+    en: 'Pressing', ka: 'დაწურვა',
+    descriptionEn: 'Record pressing and confirm the resulting lot volume.',
+    descriptionKa: 'ჩაწერეთ დაწურვა და დაადასტურეთ მიღებული მოცულობა.',
+    icon: Droplets,
+  },
+  ferment_start: {
+    en: 'Start fermentation', ka: 'დუღილის დაწყება',
+    descriptionEn: 'Record the fermentation start for the assigned lot.',
+    descriptionKa: 'ჩაწერეთ მიბმული პარტიის დუღილის დაწყება.',
+    icon: FlaskConical,
+  },
+  measurement: {
+    en: 'Temp / Brix check', ka: 'ტემპ. / შაქრის გაზომვა',
+    descriptionEn: 'Capture the current reading before the next cellar decision.',
+    descriptionKa: 'შემდეგ გადაწყვეტილებამდე ჩაწერეთ მიმდინარე მაჩვენებლები.',
+    icon: Thermometer,
+  },
+  pumpover: {
+    en: 'Pump-over', ka: 'რემონტაჟი',
+    descriptionEn: 'Log remontage for the fermenting or macerating lot.',
+    descriptionKa: 'ჩაწერეთ რემონტაჟი დუღილის ან მაცერაციის პარტიისთვის.',
+    icon: RefreshCw,
+  },
+  punchdown: {
+    en: 'Punch-down', ka: 'დარევა',
+    descriptionEn: 'Record cap management for this vessel.',
+    descriptionKa: 'ჩაწერეთ ამ ჭურჭლის ქუდის მართვის ოპერაცია.',
+    icon: ArrowDownToLine,
+  },
+  racking: {
+    en: 'Transfer / racking', ka: 'გადატანა',
+    descriptionEn: 'Move wine from this vessel with source context preserved.',
+    descriptionKa: 'გადაიტანეთ ღვინო ამ ჭურჭლიდან შენარჩუნებული კონტექსტით.',
+    icon: ArrowRightLeft,
+  },
+  sulfitation: {
+    en: 'Sulfitation (SO₂)', ka: 'სულფიტაცია',
+    descriptionEn: 'Record an SO₂ addition and the material used.',
+    descriptionKa: 'ჩაწერეთ SO₂-ის დამატება და გამოყენებული მასალა.',
+    icon: ShieldCheck,
+  },
+  additive: {
+    en: 'Additive addition', ka: 'დანამატის დამატება',
+    descriptionEn: 'Record an addition with linked stock consumption.',
+    descriptionKa: 'ჩაწერეთ დანამატი მარაგის შესაბამისი ჩამოწერით.',
+    icon: Beaker,
+  },
+  stabilization: {
+    en: 'Stabilization', ka: 'სტაბილიზაცია',
+    descriptionEn: 'Record the stabilization treatment for this lot.',
+    descriptionKa: 'ჩაწერეთ ამ პარტიის სტაბილიზაციის ოპერაცია.',
+    icon: Snowflake,
+  },
+  filtration: {
+    en: 'Filtration', ka: 'ფილტრაცია',
+    descriptionEn: 'Record filtration and confirm the remaining volume.',
+    descriptionKa: 'ჩაწერეთ ფილტრაცია და დაადასტურეთ დარჩენილი მოცულობა.',
+    icon: Filter,
+  },
+  bottling: {
+    en: 'Bottling', ka: 'ჩამოსხმა',
+    descriptionEn: 'Record wine leaving this vessel for bottling.',
+    descriptionKa: 'ჩაწერეთ ამ ჭურჭლიდან ღვინის ჩამოსხმაზე გადატანა.',
+    icon: Package,
+  },
+  cleaning: {
+    en: 'Cleaning / sanitation', ka: 'წმენდა / სანიტარია',
+    descriptionEn: 'Record the sanitation cycle before this vessel returns to use.',
+    descriptionKa: 'წარმოებაში დაბრუნებამდე ჩაწერეთ სანიტარიული ციკლი.',
+    icon: Sparkles,
+  },
+  correction: {
+    en: 'Correction', ka: 'კორექცია',
+    descriptionEn: 'Record a corrective cellar treatment.',
+    descriptionKa: 'ჩაწერეთ კორექტირების საწარმოო ოპერაცია.',
+    icon: Wrench,
+  },
+};
+
+function operationChoicesForVessel(lot: WineLot | null): CellarOperationType[] {
+  if (!lot) return [];
+
+  switch (lot.stage) {
+    case 'crushing': return ['crush_destem', 'ferment_start', 'pressing', 'measurement'];
+    case 'fermenting': return ['measurement', 'pumpover', 'punchdown', 'sulfitation'];
+    case 'maceration': return ['pumpover', 'punchdown', 'pressing', 'measurement'];
+    case 'pressing': return ['pressing', 'racking', 'measurement', 'sulfitation'];
+    case 'aging': return ['measurement', 'sulfitation', 'racking', 'additive'];
+    case 'stabilization': return ['stabilization', 'filtration', 'measurement', 'sulfitation'];
+    case 'filtration': return ['filtration', 'bottling', 'measurement', 'correction'];
+    case 'bottled':
+    case 'sold':
+      return [];
+    default:
+      return ['measurement', 'racking', 'sulfitation', 'correction'];
+  }
+}
+
+function cellarOperationLabel(operation: CellarOperation, lang: Language): string {
+  if (operation.type === 'custom') {
+    return operation.customLabel || (lang === 'ka' ? 'სხვა ოპერაცია' : 'Custom operation');
+  }
+  const metadata = CELLAR_OPERATIONS.find(item => item.key === operation.type);
+  return lang === 'ka' ? (metadata?.ka || operation.type) : (metadata?.en || operation.type);
+}
+
+function cellarOperationDetail(operation: CellarOperation, lang: Language): string {
+  const parts: string[] = [];
+  if (operation.vesselToId) parts.push(`${operation.vesselId || '—'} → ${operation.vesselToId}`);
+  if (operation.materials?.length) {
+    parts.push(operation.materials.map(material => (
+      `${material.materialName || material.materialId} ${material.quantity}${material.unit || ''}`
+    )).join(', '));
+  } else if (operation.materialName && operation.dose) {
+    parts.push(`${operation.materialName} ${operation.dose}${operation.unit || ''}`);
+  }
+  if (operation.volumeAfterL != null) parts.push(`${operation.volumeBeforeL ?? '—'} → ${operation.volumeAfterL} L`);
+  if (operation.notes) parts.push(operation.notes);
+  return parts.join(' · ') || (lang === 'ka' ? 'დამატებითი დეტალების გარეშე' : 'No additional details');
+}
 
 function SteelTankCrossSection({
   fillPct,
@@ -322,35 +482,64 @@ interface VesselDrawerProps {
   vessels: Vessel[];
   lots: WineLot[];
   fermLogs: DailyFermLog[];
+  operations?: CellarOperation[];
+  recentlyLoggedOperationId?: string;
   onClose: () => void;
   onAdjustTargetTemp: (vesselId: string, increment: number) => void;
   onToggleSanitation: (vesselId: string) => void;
   onToggleCoolingJacket?: (vesselId: string) => void;
   onUpdateVessels?: (newVessels: Vessel[]) => void;
-  /** Jump to the quick-operation form with this vessel (and its batch) preselected. */
-  onLogOperation?: (vesselId: string) => void;
+  /** Jump to the quick-operation form with this vessel, batch and optional operation preselected. */
+  onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
+  canUpdateVessel?: boolean;
 }
 
-export default function VesselDrawer({
+export function VesselDrawer({
   lang,
   selectedTankId,
   vessels,
   lots,
   fermLogs,
+  operations = [],
+  recentlyLoggedOperationId,
   onClose,
   onAdjustTargetTemp,
   onToggleSanitation,
   onToggleCoolingJacket,
   onUpdateVessels,
-  onLogOperation
+  onLogOperation,
+  canUpdateVessel = true
 }: VesselDrawerProps) {
   const selectedVessel = selectedTankId ? vessels.find(v => v.id === selectedTankId) : null;
-  const selectedLot = selectedVessel?.assignedLotId 
-    ? lots.find(l => l.id === selectedVessel.assignedLotId) 
+  const selectedLot = selectedVessel?.assignedLotId
+    ? lots.find(l => l.id === selectedVessel.assignedLotId)
     : null;
-  const tankLogs = selectedTankId 
-    ? fermLogs.filter(log => log.tankId === selectedTankId) 
+  const tankLogs = selectedTankId
+    ? fermLogs.filter(log => log.tankId === selectedTankId && isPhysicalFermentationReading(log))
     : [];
+  const operationTypes = selectedVessel ? operationChoicesForVessel(selectedLot || null) : [];
+  const recommendedOperationType = operationTypes[0];
+  const recommendedOperation = recommendedOperationType
+    ? VESSEL_OPERATION_META[recommendedOperationType]
+    : undefined;
+  const vesselOperations = selectedVessel
+    ? operations
+      .filter(operation => (
+        isActiveCellarOperation(operation)
+        && (operation.vesselId === selectedVessel.id || operation.vesselToId === selectedVessel.id)
+      ))
+      .slice()
+      .sort((a, b) => (b.lastModified || b.date).localeCompare(a.lastModified || a.date))
+    : [];
+  const highlightedOperation = recentlyLoggedOperationId
+    ? vesselOperations.find(operation => operation.id === recentlyLoggedOperationId)
+    : undefined;
+  const recentVesselOperations = highlightedOperation
+    ? [highlightedOperation, ...vesselOperations.filter(operation => operation.id !== highlightedOperation.id)].slice(0, 4)
+    : vesselOperations.slice(0, 4);
+  const recentlyLoggedOperation = recentlyLoggedOperationId
+    ? recentVesselOperations.find(operation => operation.id === recentlyLoggedOperationId)
+    : undefined;
 
   const [aiInsights, setAiInsights] = useState<string>('');
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
@@ -377,7 +566,7 @@ export default function VesselDrawer({
       setEditSoilTemperature(selectedVessel.soilTemperature ?? (selectedVessel.temperature - 2.5));
       setIsEditing(false);
     }
-  }, [selectedTankId, selectedVessel]);
+  }, [canUpdateVessel, selectedTankId, selectedVessel]);
 
   useEffect(() => {
     if (!selectedTankId || !selectedVessel) {
@@ -389,18 +578,19 @@ export default function VesselDrawer({
       setIsAiLoading(true);
       setAiInsights('');
       try {
-        const lotInfo = selectedLot 
-          ? `holding ${selectedLot.name} (${selectedLot.variety}, vintage ${selectedLot.vintage}, stage ${selectedLot.stage})`
-          : 'vacant';
-        const promptMsg = `Vessel: ${selectedVessel.id} (${selectedVessel.type}, shape ${selectedVessel.shape}, capacity ${selectedVessel.capacity}L, volume ${selectedVessel.currentVolume}L).
-Assigned Lot: ${lotInfo}.
-Current Temperature: ${selectedVessel.temperature}°C, Sanitation Status: ${selectedVessel.cleaningStatus}.
-Provide a highly-precise two-bullet checklist of critical winemaking/cellaring next steps for this vessel. Focus on KMBS sulfur dioxide, headspace control, temp checks, or sanitizing needs. Respond ONLY with the two bullet points in markdown (bolding key terms).`;
+        // The vessel's own record, chemistry and history come from the server's
+        // role-scoped context package, so the question only has to say what to
+        // look at — pasting a handful of fields here would be both thinner and
+        // ungrounded.
+        const promptMsg = `Give a two-bullet checklist of the critical winemaking or cellaring next steps for vessel ${selectedVessel.id}. Focus on KMBS sulfur dioxide, headspace control, temperature checks or sanitation. Respond ONLY with the two bullet points in markdown (bolding key terms).`;
 
         const resp = await fetch('/api/gemini', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: promptMsg })
+          body: JSON.stringify({
+            prompt: promptMsg,
+            focus: { entityType: 'vessel', entityId: selectedVessel.id },
+          })
         });
 
         if (resp.ok) {
@@ -419,7 +609,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
     // Lightweight debounced delay to prevent spamming the API on rapid clicks
     const timer = setTimeout(fetchInsights, 400);
     return () => clearTimeout(timer);
-  }, [selectedTankId, selectedVessel?.currentVolume, selectedVessel?.temperature, selectedVessel?.cleaningStatus]);
+  }, [selectedLot, selectedTankId, selectedVessel]);
 
   // Build 7-day temperature history
   const tempHistory = (() => {
@@ -431,10 +621,10 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
       const realLog = tankLogs.find(log => log.date === dateStr);
-      
+
       let temp = currentTemp;
       let isReal = false;
-      
+
       if (realLog) {
         temp = realLog.temperature;
         isReal = true;
@@ -443,12 +633,12 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
         const variance = Math.sin((idSum + i) * 1.7) * 1.3;
         temp = Number((currentTemp + variance).toFixed(1));
       }
-      
-      const label = d.toLocaleDateString(lang === 'ka' ? 'ka-GE' : lang === 'it' ? 'it-IT' : 'en-US', {
+
+      const label = d.toLocaleDateString(lang === 'ka' ? 'ka-GE' : 'en-US', {
         month: 'short',
         day: 'numeric',
       });
-      
+
       list.push({
         date: dateStr,
         label,
@@ -458,6 +648,45 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
     }
     return list;
   })();
+
+  const handleAdjustTargetTemp = (increment: number) => {
+    if (!canUpdateVessel || !selectedVessel) return;
+    onAdjustTargetTemp(selectedVessel.id, increment);
+  };
+
+  const handleToggleSanitation = () => {
+    if (!canUpdateVessel || !selectedVessel) return;
+    onToggleSanitation(selectedVessel.id);
+  };
+
+  const handleEditSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canUpdateVessel || !selectedVessel || !onUpdateVessels) return;
+
+    if (editId.trim() !== selectedVessel.id && vessels.some(v => v.id === editId.trim())) {
+      alert(lang === 'ka' ? 'ეს ID უკვე გამოყენებულია სხვა ჭურჭლისთვის.' : 'This Vessel ID is already in use by another vessel.');
+      return;
+    }
+
+    const updatedVessels = vessels.map(v => {
+      if (v.id === selectedVessel.id) {
+        return {
+          ...v,
+          id: editId.trim(),
+          type: editType,
+          shape: editShape,
+          capacity: Number(editCapacity) || 0,
+          locationDetails: editLocationDetails,
+          lastSealedDate: editType === 'qvevri' ? editLastSealedDate : undefined,
+          soilTemperature: editType === 'qvevri' ? Number(editSoilTemperature) : undefined
+        };
+      }
+      return v;
+    });
+
+    onUpdateVessels(updatedVessels);
+    setIsEditing(false);
+  };
 
   useFocusTrap(drawerRef, { active: !!selectedTankId && !!selectedVessel, onClose });
 
@@ -488,31 +717,28 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
             className="fixed inset-y-0 right-0 z-50 w-full sm:w-[600px] lg:w-[680px] bg-[#FAF8F5] dark:bg-[#140d0e] shadow-2xl border-l border-[#f0e6da] dark:border-[#2a1618] flex flex-col focus:outline-none text-stone-800 dark:text-stone-200"
           >
             <div className="flex-1 overflow-y-auto p-8 space-y-8">
-              
+
               <div className="flex items-start justify-between border-b border-[#e8dfd5] pb-4">
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-mono uppercase bg-amber-100 text-amber-955 px-2 py-0.5 rounded font-bold tracking-wider inline-block">
                       Cellar Core Vessel
                     </span>
-                    <button 
-                      onClick={() => setIsEditing(!isEditing)}
-                      className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
-                      title="Edit Properties"
-                    >
-                      ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
-                    </button>
+                    {canUpdateVessel && (
+                      <button
+                        onClick={() => {
+                          if (!canUpdateVessel) return;
+                          setIsEditing(!isEditing);
+                        }}
+                        className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
+                        title={lang === 'ka' ? 'პარამეტრების შეცვლა' : 'Edit Properties'}
+                      >
+                        ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
+                      </button>
+                    )}
                   </div>
                   <h2 id="vessel-drawer-title" className="text-xl font-serif font-bold text-[#4e0e15] mt-1">{selectedVessel.id}</h2>
                   <p className="text-xs text-slate-500 font-mono mt-0.5">{selectedVessel.locationDetails || 'Cellar Room A, main row'}</p>
-                  {onLogOperation && (
-                    <button
-                      onClick={() => onLogOperation(selectedVessel.id)}
-                      className="mt-2.5 inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#4e0e15] hover:bg-[#34070a] text-amber-50 rounded-xl text-[11px] font-bold uppercase tracking-wide cursor-pointer transition-colors"
-                    >
-                      ⚡ {lang === 'ka' ? 'ოპერაციის ჩაწერა' : 'Log operation'}
-                    </button>
-                  )}
                 </div>
                 <button
                   onClick={onClose}
@@ -523,35 +749,115 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                 </button>
               </div>
 
-              {isEditing ? (
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!selectedVessel || !onUpdateVessels) return;
-                  
-                  if (editId.trim() !== selectedVessel.id && vessels.some(v => v.id === editId.trim())) {
-                    alert(lang === 'ka' ? 'ეს ID უკვე გამოყენებულია სხვა ჭურჭლისთვის.' : 'This Vessel ID is already in use by another vessel.');
-                    return;
-                  }
+              {!canUpdateVessel && (
+                <div role="status" className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-[11px] font-semibold leading-relaxed text-sky-900">
+                  <strong>{lang === 'ka' ? 'ჭურჭლის დეტალები მხოლოდ სანახავია.' : 'Read-only vessel details.'}</strong>{' '}
+                  {lang === 'ka'
+                    ? 'შეგიძლიათ ნახოთ ტელემეტრია, ტემპერატურის ისტორია, სანიტარული მდგომარეობა, AI რჩევები და ბოლო ოპერაციები, მაგრამ ჭურჭელს ვერ შეცვლით.'
+                    : 'You can review telemetry, thermal history, sanitation status, AI guidance, and recent operations, but cannot change this vessel.'}
+                </div>
+              )}
 
-                  const updatedVessels = vessels.map(v => {
-                    if (v.id === selectedVessel.id) {
-                      return {
-                        ...v,
-                        id: editId.trim(),
-                        type: editType,
-                        shape: editShape,
-                        capacity: Number(editCapacity) || 0,
-                        locationDetails: editLocationDetails,
-                        lastSealedDate: editType === 'qvevri' ? editLastSealedDate : undefined,
-                        soilTemperature: editType === 'qvevri' ? Number(editSoilTemperature) : undefined
-                      };
-                    }
-                    return v;
-                  });
+              {onLogOperation && (
+                <section
+                  aria-label={lang === 'ka' ? 'ჭურჭლის ოპერაციები' : 'Vessel operations'}
+                  className="rounded-2xl border border-[#d9cbbd] bg-white p-4 shadow-sm"
+                >
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#801323]">
+                        {lang === 'ka' ? 'იმოქმედეთ ამ ჭურჭლიდან' : 'Act from this vessel'}
+                      </p>
+                      <h3 className="mt-1 text-sm font-serif font-bold text-[#4e0e15]">
+                        {selectedLot
+                          ? (lang === 'ka' ? `${selectedLot.name} · ოპერაციის არჩევა` : `${selectedLot.name} · choose an operation`)
+                          : (lang === 'ka' ? 'ჭურჭელზე პარტია არ არის მიბმული' : 'No wine lot assigned')}
+                      </h3>
+                      <p className="mt-1 text-[10px] leading-relaxed text-stone-500">
+                        {selectedLot
+                          ? (lang === 'ka'
+                            ? `${selectedVessel.id} და პარტია ავტომატურად შეივსება ოპერაციის ფორმაში.`
+                            : `${selectedVessel.id} and its assigned lot will stay preselected in the operation form.`)
+                          : (lang === 'ka'
+                            ? 'სრული ოპერაციების ფორმაში ჯერ აირჩიეთ პარტია; ჭურჭელი წინასწარ იქნება მონიშნული.'
+                            : 'Choose a wine lot in the full operation form; this vessel will remain preselected.')}
+                      </p>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-stone-200 bg-[#FAF8F5] px-2 py-1 text-[9px] font-bold text-stone-600">
+                      {selectedVessel.currentVolume.toLocaleString()} L
+                    </span>
+                  </div>
 
-                  onUpdateVessels(updatedVessels);
-                  setIsEditing(false);
-                }} className="space-y-4 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs text-stone-700">
+                  {recentlyLoggedOperation && (
+                    <div role="status" className="mb-3 flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-emerald-950">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[11px] font-black text-white">✓</span>
+                      <span className="min-w-0">
+                        <strong className="block text-[10px] font-black uppercase tracking-wide">
+                          {lang === 'ka' ? 'ოპერაცია წარმატებით ჩაიწერა' : 'Operation logged successfully'}
+                        </strong>
+                        <span className="mt-0.5 block text-[10px] font-semibold">
+                          {cellarOperationLabel(recentlyLoggedOperation, lang)} · {recentlyLoggedOperation.operator}
+                        </span>
+                      </span>
+                    </div>
+                  )}
+
+                  {recommendedOperation && recommendedOperationType && (
+                    <button
+                      type="button"
+                      onClick={() => onLogOperation(selectedVessel.id, recommendedOperationType)}
+                      className="group flex w-full items-center gap-3 rounded-xl bg-[#4e0e15] px-3.5 py-3 text-left text-white shadow-sm transition-colors hover:bg-[#34070a]"
+                    >
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10">
+                        <recommendedOperation.icon className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[8px] font-black uppercase tracking-[0.17em] text-amber-200">
+                          {lang === 'ka' ? 'რეკომენდებული ოპერაცია' : 'Recommended operation'}
+                        </span>
+                        <strong className="mt-0.5 block text-xs">{lang === 'ka' ? recommendedOperation.ka : recommendedOperation.en}</strong>
+                        <span className="mt-0.5 block text-[9px] leading-relaxed text-stone-200">
+                          {lang === 'ka' ? recommendedOperation.descriptionKa : recommendedOperation.descriptionEn}
+                        </span>
+                      </span>
+                      <span aria-hidden="true" className="text-amber-200 transition-transform group-hover:translate-x-0.5">→</span>
+                    </button>
+                  )}
+
+                  {operationTypes.length > 1 && (
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      {operationTypes.slice(1, 4).map(operationType => {
+                        const operation = VESSEL_OPERATION_META[operationType];
+                        if (!operation) return null;
+                        const Icon = operation.icon;
+                        return (
+                          <button
+                            key={operationType}
+                            type="button"
+                            onClick={() => onLogOperation(selectedVessel.id, operationType)}
+                            className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl border border-stone-200 bg-[#FAF8F5] px-2 py-2 text-center text-stone-600 transition-colors hover:border-[#801323]/40 hover:bg-rose-50 hover:text-[#4e0e15]"
+                          >
+                            <Icon className="h-4 w-4" />
+                            <span className="text-[9px] font-bold leading-tight">{lang === 'ka' ? operation.ka : operation.en}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => onLogOperation(selectedVessel.id)}
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[10px] font-bold text-[#801323] transition-colors hover:bg-rose-50"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                    {lang === 'ka' ? 'ყველა ოპერაციის ნახვა' : 'View all operations'}
+                  </button>
+                </section>
+              )}
+
+              {canUpdateVessel && isEditing ? (
+                <form onSubmit={handleEditSubmit} className="space-y-4 bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs text-stone-700">
                   <h3 className="text-xs uppercase font-mono tracking-widest text-[#4e0e15] font-black border-b pb-1.5 mb-3 flex justify-between items-center">
                     <span>✏️ {lang === 'ka' ? 'პარამეტრების რედაქტირება' : 'Edit Vessel Properties'}</span>
                   </h3>
@@ -559,7 +865,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                   <div className="space-y-3 text-xs">
                     <div>
                       <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vessel ID / Identifier *</label>
-                      <input 
+                      <input
                         type="text" required
                         value={editId} onChange={(e) => setEditId(e.target.value)}
                         className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-bold text-stone-900 focus:bg-white outline-none"
@@ -569,22 +875,22 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Vessel Type</label>
-                        <select 
+                        <select
                           value={editType} onChange={(e) => setEditType(e.target.value as any)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-bold text-stone-900 outline-none"
                         >
-                          <option value="stainless_steel">Stainless Steel</option>
-                          <option value="qvevri">Clay Qvevri</option>
-                          <option value="barrel">Oak Barrel</option>
-                          <option value="plastic">Plastic Tank</option>
-                          <option value="concrete">Concrete Egg</option>
+                          <option value="stainless_steel">{lang === 'ka' ? 'უჟანგავი ფოლადი' : 'Stainless Steel'}</option>
+                          <option value="qvevri">{lang === 'ka' ? 'თიხის ქვევრი' : 'Clay Qvevri'}</option>
+                          <option value="barrel">{lang === 'ka' ? 'მუხის კასრი' : 'Oak Barrel'}</option>
+                          <option value="plastic">{lang === 'ka' ? 'პლასტმასის ავზი' : 'Plastic Tank'}</option>
+                          <option value="concrete">{lang === 'ka' ? 'ბეტონის კვერცხი' : 'Concrete Egg'}</option>
                           <option value="other">Other</option>
                         </select>
                       </div>
 
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Profile Shape</label>
-                        <select 
+                        <select
                           value={editShape} onChange={(e) => setEditShape(e.target.value as any)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-bold text-stone-900 outline-none"
                         >
@@ -598,7 +904,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Total Capacity (Liters) *</label>
-                        <input 
+                        <input
                           type="number" required min="1"
                           value={editCapacity} onChange={(e) => setEditCapacity(Number(e.target.value) || 0)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded font-semibold text-stone-850 outline-none"
@@ -607,7 +913,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
 
                       <div>
                         <label className="block text-[9px] uppercase font-mono text-slate-400 font-bold mb-1">Location Details</label>
-                        <input 
+                        <input
                           type="text"
                           value={editLocationDetails} onChange={(e) => setEditLocationDetails(e.target.value)}
                           className="w-full bg-stone-50 border border-[#e8dfd5] p-2.5 rounded text-stone-800 outline-none"
@@ -620,16 +926,16 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                       <div className="grid grid-cols-2 gap-3 bg-[#FCFAF8] p-3 rounded-lg border border-amber-200">
                         <div>
                           <label className="block text-[9px] uppercase font-mono text-amber-800 font-bold mb-1">Last Sealed Date</label>
-                          <input 
-                            type="date"
-                            value={editLastSealedDate} onChange={(e) => setEditLastSealedDate(e.target.value)}
+                          <DateInput
+                            lang={lang}
+                            value={editLastSealedDate} onValueChange={setEditLastSealedDate}
                             className="w-full bg-white border border-[#e8dfd5] p-1.5 rounded outline-none text-stone-800"
                           />
                         </div>
 
                         <div>
                           <label className="block text-[9px] uppercase font-mono text-amber-800 font-bold mb-1">Soil Temperature (°C)</label>
-                          <input 
+                          <input
                             type="number" step="0.1"
                             value={editSoilTemperature} onChange={(e) => setEditSoilTemperature(Number(e.target.value) || 0)}
                             className="w-full bg-white border border-[#e8dfd5] p-1.5 rounded outline-none text-stone-800 font-mono"
@@ -639,14 +945,14 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     )}
 
                     <div className="flex gap-2 pt-2">
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setIsEditing(false)}
                         className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-700 font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer shadow-3xs transition-colors"
                       >
                         {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
                       </button>
-                      <button 
+                      <button
                         type="submit"
                         className="flex-1 bg-emerald-850 hover:bg-emerald-950 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer shadow-xs transition-colors"
                       >
@@ -679,7 +985,7 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                         <div className="flex items-center justify-between">
                           <h4 className="text-sm font-serif font-bold text-[#4e0e15]">{selectedLot.name}</h4>
                           <span className="px-2 py-0.5 text-[9px] font-semibold text-[#801323] bg-rose-50 border border-rose-100 rounded-full uppercase">
-                            {selectedLot.stage}
+                            {stageLabel(selectedLot.stage, lang)}
                           </span>
                         </div>
 
@@ -712,12 +1018,12 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                         {selectedVessel.capacity > 0 ? Math.round((selectedVessel.currentVolume / selectedVessel.capacity) * 100) : 0}% Filled
                       </span>
                     </div>
-                    
+
                     <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden border border-slate-200 relative">
-                      <div 
+                      <div
                         className={`h-full rounded-full transition-all duration-500 ${
-                          (selectedVessel.currentVolume / selectedVessel.capacity) > 0.95 
-                            ? 'bg-gradient-to-r from-red-600 to-rose-500 animate-pulse' 
+                          (selectedVessel.currentVolume / selectedVessel.capacity) > 0.95
+                            ? 'bg-gradient-to-r from-red-600 to-rose-500 animate-pulse'
                             : 'bg-gradient-to-r from-[#801323] to-[#510e19]'
                         }`}
                         style={{ width: `${selectedVessel.capacity > 0 ? (selectedVessel.currentVolume / selectedVessel.capacity) * 100 : 0}%` }}
@@ -809,20 +1115,24 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                             <strong className="text-xs font-semibold text-slate-750 font-mono">
                               {selectedVessel.targetTemperature ? `${selectedVessel.targetTemperature} °C` : '--'}
                             </strong>
-                            <div className="flex items-center gap-1 bg-white border border-slate-200 rounded shrink-0 shadow-2xs">
-                              <button 
-                                onClick={() => onAdjustTargetTemp(selectedVessel.id, -0.5)}
-                                className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold border-r border-slate-200 cursor-pointer"
-                              >
-                                -
-                              </button>
-                              <button 
-                                onClick={() => onAdjustTargetTemp(selectedVessel.id, 0.5)}
-                                className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold cursor-pointer"
-                              >
-                                +
-                              </button>
-                            </div>
+                            {canUpdateVessel && (
+                              <div className="flex items-center gap-1 bg-white border border-slate-200 rounded shrink-0 shadow-2xs">
+                                <button
+                                  onClick={() => handleAdjustTargetTemp(-0.5)}
+                                  aria-label={lang === 'ka' ? 'სამიზნე ტემპერატურის შემცირება' : 'Decrease target temperature'}
+                                  className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold border-r border-slate-200 cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <button
+                                  onClick={() => handleAdjustTargetTemp(0.5)}
+                                  aria-label={lang === 'ka' ? 'სამიზნე ტემპერატურის გაზრდა' : 'Increase target temperature'}
+                                  className="px-1.5 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100 font-bold cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -840,36 +1150,36 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                       <div className="h-28 w-full bg-[#FAF8F5]/80 rounded-lg p-2 border border-[#e8dfd5]/40">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={tempHistory} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
-                            <XAxis 
-                              dataKey="label" 
-                              fontSize={8} 
-                              tickLine={false} 
+                            <XAxis
+                              dataKey="label"
+                              fontSize={8}
+                              tickLine={false}
                               axisLine={false}
-                              stroke="#94a3b8" 
+                              stroke="#94a3b8"
                             />
-                            <YAxis 
-                              domain={['dataMin - 1', 'dataMax + 1']} 
-                              fontSize={8} 
-                              tickLine={false} 
+                            <YAxis
+                              domain={['dataMin - 1', 'dataMax + 1']}
+                              fontSize={8}
+                              tickLine={false}
                               axisLine={false}
-                              stroke="#94a3b8" 
+                              stroke="#94a3b8"
                               tickFormatter={(val) => `${val}°C`}
                             />
-                            <Tooltip 
-                              contentStyle={{ 
-                                backgroundColor: '#fff', 
-                                borderRadius: '6px', 
-                                border: '1px solid #e8dfd5', 
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#fff',
+                                borderRadius: '6px',
+                                border: '1px solid #e8dfd5',
                                 fontSize: '10px',
                                 padding: '4px 8px'
                               }}
                               formatter={(value: any) => [`${value} °C`, 'Temp']}
                               labelFormatter={(label) => `Date: ${label}`}
                             />
-                            <Line 
-                              type="monotone" 
-                              dataKey="temperature" 
-                              stroke="#801323" 
+                            <Line
+                              type="monotone"
+                              dataKey="temperature"
+                              stroke="#801323"
                               strokeWidth={2}
                               dot={{ r: 2 }}
                               activeDot={{ r: 4 }}
@@ -887,8 +1197,8 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                         Sanitation & Hygiene Protocol
                       </h3>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono uppercase ${
-                        selectedVessel.cleaningStatus === 'clean' 
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                        selectedVessel.cleaningStatus === 'clean'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                           : 'bg-amber-100 text-amber-805 border border-amber-200'
                       }`}>
                         {selectedVessel.cleaningStatus.replace('_', ' ')}
@@ -902,18 +1212,22 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                           {selectedVessel.lastCleaned ? selectedVessel.lastCleaned : 'Never/New'}
                         </strong>
                       </div>
-                      <button
-                        onClick={() => onToggleSanitation(selectedVessel.id)}
-                        className="px-2 py-1 text-[10px] font-mono font-semibold text-indigo-850 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded transition-all cursor-pointer"
-                      >
-                        {selectedVessel.cleaningStatus === 'clean' ? 'Flag: CIP Required' : '✓ Mark Sanitized Today'}
-                      </button>
+                      {canUpdateVessel && (
+                        <button
+                          onClick={handleToggleSanitation}
+                          className="px-2 py-1 text-[10px] font-mono font-semibold text-indigo-850 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded transition-all cursor-pointer"
+                        >
+                          {selectedVessel.cleaningStatus === 'clean'
+                            ? (lang === 'ka' ? 'CIP რეცხვა საჭიროა' : 'Flag: CIP Required')
+                            : (lang === 'ka' ? '✓ დღეს სანიტარიზებულია' : '✓ Mark Sanitized Today')}
+                        </button>
+                      )}
                     </div>
                   </div>
 
                   <div className="p-4 bg-gradient-to-br from-white to-amber-50/10 border border-[#e8dfd5] rounded-xl space-y-2.5 shadow-2xs relative overflow-hidden">
                     <div className="absolute -right-6 -bottom-6 text-4xl opacity-[0.07] select-none pointer-events-none">🔮</div>
-                    
+
                     <div className="flex items-center justify-between border-b border-stone-200/50 pb-2">
                       <h3 className="text-xs font-serif font-black text-[#4e0e15] flex items-center gap-1.5">
                         <span className="animate-pulse">💡</span> AI Winemaker Insights
@@ -934,8 +1248,8 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                           {aiInsights.split('\n').filter(l => l.trim()).map((line, idx) => (
                             <p key={idx} className="flex items-start gap-1.5 text-[11px] text-[#2c241e]">
                               <span className="text-amber-600 mt-0.5">•</span>
-                              <span dangerouslySetInnerHTML={{ 
-                                __html: line.replace(/^\s*[\-\*]\s*/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') 
+                              <span dangerouslySetInnerHTML={{
+                                __html: line.replace(/^\s*[-*]\s*/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                               }} />
                             </p>
                           ))}
@@ -950,15 +1264,51 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
                     <h3 className="text-xs font-bold text-[#4e0e15] uppercase tracking-wider px-1 font-serif">
                       Recent Ledger & Operations
                     </h3>
-                    <div className="p-3.5 bg-white border border-stone-200 rounded-xl space-y-2 text-[11px]">
-                      <div className="flex justify-between items-center text-slate-400 font-mono text-[9px]">
-                        <span>Last Operation recorded</span>
-                        <span>AUTOMATED SENSOR LOG</span>
+                    {recentVesselOperations.length ? (
+                      <div className="space-y-2">
+                        {recentVesselOperations.map(operation => {
+                          const isNew = operation.id === recentlyLoggedOperationId;
+                          return (
+                            <article
+                              key={operation.id}
+                              className={`rounded-xl border p-3.5 text-[11px] ${isNew
+                                ? 'border-emerald-300 bg-emerald-50 shadow-sm'
+                                : 'border-stone-200 bg-white'}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <strong className="font-serif text-xs text-[#4e0e15]">{cellarOperationLabel(operation, lang)}</strong>
+                                    {isNew && (
+                                      <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-white">
+                                        {lang === 'ka' ? 'ახალი' : 'New'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="mt-1 leading-relaxed text-stone-600">{cellarOperationDetail(operation, lang)}</p>
+                                </div>
+                                <time className="shrink-0 font-mono text-[9px] text-stone-400">{operation.date.slice(0, 10)}</time>
+                              </div>
+                              <p className="mt-2 border-t border-stone-200/70 pt-2 font-mono text-[9px] text-stone-400">
+                                {operation.operator} · {operation.lotName}
+                              </p>
+                            </article>
+                          );
+                        })}
                       </div>
-                      <p className="text-stone-700 font-medium">
-                        {selectedVessel.lastOperation || 'No recent operations recorded for this vessel.'}
-                      </p>
-                    </div>
+                    ) : (
+                      <div className="p-3.5 bg-white border border-stone-200 rounded-xl space-y-2 text-[11px]">
+                        <div className="flex justify-between items-center text-slate-400 font-mono text-[9px]">
+                          <span>{lang === 'ka' ? 'ბოლო ჩაწერილი ოპერაცია' : 'Last operation recorded'}</span>
+                          <span>{lang === 'ka' ? 'ჭურჭლის ჩანაწერი' : 'VESSEL RECORD'}</span>
+                        </div>
+                        <p className="text-stone-700 font-medium">
+                          {selectedVessel.lastOperation || (lang === 'ka'
+                            ? 'ამ ჭურჭლისთვის ოპერაცია ჯერ არ არის ჩაწერილი.'
+                            : 'No recent operations recorded for this vessel.')}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -969,3 +1319,11 @@ Provide a highly-precise two-bullet checklist of critical winemaking/cellaring n
     </AnimatePresence>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(VesselDrawer);

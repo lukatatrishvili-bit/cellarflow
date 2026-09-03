@@ -1,19 +1,25 @@
 import React from 'react';
 import {
-  BadgeDollarSign,
+  ArrowRight,
+  ArrowRightLeft,
+  Activity,
   Calculator,
+  CircleAlert,
+  CircleCheck,
   FlaskConical,
   GitMerge,
+  LockKeyhole,
+  MapPinned,
   MapPin,
   PackageCheck,
   Pencil,
-  ShoppingCart,
-  Warehouse,
+  Wrench,
   Wine,
   FileText,
 } from 'lucide-react';
 import type {
   BottlingRunRecord,
+  CellarOperationType,
   LabAnalysis,
   SalesDispatchRecord,
   SalesOrderRecord,
@@ -23,10 +29,20 @@ import type {
 } from '../lib/wineryState';
 import type { CostEntry } from '../lib/costing';
 import type { StockMovement } from '../lib/storage';
-import { isActiveReservation } from '../lib/sales';
+import type { Language } from '../lib/i18n';
+import { stageLabel as sharedStageLabel, vesselTypeLabel } from '../lib/enumLabels';
+import {
+  stagesForCurrentLot,
+  winemakingWorkflowLabel,
+} from '../lib/winemakingWorkflow';
+import {
+  lotNextActionStatusLabel,
+  type LotNextAction,
+} from '../lib/lotNextAction';
 import { StatusBadge } from './ui/primitives';
 
 interface Props {
+  lang?: Language;
   lot: WineLot;
   vessels: Vessel[];
   labLogs: LabAnalysis[];
@@ -36,45 +52,18 @@ interface Props {
   salesOrders: SalesOrderRecord[];
   salesDispatches: SalesDispatchRecord[];
   currency: string;
-  onEdit: () => void;
+  nextAction: LotNextAction;
+  onEdit?: () => void;
+  onNextAction?: () => void;
+  onChangeStage?: () => void;
   onOpenPassport?: (lotId: string) => void;
   setActiveTab?: (tab: string) => void;
   setSelectedTankId?: (tankId: string | null) => void;
   setCalculatorLotId?: (lotId: string) => void;
-}
-
-const stageOrder: WinemakingStage[] = [
-  'crushing',
-  'fermenting',
-  'maceration',
-  'pressing',
-  'aging',
-  'stabilization',
-  'filtration',
-  'bottled',
-  'sold',
-];
-
-const stageLabels: Record<WinemakingStage, string> = {
-  crushing: 'Crushing',
-  fermenting: 'Fermenting',
-  maceration: 'Maceration',
-  pressing: 'Pressing',
-  aging: 'Aging',
-  stabilization: 'Stabilization',
-  filtration: 'Filtration',
-  bottled: 'Bottled',
-  sold: 'Sold',
-};
-
-const round2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-
-function money(n: number, currency: string): string {
-  return `${n.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${currency}`;
-}
-
-function signedMovement(m: StockMovement): number {
-  return m.direction === 'in' ? m.bottles : -m.bottles;
+  setLabLotId?: (lotId: string) => void;
+  onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
+  onPlanTransfer?: (vesselId: string, role?: 'source' | 'destination') => void;
+  onLocateOnWineryPlan?: (vesselId: string) => void;
 }
 
 function MetricCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -110,44 +99,73 @@ function ActionChip({
 }
 
 export default function WineLotCommandCenter({
+  lang = 'en',
   lot,
   vessels,
   labLogs,
-  costEntries,
-  bottlingRuns,
-  stockMovements,
-  salesOrders,
-  salesDispatches,
-  currency,
+  nextAction,
   onEdit,
+  onNextAction,
+  onChangeStage,
   onOpenPassport,
   setActiveTab,
   setSelectedTankId,
   setCalculatorLotId,
+  setLabLotId,
+  onLogOperation,
+  onPlanTransfer,
+  onLocateOnWineryPlan,
 }: Props) {
+  const ka = lang === 'ka';
+  const stageLabel = (stage: WinemakingStage) => sharedStageLabel(stage, lang);
   const containingVessels = vessels.filter(v => v.assignedLotId === lot.id);
   const latestLab = labLogs
     .filter(log => log.lotId === lot.id)
     .slice()
     .sort((a, b) => b.date.localeCompare(a.date))[0];
-  const bottled = bottlingRuns
-    .filter(run => run.lotId === lot.id)
-    .reduce((acc, run) => acc + (run.totalBottles || 0) + (run.totalCeramic || 0), 0);
-  const stockOnHand = Math.max(0, stockMovements
-    .filter(m => m.lotId === lot.id)
-    .reduce((acc, m) => acc + signedMovement(m), 0));
-  const reserved = salesOrders
-    .filter(order => order.lotId === lot.id && isActiveReservation(order))
-    .reduce((acc, order) => acc + (order.bottles || 0), 0);
-  const dispatches = salesDispatches.filter(d => d.lotId === lot.id);
-  const dispatched = dispatches.reduce((acc, d) => acc + (d.bottles || 0), 0);
-  const revenue = dispatches.reduce((acc, d) => acc + (d.revenue || 0), 0);
-  const totalCost = costEntries
-    .filter(entry => entry.lotId === lot.id)
-    .reduce((acc, entry) => acc + (entry.amount || 0), 0);
-  const costPerBottle = bottled > 0 ? round2(totalCost / bottled) : null;
+  const vesselVolume = containingVessels.reduce((total, vessel) => total + vessel.currentVolume, 0);
+  const volumeDifference = Math.round((lot.currentVolume - vesselVolume) * 100) / 100;
+  const averageTemperature = containingVessels.length
+    ? containingVessels.reduce((total, vessel) => total + vessel.temperature, 0) / containingVessels.length
+    : null;
+  const highestFill = containingVessels.reduce((highest, vessel) => (
+    Math.max(highest, vessel.capacity > 0 ? (vessel.currentVolume / vessel.capacity) * 100 : 0)
+  ), 0);
+  const operationAction = containingVessels.length === 1 && onLogOperation
+    ? () => onLogOperation(containingVessels[0].id)
+    : setActiveTab
+      ? () => setActiveTab('operations')
+      : undefined;
+  const stageOrder = stagesForCurrentLot(lot.wineClass, lot.stage);
   const currentStageIndex = Math.max(0, stageOrder.indexOf(lot.stage));
   const progressPct = Math.round(((currentStageIndex + 1) / stageOrder.length) * 100);
+  const nextStepTone = {
+    ready: {
+      border: 'border-emerald-200 dark:border-emerald-900/70',
+      background: 'bg-emerald-50/70 dark:bg-emerald-950/20',
+      badge: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
+      icon: CircleCheck,
+    },
+    needs_data: {
+      border: 'border-amber-200 dark:border-amber-900/70',
+      background: 'bg-amber-50/70 dark:bg-amber-950/20',
+      badge: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200',
+      icon: CircleAlert,
+    },
+    blocked: {
+      border: 'border-rose-200 dark:border-rose-900/70',
+      background: 'bg-rose-50/70 dark:bg-rose-950/20',
+      badge: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200',
+      icon: LockKeyhole,
+    },
+    complete: {
+      border: 'border-sky-200 dark:border-sky-900/70',
+      background: 'bg-sky-50/70 dark:bg-sky-950/20',
+      badge: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200',
+      icon: CircleCheck,
+    },
+  }[nextAction.status];
+  const NextStepIcon = nextStepTone.icon;
 
   return (
     <section className="overflow-hidden rounded-3xl border border-[#e8dfd5] bg-gradient-to-br from-white via-[#fffdfa] to-[#f8f1ea] shadow-sm dark:border-stone-800 dark:from-stone-900 dark:via-stone-900 dark:to-stone-950">
@@ -158,40 +176,98 @@ export default function WineLotCommandCenter({
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge tone="brand">{lot.id}</StatusBadge>
               <StatusBadge tone={lot.stage === 'sold' ? 'success' : lot.stage === 'bottled' ? 'info' : 'neutral'}>
-                {stageLabels[lot.stage] || lot.stage}
+                {stageLabel(lot.stage) || lot.stage}
               </StatusBadge>
               <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-stone-400">
-                Vintage {lot.vintage}
+                {ka ? 'მოსავალი' : 'Vintage'} {lot.vintage}
               </span>
             </div>
             <h2 className="mt-2 text-2xl font-serif font-black leading-tight text-stone-950 dark:text-amber-100">
               {lot.name}
             </h2>
             <p className="mt-1 max-w-3xl text-sm text-stone-500 dark:text-stone-400">
-              {lot.variety} from {lot.vineyardBlock || 'unassigned block'} · {lot.region || 'unknown region'}
+              {lot.variety} · {lot.vineyardBlock || (ka ? 'ბლოკი მიუთითებელია' : 'unassigned block')} · {lot.region || (ka ? 'უცნობი რეგიონი' : 'unknown region')}
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <ActionChip icon={Pencil} onClick={onEdit}>Edit</ActionChip>
-            <ActionChip icon={GitMerge} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>Lineage</ActionChip>
-            <ActionChip icon={FileText} onClick={onOpenPassport ? () => onOpenPassport(lot.id) : undefined}>Passport</ActionChip>
+          <div className="flex flex-wrap items-stretch gap-2">
+            {onEdit && <ActionChip icon={Pencil} onClick={onEdit}>{ka ? 'რედაქტირება' : 'Edit'}</ActionChip>}
+            <ActionChip icon={GitMerge} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>{ka ? 'გენეალოგია' : 'Lineage'}</ActionChip>
+            <ActionChip icon={FileText} onClick={onOpenPassport ? () => onOpenPassport(lot.id) : undefined}>{ka ? 'პასპორტი' : 'Passport'}</ActionChip>
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-7">
-          <MetricCard label="Current volume" value={`${lot.currentVolume.toLocaleString()} L`} hint={`${lot.initialVolume.toLocaleString()} L initial`} />
-          <MetricCard label="Bottled" value={`${bottled.toLocaleString()} btl`} hint={bottled > 0 ? 'finished goods' : 'not bottled yet'} />
-          <MetricCard label="Stock now" value={`${stockOnHand.toLocaleString()} btl`} hint={reserved > 0 ? `${reserved.toLocaleString()} reserved` : 'unreserved'} />
-          <MetricCard label="Dispatched" value={`${dispatched.toLocaleString()} btl`} hint={revenue > 0 ? money(revenue, currency) : 'no sales yet'} />
-          <MetricCard label="Lot cost" value={money(totalCost, currency)} hint={costPerBottle != null ? `${costPerBottle} ${currency}/btl` : 'cost/btl pending'} />
-          <MetricCard label="Latest pH" value={latestLab ? String(latestLab.ph) : '—'} hint={latestLab ? latestLab.date : 'no lab yet'} />
-          <MetricCard label="Free SO₂" value={latestLab ? `${latestLab.freeSo2} mg/L` : '—'} hint={latestLab && latestLab.freeSo2 < 15 ? 'needs review' : 'latest lab'} />
+        <div className={`mt-5 rounded-2xl border p-4 ${nextStepTone.border} ${nextStepTone.background}`}>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-[9px] font-mono font-black uppercase tracking-widest text-stone-500 dark:text-stone-300">
+                  <Activity className="h-3.5 w-3.5 text-[#4e0e15] dark:text-amber-200" />
+                  {ka ? 'შემდეგი ნაბიჯი' : 'Next step'}
+                </span>
+                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wide ${nextStepTone.badge}`}>
+                  <NextStepIcon className="h-3 w-3" />
+                  {lotNextActionStatusLabel(nextAction.status, lang)}
+                </span>
+              </div>
+              <h3 className="mt-2 text-base font-serif font-black text-stone-950 dark:text-amber-100">
+                {nextAction.label}
+              </h3>
+              <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-stone-600 dark:text-stone-300">
+                {nextAction.description}
+              </p>
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {onChangeStage && nextAction.intent !== 'transition' && lot.stage !== 'sold' && (
+                <button
+                  type="button"
+                  onClick={onChangeStage}
+                  className="rounded-xl border border-stone-300 bg-white/80 px-3 py-2 text-[10px] font-bold text-stone-600 transition-colors hover:border-[#4e0e15]/40 hover:text-[#4e0e15] dark:border-stone-700 dark:bg-stone-950/50 dark:text-stone-300"
+                >
+                  {ka ? 'სხვა ეტაპის არჩევა' : 'Choose another stage'}
+                </button>
+              )}
+              {onNextAction && nextAction.intent !== 'none' && (
+                <button
+                  type="button"
+                  onClick={onNextAction}
+                  className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#4e0e15] px-4 py-2 text-[10px] font-black text-amber-50 shadow-sm transition-colors hover:bg-[#6b151e] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c5a059] focus-visible:ring-offset-2"
+                >
+                  {nextAction.ctaLabel}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <MetricCard label={ka ? 'მიმდინარე მოცულობა' : 'Current volume'} value={`${lot.currentVolume.toLocaleString()} L`} hint={`${lot.initialVolume.toLocaleString()} L ${ka ? 'საწყისი' : 'initial'}`} />
+          <MetricCard
+            label={ka ? 'განთავსება' : 'Placement'}
+            value={containingVessels.length ? `${containingVessels.length} ${ka ? 'ჭურჭელი' : containingVessels.length === 1 ? 'vessel' : 'vessels'}` : '—'}
+            hint={Math.abs(volumeDifference) > 0.1
+              ? `${ka ? 'მოცულობის სხვაობა' : 'volume difference'} ${volumeDifference.toLocaleString()} L`
+              : `${vesselVolume.toLocaleString()} L ${ka ? 'შეჯერებულია' : 'reconciled'}`}
+          />
+          <MetricCard
+            label={ka ? 'ტემპერატურა' : 'Temperature'}
+            value={averageTemperature == null ? '—' : `${averageTemperature.toFixed(1)}°C`}
+            hint={containingVessels.length ? `${ka ? 'უმაღლესი შევსება' : 'highest fill'} ${Math.round(highestFill)}%` : (ka ? 'ჭურჭელი არ არის მიბმული' : 'no vessel assigned')}
+          />
+          <MetricCard
+            label={ka ? 'ბოლო ანალიზი' : 'Latest analysis'}
+            value={latestLab ? `pH ${latestLab.ph}` : '—'}
+            hint={latestLab ? `SO₂ ${latestLab.freeSo2} mg/L · ${latestLab.date}` : (ka ? 'ანალიზი ჯერ არ არის' : 'no lab yet')}
+          />
         </div>
 
         <div className="mt-5 rounded-2xl border border-stone-200 bg-white/55 p-3 dark:border-stone-800 dark:bg-stone-950/30">
           <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-[9px] font-mono font-black uppercase tracking-widest text-stone-400">Winemaking progress</span>
+            <span className="text-[9px] font-mono font-black uppercase tracking-widest text-stone-400">
+              {winemakingWorkflowLabel(lot.wineClass, lang)}
+            </span>
             <span className="text-[10px] font-mono font-bold text-stone-500">{progressPct}%</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">
@@ -207,7 +283,7 @@ export default function WineLotCommandCenter({
                     : 'bg-stone-100 text-stone-400 dark:bg-stone-800'
                 }`}
               >
-                {stageLabels[stage]}
+                {stageLabel(stage)}
               </span>
             ))}
           </div>
@@ -216,7 +292,7 @@ export default function WineLotCommandCenter({
         <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-stone-200 bg-white/65 p-4 dark:border-stone-800 dark:bg-stone-950/30">
             <h3 className="flex items-center gap-1.5 text-xs font-black text-stone-700 dark:text-amber-100">
-              <MapPin className="h-4 w-4 text-[#4e0e15]" /> Where it is now
+              <MapPin className="h-4 w-4 text-[#4e0e15]" /> {ka ? 'სად არის ახლა' : 'Where it is now'}
             </h3>
             {containingVessels.length > 0 ? (
               <div className="mt-3 space-y-2">
@@ -229,28 +305,29 @@ export default function WineLotCommandCenter({
                   >
                     <span>
                       <strong className="block text-xs text-stone-900 dark:text-amber-100">{vessel.id}</strong>
-                      <span className="text-[10px] text-stone-400">{vessel.type.replace(/_/g, ' ')} · {vessel.temperature}°C</span>
+                      <span className="text-[10px] text-stone-400">{vesselTypeLabel(vessel.type, lang)} · {vessel.temperature}°C</span>
                     </span>
                     <span className="text-[10px] font-mono font-bold text-stone-500">{vessel.currentVolume.toLocaleString()} L</span>
                   </button>
                 ))}
               </div>
             ) : (
-              <p className="mt-3 text-xs text-stone-400">No vessel currently assigned. If bottled, check finished-goods stock and storage.</p>
+              <p className="mt-3 text-xs text-stone-400">{ka ? 'ამჟამად ჭურჭელი მიბმული არ არის. თუ ჩამოსხმულია, შეამოწმეთ მზა პროდუქციის მარაგი და საწყობი.' : 'No vessel currently assigned. If bottled, check finished-goods stock and storage.'}</p>
             )}
           </div>
 
           <div className="rounded-2xl border border-stone-200 bg-white/65 p-4 dark:border-stone-800 dark:bg-stone-950/30">
             <h3 className="flex items-center gap-1.5 text-xs font-black text-stone-700 dark:text-amber-100">
-              <Wine className="h-4 w-4 text-[#4e0e15]" /> Next useful actions
+              <Wine className="h-4 w-4 text-[#4e0e15]" /> {ka ? 'სწრაფი მოქმედებები' : 'Quick actions'}
             </h3>
             <div className="mt-3 flex flex-wrap gap-2">
-              <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => setActiveTab('labs') : undefined}>Lab</ActionChip>
-              <ActionChip icon={Calculator} onClick={setActiveTab && setCalculatorLotId ? () => { setCalculatorLotId(lot.id); setActiveTab('calculators'); } : undefined}>Calculator</ActionChip>
-              <ActionChip icon={PackageCheck} onClick={setActiveTab ? () => setActiveTab('bottling') : undefined}>Bottling</ActionChip>
-              <ActionChip icon={Warehouse} onClick={setActiveTab ? () => setActiveTab('inventory') : undefined}>Materials</ActionChip>
-              <ActionChip icon={ShoppingCart} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>Trace sales</ActionChip>
-              <ActionChip icon={BadgeDollarSign} onClick={setActiveTab ? () => setActiveTab('lineage') : undefined}>Trace value</ActionChip>
+              <ActionChip icon={Wrench} onClick={operationAction}>{ka ? 'ოპერაცია' : 'Operation'}</ActionChip>
+              <ActionChip icon={MapPinned} onClick={containingVessels.length && onLocateOnWineryPlan ? () => onLocateOnWineryPlan(containingVessels[0].id) : undefined}>{ka ? 'მარნის გეგმაზე' : 'Winery plan'}</ActionChip>
+              <ActionChip icon={ArrowRightLeft} onClick={containingVessels.length === 1 && onPlanTransfer ? () => onPlanTransfer(containingVessels[0].id) : setActiveTab && containingVessels.length ? () => setActiveTab('transfers') : undefined}>{ka ? 'გადატანა' : 'Transfer'}</ActionChip>
+              <ActionChip icon={FlaskConical} onClick={setActiveTab ? () => { setLabLotId?.(lot.id); setActiveTab('labs'); } : undefined}>{ka ? 'ლაბორატორია' : 'Lab'}</ActionChip>
+              {lot.stage === 'filtration'
+                ? <ActionChip icon={PackageCheck} onClick={setActiveTab ? () => setActiveTab('bottling') : undefined}>{ka ? 'ჩამოსხმა' : 'Bottling'}</ActionChip>
+                : <ActionChip icon={Calculator} onClick={setActiveTab && setCalculatorLotId ? () => { setCalculatorLotId(lot.id); setActiveTab('calculators'); } : undefined}>{ka ? 'კალკულატორი' : 'Calculator'}</ActionChip>}
             </div>
           </div>
         </div>

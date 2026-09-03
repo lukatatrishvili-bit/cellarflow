@@ -16,6 +16,8 @@ interface Props {
   /** Render manual lat/lon inputs (omit when the host form already has them). */
   showManual?: boolean;
   placeholder?: string;
+  /** UI language; only 'ka' has translations. */
+  lang?: string;
 }
 
 /**
@@ -23,7 +25,8 @@ interface Props {
  * optional manual coordinate entry. Used by vineyard block registration and
  * the Weather Explorer.
  */
-export default function LocationPicker({ latitude, longitude, onChange, showManual = true, placeholder }: Props) {
+export default function LocationPicker({ latitude, longitude, onChange, showManual = true, placeholder, lang = 'en' }: Props) {
+  const isKa = lang === 'ka';
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<GeoLocation[]>([]);
   const [searching, setSearching] = useState(false);
@@ -36,9 +39,9 @@ export default function LocationPicker({ latitude, longitude, onChange, showManu
     try {
       const found = await searchLocations(query);
       setResults(found);
-      if (found.length === 0) setError('No places found — try another spelling.');
+      if (found.length === 0) setError(isKa ? 'ადგილი ვერ მოიძებნა — სცადეთ სხვა დაწერილობა.' : 'No places found — try another spelling.');
     } catch (e: any) {
-      setError(e?.message || 'Search failed. Check your connection.');
+      setError(e?.message || (isKa ? 'ძებნა ვერ შესრულდა. შეამოწმეთ კავშირი.' : 'Search failed. Check your connection.'));
       setResults([]);
     } finally {
       setSearching(false);
@@ -71,7 +74,7 @@ export default function LocationPicker({ latitude, longitude, onChange, showManu
                 runSearch();
               }
             }}
-            placeholder={placeholder || 'Search a place… e.g. Telavi, Bordeaux'}
+            placeholder={placeholder || (isKa ? 'მოძებნეთ ადგილი… მაგ. თელავი, ბორდო' : 'Search a place… e.g. Telavi, Bordeaux')}
             className="w-full bg-stone-50 border border-stone-200 rounded-lg pl-8 pr-2 py-2 text-xs text-stone-900 font-medium outline-none focus:border-emerald-600 transition-colors"
           />
         </div>
@@ -82,7 +85,7 @@ export default function LocationPicker({ latitude, longitude, onChange, showManu
           className="px-3 py-2 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white rounded-lg text-[10px] font-mono font-bold uppercase tracking-wide cursor-pointer transition-colors flex items-center gap-1.5"
         >
           {searching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MapPin className="w-3.5 h-3.5" />}
-          Find
+          {isKa ? 'ძებნა' : 'Find'}
         </button>
       </div>
 
@@ -119,7 +122,7 @@ export default function LocationPicker({ latitude, longitude, onChange, showManu
       {showManual && (
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400">Latitude</label>
+            <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400">{isKa ? 'განედი' : 'Latitude'}</label>
             <input
               type="number"
               step="0.0001"
@@ -129,7 +132,7 @@ export default function LocationPicker({ latitude, longitude, onChange, showManu
             />
           </div>
           <div>
-            <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400">Longitude</label>
+            <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400">{isKa ? 'გრძედი' : 'Longitude'}</label>
             <input
               type="number"
               step="0.0001"

@@ -15,7 +15,7 @@ export interface DeploymentStatus {
   };
   persistence: {
     databaseBackend: 'postgresql-jsonb' | 'gcs' | 'local';
-    userDataBackend: 'postgres-jsonb' | 'firestore' | 'db-json';
+    userDataBackend: 'postgres-jsonb' | 'db-json';
     target: string;
     maxInstancesRecommendation: string;
   };
@@ -44,6 +44,8 @@ export interface RuntimeScaleProbe {
     coreMetadataRead?: boolean;
     organizationStateRead?: boolean;
     loginAttemptStoreRead?: boolean;
+    securityAuditStoreRead?: boolean;
+    relationalProjectionRead?: boolean;
   };
   errors?: string[];
 }
@@ -67,7 +69,6 @@ function maskDatabaseUrl(value: string | undefined): string {
 function computeScaleReadiness(opts: {
   postgresConfigured: boolean;
   gcsConfigured: boolean;
-  firestoreConfigured: boolean;
   isProduction: boolean;
 }): DeploymentStatus['scaleReadiness'] {
   const completed: string[] = [];
@@ -84,11 +85,9 @@ function computeScaleReadiness(opts: {
   } else if (opts.gcsConfigured) {
     completed.push('Cloud Storage backup/fallback is configured.');
     blockers.push('Primary persistence is still a single JSON object, which is not safe for concurrent Cloud Run instances.');
-  } else if (opts.firestoreConfigured) {
-    completed.push('Firestore flag is enabled for legacy user-data storage.');
   } else {
     blockers.push(opts.isProduction
-      ? 'Production has no durable SQL/GCS/Firestore backend configured.'
+      ? 'Production has no durable PostgreSQL or GCS backend configured.'
       : 'No durable shared backend is configured.');
   }
 
@@ -110,7 +109,6 @@ export function getDeploymentStatus(env: NodeJS.ProcessEnv = process.env): Deplo
   const isCloudRun = truthy(env.K_SERVICE);
   const gcsConfigured = gcsEnabled || truthy(env.GCS_BUCKET);
   const postgresConfigured = truthy(env.DATABASE_URL);
-  const firestoreConfigured = env.USE_FIRESTORE === 'true';
   const runtimeOAuthConfigAllowed = isRuntimeOAuthConfigAllowed(env);
   const warnings: string[] = [];
   const blockingIssues: string[] = [];
@@ -119,13 +117,13 @@ export function getDeploymentStatus(env: NodeJS.ProcessEnv = process.env): Deplo
     if (blocking) blockingIssues.push(message);
   };
 
-  if (isProduction && !postgresConfigured && !gcsConfigured && !firestoreConfigured) {
-    warn('Production is using local db.json storage. Cloud Run filesystems are ephemeral; configure DATABASE_URL, GCS_BUCKET, or Firestore before real use.', true);
+  if (isProduction && !postgresConfigured && !gcsConfigured) {
+    warn('Production is using local db.json storage. Cloud Run filesystems are ephemeral; configure DATABASE_URL or GCS_BUCKET before real use.', true);
   }
   if (!postgresConfigured && gcsConfigured) {
-    warn('GCS db.json persistence is single-object storage. Keep Cloud Run max instances at 1 until the app moves to per-user objects, Firestore, or SQL.');
+    warn('GCS db.json persistence is single-object storage. Keep Cloud Run max instances at 1 until PostgreSQL is authoritative.');
   }
-  const scaleReadiness = computeScaleReadiness({ postgresConfigured, gcsConfigured, firestoreConfigured, isProduction });
+  const scaleReadiness = computeScaleReadiness({ postgresConfigured, gcsConfigured, isProduction });
 
   if (postgresConfigured && !scaleReadiness.safeToRaiseMaxInstances) {
     warn('PostgreSQL JSONB protects operational winery state, but deployment is not yet cleared for multi-instance scaling. Keep Cloud Run max instances at 1.');
@@ -164,7 +162,7 @@ export function getDeploymentStatus(env: NodeJS.ProcessEnv = process.env): Deplo
     },
     persistence: {
       databaseBackend: postgresConfigured ? 'postgresql-jsonb' : gcsConfigured ? 'gcs' : 'local',
-      userDataBackend: postgresConfigured ? 'postgres-jsonb' : firestoreConfigured ? 'firestore' : 'db-json',
+      userDataBackend: postgresConfigured ? 'postgres-jsonb' : 'db-json',
       target: postgresConfigured
         ? maskDatabaseUrl(env.DATABASE_URL)
         : gcsConfigured
@@ -220,6 +218,18 @@ export function applyRuntimeScaleReadinessProbe(
     addCompleted('Live PostgreSQL probe confirmed the shared LoginAttempt limiter table is readable.');
   } else {
     addBlocker('Live PostgreSQL probe could not read the shared LoginAttempt limiter table.');
+  }
+
+  if (probe.checks?.securityAuditStoreRead === true) {
+    addCompleted('Live PostgreSQL probe confirmed the SecurityAuditEvent table is readable.');
+  } else if (probe.checks?.securityAuditStoreRead === false) {
+    addBlocker('Live PostgreSQL probe could not read the SecurityAuditEvent table.');
+  }
+
+  if (probe.checks?.relationalProjectionRead === true) {
+    addCompleted('Live PostgreSQL probe confirmed vessel and wine-lot projection tables are readable.');
+  } else if (probe.checks?.relationalProjectionRead === false) {
+    addBlocker('Live PostgreSQL probe could not read the vessel and wine-lot projection tables.');
   }
 
   for (const error of probe.errors || []) {

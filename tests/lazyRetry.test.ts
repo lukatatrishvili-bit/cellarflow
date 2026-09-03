@@ -46,29 +46,30 @@ afterEach(() => {
 });
 
 describe('lazyRetry', () => {
-  it('resolves normally and clears the reload flag on success', async () => {
+  it('resolves normally without mutating the retry guard', async () => {
     const { store } = stubBrowserGlobals();
-    store.set('cf_chunk_reload', '1'); // stale flag from a previous recovery
+    const staleGuard = String(Date.now() - 20_000);
+    store.set('cf_chunk_reload_at', staleGuard);
     const Component = () => null;
     const wrapped = lazyRetry(async () => ({ default: Component }));
     await initLazy(wrapped).catch(() => {});
-    // Flag cleared so the NEXT deploy can auto-reload again.
-    expect(store.has('cf_chunk_reload')).toBe(false);
+    expect(store.get('cf_chunk_reload_at')).toBe(staleGuard);
   });
 
-  it('reloads once on first chunk failure and sets the guard flag', async () => {
+  it('reloads once on first chunk failure and timestamps the guard', async () => {
     const { store, reload } = stubBrowserGlobals();
+    const startedAt = Date.now();
     const wrapped = lazyRetry(() => Promise.reject(new Error('Failed to fetch dynamically imported module')));
     // Deliberately not awaited: on the reload path the wrapper never settles,
     // holding the Suspense fallback on screen while the page reloads.
     void initLazy(wrapped).catch(() => {});
     await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
-    expect(store.get('cf_chunk_reload')).toBe('1');
+    expect(Number(store.get('cf_chunk_reload_at'))).toBeGreaterThanOrEqual(startedAt);
   });
 
-  it('does NOT reload again when the guard flag is already set (no loops)', async () => {
+  it('does NOT reload again while the guard is fresh (no loops)', async () => {
     const { store, reload } = stubBrowserGlobals();
-    store.set('cf_chunk_reload', '1');
+    store.set('cf_chunk_reload_at', String(Date.now()));
     const err = new Error('still failing');
     const wrapped = lazyRetry(() => Promise.reject(err));
     let caught: unknown = null;
@@ -76,5 +77,14 @@ describe('lazyRetry', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(reload).not.toHaveBeenCalled();
     expect(caught).toBe(err); // error propagates to the error boundary
+  });
+
+  it('allows a later deployment to recover after the guard expires', async () => {
+    const { store, reload } = stubBrowserGlobals();
+    store.set('cf_chunk_reload_at', String(Date.now() - 10_001));
+    const wrapped = lazyRetry(() => Promise.reject(new Error('new deploy failure')));
+    void initLazy(wrapped).catch(() => {});
+
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 });

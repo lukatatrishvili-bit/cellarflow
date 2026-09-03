@@ -20,7 +20,7 @@ async function main() {
 
   for (const u of db.users || []) {
     console.log(`Seeding user: ${u.username}`);
-    
+
     const user = await prisma.user.upsert({
       where: { username: u.username },
       update: {

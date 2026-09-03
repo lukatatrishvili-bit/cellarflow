@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, type Variants } from 'motion/react';
 
 /**
- * Shared motion primitives for the MaraniOS UI pass.
+ * Shared motion primitives for the VinOS UI.
  *
  * All animations are compositor-only (transform/opacity) for 60fps on cellar
  * tablets, and respect prefers-reduced-motion (globally via <MotionConfig

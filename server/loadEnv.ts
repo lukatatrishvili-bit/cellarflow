@@ -11,27 +11,27 @@ import { fileURLToPath } from 'url';
  * Never runs in production — Cloud Run supplies real env vars / Secret Manager
  * references, and values already present in the environment always win here.
  */
-if (process.env.NODE_ENV !== 'production') {
-  try {
-    const envPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env');
-    if (fs.existsSync(envPath)) {
-      for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eq = trimmed.indexOf('=');
-        if (eq === -1) continue;
-        const key = trimmed.slice(0, eq).trim();
-        let value = trimmed.slice(eq + 1).trim();
-        if (
-          (value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))
-        ) {
-          value = value.slice(1, -1);
-        }
-        if (process.env[key] === undefined) process.env[key] = value;
+try {
+  const envPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] === undefined) {
+        process.env[key] = value;
       }
     }
-  } catch {
-    // Best-effort: a malformed .env must never stop the dev server.
   }
+} catch {
+  // Best-effort: a malformed .env must never stop the server.
 }

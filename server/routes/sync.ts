@@ -5,27 +5,149 @@ import {
   createEmptyUserData,
   saveUserData,
   saveDB,
-  getDB,
   reloadUserOrganizationDataFromPostgres,
   OrganizationStateVersionConflictError,
 } from '../db';
-import { applyDeletions, mergeCollections, isValidId } from '../sync';
+import {
+  applyDeletions,
+  createDeletionMatcher,
+  createMergeOutcomeTally,
+  mergeCollections,
+  isValidId,
+  toClientKey,
+  type DeletedRecordRef,
+  type MergeOutcomeTally,
+} from '../sync';
 import { prepareAuditLogsForServerMerge } from '../../lib/auditHash';
+import { windowAuditLogsForHydration } from '../../lib/auditHydration';
+import { syncRecordFingerprint } from '../../lib/deletionTombstones';
+import { compareBottlingRunsNewestFirst } from '../../lib/bottlingIntegrity';
+import { reservedBottlesFor } from '../../lib/sales';
 import {
   attachmentMimeTypeMatchesInlineDataUrl,
   checksumAttachmentDataUrl,
+  inlineAttachmentDecodedBytes,
   isAllowedInlineAttachmentDataUrl,
   isSupportedAttachmentMimeType,
   isSupportedAttachmentFileName,
   isValidAttachmentChecksum,
+  isValidAttachmentObjectKey,
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_TOTAL_INLINE_ATTACHMENT_BYTES,
+  normalizeAttachmentFileName,
+  normalizeAttachmentMimeType,
   normalizeExternalAttachmentUrl,
   sumInlineAttachmentBytes,
 } from '../../lib/attachments';
-import { can, canAccess, canSyncCollection, moduleForAttachmentKind, moduleForSyncCollection, type PermissionAction } from '../permissions';
+import {
+  can,
+  canAccess,
+  canSyncCollection,
+  moduleForAttachmentKind,
+  moduleForSyncCollection,
+  type PermissionAction,
+  type PermissionModule,
+} from '../permissions';
+import { assessFootprintPressure, measureStateFootprint } from '../../lib/retention';
+import { recordSyncOperationalMetric, recordSyncMergeOutcomeMetric } from '../operationalTelemetry';
+import { organizationHasFeature, recordProductionUsage } from '../billing/service';
+import { productionPlanTransitionIssue } from '../../lib/operationsControl';
 
 const router = express.Router();
+
+/**
+ * Byte ceiling for a whole-state sync body.
+ *
+ * This is the FIRST limit a growing workspace meets — it binds long before the
+ * record ceilings below, because the body parser rejects on wire bytes while
+ * those count entities. It is deliberately the same 5 MB the global parser
+ * uses; the point of naming it here is that `/api/sync` mounts its own parser
+ * so an over-limit body produces a structured, actionable 413 instead of the
+ * body parser's raw HTML error (which the client could only surface as a bare
+ * "Sync rejected (HTTP 413)").
+ *
+ * Keep it aligned with the Cloud Run memory allocation: the raw body, its
+ * parsed object graph, and the merged candidate document are all resident at
+ * once during a sync.
+ */
+export const MAX_SYNC_BODY_BYTES = 5_000_000;
+
+export const MAX_SYNC_RECORDS_PER_COLLECTION = 20_000;
+export const MAX_SYNC_TOTAL_RECORDS = 75_000;
+export const MAX_SYNC_TOMBSTONES = 20_000;
+
+/**
+ * Convert the body parser's `entity.too.large` into the same structured shape
+ * the in-route limit errors use, so `lib/syncQueue` can read `code`/`error`
+ * from JSON rather than failing `res.json()` on an HTML error page.
+ *
+ * The offline path is what makes this matter: attachments are added inline and
+ * only offloaded to object storage once a request succeeds, so a tablet that
+ * spends a day offline can accumulate several inline blobs and then breach the
+ * ceiling on its first reconnect — precisely when a silent failure is worst.
+ */
+export function syncBodyLimitErrorHandler(
+  err: any,
+  _req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  if (err?.type !== 'entity.too.large') return next(err);
+  const capMb = (MAX_SYNC_BODY_BYTES / 1_000_000).toFixed(0);
+  return res.status(413).json({
+    code: 'sync_payload_too_large',
+    error: `This workspace's pending changes exceed the ${capMb} MB sync limit. Large files attached while offline are the usual cause: stay connected so attachments upload to file storage, or remove them and re-attach as an external link. No changes were lost — they remain on this device for retry.`,
+  });
+}
+
+export class SyncPayloadLimitError extends Error {
+  constructor(
+    public readonly code: 'sync_payload_invalid' | 'sync_collection_record_limit_exceeded' | 'sync_total_record_limit_exceeded' | 'sync_tombstone_limit_exceeded',
+    message: string,
+    public readonly statusCode = 413,
+  ) {
+    super(message);
+    this.name = 'SyncPayloadLimitError';
+  }
+}
+
+/** Bound whole-state sync work before permission, merge, and conflict processing. */
+export function assertSyncPayloadWithinLimits(body: unknown): void {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new SyncPayloadLimitError(
+      'sync_payload_invalid',
+      'Sync payload must be a JSON object. Local changes were kept.',
+      400,
+    );
+  }
+  const payload = body as Record<string, unknown>;
+  let totalRecords = 0;
+  for (const [collection, value] of Object.entries(payload)) {
+    if (!Array.isArray(value)) continue;
+    if (collection === 'deletedIds' || collection === 'deletedRecords') {
+      if (value.length > MAX_SYNC_TOMBSTONES) {
+        throw new SyncPayloadLimitError(
+          'sync_tombstone_limit_exceeded',
+          `Sync contains ${value.length.toLocaleString()} deletion records; the limit is ${MAX_SYNC_TOMBSTONES.toLocaleString()}. Export or archive old data and retry in smaller maintenance batches. Local changes were kept.`,
+        );
+      }
+      continue;
+    }
+    if (value.length > MAX_SYNC_RECORDS_PER_COLLECTION) {
+      throw new SyncPayloadLimitError(
+        'sync_collection_record_limit_exceeded',
+        `${collection} contains ${value.length.toLocaleString()} records in one sync; the limit is ${MAX_SYNC_RECORDS_PER_COLLECTION.toLocaleString()}. Export or archive older records before retrying. Local changes were kept.`,
+      );
+    }
+    totalRecords += value.length;
+    if (totalRecords > MAX_SYNC_TOTAL_RECORDS) {
+      throw new SyncPayloadLimitError(
+        'sync_total_record_limit_exceeded',
+        `Sync contains more than ${MAX_SYNC_TOTAL_RECORDS.toLocaleString()} records across collections. Export or archive older records before retrying. Local changes were kept.`,
+      );
+    }
+  }
+}
 
 function pruneTestUserSeedDuplicates(userDb: any): void {
   const staleHarvestIds = new Set(['HV-SAP-24', 'HV-RK-23']);
@@ -39,14 +161,26 @@ function pruneTestUserSeedDuplicates(userDb: any): void {
   }
 }
 
+function isValidCalendarDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 /**
  * Validate the incoming sync payload against the CURRENT server state (throws
  * on violation). Extracted from the route handler so the merge/save retry loop
  * can re-validate against freshly reloaded state after a version conflict.
  */
-export function validateSyncPayload(userDb: any, collections: Record<string, any>, deletedIds: any): void {
+export function validateSyncPayload(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords?: any,
+): void {
   {
-    // 1. Validate deletedIds syntax & block deletions of bottled lots or audit logs
+    // 1. Validate legacy wildcard and collection-scoped tombstones, then block
+    // deletions of bottled lots or immutable audit logs.
     if (deletedIds !== undefined) {
       if (!Array.isArray(deletedIds)) {
         throw new Error('deletedIds must be an array');
@@ -55,15 +189,778 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
         if (!isValidId(id)) {
           throw new Error(`Invalid deleted ID syntax: ${id}`);
         }
-        // Volatile Content Lock
-        const existingLot = userDb.lots.find((l: any) => l.id === id);
-        if (existingLot && existingLot.stage === 'bottled') {
-          throw new Error(`Volatile Content Lock: Bottled wine lot ${id} cannot be deleted.`);
+      }
+    }
+    if (deletedRecords !== undefined) {
+      if (!Array.isArray(deletedRecords)) {
+        throw new Error('deletedRecords must be an array');
+      }
+      for (const record of deletedRecords) {
+        if (!record || typeof record !== 'object' || !isValidId(record.id)) {
+          throw new Error(`Invalid deleted record syntax: ${record?.id}`);
         }
-        // Audit Immutability
-        const existingAudit = userDb.auditLogs.find((l: any) => l.id === id);
-        if (existingAudit) {
-          throw new Error(`Audit Immutability: Deletion of audit log ${id} is forbidden.`);
+        if (typeof record.collection !== 'string'
+          || !moduleForSyncCollection(record.collection)
+          || !Array.isArray(userDb?.[record.collection])) {
+          throw new Error(`Invalid deleted record collection: ${record.collection}`);
+        }
+        if (record.baselineTimestamp !== undefined && (
+          typeof record.baselineTimestamp !== 'string'
+          || record.baselineTimestamp.length > 64
+          || !Number.isFinite(Date.parse(record.baselineTimestamp))
+        )) {
+          throw new Error(`Invalid deletion baseline timestamp for ${record.id}.`);
+        }
+        if (record.baselineFingerprint !== undefined && (
+          typeof record.baselineFingerprint !== 'string'
+          || !/^[0-9a-f]{8}$/.test(record.baselineFingerprint)
+        )) {
+          throw new Error(`Invalid deletion baseline fingerprint for ${record.id}.`);
+        }
+        if (record.deletedAt !== undefined && (
+          typeof record.deletedAt !== 'string'
+          || record.deletedAt.length > 64
+          || !Number.isFinite(Date.parse(record.deletedAt))
+        )) {
+          throw new Error(`Invalid deletion capture timestamp for ${record.id}.`);
+        }
+      }
+    }
+
+    const deletionMatcher = createDeletionMatcher(deletedIds, deletedRecords);
+    const isDeleted = deletionMatcher.isDeleted;
+    for (const lot of Array.isArray(userDb?.lots) ? userDb.lots : []) {
+      if (lot?.id && isDeleted('lots', lot.id) && lot.stage === 'bottled') {
+        throw new Error(`Volatile Content Lock: Bottled wine lot ${lot.id} cannot be deleted.`);
+      }
+    }
+    for (const audit of Array.isArray(userDb?.auditLogs) ? userDb.auditLogs : []) {
+      if (audit?.id && isDeleted('auditLogs', audit.id)) {
+        throw new Error(`Audit Immutability: Deletion of audit log ${audit.id} is forbidden.`);
+      }
+    }
+    const mergedCollection = (key: string): any[] => {
+      const byId = new Map<string, any>();
+      const stored = Array.isArray(userDb?.[key]) ? userDb[key] : [];
+      const incoming = Array.isArray(collections?.[key]) ? collections[key] : [];
+      for (const item of stored) {
+        if (item?.id) byId.set(item.id, item);
+      }
+      for (const item of incoming) {
+        if (item?.id) byId.set(item.id, { ...(byId.get(item.id) || {}), ...item });
+      }
+      return [...byId.values()];
+    };
+    const effectiveCollection = (key: string): any[] => (
+      mergedCollection(key).filter(item => !isDeleted(key, item.id))
+    );
+    const effectiveRecord = (key: string, id: unknown): any | undefined => (
+      typeof id === 'string'
+        ? effectiveCollection(key).find(item => item?.id === id)
+        : undefined
+    );
+    const validateMovementParity = (
+      kind: 'bottling' | 'bottling_reversal' | 'sale' | 'sale_reversal',
+      parent: any,
+      movement: any,
+    ): void => {
+      const label = kind === 'bottling'
+        ? 'Bottling'
+        : kind === 'bottling_reversal'
+          ? 'Bottling Reversal'
+          : kind === 'sale' ? 'Sales' : 'Sales Reversal';
+      const expectedDirection = kind === 'sale' || kind === 'bottling_reversal' ? 'out' : 'in';
+      if (movement.direction !== expectedDirection) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must have direction '${expectedDirection}'.`);
+      }
+      if (movement.reason !== kind) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must have reason '${kind}'.`);
+      }
+      if (movement.sourceRef !== parent.id) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must link back to ${parent.id}.`);
+      }
+      if (movement.lotId !== parent.lotId) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must use lot ${parent.lotId}.`);
+      }
+      const expectedLocationId = kind === 'bottling' || kind === 'bottling_reversal'
+        ? parent.storageLocationId
+        : parent.locationId;
+      if (expectedLocationId && movement.locationId !== expectedLocationId) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must use location ${expectedLocationId}.`);
+      }
+      const expectedBottles = kind === 'bottling' || kind === 'bottling_reversal'
+        ? parent.placedInStorageBottles
+        : parent.bottles;
+      if (typeof expectedBottles === 'number' && movement.bottles !== expectedBottles) {
+        throw new Error(`Mismatched ${label} Link: Stock movement ${movement.id} must contain ${expectedBottles} bottles.`);
+      }
+    };
+    const validateBottlingReversalParity = (reversal: any): void => {
+      if (reversal.recordKind !== 'reversal'
+        || !reversal.commandId
+        || !isValidId(reversal.reversalOfRunId)
+        || !isValidId(reversal.reversalOfCommandId)) {
+        throw new Error(`Mismatched Bottling Reversal: correction run ${reversal.id} has incomplete provenance.`);
+      }
+      const original = effectiveRecord('bottlingRuns', reversal.reversalOfRunId);
+      if (!original || original.recordKind === 'reversal'
+        || original.commandId !== reversal.reversalOfCommandId
+        || original.reversedByCommandId !== reversal.commandId
+        || original.reversedAt !== reversal.lastModified
+        || original.reversalReason !== reversal.reversalReason
+        || typeof reversal.reversalReason !== 'string'
+        || !reversal.reversalReason.trim()
+        || reversal.reversalReason.length > 500
+        || reversal.date !== String(reversal.lastModified).slice(0, 10)
+        || original.lotId !== reversal.lotId
+        || original.lotName !== reversal.lotName
+        || original.lotNumber !== reversal.lotNumber
+        || original.totalBottles !== reversal.totalBottles
+        || original.totalCeramic !== reversal.totalCeramic
+        || original.volumeBottledL !== reversal.volumeBottledL
+        || JSON.stringify(original.formats) !== JSON.stringify(reversal.formats)
+        || JSON.stringify(original.packagingDeductions || {}) !== JSON.stringify(reversal.packagingDeductions || {})) {
+        throw new Error(`Mismatched Bottling Reversal: correction run ${reversal.id} is inconsistent with its original run.`);
+      }
+      const lot = effectiveRecord('lots', original.lotId);
+      if (!lot || lot.currentVolume !== original.previousLotVolumeL
+        || lot.stage !== original.previousLotStage
+        || lot.lastCommandId !== reversal.commandId
+        || lot.lastModified !== reversal.lastModified
+        || lot.history?.[0]?.sourceRef !== reversal.id
+        || lot.history?.[0]?.type !== 'correction') {
+        throw new Error(`Mismatched Bottling Reversal: lot ${original.lotId} was not restored by ${reversal.id}.`);
+      }
+      const storedReversal = (Array.isArray(userDb?.bottlingRuns) ? userDb.bottlingRuns : [])
+        .find((run: any) => run?.id === reversal.id);
+      if (!storedReversal) {
+        for (const [inventoryId, quantity] of Object.entries(original.packagingDeductions || {})) {
+          const before = (Array.isArray(userDb?.inventory) ? userDb.inventory : [])
+            .find((entry: any) => entry?.id === inventoryId);
+          const restored = effectiveRecord('inventory', inventoryId);
+          if (!before || !restored || typeof quantity !== 'number'
+            || restored.stock !== before.stock + quantity
+            || restored.lastCommandId !== reversal.commandId
+            || restored.lastModified !== reversal.lastModified) {
+            throw new Error(`Mismatched Bottling Reversal: packaging material ${inventoryId} was not restored.`);
+          }
+        }
+      }
+      const originalCosts = effectiveCollection('costEntries').filter((entry: any) => (
+        entry?.sourceRef === original.id && entry.recordKind !== 'reversal'
+      ));
+      const reversalCosts = effectiveCollection('costEntries').filter((entry: any) => (
+        entry?.recordKind === 'reversal' && entry.reversalOfCommandId === original.commandId
+          && entry.sourceRef === reversal.id
+      ));
+      if (originalCosts.length !== reversalCosts.length) {
+        throw new Error(`Mismatched Bottling Reversal: cost ledger for ${reversal.id} is incomplete.`);
+      }
+      for (const originalCost of originalCosts) {
+        const correction = reversalCosts.find((entry: any) => entry.reversalOfCostEntryId === originalCost.id);
+        if (!correction || correction.commandId !== reversal.commandId
+          || correction.lastModified !== reversal.lastModified
+          || correction.lotId !== originalCost.lotId
+          || correction.category !== originalCost.category
+          || correction.currency !== originalCost.currency
+          || correction.amount !== -Math.abs(originalCost.amount)
+          || originalCost.reversedByCommandId !== reversal.commandId
+          || originalCost.reversedAt !== reversal.lastModified
+          || originalCost.reversalReason !== reversal.reversalReason) {
+          throw new Error(`Mismatched Bottling Reversal: cost correction for ${originalCost.id} is invalid.`);
+        }
+      }
+      if (original.storageMovementId) {
+        const movement = effectiveRecord('stockMovements', reversal.storageMovementId);
+        const originalMovement = effectiveRecord('stockMovements', original.storageMovementId);
+        if (!movement || !originalMovement
+          || movement.reversalOfMovementId !== originalMovement.id
+          || movement.reversalOfCommandId !== original.commandId
+          || movement.commandId !== reversal.commandId
+          || movement.lastModified !== reversal.lastModified) {
+          throw new Error(`Mismatched Bottling Reversal: storage correction for ${reversal.id} is invalid.`);
+        }
+        validateMovementParity('bottling_reversal', reversal, movement);
+      } else if (reversal.storageMovementId || reversal.storageLocationId || reversal.placedInStorageBottles) {
+        throw new Error(`Mismatched Bottling Reversal: ${reversal.id} has an unexpected storage correction.`);
+      }
+    };
+    const validateCellarOperationReversalParity = (reversal: any): void => {
+      if (reversal.recordKind !== 'reversal'
+        || !reversal.commandId
+        || !isValidId(reversal.reversalOfOperationId)
+        || !isValidId(reversal.reversalOfCommandId)
+        || reversal.type !== 'correction') {
+        throw new Error(`Mismatched Cellar Operation Reversal: correction ${reversal.id} has incomplete provenance.`);
+      }
+      const original = effectiveRecord('cellarOps', reversal.reversalOfOperationId);
+      const snapshot = original?.reversalSnapshot;
+      if (!original || original.recordKind === 'reversal'
+        || original.commandId !== reversal.reversalOfCommandId
+        || original.reversedByCommandId !== reversal.commandId
+        || original.reversedAt !== reversal.lastModified
+        || original.reversalReason !== reversal.reversalReason
+        || !snapshot || ![1, 2].includes(snapshot.version)
+        || typeof reversal.reversalReason !== 'string'
+        || !reversal.reversalReason.trim()
+        || reversal.reversalReason.length > 500
+        || reversal.date !== String(reversal.lastModified).slice(0, 10)
+        || reversal.lotId !== original.lotId
+        || reversal.lotName !== original.lotName
+        || reversal.vesselId !== original.vesselId
+        || reversal.vesselToId !== original.vesselToId
+        || reversal.materialId !== original.materialId
+        || reversal.materialName !== original.materialName
+        || reversal.dose !== original.dose
+        || reversal.unit !== original.unit
+        || JSON.stringify(reversal.materials || []) !== JSON.stringify(original.materials || [])
+        || reversal.volumeBeforeL !== (original.volumeAfterL ?? snapshot.lot?.currentVolume)
+        || reversal.volumeAfterL !== snapshot.lot?.currentVolume) {
+        throw new Error(`Mismatched Cellar Operation Reversal: correction ${reversal.id} is inconsistent with its original operation.`);
+      }
+      const lot = effectiveRecord('lots', original.lotId);
+      if (!lot || lot.currentVolume !== snapshot.lot.currentVolume
+        || lot.stage !== snapshot.lot.stage
+        || lot.lastCommandId !== reversal.commandId
+        || lot.lastModified !== reversal.lastModified
+        || lot.history?.[0]?.sourceRef !== reversal.id
+        || lot.history?.[0]?.type !== 'correction') {
+        throw new Error(`Mismatched Cellar Operation Reversal: lot ${original.lotId} was not restored by ${reversal.id}.`);
+      }
+      if (snapshot.vessel) {
+        const vessel = effectiveRecord('vessels', snapshot.vessel.id);
+        if (!vessel || vessel.currentVolume !== snapshot.vessel.currentVolume
+          || vessel.lastOperation !== snapshot.vessel.lastOperation
+          || vessel.lastCommandId !== reversal.commandId
+          || vessel.lastModified !== reversal.lastModified) {
+          throw new Error(`Mismatched Cellar Operation Reversal: vessel ${snapshot.vessel.id} was not restored.`);
+        }
+      } else if (original.vesselId) {
+        throw new Error(`Mismatched Cellar Operation Reversal: vessel snapshot for ${original.id} is missing.`);
+      }
+      const inventorySnapshots = snapshot.version === 2
+        ? snapshot.inventory
+        : snapshot.inventory ? [snapshot.inventory] : [];
+      const originalMaterialUsages = Array.isArray(original.materials) && original.materials.length
+        ? original.materials
+        : original.materialId && original.dose
+          ? [{ materialId: original.materialId, quantity: original.dose }]
+          : [];
+      if (!Array.isArray(inventorySnapshots)
+        || inventorySnapshots.length !== originalMaterialUsages.length) {
+        throw new Error(`Mismatched Cellar Operation Reversal: inventory snapshots for ${original.id} are incomplete.`);
+      }
+      for (const inventorySnapshot of inventorySnapshots) {
+        const material = effectiveRecord('inventory', inventorySnapshot.id);
+        if (!material || material.stock !== inventorySnapshot.stock
+          || material.lastCommandId !== reversal.commandId
+          || material.lastModified !== reversal.lastModified) {
+          throw new Error(`Mismatched Cellar Operation Reversal: material ${inventorySnapshot.id} was not restored.`);
+        }
+      }
+      const originalCosts = effectiveCollection('costEntries').filter((entry: any) => (
+        entry?.sourceRef === original.id && entry.recordKind !== 'reversal'
+      ));
+      const reversalCosts = effectiveCollection('costEntries').filter((entry: any) => (
+        entry?.recordKind === 'reversal' && entry.reversalOfCommandId === original.commandId
+          && entry.sourceRef === reversal.id
+      ));
+      const costSnapshots = snapshot.version === 2
+        ? snapshot.costEntries
+        : snapshot.costEntry ? [snapshot.costEntry] : [];
+      const expectedCostCount = Array.isArray(costSnapshots) ? costSnapshots.length : -1;
+      if (originalCosts.length !== expectedCostCount || reversalCosts.length !== expectedCostCount) {
+        throw new Error(`Mismatched Cellar Operation Reversal: cost ledger for ${reversal.id} is incomplete.`);
+      }
+      for (const costSnapshot of costSnapshots) {
+        const originalCost = originalCosts.find((entry: any) => entry.id === costSnapshot.id);
+        const correction = reversalCosts.find((entry: any) => entry.reversalOfCostEntryId === costSnapshot.id);
+        if (!originalCost || !correction
+          || originalCost.amount !== costSnapshot.amount
+          || originalCost.currency !== costSnapshot.currency
+          || correction.reversalOfCostEntryId !== originalCost.id
+          || correction.commandId !== reversal.commandId
+          || correction.lastModified !== reversal.lastModified
+          || correction.lotId !== originalCost.lotId
+          || correction.category !== originalCost.category
+          || correction.currency !== originalCost.currency
+          || correction.amount !== -Math.abs(originalCost.amount)
+          || originalCost.reversedByCommandId !== reversal.commandId
+          || originalCost.reversedAt !== reversal.lastModified
+          || originalCost.reversalReason !== reversal.reversalReason) {
+          throw new Error(`Mismatched Cellar Operation Reversal: cost correction for ${costSnapshot.id} is invalid.`);
+        }
+      }
+      const originalAudit = effectiveRecord('auditLogs', snapshot.auditId);
+      const correctionAudits = effectiveCollection('auditLogs').filter((audit: any) => (
+        audit?.commandId === reversal.commandId
+      ));
+      if (!originalAudit || originalAudit.commandId !== original.commandId
+        || correctionAudits.length !== 1
+        || correctionAudits[0].lastModified !== reversal.lastModified
+        || correctionAudits[0].changedItem !== `Lot ${original.lotId}`
+        || !String(correctionAudits[0].actionType || '').startsWith('Cellar Operation Reversal:')) {
+        throw new Error(`Mismatched Cellar Operation Reversal: signed audit evidence for ${reversal.id} is incomplete.`);
+      }
+    };
+    const validateHarvestIntakeReversalParity = (reversal: any): void => {
+      if (reversal.recordKind !== 'reversal' || !reversal.commandId
+        || !isValidId(reversal.reversalOfIntakeId)
+        || !isValidId(reversal.reversalOfCommandId)) {
+        throw new Error(`Mismatched Harvest Intake Reversal: correction ${reversal.id} has incomplete provenance.`);
+      }
+      const original = effectiveRecord('grapeIntakes', reversal.reversalOfIntakeId);
+      const snapshot = original?.reversalSnapshot;
+      if (!original || original.recordKind === 'reversal'
+        || original.commandId !== reversal.reversalOfCommandId
+        || original.reversedByCommandId !== reversal.commandId
+        || original.reversedAt !== reversal.lastModified
+        || original.reversalReason !== reversal.reversalReason
+        || !snapshot || snapshot.version !== 1
+        || typeof reversal.reversalReason !== 'string' || !reversal.reversalReason.trim()
+        || reversal.reversalReason.length > 500
+        || reversal.date !== String(reversal.lastModified).slice(0, 10)
+        || reversal.createdLotId !== original.createdLotId
+        || reversal.netWeightKg !== original.netWeightKg
+        || reversal.estimatedVolumeL !== original.estimatedVolumeL
+        || reversal.source !== original.source
+        || reversal.variety !== original.variety) {
+        throw new Error(`Mismatched Harvest Intake Reversal: correction ${reversal.id} is inconsistent with its original intake.`);
+      }
+      const lot = effectiveRecord('lots', original.createdLotId);
+      if (!lot || lot.currentVolume !== 0 || !lot.voidedAt
+        || lot.voidedAt !== reversal.lastModified
+        || lot.voidedByCommandId !== reversal.commandId
+        || lot.voidReason !== reversal.reversalReason
+        || lot.lastCommandId !== reversal.commandId
+        || lot.lastModified !== reversal.lastModified
+        || lot.history?.[0]?.sourceRef !== reversal.id
+        || lot.history?.[0]?.type !== 'Grape Intake Reversal') {
+        throw new Error(`Mismatched Harvest Intake Reversal: lot ${original.createdLotId} was not voided by ${reversal.id}.`);
+      }
+      if (snapshot.harvest) {
+        const harvest = effectiveRecord('harvests', snapshot.harvest.id);
+        if (!harvest || harvest.sentToGvino !== snapshot.harvest.sentToGvino
+          || (harvest.actualHarvestedKg ?? null) !== snapshot.harvest.actualHarvestedKg
+          || (harvest.actualHarvestDate ?? null) !== snapshot.harvest.actualHarvestDate
+          || (harvest.associatedLotId ?? null) !== snapshot.harvest.associatedLotId
+          || harvest.lastCommandId !== reversal.commandId
+          || harvest.lastModified !== reversal.lastModified) {
+          throw new Error(`Mismatched Harvest Intake Reversal: harvest ${snapshot.harvest.id} was not restored.`);
+        }
+      }
+      if (snapshot.vessel) {
+        const vessel = effectiveRecord('vessels', snapshot.vessel.id);
+        if (!vessel || vessel.currentVolume !== snapshot.vessel.currentVolume
+          || (vessel.assignedLotId ?? null) !== snapshot.vessel.assignedLotId
+          || vessel.temperature !== snapshot.vessel.temperature
+          || vessel.lastOperation !== snapshot.vessel.lastOperation
+          || vessel.lastCommandId !== reversal.commandId
+          || vessel.lastModified !== reversal.lastModified) {
+          throw new Error(`Mismatched Harvest Intake Reversal: vessel ${snapshot.vessel.id} was not restored.`);
+        }
+      }
+      const originalCosts = effectiveCollection('costEntries').filter((entry: any) => (
+        entry?.sourceRef === original.id && entry.recordKind !== 'reversal'
+      ));
+      const reversalCosts = effectiveCollection('costEntries').filter((entry: any) => (
+        entry?.recordKind === 'reversal' && entry.reversalOfCommandId === original.commandId
+          && entry.sourceRef === reversal.id
+      ));
+      const expectedCostCount = snapshot.costEntry ? 1 : 0;
+      if (originalCosts.length !== expectedCostCount || reversalCosts.length !== expectedCostCount) {
+        throw new Error(`Mismatched Harvest Intake Reversal: cost ledger for ${reversal.id} is incomplete.`);
+      }
+      if (snapshot.costEntry) {
+        const originalCost = originalCosts[0];
+        const correction = reversalCosts[0];
+        if (originalCost.id !== snapshot.costEntry.id
+          || correction.reversalOfCostEntryId !== originalCost.id
+          || correction.commandId !== reversal.commandId
+          || correction.lastModified !== reversal.lastModified
+          || correction.amount !== -Math.abs(originalCost.amount)
+          || originalCost.reversedByCommandId !== reversal.commandId
+          || originalCost.reversedAt !== reversal.lastModified) {
+          throw new Error(`Mismatched Harvest Intake Reversal: cost correction for ${originalCost.id} is invalid.`);
+        }
+      }
+      const originalAudit = effectiveRecord('auditLogs', snapshot.auditId);
+      const correctionAudits = effectiveCollection('auditLogs').filter((audit: any) => audit?.commandId === reversal.commandId);
+      if (!originalAudit || originalAudit.commandId !== original.commandId
+        || correctionAudits.length !== 1
+        || correctionAudits[0].lastModified !== reversal.lastModified
+        || correctionAudits[0].changedItem !== `WineLot ${original.createdLotId}`
+        || correctionAudits[0].actionType !== 'Grape Receiving Reversal') {
+        throw new Error(`Mismatched Harvest Intake Reversal: signed audit evidence for ${reversal.id} is incomplete.`);
+      }
+    };
+    const validateFermentationCompletionReversalParity = (reversal: any): void => {
+      if (reversal.recordKind !== 'reversal' || !reversal.commandId
+        || !isValidId(reversal.reversalOfLogId)
+        || !isValidId(reversal.reversalOfCommandId)) {
+        throw new Error(`Mismatched Fermentation Completion Reversal: correction ${reversal.id} has incomplete provenance.`);
+      }
+      const original = effectiveRecord('fermlogs', reversal.reversalOfLogId);
+      const snapshot = original?.completionSnapshot;
+      if (!original || original.recordKind !== 'completion' || original.isCompletion !== true
+        || original.commandId !== reversal.reversalOfCommandId
+        || original.reversedByCommandId !== reversal.commandId
+        || original.reversedAt !== reversal.lastModified
+        || original.reversalReason !== reversal.reversalReason
+        || !snapshot || snapshot.version !== 1
+        || typeof reversal.reversalReason !== 'string' || !reversal.reversalReason.trim()
+        || reversal.reversalReason.length > 500
+        || reversal.date !== String(reversal.lastModified).slice(0, 10)
+        || reversal.lotId !== original.lotId || reversal.tankId !== original.tankId
+        || reversal.temperature !== original.temperature || reversal.density !== original.density
+        || reversal.sugar !== original.sugar || reversal.ph !== original.ph
+        || reversal.isCompletion !== false) {
+        throw new Error(`Mismatched Fermentation Completion Reversal: correction ${reversal.id} is inconsistent with its original reading.`);
+      }
+      const storedReversal = (Array.isArray(userDb?.fermlogs) ? userDb.fermlogs : [])
+        .find((log: any) => log?.id === reversal.id);
+      if (!storedReversal) {
+        const lot = effectiveRecord('lots', original.lotId);
+        if (!lot || lot.stage !== snapshot.lot?.stage
+          || lot.currentVolume !== snapshot.lot?.currentVolume
+          || lot.lastCommandId !== reversal.commandId
+          || lot.lastModified !== reversal.lastModified
+          || lot.history?.[0]?.sourceRef !== reversal.id
+          || lot.history?.[0]?.type !== 'correction') {
+          throw new Error(`Mismatched Fermentation Completion Reversal: lot ${original.lotId} was not reopened by ${reversal.id}.`);
+        }
+        const vessel = effectiveRecord('vessels', original.tankId);
+        if (!vessel || vessel.id !== snapshot.vessel?.id
+          || vessel.currentVolume !== snapshot.vessel.currentVolume
+          || (vessel.assignedLotId ?? null) !== snapshot.vessel.assignedLotId
+          || vessel.lastOperation !== snapshot.vessel.lastOperation
+          || vessel.lastCommandId !== reversal.commandId
+          || vessel.lastModified !== reversal.lastModified) {
+          throw new Error(`Mismatched Fermentation Completion Reversal: vessel ${original.tankId} was not restored.`);
+        }
+      }
+      const originalAudit = effectiveRecord('auditLogs', snapshot.auditId);
+      const correctionAudits = effectiveCollection('auditLogs').filter((audit: any) => audit?.commandId === reversal.commandId);
+      if (!originalAudit || originalAudit.commandId !== original.commandId
+        || correctionAudits.length !== 1
+        || correctionAudits[0].lastModified !== reversal.lastModified
+        || correctionAudits[0].changedItem !== `WineLot ${original.lotId}`
+        || correctionAudits[0].actionType !== 'Fermentation Completion Reversal') {
+        throw new Error(`Mismatched Fermentation Completion Reversal: signed audit evidence for ${reversal.id} is incomplete.`);
+      }
+    };
+    const validateSalesReversalParity = (reversal: any, returnMovement: any): void => {
+      if (reversal.recordKind !== 'reversal'
+        || !reversal.commandId
+        || !isValidId(reversal.reversalOfDispatchId)
+        || !isValidId(reversal.reversalOfCommandId)) {
+        throw new Error(`Mismatched Sales Reversal: correction dispatch ${reversal.id} has incomplete provenance.`);
+      }
+      const original = effectiveRecord('salesDispatches', reversal.reversalOfDispatchId);
+      if (!original || original.recordKind === 'reversal' || original.commandId !== reversal.reversalOfCommandId) {
+        throw new Error(`Mismatched Sales Reversal: correction dispatch ${reversal.id} has no matching original dispatch.`);
+      }
+      const originalMovement = effectiveRecord('stockMovements', original.stockMovementId);
+      if (!originalMovement
+        || returnMovement.reversalOfMovementId !== originalMovement.id
+        || returnMovement.reversalOfCommandId !== original.commandId
+        || returnMovement.commandId !== reversal.commandId
+        || returnMovement.lastModified !== reversal.lastModified
+        || returnMovement.date !== reversal.date
+        || original.reversedByCommandId !== reversal.commandId
+        || original.reversedAt !== reversal.lastModified
+        || original.reversalReason !== reversal.reversalReason
+        || typeof reversal.reversalReason !== 'string'
+        || !reversal.reversalReason.trim()
+        || reversal.reversalReason.length > 500
+        || reversal.date !== String(reversal.lastModified).slice(0, 10)
+        || original.lotId !== reversal.lotId
+        || original.locationId !== reversal.locationId
+        || original.bottles !== reversal.bottles
+        || original.customerName !== reversal.customerName
+        || original.pricePerBottle !== reversal.pricePerBottle
+        || original.currency !== reversal.currency
+        || original.revenue !== reversal.revenue
+        || original.costPerBottle !== reversal.costPerBottle
+        || original.cogs !== reversal.cogs
+        || original.grossProfit !== reversal.grossProfit
+        || original.marginPct !== reversal.marginPct
+        || originalMovement.direction !== 'out'
+        || originalMovement.reason !== 'sale'
+        || originalMovement.sourceRef !== original.id
+        || originalMovement.lotId !== original.lotId
+        || originalMovement.locationId !== original.locationId
+        || originalMovement.bottles !== original.bottles
+        || (originalMovement.commandId !== undefined && originalMovement.commandId !== original.commandId)) {
+        throw new Error(`Mismatched Sales Reversal: correction dispatch ${reversal.id} is inconsistent with its original sale.`);
+      }
+      validateMovementParity('sale_reversal', reversal, returnMovement);
+    };
+    const validateStoragePlacementParity = (
+      run: any,
+      placement: any,
+      movement: any,
+    ): void => {
+      if (movement.direction !== 'in' || movement.reason !== 'receive') {
+        throw new Error('Mismatched Storage Placement: Stock movement ' + movement.id + ' must be an inbound receive.');
+      }
+      if (movement.sourceRef !== run.id || movement.lotId !== run.lotId) {
+        throw new Error('Mismatched Storage Placement: Stock movement ' + movement.id + ' must link to its bottling run and lot.');
+      }
+      if (placement.movementId !== movement.id
+        || placement.locationId !== movement.locationId
+        || placement.bottles !== movement.bottles
+        || placement.date !== movement.date) {
+        throw new Error('Mismatched Storage Placement: Bottling run ' + run.id + ' does not match stock movement ' + movement.id + '.');
+      }
+      if (placement.commandId && movement.commandId !== placement.commandId) {
+        throw new Error('Mismatched Storage Placement: Stock movement ' + movement.id + ' has a different command id.');
+      }
+    };
+
+    const effectiveCellarOperations = effectiveCollection('cellarOps');
+    for (const operation of effectiveCellarOperations) {
+      if (operation.recordKind === 'reversal') {
+        validateCellarOperationReversalParity(operation);
+      } else if (operation.reversedByCommandId || operation.reversedAt || operation.reversalReason) {
+        const correction = effectiveCellarOperations.find(item => (
+          item?.recordKind === 'reversal' && item.reversalOfOperationId === operation.id
+        ));
+        if (!correction) {
+          throw new Error(`Mismatched Cellar Operation Reversal: original operation ${operation.id} has no correction.`);
+        }
+      }
+    }
+
+    const effectiveGrapeIntakes = effectiveCollection('grapeIntakes');
+    for (const intake of effectiveGrapeIntakes) {
+      if (intake.recordKind === 'reversal') {
+        validateHarvestIntakeReversalParity(intake);
+      } else if (intake.reversedByCommandId || intake.reversedAt || intake.reversalReason) {
+        const correction = effectiveGrapeIntakes.find(item => (
+          item?.recordKind === 'reversal' && item.reversalOfIntakeId === intake.id
+        ));
+        if (!correction) {
+          throw new Error(`Mismatched Harvest Intake Reversal: original intake ${intake.id} has no correction.`);
+        }
+      }
+    }
+
+    const effectiveFermentationLogs = effectiveCollection('fermlogs');
+    for (const log of effectiveFermentationLogs) {
+      if (log.recordKind === 'reversal') {
+        validateFermentationCompletionReversalParity(log);
+      } else if (log.reversedByCommandId || log.reversedAt || log.reversalReason) {
+        const correction = effectiveFermentationLogs.find(item => (
+          item?.recordKind === 'reversal' && item.reversalOfLogId === log.id
+        ));
+        if (!correction) {
+          throw new Error(`Mismatched Fermentation Completion Reversal: original reading ${log.id} has no correction.`);
+        }
+      }
+    }
+
+    if (deletionMatcher.hasDeletions) {
+      const survivingMovements = effectiveCollection('stockMovements');
+      const survivingDispatches = effectiveCollection('salesDispatches');
+      const survivingOrders = effectiveCollection('salesOrders');
+      const survivingBottlingRuns = effectiveCollection('bottlingRuns');
+      const survivingCosts = effectiveCollection('costEntries');
+      const allBottlingRuns = mergedCollection('bottlingRuns');
+
+      for (const transfer of mergedCollection('transfers')) {
+        if (!transfer?.id || !isDeleted('transfers', transfer.id)) continue;
+        if (transfer.commandId) {
+          throw new Error(`Immutable Transfer Ledger: command-created record ${transfer.id} cannot be deleted.`);
+        }
+      }
+
+      for (const operation of mergedCollection('cellarOps')) {
+        if (!operation?.id || !isDeleted('cellarOps', operation.id)) continue;
+        if (operation.commandId) {
+          throw new Error(`Immutable Cellar Operation Ledger: command-created record ${operation.id} cannot be deleted.`);
+        }
+      }
+
+      for (const intake of mergedCollection('grapeIntakes')) {
+        if (!intake?.id || !isDeleted('grapeIntakes', intake.id)) continue;
+        if (intake.commandId) {
+          throw new Error(`Immutable Grape Intake Ledger: command-created record ${intake.id} cannot be deleted.`);
+        }
+      }
+
+      for (const log of mergedCollection('fermlogs')) {
+        if (!log?.id || !isDeleted('fermlogs', log.id)) continue;
+        if (log.commandId) {
+          throw new Error(`Immutable Fermentation Ledger: command-created record ${log.id} cannot be deleted.`);
+        }
+      }
+
+      for (const location of mergedCollection('storageLocations')) {
+        if (!location?.id || !isDeleted('storageLocations', location.id)) continue;
+        const movement = survivingMovements.find(item => item.locationId === location.id);
+        if (movement) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by stock movement ${movement.id}.`);
+        }
+        const dispatch = survivingDispatches.find(item => item.locationId === location.id);
+        if (dispatch) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by sales dispatch ${dispatch.id}.`);
+        }
+        const order = survivingOrders.find(item => item.locationId === location.id);
+        if (order) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by sales order ${order.id}.`);
+        }
+        const bottlingRun = survivingBottlingRuns.find(item => item.storageLocationId === location.id
+          || item.storagePlacements?.some((placement: any) => placement.locationId === location.id));
+        if (bottlingRun) {
+          throw new Error(`Referenced Storage Location: ${location.id} is still used by bottling run ${bottlingRun.id}.`);
+        }
+      }
+
+      for (const movement of mergedCollection('stockMovements')) {
+        if (!movement?.id || !isDeleted('stockMovements', movement.id)) continue;
+        if (movement.commandId) {
+          throw new Error(`Immutable Stock Ledger: command-created movement ${movement.id} cannot be deleted.`);
+        }
+        const bottlingRun = survivingBottlingRuns.find(item => (
+          item.storageMovementId === movement.id
+          || item.storagePlacements?.some((placement: any) => placement.movementId === movement.id)
+          || movement.sourceRef === item.id
+        ));
+        if (bottlingRun) {
+          throw new Error(`Referenced Stock Movement: ${movement.id} is still used by bottling run ${bottlingRun.id}.`);
+        }
+        const dispatch = survivingDispatches.find(item => (
+          item.stockMovementId === movement.id || movement.sourceRef === item.id
+        ));
+        if (dispatch) {
+          throw new Error(`Referenced Stock Movement: ${movement.id} is still used by sales dispatch ${dispatch.id}.`);
+        }
+
+        const remainingOnHand = survivingMovements.reduce((total, item) => {
+          if (item.locationId !== movement.locationId || item.lotId !== movement.lotId) return total;
+          return total + (item.direction === 'in' ? item.bottles : -item.bottles);
+        }, 0);
+        if (remainingOnHand < 0) {
+          throw new Error(`Invalid Stock Deletion: removing ${movement.id} would make stock negative for ${movement.lotId} at ${movement.locationId}.`);
+        }
+        const reserved = reservedBottlesFor(
+          survivingOrders,
+          movement.locationId,
+          movement.lotId,
+        );
+        if (remainingOnHand < reserved) {
+          throw new Error(`Reserved Stock Deletion: removing ${movement.id} would leave ${reserved} reserved bottles without enough stock.`);
+        }
+      }
+
+      for (const dispatch of mergedCollection('salesDispatches')) {
+        if (!dispatch?.id || !isDeleted('salesDispatches', dispatch.id)) continue;
+        if (dispatch.commandId) {
+          throw new Error(`Immutable Sales Ledger: command-created dispatch ${dispatch.id} cannot be deleted.`);
+        }
+        const movement = survivingMovements.find(item => (
+          item.id === dispatch.stockMovementId || item.sourceRef === dispatch.id
+        ));
+        if (movement) {
+          throw new Error(`Referenced Sales Dispatch: ${dispatch.id} is still used by stock movement ${movement.id}.`);
+        }
+        const order = survivingOrders.find(item => item.dispatchId === dispatch.id);
+        if (order) {
+          throw new Error(`Referenced Sales Dispatch: ${dispatch.id} is still used by sales order ${order.id}.`);
+        }
+      }
+
+      for (const order of mergedCollection('salesOrders')) {
+        if (!order?.id || !isDeleted('salesOrders', order.id)) continue;
+        if (order.commandId || order.lastCommandId) {
+          throw new Error(`Immutable Sales Order Ledger: command-created order ${order.id} cannot be deleted.`);
+        }
+        const dispatch = survivingDispatches.find(item => item.salesOrderId === order.id);
+        if (dispatch) {
+          throw new Error(`Referenced Sales Order: ${order.id} is still used by sales dispatch ${dispatch.id}.`);
+        }
+      }
+
+      for (const run of allBottlingRuns) {
+        if (!run?.id || !isDeleted('bottlingRuns', run.id)) continue;
+        if (run.commandId) {
+          throw new Error(`Immutable Bottling Ledger: command-created run ${run.id} cannot be deleted.`);
+        }
+        const sameLotRuns = allBottlingRuns
+          .map((candidate, index) => ({ candidate, index }))
+          .filter(({ candidate }) => candidate?.lotId && candidate.lotId === run.lotId)
+          .sort((left, right) => (
+            compareBottlingRunsNewestFirst(left.candidate, right.candidate)
+            || left.index - right.index
+          ));
+        const latest = sameLotRuns[0];
+        if (latest && latest.candidate.id !== run.id) {
+          throw new Error(`Bottling Rollback Order: ${run.id} is not the latest bottling run for lot ${run.lotId}. Roll back ${latest.candidate.id} first.`);
+        }
+        const restoredLot = mergedCollection('lots').find(item => item?.id === run.lotId);
+        if (run.previousLotStage !== undefined && restoredLot?.stage !== run.previousLotStage) {
+          throw new Error(`Bottling Rollback Mismatch: lot ${run.lotId} must restore stage ${run.previousLotStage} when deleting ${run.id}.`);
+        }
+        if (run.previousLotVolumeL !== undefined && restoredLot?.currentVolume !== run.previousLotVolumeL) {
+          throw new Error(`Bottling Rollback Mismatch: lot ${run.lotId} must restore volume ${run.previousLotVolumeL} when deleting ${run.id}.`);
+        }
+        const movement = survivingMovements.find(item => (
+          item.id === run.storageMovementId || item.sourceRef === run.id
+        ));
+        if (movement) {
+          throw new Error(`Referenced Bottling Run: ${run.id} is still used by stock movement ${movement.id}.`);
+        }
+        const cost = survivingCosts.find(item => item.sourceRef === run.id);
+        if (cost) {
+          throw new Error(`Referenced Bottling Run: ${run.id} is still used by cost entry ${cost.id}.`);
+        }
+      }
+
+      for (const cost of mergedCollection('costEntries')) {
+        if (!cost?.id || !isDeleted('costEntries', cost.id)) continue;
+        if (cost.commandId) {
+          throw new Error(`Immutable Cost Ledger: command-created entry ${cost.id} cannot be deleted.`);
+        }
+      }
+
+      for (const receipt of mergedCollection('invoiceReceipts')) {
+        if (!receipt?.id || !isDeleted('invoiceReceipts', receipt.id)) continue;
+        throw new Error(`Immutable Invoice Receipt Ledger: receipt ${receipt.id} cannot be deleted; post a reversal.`);
+      }
+
+      for (const movement of mergedCollection('inventoryMovements')) {
+        if (!movement?.id || !isDeleted('inventoryMovements', movement.id)) continue;
+        throw new Error(`Immutable Inventory Movement Ledger: movement ${movement.id} cannot be deleted.`);
+      }
+    }
+
+    const effectiveTransfers = effectiveCollection('transfers');
+    for (const transfer of effectiveTransfers) {
+      if (transfer.recordKind !== undefined && !['transfer', 'reversal'].includes(transfer.recordKind)) {
+        throw new Error(`Transfer ${transfer.id} has invalid recordKind.`);
+      }
+      if (transfer.recordKind === 'reversal') {
+        const original = effectiveTransfers.find(item => item.id === transfer.reversalOfTransferId);
+        if (!original
+          || original.recordKind === 'reversal'
+          || !transfer.commandId
+          || transfer.reversalOfCommandId !== original.commandId
+          || original.reversedByCommandId !== transfer.commandId
+          || original.reversedAt !== transfer.lastModified
+          || original.reversalReason !== transfer.reversalReason) {
+          throw new Error(`Mismatched Transfer Reversal: correction ${transfer.id} is not paired with its original transfer.`);
+        }
+      } else if (transfer.reversedByCommandId || transfer.reversedAt || transfer.reversalReason) {
+        const reversal = effectiveTransfers.find(item => (
+          item.recordKind === 'reversal'
+          && item.commandId === transfer.reversedByCommandId
+          && item.reversalOfTransferId === transfer.id
+        ));
+        if (!reversal
+          || transfer.reversedAt !== reversal.lastModified
+          || transfer.reversalReason !== reversal.reversalReason) {
+          throw new Error(`Mismatched Transfer Reversal: original transfer ${transfer.id} has no valid correction record.`);
         }
       }
     }
@@ -73,6 +970,9 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
       if (key === 'users') {
         throw new Error('Modifying user credentials via sync is forbidden');
       }
+      if (key === 'aiFindings') {
+        throw new Error('AI findings are server-owned and cannot be modified via sync');
+      }
       if (key === 'companyProfile') {
         const profile = collections[key];
         if (profile && typeof profile === 'object') {
@@ -81,6 +981,57 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
           }
           if (profile.longitude !== undefined && typeof profile.longitude !== 'number') {
             throw new Error('companyProfile longitude must be a number');
+          }
+          if (profile.cellarFloors !== undefined) {
+            if (!Array.isArray(profile.cellarFloors) || profile.cellarFloors.length < 1 || profile.cellarFloors.length > 30) {
+              throw new Error('companyProfile cellarFloors must contain between 1 and 30 floors');
+            }
+            const floorIds = new Set<string>();
+            const planObjectKinds = new Set(['zone', 'door', 'drain', 'water', 'power', 'pump', 'press']);
+            const zoneUses = new Set(['general', 'receiving', 'fermentation', 'aging', 'bottling', 'laboratory', 'storage', 'utility']);
+            for (const floor of profile.cellarFloors) {
+              if (!floor || typeof floor !== 'object' || Array.isArray(floor)
+                || !isValidId(floor.id) || floorIds.has(floor.id)
+                || typeof floor.name !== 'string' || floor.name.trim().length < 1 || floor.name.length > 120
+                || typeof floor.level !== 'number' || !Number.isFinite(floor.level) || floor.level < -20 || floor.level > 100
+                || typeof floor.widthMeters !== 'number' || !Number.isFinite(floor.widthMeters) || floor.widthMeters < 5 || floor.widthMeters > 250
+                || typeof floor.heightMeters !== 'number' || !Number.isFinite(floor.heightMeters) || floor.heightMeters < 5 || floor.heightMeters > 250
+                || typeof floor.gridMeters !== 'number' || !Number.isFinite(floor.gridMeters) || floor.gridMeters < 0.25 || floor.gridMeters > 10
+                || (floor.notes !== undefined && (typeof floor.notes !== 'string' || floor.notes.length > 2_000))) {
+                throw new Error('companyProfile contains an invalid cellar floor');
+              }
+              floorIds.add(floor.id);
+              if (floor.planObjects !== undefined) {
+                if (!Array.isArray(floor.planObjects) || floor.planObjects.length > 250) {
+                  throw new Error('cellar floor planObjects must be an array with at most 250 objects');
+                }
+                const objectIds = new Set<string>();
+                for (const object of floor.planObjects) {
+                  if (!object || typeof object !== 'object' || Array.isArray(object)
+                    || !isValidId(object.id) || objectIds.has(object.id)
+                    || !planObjectKinds.has(object.kind)
+                    || typeof object.label !== 'string' || object.label.trim().length < 1 || object.label.length > 80
+                    || typeof object.xMeters !== 'number' || !Number.isFinite(object.xMeters)
+                    || typeof object.yMeters !== 'number' || !Number.isFinite(object.yMeters)
+                    || typeof object.widthMeters !== 'number' || !Number.isFinite(object.widthMeters) || object.widthMeters < 0.25
+                    || typeof object.heightMeters !== 'number' || !Number.isFinite(object.heightMeters) || object.heightMeters < 0.25
+                    || (object.rotation !== undefined && ![0, 90, 180, 270].includes(object.rotation))
+                    || (object.kind === 'zone' && object.zoneUse !== undefined && !zoneUses.has(object.zoneUse))
+                    || (object.kind !== 'zone' && object.zoneUse !== undefined)) {
+                    throw new Error('cellar floor contains an invalid plan object');
+                  }
+                  const rotated = object.rotation === 90 || object.rotation === 270;
+                  const footprintWidth = rotated ? object.heightMeters : object.widthMeters;
+                  const footprintHeight = rotated ? object.widthMeters : object.heightMeters;
+                  if (footprintWidth > floor.widthMeters || footprintHeight > floor.heightMeters
+                    || object.xMeters < footprintWidth / 2 || object.xMeters > floor.widthMeters - footprintWidth / 2
+                    || object.yMeters < footprintHeight / 2 || object.yMeters > floor.heightMeters - footprintHeight / 2) {
+                    throw new Error('cellar floor contains an invalid plan object');
+                  }
+                  objectIds.add(object.id);
+                }
+              }
+            }
           }
         }
         continue;
@@ -100,18 +1051,26 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
         }
         continue;
       }
-      
+
       const clientList = collections[key];
       if (clientList !== undefined) {
         if (!Array.isArray(clientList)) {
           throw new Error(`Collection ${key} must be an array of objects`);
         }
+        const incomingIds = new Set<string>();
         for (const item of clientList) {
           if (!item || typeof item !== 'object') {
             throw new Error(`Items in ${key} must be valid objects`);
           }
           if (!isValidId(item.id)) {
             throw new Error(`Item in ${key} has invalid or missing ID: ${item.id}`);
+          }
+          if (incomingIds.has(item.id)) {
+            throw new Error(`Duplicate ID in ${key}: ${item.id}.`);
+          }
+          incomingIds.add(item.id);
+          if (isDeleted(key, item.id)) {
+            throw new Error(`Deleted item ${item.id} cannot be resubmitted in ${key}.`);
           }
 
           // General Time Invariance / Immutable properties check
@@ -132,7 +1091,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Item in ${key} has invalid referenced blockId.`);
             }
             const blockExists = userDb.blocks.some((b: any) => b.id === item.blockId) || (collections.blocks && collections.blocks.some((b: any) => b.id === item.blockId));
-            const blockDeleted = deletedIds && deletedIds.includes(item.blockId);
+            const blockDeleted = isDeleted('blocks', item.blockId);
             if (!blockExists || blockDeleted) {
               throw new Error(`Orphaned Reference: Item in ${key} references non-existent or deleted Block (${item.blockId}).`);
             }
@@ -142,6 +1101,37 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             const capacity = item.capacity !== undefined ? item.capacity : (existingItem ? existingItem.capacity : undefined);
             const currentVolume = item.currentVolume !== undefined ? item.currentVolume : (existingItem ? existingItem.currentVolume : undefined);
             const assignedLotId = item.assignedLotId !== undefined ? item.assignedLotId : (existingItem ? existingItem.assignedLotId : undefined);
+            const cellarFloorId = item.cellarFloorId !== undefined ? item.cellarFloorId : (existingItem ? existingItem.cellarFloorId : undefined);
+            if (cellarFloorId !== undefined) {
+              if (!isValidId(cellarFloorId)) throw new Error(`Vessel ${item.id} has an invalid cellar floor.`);
+              const profile = collections.companyProfile && typeof collections.companyProfile === 'object'
+                ? collections.companyProfile
+                : userDb.companyProfile;
+              if (Array.isArray(profile?.cellarFloors) && !profile.cellarFloors.some((floor: any) => floor?.id === cellarFloorId)) {
+                throw new Error(`Vessel ${item.id} references an unknown cellar floor.`);
+              }
+            }
+            const planModel = item.planModel !== undefined ? item.planModel : existingItem?.planModel;
+            if (planModel !== undefined && ![
+              'closed_top_jacket', 'closed_top', 'open_top_jacket', 'open_top', 'portable',
+              'insulated', 'horizontal_tank', 'barrel', 'qvevri', 'concrete', 'plastic',
+            ].includes(planModel)) {
+              throw new Error(`Vessel ${item.id} has an invalid 3D plan model.`);
+            }
+            for (const [field, min, max] of [
+              ['planWidthMeters', 0.2, 20],
+              ['planDepthMeters', 0.2, 20],
+              ['planHeightMeters', 0.2, 30],
+              ['planElevationMeters', -10, 15],
+              ['planRotationDegrees', 0, 359],
+              ['xGrid', 0, 100],
+              ['yGrid', 0, 100],
+            ] as const) {
+              const value = item[field] !== undefined ? item[field] : existingItem?.[field];
+              if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)) {
+                throw new Error(`Vessel ${item.id} has an invalid ${field} value.`);
+              }
+            }
 
             if (capacity !== undefined) {
               if (typeof capacity !== 'number' || capacity <= 0) {
@@ -165,11 +1155,11 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Vessel ${item.id} has invalid referenced assignedLotId.`);
               }
               const lotExists = userDb.lots.some((l: any) => l.id === assignedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === assignedLotId));
-              const lotDeleted = deletedIds && deletedIds.includes(assignedLotId);
+              const lotDeleted = isDeleted('lots', assignedLotId);
               if (!lotExists || lotDeleted) {
                 throw new Error(`Orphaned Reference: Vessel ${item.id} references non-existent or deleted Lot (${assignedLotId}).`);
               }
-              
+
               const lot = userDb.lots.find((l: any) => l.id === assignedLotId) || (collections.lots && collections.lots.find((l: any) => l.id === assignedLotId));
               if (lot && lot.stage === 'bottled') {
                 if (existingItem && currentVolume !== undefined && currentVolume < existingItem.currentVolume) {
@@ -178,11 +1168,25 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               }
             }
           }
-          
+
           else if (key === 'lots') {
             const existingLot = existingItem;
             const currentVolume = item.currentVolume !== undefined ? item.currentVolume : (existingLot ? existingLot.currentVolume : undefined);
             const initialVolume = item.initialVolume !== undefined ? item.initialVolume : (existingLot ? existingLot.initialVolume : undefined);
+            const rollbackRun = existingLot?.stage === 'bottled'
+              && item.stage !== undefined
+              && item.currentVolume !== undefined
+              ? mergedCollection('bottlingRuns').find((run: any) => (
+                run?.id
+                && isDeleted('bottlingRuns', run.id)
+                && run.lotId === item.id
+                && run.previousLotStage !== undefined
+                && run.previousLotVolumeL !== undefined
+                && item.stage === run.previousLotStage
+                && item.currentVolume === run.previousLotVolumeL
+              ))
+              : undefined;
+            const isExactBottlingRollback = Boolean(rollbackRun);
 
             if (initialVolume !== undefined && (typeof initialVolume !== 'number' || initialVolume < 0)) {
               throw new Error(`Lot ${item.id} initial volume cannot be negative.`);
@@ -192,12 +1196,13 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             }
 
             if (existingLot && existingLot.stage === 'bottled') {
-              if (currentVolume !== undefined && currentVolume < existingLot.currentVolume) {
+              if (currentVolume !== undefined && currentVolume < existingLot.currentVolume && !isExactBottlingRollback) {
                 throw new Error(`Volatile Content Lock: Bottled wine lot ${item.id} volume cannot decrease.`);
               }
               const frozenFields = ['name', 'vintage', 'variety', 'vineyardBlock', 'region', 'wineClass', 'stage'];
               for (const field of frozenFields) {
                 if (item[field] !== undefined && item[field] !== existingLot[field]) {
+                  if (field === 'stage' && isExactBottlingRollback) continue;
                   throw new Error(`Volatile Content Lock: Bottled wine lot ${item.id} parameter '${field}' is frozen.`);
                 }
               }
@@ -217,6 +1222,25 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
           }
 
           else if (key === 'fermlogs') {
+            if (item.recordKind !== undefined && !['reading', 'completion', 'reversal'].includes(item.recordKind)) {
+              throw new Error(`Fermentation log ${item.id} has invalid recordKind.`);
+            }
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'recordKind', 'tankId', 'lotId', 'date', 'temperature', 'density',
+                'sugar', 'ph', 'tastingNotes', 'capManagement', 'additives', 'isCompletion',
+                'completedAt', 'completedBy', 'reversalOfLogId', 'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Fermentation Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+              if (item.completionSnapshot !== undefined
+                && JSON.stringify(item.completionSnapshot) !== JSON.stringify(existingItem.completionSnapshot)) {
+                throw new Error(`Immutable Fermentation Ledger: completionSnapshot cannot be modified on ${item.id}.`);
+              }
+            }
             if (!isValidId(item.lotId)) {
               throw new Error(`Fermentation log ${item.id} has invalid referenced lotId.`);
             }
@@ -225,9 +1249,9 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Fermentation log ${item.id} has invalid referenced tankId.`);
             }
             const lotExists = (userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
-                              !(deletedIds && deletedIds.includes(item.lotId));
+                              !isDeleted('lots', item.lotId);
             const tankExists = !hasTankRef || ((userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
-                               !(deletedIds && deletedIds.includes(item.tankId)));
+                               !isDeleted('vessels', item.tankId));
             if (!lotExists || !tankExists) {
               throw new Error(`Orphaned Fermentation: Fermentation log ${item.id} references non-existent or deleted Lot (${item.lotId}) or Vessel (${item.tankId}).`);
             }
@@ -250,9 +1274,9 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Lab analysis ${item.id} has invalid referenced IDs.`);
             }
             const lotExists = (userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId))) &&
-                              !(deletedIds && deletedIds.includes(item.lotId));
+                              !isDeleted('lots', item.lotId);
             const tankExists = (userDb.vessels.some((v: any) => v.id === item.tankId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.tankId))) &&
-                               !(deletedIds && deletedIds.includes(item.tankId));
+                               !isDeleted('vessels', item.tankId);
             if (!lotExists || !tankExists) {
               throw new Error(`Orphaned Lab Log: Lab analysis ${item.id} references non-existent or deleted Lot (${item.lotId}) or Vessel (${item.tankId}).`);
             }
@@ -274,14 +1298,94 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (item.costPerUnit !== undefined && (typeof item.costPerUnit !== 'number' || item.costPerUnit < 0)) {
               throw new Error(`Inventory item ${item.id} costPerUnit cannot be negative.`);
             }
+            if (item.costCurrency !== undefined && !['GEL', 'EUR', 'USD'].includes(item.costCurrency)) {
+              throw new Error(`Inventory item ${item.id} costCurrency must be GEL, EUR, or USD.`);
+            }
+            if (item.activeIngredients !== undefined && (
+              !Array.isArray(item.activeIngredients)
+              || item.activeIngredients.length > 20
+              || item.activeIngredients.some((value: unknown) => typeof value !== 'string' || value.length > 240)
+            )) {
+              throw new Error(`Inventory item ${item.id} activeIngredients is invalid.`);
+            }
+            for (const sourceField of ['productSourceUrls', 'officialSourceUrls']) {
+              const urls = item[sourceField];
+              if (urls === undefined) continue;
+              if (
+                !Array.isArray(urls)
+                || urls.length > 20
+                || urls.some((url: unknown) => typeof url !== 'string' || url.length > 2_000 || !/^https:\/\//i.test(url))
+              ) {
+                throw new Error(`Inventory item ${item.id} ${sourceField} is invalid.`);
+              }
+            }
+            if (item.lastInvoiceReceipt !== undefined) {
+              const receipt = item.lastInvoiceReceipt;
+              if (!receipt || typeof receipt !== 'object') {
+                throw new Error(`Inventory item ${item.id} lastInvoiceReceipt is invalid.`);
+              }
+              for (const field of ['quantity', 'unitCost', 'lineTotal', 'sourceUnitCost', 'sourceLineTotal', 'exchangeRate']) {
+                if (
+                  receipt[field] !== undefined
+                  && (typeof receipt[field] !== 'number' || !Number.isFinite(receipt[field]) || receipt[field] < 0)
+                ) {
+                  throw new Error(`Inventory item ${item.id} invoice receipt ${field} is invalid.`);
+                }
+              }
+              if (receipt.sourceCurrency !== undefined && !['GEL', 'EUR', 'USD'].includes(receipt.sourceCurrency)) {
+                throw new Error(`Inventory item ${item.id} invoice receipt sourceCurrency is invalid.`);
+              }
+            }
+          }
+
+          else if (key === 'invoiceReceipts') {
+            if (!existingItem) {
+              throw new Error(`Immutable Invoice Receipt Ledger: ${item.id} must be created through an invoice command.`);
+            }
+            if (syncRecordFingerprint(item) !== syncRecordFingerprint(existingItem)) {
+              throw new Error(`Immutable Invoice Receipt Ledger: ${item.id} cannot be modified through sync.`);
+            }
+          }
+
+          else if (key === 'inventoryMovements') {
+            if (!existingItem) {
+              throw new Error(`Immutable Inventory Movement Ledger: ${item.id} must be created through an invoice command.`);
+            }
+            if (syncRecordFingerprint(item) !== syncRecordFingerprint(existingItem)) {
+              throw new Error(`Immutable Inventory Movement Ledger: ${item.id} cannot be modified through sync.`);
+            }
           }
 
           else if (key === 'bottlingRuns') {
+            const runRecord = { ...(existingItem || {}), ...item };
+            if (item.recordKind !== undefined && !['bottling', 'reversal'].includes(item.recordKind)) {
+              throw new Error(`Bottling run ${item.id} has invalid recordKind.`);
+            }
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'recordKind', 'createdAt', 'lotId', 'lotName', 'date', 'lotNumber',
+                'operator', 'totalBottles', 'totalCeramic', 'volumeBottledL',
+                'previousLotVolumeL', 'previousLotStage', 'bottlesPerBox',
+                'packagingCostTotal', 'bottlingServiceCost', 'storageLocationId', 'storageMovementId',
+                'reversalOfRunId', 'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Bottling Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+              for (const field of ['formats', 'packagingMaterialIds', 'packagingDeductions']) {
+                if (item[field] !== undefined
+                  && JSON.stringify(item[field]) !== JSON.stringify(existingItem[field])) {
+                  throw new Error(`Immutable Bottling Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+            }
             if (!isValidId(item.lotId)) {
               throw new Error(`Bottling run ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
@@ -311,7 +1415,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                     throw new Error(`Bottling run ${item.id} has invalid packaging material for ${component}.`);
                   }
                   const materialExists = userDb.inventory.some((i: any) => i.id === materialId) || (collections.inventory && collections.inventory.some((i: any) => i.id === materialId));
-                  const materialDeleted = deletedIds && deletedIds.includes(materialId as string);
+                  const materialDeleted = isDeleted('inventory', materialId);
                   if (!materialExists || materialDeleted) {
                     throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted packaging material (${materialId}).`);
                   }
@@ -336,12 +1440,64 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Bottling run ${item.id} has invalid storageLocationId.`);
               }
               const locExists = userDb.storageLocations?.some((l: any) => l.id === item.storageLocationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.storageLocationId));
-              if (!locExists) {
-                throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent Storage Location (${item.storageLocationId}).`);
+              const locDeleted = isDeleted('storageLocations', item.storageLocationId);
+              if (!locExists || locDeleted) {
+                throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Storage Location (${item.storageLocationId}).`);
               }
             }
-            if (item.storageMovementId && !isValidId(item.storageMovementId)) {
-              throw new Error(`Bottling run ${item.id} has invalid storageMovementId.`);
+            const storageMovementId = item.storageMovementId !== undefined
+              ? item.storageMovementId
+              : existingItem?.storageMovementId;
+            if (storageMovementId) {
+              if (!isValidId(storageMovementId)) {
+                throw new Error(`Bottling run ${item.id} has invalid storageMovementId.`);
+              }
+              const movement = effectiveRecord('stockMovements', storageMovementId);
+              if (!movement) {
+                throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Stock Movement (${storageMovementId}).`);
+              }
+              validateMovementParity(runRecord.recordKind === 'reversal' ? 'bottling_reversal' : 'bottling', runRecord, movement);
+            }
+            if (runRecord.storagePlacements !== undefined) {
+              if (!Array.isArray(runRecord.storagePlacements) || runRecord.storagePlacements.length > 10_000) {
+                throw new Error(`Bottling run ${item.id} storagePlacements must be a bounded array.`);
+              }
+              const placementMovementIds = new Set<string>();
+              let placedUnits = 0;
+              for (const placement of runRecord.storagePlacements) {
+                if (!placement || typeof placement !== 'object'
+                  || !isValidId(placement.movementId)
+                  || !isValidId(placement.locationId)
+                  || typeof placement.bottles !== 'number'
+                  || !Number.isSafeInteger(placement.bottles)
+                  || placement.bottles <= 0
+                  || typeof placement.date !== 'string') {
+                  throw new Error(`Bottling run ${item.id} has an invalid storage placement.`);
+                }
+                if (placementMovementIds.has(placement.movementId)) {
+                  throw new Error(`Bottling run ${item.id} repeats storage movement ${placement.movementId}.`);
+                }
+                placementMovementIds.add(placement.movementId);
+                if (!effectiveRecord('storageLocations', placement.locationId)) {
+                  throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Storage Location (${placement.locationId}).`);
+                }
+                const movement = effectiveRecord('stockMovements', placement.movementId);
+                if (!movement) {
+                  throw new Error(`Orphaned Bottling Run: ${item.id} references non-existent or deleted Stock Movement (${placement.movementId}).`);
+                }
+                validateStoragePlacementParity(runRecord, placement, movement);
+                placedUnits += placement.bottles;
+              }
+              if (typeof runRecord.placedInStorageBottles === 'number'
+                && runRecord.placedInStorageBottles !== placedUnits) {
+                throw new Error(`Mismatched Storage Placement: Bottling run ${item.id} placement total is invalid.`);
+              }
+            }
+            if (runRecord.recordKind === 'reversal') {
+              if (Array.isArray(runRecord.storagePlacements) && runRecord.storagePlacements.length > 0) {
+                throw new Error(`Mismatched Bottling Reversal: ${item.id} cannot contain inbound storage placements.`);
+              }
+              validateBottlingReversalParity(runRecord);
             }
           }
 
@@ -358,14 +1514,61 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (item.destId !== undefined && !isValidId(item.destId)) {
               throw new Error(`Transfer ${item.id} has invalid destId.`);
             }
+            if (item.recordKind !== undefined && !['transfer', 'reversal'].includes(item.recordKind)) {
+              throw new Error(`Transfer ${item.id} has invalid recordKind.`);
+            }
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'recordKind', 'sourceId', 'destId', 'volume', 'loss',
+                'sourceLotId', 'destinationLotId', 'resultLotId',
+                'sourceContributionL', 'destinationContributionL', 'arrivalVolumeL',
+                'reversalOfTransferId', 'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Transfer Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+              if (item.reversalSnapshot !== undefined
+                && JSON.stringify(item.reversalSnapshot) !== JSON.stringify(existingItem.reversalSnapshot)) {
+                throw new Error(`Immutable Transfer Ledger: reversalSnapshot cannot be modified on ${item.id}.`);
+              }
+            }
           }
 
           else if (key === 'grapeIntakes') {
+            if (item.recordKind !== undefined && !['intake', 'reversal'].includes(item.recordKind)) {
+              throw new Error(`Grape intake ${item.id} has invalid recordKind.`);
+            }
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'recordKind', 'date', 'source', 'supplierName', 'supplierIdCode',
+                'blockId', 'blockName', 'variety', 'vintage', 'grossWeightKg', 'tareWeightKg',
+                'netWeightKg', 'estimatedVolumeL', 'destinationVesselId', 'createdLotId',
+                'harvestRecordId', 'operator', 'reversalOfIntakeId', 'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Grape Intake Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+              if (item.reversalSnapshot !== undefined
+                && JSON.stringify(item.reversalSnapshot) !== JSON.stringify(existingItem.reversalSnapshot)) {
+                throw new Error(`Immutable Grape Intake Ledger: reversalSnapshot cannot be modified on ${item.id}.`);
+              }
+              if (existingItem.recordKind === 'reversal' || existingItem.reversedByCommandId) {
+                for (const field of ['reversedByCommandId', 'reversedAt', 'reversalReason']) {
+                  if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                    throw new Error(`Immutable Grape Intake Ledger: ${field} cannot be modified on ${item.id}.`);
+                  }
+                }
+              }
+            }
             if (!isValidId(item.createdLotId)) {
               throw new Error(`Grape intake ${item.id} has invalid referenced createdLotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.createdLotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.createdLotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.createdLotId);
+            const lotDeleted = isDeleted('lots', item.createdLotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Lot (${item.createdLotId}).`);
             }
@@ -396,7 +1599,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Grape intake ${item.id} has invalid destinationVesselId.`);
               }
               const vesselExists = userDb.vessels.some((v: any) => v.id === item.destinationVesselId) || (collections.vessels && collections.vessels.some((v: any) => v.id === item.destinationVesselId));
-              const vesselDeleted = deletedIds && deletedIds.includes(item.destinationVesselId);
+              const vesselDeleted = isDeleted('vessels', item.destinationVesselId);
               if (!vesselExists || vesselDeleted) {
                 throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Vessel (${item.destinationVesselId}).`);
               }
@@ -406,7 +1609,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Grape intake ${item.id} has invalid harvestRecordId.`);
               }
               const harvestExists = userDb.harvests.some((h: any) => h.id === item.harvestRecordId) || (collections.harvests && collections.harvests.some((h: any) => h.id === item.harvestRecordId));
-              const harvestDeleted = deletedIds && deletedIds.includes(item.harvestRecordId);
+              const harvestDeleted = isDeleted('harvests', item.harvestRecordId);
               if (!harvestExists || harvestDeleted) {
                 throw new Error(`Orphaned Grape Intake: ${item.id} references non-existent or deleted Harvest (${item.harvestRecordId}).`);
               }
@@ -414,11 +1617,43 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
           }
 
           else if (key === 'cellarOps') {
+            const operationRecord = { ...(existingItem || {}), ...item };
+            if (item.recordKind !== undefined && !['operation', 'reversal'].includes(item.recordKind)) {
+              throw new Error(`Cellar operation ${item.id} has invalid recordKind.`);
+            }
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'recordKind', 'date', 'type', 'customLabel', 'lotId', 'lotName',
+                'vesselId', 'vesselToId', 'volumeBeforeL', 'volumeAfterL', 'materialId',
+                'materialName', 'dose', 'unit', 'operator', 'notes',
+                'reversalOfOperationId', 'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Cellar Operation Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+              if (item.reversalSnapshot !== undefined
+                && JSON.stringify(item.reversalSnapshot) !== JSON.stringify(existingItem.reversalSnapshot)) {
+                throw new Error(`Immutable Cellar Operation Ledger: reversalSnapshot cannot be modified on ${item.id}.`);
+              }
+              if (item.materials !== undefined
+                && JSON.stringify(item.materials) !== JSON.stringify(existingItem.materials)) {
+                throw new Error(`Immutable Cellar Operation Ledger: materials cannot be modified on ${item.id}.`);
+              }
+              if (existingItem.recordKind === 'reversal' || existingItem.reversedByCommandId) {
+                for (const field of ['reversedByCommandId', 'reversedAt', 'reversalReason']) {
+                  if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                    throw new Error(`Immutable Cellar Operation Ledger: ${field} cannot be modified on ${item.id}.`);
+                  }
+                }
+              }
+            }
             if (!isValidId(item.lotId)) {
               throw new Error(`Cellar operation ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
@@ -429,7 +1664,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                   throw new Error(`Cellar operation ${item.id} has invalid ${vesselField}.`);
                 }
                 const vesselExists = userDb.vessels.some((v: any) => v.id === item[vesselField]) || (collections.vessels && collections.vessels.some((v: any) => v.id === item[vesselField]));
-                const vesselDeleted = deletedIds && deletedIds.includes(item[vesselField]);
+                const vesselDeleted = isDeleted('vessels', item[vesselField]);
                 if (!vesselExists || vesselDeleted) {
                   throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted Vessel (${item[vesselField]}).`);
                 }
@@ -441,7 +1676,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Cellar operation ${item.id} has invalid materialId.`);
               }
               const materialExists = userDb.inventory.some((i: any) => i.id === item.materialId) || (collections.inventory && collections.inventory.some((i: any) => i.id === item.materialId));
-              const materialDeleted = deletedIds && deletedIds.includes(item.materialId);
+              const materialDeleted = isDeleted('inventory', item.materialId);
               if (!materialExists || materialDeleted) {
                 throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted inventory material (${item.materialId}).`);
               }
@@ -453,25 +1688,101 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Cellar operation ${item.id} property ${field} must be non-negative.`);
               }
             }
+            if (item.materials !== undefined) {
+              if (!Array.isArray(item.materials) || item.materials.length > 25) {
+                throw new Error(`Cellar operation ${item.id} materials must be a bounded array.`);
+              }
+              const materialIds = new Set<string>();
+              for (const usage of item.materials) {
+                if (!usage || !isValidId(usage.materialId)
+                  || typeof usage.quantity !== 'number'
+                  || !Number.isFinite(usage.quantity)
+                  || usage.quantity <= 0
+                  || (usage.purpose !== undefined
+                    && (typeof usage.purpose !== 'string' || usage.purpose.length > 120))) {
+                  throw new Error(`Cellar operation ${item.id} has an invalid material usage.`);
+                }
+                if (materialIds.has(usage.materialId)) {
+                  throw new Error(`Cellar operation ${item.id} repeats inventory material ${usage.materialId}.`);
+                }
+                materialIds.add(usage.materialId);
+                const materialExists = userDb.inventory.some((inventoryItem: any) => inventoryItem.id === usage.materialId)
+                  || (collections.inventory && collections.inventory.some((inventoryItem: any) => inventoryItem.id === usage.materialId));
+                const materialDeleted = isDeleted('inventory', usage.materialId);
+                if (!materialExists || materialDeleted) {
+                  throw new Error(`Orphaned Cellar Operation: ${item.id} references non-existent or deleted inventory material (${usage.materialId}).`);
+                }
+              }
+            }
+            if (operationRecord.recordKind === 'reversal') {
+              validateCellarOperationReversalParity(operationRecord);
+            }
           }
 
           else if (key === 'costEntries') {
+            const costRecord = { ...(existingItem || {}), ...item };
+            if (item.recordKind !== undefined && !['cost', 'reversal'].includes(item.recordKind)) {
+              throw new Error(`Cost entry ${item.id} has invalid recordKind.`);
+            }
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'recordKind', 'date', 'lotId', 'category', 'description', 'amount',
+                'currency', 'quantity', 'unitCost', 'sourceRef', 'createdBy',
+                'reversalOfCostEntryId', 'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Cost Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+            }
             if (!isValidId(item.lotId)) {
               throw new Error(`Cost entry ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Cost Entry: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
             if (typeof item.amount !== 'number') {
               throw new Error(`Cost entry ${item.id} amount must be a number.`);
             }
-            if (item.quantity !== undefined && (typeof item.quantity !== 'number' || item.quantity < 0)) {
-              throw new Error(`Cost entry ${item.id} quantity must be non-negative.`);
+            if (item.quantity !== undefined && (typeof item.quantity !== 'number'
+              || (item.quantity < 0 && costRecord.recordKind !== 'reversal')
+              || (costRecord.recordKind === 'reversal' && item.quantity > 0))) {
+              throw new Error(`Cost entry ${item.id} quantity has an invalid sign.`);
             }
             if (item.unitCost !== undefined && (typeof item.unitCost !== 'number' || item.unitCost < 0)) {
               throw new Error(`Cost entry ${item.id} unitCost must be non-negative.`);
+            }
+            if (costRecord.recordKind === 'reversal') {
+              const original = effectiveRecord('costEntries', costRecord.reversalOfCostEntryId);
+              const reversalRun = effectiveRecord('bottlingRuns', costRecord.sourceRef);
+              const reversalOperation = effectiveRecord('cellarOps', costRecord.sourceRef);
+              const reversalIntake = effectiveRecord('grapeIntakes', costRecord.sourceRef);
+              const reversalParent = reversalRun?.recordKind === 'reversal'
+                ? reversalRun
+                : reversalOperation?.recordKind === 'reversal'
+                  ? reversalOperation
+                  : reversalIntake?.recordKind === 'reversal'
+                    ? reversalIntake
+                    : undefined;
+              if (!(costRecord.amount < 0)
+                || !costRecord.commandId
+                || !original
+                || original.recordKind === 'reversal'
+                || original.commandId !== costRecord.reversalOfCommandId
+                || original.amount !== Math.abs(costRecord.amount)
+                || original.lotId !== costRecord.lotId
+                || original.category !== costRecord.category
+                || original.currency !== costRecord.currency
+                || original.reversedByCommandId !== costRecord.commandId
+                || original.reversedAt !== costRecord.lastModified
+                || !reversalParent
+                || reversalParent.commandId !== costRecord.commandId
+                || reversalParent.reversalOfCommandId !== original.commandId) {
+                throw new Error(`Mismatched Cost Reversal: correction entry ${item.id} is inconsistent.`);
+              }
             }
           }
 
@@ -488,19 +1799,31 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
           }
 
           else if (key === 'stockMovements') {
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'date', 'lotId', 'locationId', 'direction', 'bottles',
+                'reason', 'sourceRef', 'relatedMovementId', 'reversalOfMovementId',
+                'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Stock Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+            }
             if (!isValidId(item.lotId)) {
               throw new Error(`Stock movement ${item.id} has invalid referenced lotId.`);
             }
             if (!isValidId(item.locationId)) {
               throw new Error(`Stock movement ${item.id} has invalid referenced locationId.`);
             }
-            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            const lotExists = effectiveRecord('lots', item.lotId);
+            const locExists = effectiveRecord('storageLocations', item.locationId);
             if (!lotExists) {
-              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent Lot (${item.lotId}).`);
+              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
             if (!locExists) {
-              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+              throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Storage Location (${item.locationId}).`);
             }
             if (!['in', 'out'].includes(item.direction)) {
               throw new Error(`Stock movement ${item.id} has invalid direction.`);
@@ -508,25 +1831,144 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (typeof item.bottles !== 'number' || item.bottles < 0) {
               throw new Error(`Stock movement ${item.id} bottles must be non-negative.`);
             }
+            const hasStoredBottlingProvenance = (Array.isArray(userDb?.bottlingRuns) ? userDb.bottlingRuns : [])
+              .some((run: any) => run?.lotId === item.lotId
+                && run.recordKind !== 'reversal' && !run.reversedByCommandId && !run.reversedAt
+                && !isDeleted('bottlingRuns', run.id));
+            const linkedRun = ['bottling', 'receive'].includes(item.reason)
+              ? effectiveRecord('bottlingRuns', item.sourceRef)
+              : undefined;
+            const hasLinkedSamePayloadProvenance = linkedRun?.lotId === item.lotId;
+            if (!['bottled', 'sold'].includes(lotExists.stage)
+              && !hasStoredBottlingProvenance
+              && !hasLinkedSamePayloadProvenance) {
+              throw new Error(`Ineligible Stock Movement: lot ${item.lotId} is not bottled and has no bottling provenance.`);
+            }
             if (item.sourceRef !== undefined && item.sourceRef !== null && item.sourceRef !== '' && !isValidId(item.sourceRef)) {
               throw new Error(`Stock movement ${item.id} has invalid sourceRef.`);
+            }
+            const movementRecord = { ...(existingItem || {}), ...item };
+            if (movementRecord.sourceRef && movementRecord.reason === 'bottling') {
+              const run = effectiveRecord('bottlingRuns', movementRecord.sourceRef);
+              if (!run) {
+                throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Bottling Run (${movementRecord.sourceRef}).`);
+              }
+              if (run.storageMovementId && run.storageMovementId !== item.id) {
+                throw new Error(`Mismatched Bottling Link: Bottling run ${run.id} points to a different stock movement.`);
+              }
+              validateMovementParity('bottling', run, movementRecord);
+            }
+            if (movementRecord.sourceRef && movementRecord.reason === 'receive') {
+              const run = effectiveRecord('bottlingRuns', movementRecord.sourceRef);
+              if (!run) {
+                throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Bottling Run (${movementRecord.sourceRef}).`);
+              }
+              const placement = Array.isArray(run.storagePlacements)
+                ? run.storagePlacements.find((entry: any) => entry?.movementId === item.id)
+                : undefined;
+              if (!placement) {
+                throw new Error(`Mismatched Storage Placement: Bottling run ${run.id} does not point to stock movement ${item.id}.`);
+              }
+              validateStoragePlacementParity(run, placement, movementRecord);
+            }
+            if (movementRecord.sourceRef && movementRecord.reason === 'sale') {
+              const dispatch = effectiveRecord('salesDispatches', movementRecord.sourceRef);
+              if (!dispatch) {
+                throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Sales Dispatch (${movementRecord.sourceRef}).`);
+              }
+              if (dispatch.stockMovementId && dispatch.stockMovementId !== item.id) {
+                throw new Error(`Mismatched Sales Link: Sales dispatch ${dispatch.id} points to a different stock movement.`);
+              }
+              validateMovementParity('sale', dispatch, movementRecord);
+            }
+            if (movementRecord.sourceRef && movementRecord.reason === 'sale_reversal') {
+              const reversal = effectiveRecord('salesDispatches', movementRecord.sourceRef);
+              if (!reversal) {
+                throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted Sales Reversal (${movementRecord.sourceRef}).`);
+              }
+              if (reversal.stockMovementId !== item.id) {
+                throw new Error(`Mismatched Sales Reversal: correction dispatch ${reversal.id} points to a different return movement.`);
+              }
+              validateSalesReversalParity(reversal, movementRecord);
+            }
+            if (movementRecord.sourceRef && movementRecord.reason === 'bottling_reversal') {
+              const reversal = effectiveRecord('bottlingRuns', movementRecord.sourceRef);
+              if (!reversal || reversal.recordKind !== 'reversal'
+                || reversal.storageMovementId !== item.id) {
+                throw new Error(`Mismatched Bottling Reversal: correction run ${movementRecord.sourceRef} does not point to ${item.id}.`);
+              }
+              validateBottlingReversalParity(reversal);
+            }
+            if (movementRecord.sourceRef
+              && !['bottling', 'receive', 'sale', 'sale_reversal', 'bottling_reversal'].includes(movementRecord.reason)
+              && (effectiveRecord('bottlingRuns', movementRecord.sourceRef)
+                || effectiveRecord('salesDispatches', movementRecord.sourceRef))) {
+              throw new Error(`Mismatched Stock Movement Link: ${item.id} has an invalid reason for linked source ${movementRecord.sourceRef}.`);
+            }
+            if (movementRecord.relatedMovementId !== undefined
+              && movementRecord.relatedMovementId !== null
+              && movementRecord.relatedMovementId !== '') {
+              if (!isValidId(movementRecord.relatedMovementId)) {
+                throw new Error(`Stock movement ${item.id} has invalid relatedMovementId.`);
+              }
+              const related = effectiveRecord('stockMovements', movementRecord.relatedMovementId);
+              if (!related) {
+                throw new Error(`Orphaned Stock Movement: ${item.id} references non-existent or deleted paired movement (${movementRecord.relatedMovementId}).`);
+              }
+              if (movementRecord.reason !== 'transfer'
+                || related.reason !== 'transfer'
+                || related.relatedMovementId !== item.id
+                || related.direction === movementRecord.direction
+                || related.lotId !== movementRecord.lotId
+                || related.bottles !== movementRecord.bottles
+                || related.date !== movementRecord.date
+                || related.locationId === movementRecord.locationId
+                || !movementRecord.commandId
+                || related.commandId !== movementRecord.commandId
+                || movementRecord.sourceRef !== movementRecord.commandId
+                || related.sourceRef !== movementRecord.commandId) {
+                throw new Error(`Mismatched Storage Relocation: paired movement ${item.id} is inconsistent.`);
+              }
             }
           }
 
           else if (key === 'salesDispatches') {
+            if (item.recordKind !== undefined && !['dispatch', 'reversal'].includes(item.recordKind)) {
+              throw new Error(`Sales dispatch ${item.id} has invalid recordKind.`);
+            }
+            if (existingItem?.commandId) {
+              const immutableFields = [
+                'commandId', 'recordKind', 'date', 'customerName', 'lotId', 'lotName',
+                'locationId', 'locationName', 'bottles', 'pricePerBottle', 'currency',
+                'revenue', 'costPerBottle', 'cogs', 'grossProfit', 'marginPct',
+                'stockMovementId', 'salesOrderId', 'reversalOfDispatchId', 'reversalOfCommandId',
+              ];
+              for (const field of immutableFields) {
+                if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                  throw new Error(`Immutable Sales Ledger: ${field} cannot be modified on ${item.id}.`);
+                }
+              }
+              if (existingItem.recordKind === 'reversal' || existingItem.reversedByCommandId) {
+                for (const field of ['reversedByCommandId', 'reversedAt', 'reversalReason']) {
+                  if (item[field] !== undefined && item[field] !== existingItem[field]) {
+                    throw new Error(`Immutable Sales Ledger: ${field} cannot be modified on ${item.id}.`);
+                  }
+                }
+              }
+            }
             if (!isValidId(item.lotId)) {
               throw new Error(`Sales dispatch ${item.id} has invalid referenced lotId.`);
             }
             if (!isValidId(item.locationId)) {
               throw new Error(`Sales dispatch ${item.id} has invalid referenced locationId.`);
             }
-            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            const lotExists = effectiveRecord('lots', item.lotId);
+            const locExists = effectiveRecord('storageLocations', item.locationId);
             if (!lotExists) {
-              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent Lot (${item.lotId}).`);
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
             if (!locExists) {
-              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Storage Location (${item.locationId}).`);
             }
             const numericFields = ['bottles', 'pricePerBottle', 'revenue', 'cogs'];
             for (const field of numericFields) {
@@ -543,11 +1985,54 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (item.marginPct !== undefined && item.marginPct !== null && typeof item.marginPct !== 'number') {
               throw new Error(`Sales dispatch ${item.id} marginPct must be a number.`);
             }
-            if (item.stockMovementId !== undefined && !isValidId(item.stockMovementId)) {
-              throw new Error(`Sales dispatch ${item.id} has invalid stockMovementId.`);
+            const dispatchRecord = { ...(existingItem || {}), ...item };
+            if (!isValidId(dispatchRecord.stockMovementId)) {
+              throw new Error(`Sales dispatch ${item.id} has invalid or missing stockMovementId.`);
+            }
+            const movement = effectiveRecord('stockMovements', dispatchRecord.stockMovementId);
+            if (!movement) {
+              throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Stock Movement (${dispatchRecord.stockMovementId}).`);
+            }
+            validateMovementParity(dispatchRecord.recordKind === 'reversal' ? 'sale_reversal' : 'sale', dispatchRecord, movement);
+            if (dispatchRecord.recordKind === 'reversal') {
+              if (dispatchRecord.salesOrderId) {
+                throw new Error(`Mismatched Sales Reversal: correction dispatch ${item.id} cannot fulfill an order.`);
+              }
+              validateSalesReversalParity(dispatchRecord, movement);
+            } else if (dispatchRecord.reversedByCommandId || dispatchRecord.reversedAt) {
+              const reversal = effectiveCollection('salesDispatches').find(candidate => (
+                candidate?.recordKind === 'reversal' && candidate.reversalOfDispatchId === dispatchRecord.id
+              ));
+              if (!reversal) {
+                throw new Error(`Mismatched Sales Reversal: reversed dispatch ${item.id} has no correction entry.`);
+              }
+              const returnMovement = effectiveRecord('stockMovements', reversal.stockMovementId);
+              if (!returnMovement) {
+                throw new Error(`Mismatched Sales Reversal: correction dispatch ${reversal.id} has no return movement.`);
+              }
+              validateSalesReversalParity(reversal, returnMovement);
             }
             if (item.salesOrderId !== undefined && item.salesOrderId !== null && item.salesOrderId !== '' && !isValidId(item.salesOrderId)) {
               throw new Error(`Sales dispatch ${item.id} has invalid salesOrderId.`);
+            }
+            if (dispatchRecord.salesOrderId) {
+              const order = effectiveRecord('salesOrders', dispatchRecord.salesOrderId);
+              if (!order) {
+                throw new Error(`Orphaned Sales Dispatch: ${item.id} references non-existent or deleted Sales Order (${dispatchRecord.salesOrderId}).`);
+              }
+              const orderMatchesLifecycle = dispatchRecord.reversedByCommandId
+                ? order.status === 'cancelled'
+                  && order.reversedByCommandId === dispatchRecord.reversedByCommandId
+                  && order.reversalReason === dispatchRecord.reversalReason
+                : order.status === 'fulfilled';
+              if (order.dispatchId !== item.id || !orderMatchesLifecycle) {
+                throw new Error(`Mismatched Sales Link: Sales order ${order.id} must be fulfilled or cancelled by the matching reversal for dispatch ${item.id}.`);
+              }
+              if (order.lotId !== dispatchRecord.lotId
+                || order.locationId !== dispatchRecord.locationId
+                || order.bottles !== dispatchRecord.bottles) {
+                throw new Error(`Mismatched Sales Link: Sales order ${order.id} does not match dispatch ${item.id} lot, location, and bottle count.`);
+              }
             }
           }
 
@@ -558,13 +2043,13 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (!isValidId(item.locationId)) {
               throw new Error(`Sales order ${item.id} has invalid referenced locationId.`);
             }
-            const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const locExists = userDb.storageLocations?.some((l: any) => l.id === item.locationId) || (collections.storageLocations && collections.storageLocations.some((l: any) => l.id === item.locationId));
+            const lotExists = effectiveRecord('lots', item.lotId);
+            const locExists = effectiveRecord('storageLocations', item.locationId);
             if (!lotExists) {
-              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent Lot (${item.lotId}).`);
+              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
             if (!locExists) {
-              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent Storage Location (${item.locationId}).`);
+              throw new Error(`Orphaned Sales Order: ${item.id} references non-existent or deleted Storage Location (${item.locationId}).`);
             }
             if (!['reserved', 'fulfilled', 'cancelled'].includes(item.status)) {
               throw new Error(`Sales order ${item.id} has invalid status.`);
@@ -587,6 +2072,26 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (item.dispatchId !== undefined && item.dispatchId !== null && item.dispatchId !== '' && !isValidId(item.dispatchId)) {
               throw new Error(`Sales order ${item.id} has invalid dispatchId.`);
             }
+            const orderRecord = { ...(existingItem || {}), ...item };
+            if (orderRecord.dispatchId) {
+              const dispatch = effectiveRecord('salesDispatches', orderRecord.dispatchId);
+              if (!dispatch) {
+                throw new Error(`Orphaned Sales Order: ${item.id} references non-existent or deleted Sales Dispatch (${orderRecord.dispatchId}).`);
+              }
+              const orderMatchesLifecycle = dispatch.reversedByCommandId
+                ? orderRecord.status === 'cancelled'
+                  && orderRecord.reversedByCommandId === dispatch.reversedByCommandId
+                  && orderRecord.reversalReason === dispatch.reversalReason
+                : orderRecord.status === 'fulfilled';
+              if (!orderMatchesLifecycle || dispatch.salesOrderId !== item.id) {
+                throw new Error(`Mismatched Sales Link: Sales order ${item.id} must be fulfilled or cancelled by the matching reversal for dispatch ${dispatch.id}.`);
+              }
+              if (dispatch.lotId !== orderRecord.lotId
+                || dispatch.locationId !== orderRecord.locationId
+                || dispatch.bottles !== orderRecord.bottles) {
+                throw new Error(`Mismatched Sales Link: Sales order ${item.id} does not match dispatch ${dispatch.id} lot, location, and bottle count.`);
+              }
+            }
           }
 
           else if (key === 'supplierPayments') {
@@ -606,7 +2111,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               throw new Error(`Certification record ${item.id} has invalid referenced lotId.`);
             }
             const lotExists = userDb.lots.some((l: any) => l.id === item.lotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.lotId));
-            const lotDeleted = deletedIds && deletedIds.includes(item.lotId);
+            const lotDeleted = isDeleted('lots', item.lotId);
             if (!lotExists || lotDeleted) {
               throw new Error(`Orphaned Certification Record: ${item.id} references non-existent or deleted Lot (${item.lotId}).`);
             }
@@ -615,7 +2120,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Certification record ${item.id} has invalid bottlingRunId.`);
               }
               const runExists = userDb.bottlingRuns.some((r: any) => r.id === item.bottlingRunId) || (collections.bottlingRuns && collections.bottlingRuns.some((r: any) => r.id === item.bottlingRunId));
-              const runDeleted = deletedIds && deletedIds.includes(item.bottlingRunId);
+              const runDeleted = isDeleted('bottlingRuns', item.bottlingRunId);
               if (!runExists || runDeleted) {
                 throw new Error(`Orphaned Certification Record: ${item.id} references non-existent or deleted Bottling Run (${item.bottlingRunId}).`);
               }
@@ -644,29 +2149,34 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             if (typeof item.fileName !== 'string' || !item.fileName.trim()) {
               throw new Error(`Attachment ${item.id} requires a fileName.`);
             }
-            if (!isSupportedAttachmentFileName(item.fileName)) {
+            const attachmentFileName = normalizeAttachmentFileName(item.fileName);
+            if (!attachmentFileName) {
+              throw new Error(`Attachment ${item.id} requires a safe fileName.`);
+            }
+            if (!isSupportedAttachmentFileName(attachmentFileName)) {
               throw new Error(`Attachment ${item.id} has unsupported file type.`);
             }
             if (!['company', 'official_docs', 'certification', 'cadastre', 'qvevri', 'lab', 'vineyard_project', 'crm', 'other'].includes(item.module)) {
               throw new Error(`Attachment ${item.id} has invalid module.`);
             }
-            if (!item.storage || typeof item.storage !== 'object' || !['inline', 'external', 'metadata_only'].includes(item.storage.kind)) {
+            if (!item.storage || typeof item.storage !== 'object' || !['inline', 'external', 'metadata_only', 'gcs'].includes(item.storage.kind)) {
               throw new Error(`Attachment ${item.id} has invalid storage kind.`);
             }
             if (item.sizeBytes !== undefined && (typeof item.sizeBytes !== 'number' || !Number.isFinite(item.sizeBytes) || item.sizeBytes < 0)) {
               throw new Error(`Attachment ${item.id} sizeBytes must be non-negative.`);
             }
-            if (!isSupportedAttachmentMimeType(item.mimeType, item.fileName)) {
+            if (!isSupportedAttachmentMimeType(item.mimeType, attachmentFileName)) {
               throw new Error(`Attachment ${item.id} has unsupported MIME type.`);
             }
             if (item.storage.kind === 'inline') {
-              if (!isAllowedInlineAttachmentDataUrl(item.storage.dataUrl, item.fileName)) {
+              if (!isAllowedInlineAttachmentDataUrl(item.storage.dataUrl, attachmentFileName)) {
                 throw new Error(`Attachment ${item.id} inline storage requires a supported PDF, image, Office, or CSV data URL.`);
               }
-              if (!attachmentMimeTypeMatchesInlineDataUrl(item.storage.dataUrl, item.mimeType, item.fileName)) {
+              if (!attachmentMimeTypeMatchesInlineDataUrl(item.storage.dataUrl, item.mimeType, attachmentFileName)) {
                 throw new Error(`Attachment ${item.id} MIME type does not match inline content.`);
               }
-              if ((item.sizeBytes || 0) > MAX_INLINE_ATTACHMENT_BYTES || item.storage.dataUrl.length > MAX_INLINE_ATTACHMENT_BYTES * 2) {
+              const decodedInlineBytes = inlineAttachmentDecodedBytes(item.storage.dataUrl) || 0;
+              if (Math.max(item.sizeBytes || 0, decodedInlineBytes) > MAX_INLINE_ATTACHMENT_BYTES) {
                 throw new Error(`Attachment ${item.id} is too large for inline sync.`);
               }
               if (item.checksum !== undefined && checksumAttachmentDataUrl(item.storage.dataUrl) !== String(item.checksum).toLowerCase()) {
@@ -674,7 +2184,13 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
               }
             }
             if (item.storage.kind === 'external' && !normalizeExternalAttachmentUrl(item.storage.url)) {
-              throw new Error(`Attachment ${item.id} external storage requires a valid HTTP(S) URL.`);
+              throw new Error(`Attachment ${item.id} external storage requires a valid HTTPS URL.`);
+            }
+            // GCS-backed: bytes live in object storage, so state carries only a
+            // validated object key and no inline data — cost to the JSONB blob
+            // is ~0 regardless of file size (the whole point of this backend).
+            if (item.storage.kind === 'gcs' && !isValidAttachmentObjectKey(item.storage.objectKey)) {
+              throw new Error(`Attachment ${item.id} gcs storage requires a valid object key.`);
             }
             if (item.checksum !== undefined && !isValidAttachmentChecksum(item.checksum)) {
               throw new Error(`Attachment ${item.id} has invalid checksum.`);
@@ -714,12 +2230,502 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
             }
           }
 
+          else if (key === 'qualitySops') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Quality SOP ${item.id} requires a title of at most 200 characters.`);
+            }
+            if (!['sanitation', 'calibration', 'sampling', 'bottling', 'compliance', 'safety', 'other'].includes(item.category)) {
+              throw new Error(`Quality SOP ${item.id} has invalid category.`);
+            }
+            if (!['once', 'daily', 'weekly', 'monthly', 'quarterly', 'seasonal'].includes(item.frequency)) {
+              throw new Error(`Quality SOP ${item.id} has invalid frequency.`);
+            }
+            if (!isValidCalendarDate(item.nextDueDate)) {
+              throw new Error(`Quality SOP ${item.id} requires a next due date.`);
+            }
+            if (!Array.isArray(item.checklist) || item.checklist.length === 0 || item.checklist.length > 50
+              || item.checklist.some((entry: unknown) => typeof entry !== 'string' || !entry.trim() || entry.length > 300)) {
+              throw new Error(`Quality SOP ${item.id} requires 1-50 valid checklist items.`);
+            }
+            if (!Array.isArray(item.completionHistory) || item.completionHistory.length > 100) {
+              throw new Error(`Quality SOP ${item.id} has invalid completion history.`);
+            }
+            const previousCompletions = Array.isArray(existingItem?.completionHistory)
+              ? existingItem.completionHistory
+              : [];
+            const completionIds = new Set<string>();
+            for (const completion of item.completionHistory) {
+              if (!completion || !isValidId(completion.id) || completionIds.has(completion.id)
+                || typeof completion.completedAt !== 'string' || Number.isNaN(Date.parse(completion.completedAt))
+                || typeof completion.completedBy !== 'string' || !completion.completedBy.trim() || completion.completedBy.length > 160
+                || !Array.isArray(completion.completedChecklist)
+                || completion.completedChecklist.length !== item.checklist.length
+                || completion.completedChecklist.some((entry: unknown) => typeof entry !== 'string' || !item.checklist.includes(entry))
+                || typeof completion.evidenceNote !== 'string' || completion.evidenceNote.length > 2_000
+                || (item.evidenceRequired && !completion.evidenceNote.trim())) {
+                throw new Error(`Quality SOP ${item.id} has invalid completion evidence.`);
+              }
+              completionIds.add(completion.id);
+            }
+            if (previousCompletions.length) {
+              const previousIds = new Set(previousCompletions.map((completion: any) => completion.id));
+              const firstRetainedIndex = item.completionHistory.findIndex((completion: any) => previousIds.has(completion.id));
+              const addedCount = firstRetainedIndex < 0 ? item.completionHistory.length : firstRetainedIndex;
+              const expectedRetained = previousCompletions.slice(0, Math.max(0, 100 - addedCount));
+              const actualRetained = firstRetainedIndex < 0 ? [] : item.completionHistory.slice(firstRetainedIndex);
+              if (JSON.stringify(actualRetained) !== JSON.stringify(expectedRetained)) {
+                throw new Error(`Quality SOP ${item.id} completion evidence is append-only.`);
+              }
+            }
+            if (item.relatedVesselId && !effectiveRecord('vessels', item.relatedVesselId)) {
+              throw new Error(`Quality SOP ${item.id} references an unknown vessel.`);
+            }
+            if (item.relatedLotId && !effectiveRecord('lots', item.relatedLotId)) {
+              throw new Error(`Quality SOP ${item.id} references an unknown lot.`);
+            }
+          }
+
+          else if (key === 'purchaseOrders') {
+            if (typeof item.orderNumber !== 'string' || !item.orderNumber.trim() || item.orderNumber.length > 120) {
+              throw new Error(`Purchase order ${item.id} requires a valid order number.`);
+            }
+            if (typeof item.supplierName !== 'string' || !item.supplierName.trim() || item.supplierName.length > 240) {
+              throw new Error(`Purchase order ${item.id} requires a supplier.`);
+            }
+            if (!['draft', 'submitted', 'ordered', 'partially_received', 'received', 'cancelled'].includes(item.status)) {
+              throw new Error(`Purchase order ${item.id} has invalid status.`);
+            }
+            if (existingItem) {
+              const transitions: Record<string, string[]> = {
+                draft: ['draft', 'submitted', 'cancelled'],
+                submitted: ['submitted', 'ordered', 'partially_received', 'received', 'cancelled'],
+                ordered: ['ordered', 'partially_received', 'received', 'cancelled'],
+                partially_received: ['partially_received', 'received', 'cancelled'],
+                received: ['received'],
+                cancelled: ['cancelled'],
+              };
+              if (!transitions[existingItem.status]?.includes(item.status)) {
+                throw new Error(`Purchase order ${item.id} cannot move from ${existingItem.status} to ${item.status}.`);
+              }
+            }
+            if (!['GEL', 'EUR', 'USD'].includes(item.currency)) {
+              throw new Error(`Purchase order ${item.id} has unsupported currency.`);
+            }
+            if (!Array.isArray(item.lines) || item.lines.length === 0 || item.lines.length > 200) {
+              throw new Error(`Purchase order ${item.id} requires 1-200 lines.`);
+            }
+            const lineIds = new Set<string>();
+            const previousLines = new Map<string, any>((existingItem?.lines || []).map((line: any) => [line.id, line]));
+            for (const line of item.lines) {
+              if (!line || typeof line !== 'object' || !isValidId(line.id)
+                || lineIds.has(line.id) || !isValidId(line.inventoryItemId) || !effectiveRecord('inventory', line.inventoryItemId)) {
+                throw new Error(`Purchase order ${item.id} has an invalid inventory line.`);
+              }
+              lineIds.add(line.id);
+              for (const field of ['quantity', 'receivedQuantity', 'unitCost']) {
+                if (typeof line[field] !== 'number' || !Number.isFinite(line[field]) || line[field] < 0
+                  || (field === 'quantity' && line[field] === 0)) {
+                  throw new Error(`Purchase order ${item.id} line ${line.id} has invalid ${field}.`);
+                }
+              }
+              if (line.receivedQuantity > line.quantity) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} received quantity exceeds the order.`);
+              }
+              const previousLine = previousLines.get(line.id);
+              if (existingItem && !previousLine) {
+                throw new Error(`Purchase order ${item.id} lines cannot be replaced after creation.`);
+              }
+              if (previousLine && ['inventoryItemId', 'productName', 'quantity', 'unit', 'unitCost']
+                .some(field => JSON.stringify(line[field]) !== JSON.stringify(previousLine[field]))) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} ordering evidence is immutable.`);
+              }
+              if (previousLine && line.receivedQuantity < previousLine.receivedQuantity) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} received quantity cannot decrease.`);
+              }
+              const inventoryItem = effectiveRecord('inventory', line.inventoryItemId);
+              if (typeof line.unit !== 'string' || !line.unit.trim() || line.unit !== inventoryItem.unit
+                || typeof line.productName !== 'string' || !line.productName.trim() || line.productName.length > 240) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} does not match its inventory item.`);
+              }
+            }
+            if (existingItem && previousLines.size !== item.lines.length) {
+              throw new Error(`Purchase order ${item.id} lines cannot be added or removed after creation.`);
+            }
+
+            const receiptHistory = item.receiptHistory === undefined ? [] : item.receiptHistory;
+            if (!Array.isArray(receiptHistory) || receiptHistory.length > 1_000) {
+              throw new Error(`Purchase order ${item.id} has invalid receipt history.`);
+            }
+            const receiptIds = new Set<string>();
+            const receiptCommandIds = new Set<string>();
+            for (const receipt of receiptHistory) {
+              if (!receipt || typeof receipt !== 'object' || !isValidId(receipt.id) || receiptIds.has(receipt.id)
+                || !isValidId(receipt.commandId) || receiptCommandIds.has(receipt.commandId)
+                || typeof receipt.receivedAt !== 'string' || Number.isNaN(Date.parse(receipt.receivedAt))
+                || typeof receipt.receivedBy !== 'string' || !receipt.receivedBy.trim() || receipt.receivedBy.length > 160
+                || !Array.isArray(receipt.lines) || receipt.lines.length === 0 || receipt.lines.length > 200) {
+                throw new Error(`Purchase order ${item.id} has invalid receipt evidence.`);
+              }
+              receiptIds.add(receipt.id);
+              receiptCommandIds.add(receipt.commandId);
+              const receiptLineIds = new Set<string>();
+              for (const receiptLine of receipt.lines) {
+                if (!receiptLine || typeof receiptLine !== 'object' || !isValidId(receiptLine.purchaseOrderLineId)
+                  || receiptLineIds.has(receiptLine.purchaseOrderLineId) || !lineIds.has(receiptLine.purchaseOrderLineId)
+                  || typeof receiptLine.quantity !== 'number' || !Number.isFinite(receiptLine.quantity) || receiptLine.quantity <= 0) {
+                  throw new Error(`Purchase order ${item.id} has invalid receipt line evidence.`);
+                }
+                receiptLineIds.add(receiptLine.purchaseOrderLineId);
+              }
+            }
+            const previousReceipts = Array.isArray(existingItem?.receiptHistory) ? existingItem.receiptHistory : [];
+            const previousReceiptIds = new Set(previousReceipts.map((receipt: any) => receipt.id));
+            const firstRetainedReceipt = receiptHistory.findIndex((receipt: any) => previousReceiptIds.has(receipt.id));
+            const addedReceiptCount = firstRetainedReceipt < 0 ? receiptHistory.length : firstRetainedReceipt;
+            const retainedReceipts = firstRetainedReceipt < 0 ? [] : receiptHistory.slice(firstRetainedReceipt);
+            const expectedRetainedReceipts = previousReceipts.slice(0, Math.max(0, 1_000 - addedReceiptCount));
+            if (JSON.stringify(retainedReceipts) !== JSON.stringify(expectedRetainedReceipts)) {
+              throw new Error(`Purchase order ${item.id} receipt evidence is append-only.`);
+            }
+            const addedReceipts = receiptHistory.slice(0, addedReceiptCount);
+            for (const line of item.lines) {
+              const previousReceived = previousLines.get(line.id)?.receivedQuantity || 0;
+              const documentedIncrease = addedReceipts.reduce((sum: number, receipt: any) => (
+                sum + (receipt.lines.find((entry: any) => entry.purchaseOrderLineId === line.id)?.quantity || 0)
+              ), 0);
+              if (line.receivedQuantity - previousReceived !== documentedIncrease) {
+                throw new Error(`Purchase order ${item.id} line ${line.id} receipt quantity lacks matching evidence.`);
+              }
+            }
+            if (receiptHistory.length && item.receiptCommandId !== receiptHistory[0].commandId) {
+              throw new Error(`Purchase order ${item.id} latest receipt command does not match its evidence.`);
+            }
+            const hasReceived = item.lines.some((line: any) => line.receivedQuantity > 0);
+            const fullyReceived = item.lines.every((line: any) => line.receivedQuantity === line.quantity);
+            if (item.status === 'partially_received' && (!hasReceived || fullyReceived)) {
+              throw new Error(`Purchase order ${item.id} partial status does not match its received quantities.`);
+            }
+            if (['draft', 'submitted', 'ordered'].includes(item.status) && hasReceived) {
+              throw new Error(`Purchase order ${item.id} requires a receipt-controlled status.`);
+            }
+            if (item.status === 'received' && (
+              typeof item.receivedAt !== 'string' || Number.isNaN(Date.parse(item.receivedAt))
+              || !isValidId(item.receiptCommandId)
+              || !fullyReceived
+            )) {
+              throw new Error(`Purchase order ${item.id} requires receipt evidence before it can be closed.`);
+            }
+          }
+
+          else if (key === 'productionPlans') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Production plan ${item.id} requires a title.`);
+            }
+            if (!['harvest', 'intake', 'transfer', 'fermentation', 'lab', 'bottling', 'sanitation', 'procurement', 'dispatch', 'other'].includes(item.kind)) {
+              throw new Error(`Production plan ${item.id} has invalid kind.`);
+            }
+            if (item.operationType !== undefined && ![
+              'crush_destem', 'pressing', 'ferment_start', 'measurement', 'pumpover', 'punchdown',
+              'racking', 'blending', 'sulfitation', 'additive', 'fining', 'filtration',
+              'stabilization', 'vessel_filling', 'bottling', 'cleaning', 'correction', 'custom',
+            ].includes(item.operationType)) {
+              throw new Error(`Production plan ${item.id} has invalid cellar operation type.`);
+            }
+            if (!['planned', 'ready', 'blocked', 'in_progress', 'completed', 'cancelled'].includes(item.status)) {
+              throw new Error(`Production plan ${item.id} has invalid status.`);
+            }
+            if (existingItem && item.status !== existingItem.status) {
+              const transitionIssue = productionPlanTransitionIssue(
+                existingItem,
+                item.status,
+                effectiveCollection('productionPlans'),
+              );
+              if (transitionIssue) {
+                throw new Error(`Production plan ${item.id} status is invalid: ${transitionIssue}`);
+              }
+            }
+            if (!isValidCalendarDate(item.startDate) || !isValidCalendarDate(item.endDate)) {
+              throw new Error(`Production plan ${item.id} requires valid start and end dates.`);
+            }
+            if (item.endDate < item.startDate) {
+              throw new Error(`Production plan ${item.id} cannot end before it starts.`);
+            }
+            if (!Array.isArray(item.vesselIds) || !Array.isArray(item.dependencyIds)) {
+              throw new Error(`Production plan ${item.id} has invalid vessel or dependency references.`);
+            }
+            for (const vesselId of item.vesselIds) {
+              if (!isValidId(vesselId) || !effectiveRecord('vessels', vesselId)) {
+                throw new Error(`Production plan ${item.id} references unknown vessel ${vesselId}.`);
+              }
+            }
+            const dependencyIds = new Set<string>();
+            for (const dependencyId of item.dependencyIds) {
+              if (!isValidId(dependencyId) || dependencyIds.has(dependencyId) || dependencyId === item.id || !effectiveRecord('productionPlans', dependencyId)) {
+                throw new Error(`Production plan ${item.id} references unknown dependency ${dependencyId}.`);
+              }
+              dependencyIds.add(dependencyId);
+            }
+            const dependencyQueue = [...item.dependencyIds];
+            const traversedDependencies = new Set<string>();
+            while (dependencyQueue.length) {
+              const dependencyId = dependencyQueue.shift()!;
+              if (dependencyId === item.id) {
+                throw new Error(`Production plan ${item.id} contains a dependency cycle.`);
+              }
+              if (traversedDependencies.has(dependencyId)) continue;
+              traversedDependencies.add(dependencyId);
+              const dependency = effectiveRecord('productionPlans', dependencyId);
+              if (Array.isArray(dependency?.dependencyIds)) dependencyQueue.push(...dependency.dependencyIds);
+            }
+            if (item.lotId && !effectiveRecord('lots', item.lotId)) {
+              throw new Error(`Production plan ${item.id} references an unknown lot.`);
+            }
+            if (item.quantityLiters !== undefined
+              && (typeof item.quantityLiters !== 'number' || !Number.isFinite(item.quantityLiters) || item.quantityLiters < 0)) {
+              throw new Error(`Production plan ${item.id} quantity must be non-negative.`);
+            }
+          }
+
+          else if (key === 'recallCases') {
+            if (!isValidId(item.lotId) || !effectiveRecord('lots', item.lotId)) {
+              throw new Error(`Recall case ${item.id} references an unknown lot.`);
+            }
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200
+              || typeof item.reason !== 'string' || !item.reason.trim() || item.reason.length > 2_000) {
+              throw new Error(`Recall case ${item.id} requires a valid title and reason.`);
+            }
+            if (!['draft', 'active', 'contained', 'closed'].includes(item.status)) {
+              throw new Error(`Recall case ${item.id} has invalid status.`);
+            }
+            if (existingItem) {
+              const transitions: Record<string, string[]> = {
+                draft: ['draft', 'active'],
+                active: ['active', 'contained'],
+                contained: ['contained', 'closed'],
+                closed: ['closed'],
+              };
+              if (!transitions[existingItem.status]?.includes(item.status)) {
+                throw new Error(`Recall case ${item.id} cannot move from ${existingItem.status} to ${item.status}.`);
+              }
+              for (const field of ['lotId', 'title', 'reason', 'openedAt', 'openedBy', 'affectedBottlingRunIds', 'affectedOrderIds', 'affectedDispatchIds', 'containmentTaskIds']) {
+                if (JSON.stringify(item[field]) !== JSON.stringify(existingItem[field])) {
+                  throw new Error(`Recall case ${item.id} exposure evidence cannot be modified.`);
+                }
+              }
+              for (const field of ['containedAt', 'containedBy', 'closedAt', 'closedBy']) {
+                if (existingItem[field] !== undefined && JSON.stringify(item[field]) !== JSON.stringify(existingItem[field])) {
+                  throw new Error(`Recall case ${item.id} lifecycle evidence is immutable.`);
+                }
+              }
+            }
+            if (item.status === 'contained' && existingItem?.status !== 'contained' && (
+              typeof item.containedAt !== 'string' || Number.isNaN(Date.parse(item.containedAt))
+              || typeof item.containedBy !== 'string' || !item.containedBy.trim()
+            )) {
+              throw new Error(`Recall case ${item.id} requires containment evidence.`);
+            }
+            if (item.status === 'closed' && (
+              typeof item.closedAt !== 'string' || Number.isNaN(Date.parse(item.closedAt))
+              || typeof item.closedBy !== 'string' || !item.closedBy.trim()
+            )) {
+              throw new Error(`Recall case ${item.id} requires closure evidence.`);
+            }
+            const referenceCollections: Array<[string, string]> = [
+              ['affectedBottlingRunIds', 'bottlingRuns'],
+              ['affectedOrderIds', 'salesOrders'],
+              ['affectedDispatchIds', 'salesDispatches'],
+              ['containmentTaskIds', 'tasks'],
+            ];
+            for (const [field, collection] of referenceCollections) {
+              if (!Array.isArray(item[field]) || item[field].length > 2_000) {
+                throw new Error(`Recall case ${item.id} has invalid ${field}.`);
+              }
+              for (const recordId of item[field]) {
+                if (!isValidId(recordId) || !effectiveRecord(collection, recordId)) {
+                  throw new Error(`Recall case ${item.id} references unknown ${collection} record ${recordId}.`);
+                }
+              }
+            }
+            if (!existingItem && item.status !== 'draft' && item.containmentTaskIds.length === 0) {
+              throw new Error(`Recall case ${item.id} requires containment tasks before activation.`);
+            }
+            if (['contained', 'closed'].includes(item.status)) {
+              const incompleteTaskIds = item.containmentTaskIds.filter((taskId: string) => (
+                effectiveRecord('tasks', taskId)?.status !== 'completed'
+              ));
+              if (item.containmentTaskIds.length === 0 || incompleteTaskIds.length > 0) {
+                throw new Error(`Recall case ${item.id} cannot advance until every containment task is completed.`);
+              }
+            }
+          }
+
+          else if (key === 'workOrders') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Work order ${item.id} requires a title.`);
+            }
+            if (typeof item.assignedTo !== 'string' || item.assignedTo.length > 160) {
+              throw new Error(`Work order ${item.id} has an invalid assignee.`);
+            }
+            if (typeof item.dueDate !== 'string' || Number.isNaN(Date.parse(item.dueDate))) {
+              throw new Error(`Work order ${item.id} requires a valid due date.`);
+            }
+            if (!Array.isArray(item.itemIds) || item.itemIds.length > 500) {
+              throw new Error(`Work order ${item.id} has an invalid item list.`);
+            }
+            // An order is a container, so its contents must exist. Duplicates
+            // would make the derived progress count the same work twice.
+            const seenItemIds = new Set<string>();
+            for (const planId of item.itemIds) {
+              if (!isValidId(planId) || !effectiveRecord('productionPlans', planId)) {
+                throw new Error(`Work order ${item.id} references unknown production plan ${planId}.`);
+              }
+              if (seenItemIds.has(planId)) {
+                throw new Error(`Work order ${item.id} lists production plan ${planId} more than once.`);
+              }
+              seenItemIds.add(planId);
+            }
+            if (item.templateId !== undefined
+              && (!isValidId(item.templateId) || !effectiveRecord('workOrderTemplates', item.templateId))) {
+              throw new Error(`Work order ${item.id} references an unknown template.`);
+            }
+            if (item.notes !== undefined && (typeof item.notes !== 'string' || item.notes.length > 4_000)) {
+              throw new Error(`Work order ${item.id} has invalid notes.`);
+            }
+          }
+
+          else if (key === 'workOrderTemplates') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Work order template ${item.id} requires a title.`);
+            }
+            if (!Array.isArray(item.items) || item.items.length > 100) {
+              throw new Error(`Work order template ${item.id} has an invalid item list.`);
+            }
+            for (const templateItem of item.items) {
+              if (!templateItem || typeof templateItem !== 'object' || Array.isArray(templateItem)) {
+                throw new Error(`Work order template ${item.id} has a malformed item.`);
+              }
+              if (typeof templateItem.title !== 'string' || !templateItem.title.trim() || templateItem.title.length > 200) {
+                throw new Error(`Work order template ${item.id} has an item without a title.`);
+              }
+              if (typeof templateItem.dayOffset !== 'number' || !Number.isInteger(templateItem.dayOffset)
+                || Math.abs(templateItem.dayOffset) > 365) {
+                throw new Error(`Work order template ${item.id} has an out-of-range day offset.`);
+              }
+            }
+            if (item.recurrence !== undefined) {
+              const recurrence = item.recurrence;
+              if (!recurrence || typeof recurrence !== 'object' || Array.isArray(recurrence)) {
+                throw new Error(`Work order template ${item.id} has a malformed recurrence.`);
+              }
+              // A non-advancing interval would ask the generator for an endless
+              // run of occurrences on the same date.
+              if (typeof recurrence.every !== 'number' || !Number.isInteger(recurrence.every)
+                || recurrence.every < 1 || recurrence.every > 365) {
+                throw new Error(`Work order template ${item.id} has an invalid recurrence interval.`);
+              }
+              if (!['day', 'week'].includes(recurrence.unit)) {
+                throw new Error(`Work order template ${item.id} has an invalid recurrence unit.`);
+              }
+              if (recurrence.until !== undefined
+                && (typeof recurrence.until !== 'string' || Number.isNaN(Date.parse(recurrence.until)))) {
+                throw new Error(`Work order template ${item.id} has an invalid recurrence end date.`);
+              }
+            }
+          }
+
+          else if (key === 'blendTrials') {
+            if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+              throw new Error(`Blend trial ${item.id} requires a title.`);
+            }
+            if (!['draft', 'accepted', 'discarded'].includes(item.status)) {
+              throw new Error(`Blend trial ${item.id} has invalid status.`);
+            }
+            if (!Array.isArray(item.components) || item.components.length > 50) {
+              throw new Error(`Blend trial ${item.id} has an invalid component list.`);
+            }
+            const trialLotIds = new Set<string>();
+            for (const component of item.components) {
+              if (!component || typeof component !== 'object' || Array.isArray(component)) {
+                throw new Error(`Blend trial ${item.id} has a malformed component.`);
+              }
+              if (!isValidId(component.lotId) || !effectiveRecord('lots', component.lotId)) {
+                throw new Error(`Blend trial ${item.id} references an unknown lot.`);
+              }
+              if (trialLotIds.has(component.lotId)) {
+                throw new Error(`Blend trial ${item.id} lists lot ${component.lotId} more than once.`);
+              }
+              trialLotIds.add(component.lotId);
+              if (typeof component.volumeL !== 'number' || !Number.isFinite(component.volumeL)
+                || component.volumeL < 0) {
+                throw new Error(`Blend trial ${item.id} has an invalid component volume.`);
+              }
+            }
+            if (item.notes !== undefined && (typeof item.notes !== 'string' || item.notes.length > 4_000)) {
+              throw new Error(`Blend trial ${item.id} has invalid notes.`);
+            }
+          }
+
           else if (key === 'tasks') {
             if (item.priority && !['high', 'medium', 'low'].includes(item.priority)) {
               throw new Error(`Task ${item.id} has invalid priority: ${item.priority}`);
             }
             if (item.status && !['pending', 'completed'].includes(item.status)) {
               throw new Error(`Task ${item.id} has invalid status: ${item.status}`);
+            }
+            if (item.assignedUserId !== undefined
+              && (typeof item.assignedUserId !== 'string' || item.assignedUserId.length > 160)) {
+              throw new Error(`Task ${item.id} has an invalid assigned user.`);
+            }
+            if (item.source !== undefined) {
+              const source = item.source;
+              if (!source || typeof source !== 'object' || Array.isArray(source)
+                || source.type !== 'production_plan' || !isValidId(source.id)
+                || !effectiveRecord('productionPlans', source.id)) {
+                throw new Error(`Task ${item.id} has an invalid production plan source.`);
+              }
+              const references: Array<[string, unknown, string]> = [
+                ['lotId', source.lotId, 'lots'],
+                ['blockId', source.blockId, 'blocks'],
+              ];
+              for (const [field, value, collection] of references) {
+                if (value !== undefined && (!isValidId(value) || !effectiveRecord(collection, value))) {
+                  throw new Error(`Task ${item.id} source has an invalid ${field}.`);
+                }
+              }
+              if (source.vesselIds !== undefined) {
+                if (!Array.isArray(source.vesselIds) || source.vesselIds.length > 100
+                  || source.vesselIds.some((vesselId: unknown) => !isValidId(vesselId) || !effectiveRecord('vessels', vesselId))) {
+                  throw new Error(`Task ${item.id} source has invalid vessel references.`);
+                }
+              }
+            }
+            if (item.notification !== undefined) {
+              const notification = item.notification;
+              if (!notification || typeof notification !== 'object' || Array.isArray(notification)) {
+                throw new Error(`Task ${item.id} has an invalid notification.`);
+              }
+              if (!['sending', 'sent', 'partial', 'failed'].includes(notification.status)) {
+                throw new Error(`Task ${item.id} has an invalid notification delivery status.`);
+              }
+              if (typeof notification.updatedAt !== 'string' || notification.updatedAt.length > 80
+                || (notification.error !== undefined
+                  && (typeof notification.error !== 'string' || notification.error.length > 300))) {
+                throw new Error(`Task ${item.id} has invalid notification delivery metadata.`);
+              }
+              if (notification.deliveries !== undefined) {
+                if (!Array.isArray(notification.deliveries) || notification.deliveries.length > 2) {
+                  throw new Error(`Task ${item.id} has invalid notification channels.`);
+                }
+                for (const delivery of notification.deliveries) {
+                  if (!delivery || typeof delivery !== 'object' || Array.isArray(delivery)
+                    || !['email', 'push'].includes(delivery.channel)
+                    || !['sending', 'sent', 'failed'].includes(delivery.status)
+                    || (delivery.error !== undefined
+                      && (typeof delivery.error !== 'string' || delivery.error.length > 300))) {
+                    throw new Error(`Task ${item.id} has invalid notification channel metadata.`);
+                  }
+                }
+              }
             }
           }
 
@@ -830,7 +2836,7 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
                 throw new Error(`Note ${item.id} has invalid referenced relatedLotId.`);
               }
               const lotExists = userDb.lots.some((l: any) => l.id === item.relatedLotId) || (collections.lots && collections.lots.some((l: any) => l.id === item.relatedLotId));
-              const lotDeleted = deletedIds && deletedIds.includes(item.relatedLotId);
+              const lotDeleted = isDeleted('lots', item.relatedLotId);
               if (!lotExists || lotDeleted) {
                 throw new Error(`Orphaned Reference: Note ${item.id} references non-existent or deleted Lot (${item.relatedLotId}).`);
               }
@@ -846,7 +2852,570 @@ export function validateSyncPayload(userDb: any, collections: Record<string, any
         }
       }
     }
+
+    const aggregateMovements = effectiveCollection('stockMovements')
+      .filter(item => item && ['in', 'out'].includes(item.direction) && typeof item.bottles === 'number' && Number.isFinite(item.bottles));
+    const aggregateOrders = effectiveCollection('salesOrders');
+    const stockPairs = new Map<string, { locationId: string; lotId: string; onHand: number }>();
+    const stockByLocation = new Map<string, number>();
+    for (const movement of aggregateMovements) {
+      const signedBottles = movement.direction === 'in' ? movement.bottles : -movement.bottles;
+      const key = `${movement.locationId}\u0000${movement.lotId}`;
+      const pair = stockPairs.get(key) || { locationId: movement.locationId, lotId: movement.lotId, onHand: 0 };
+      pair.onHand += signedBottles;
+      stockPairs.set(key, pair);
+      stockByLocation.set(movement.locationId, (stockByLocation.get(movement.locationId) || 0) + signedBottles);
+    }
+    for (const order of aggregateOrders) {
+      if (order?.status !== 'reserved' || !order.locationId || !order.lotId) continue;
+      const key = `${order.locationId}\u0000${order.lotId}`;
+      if (!stockPairs.has(key)) {
+        stockPairs.set(key, { locationId: order.locationId, lotId: order.lotId, onHand: 0 });
+      }
+    }
+    for (const pair of stockPairs.values()) {
+      if (pair.onHand < 0) {
+        throw new Error(`Invalid Stock Balance: outbound movements exceed inbound stock for ${pair.lotId} at ${pair.locationId}.`);
+      }
+      const reserved = reservedBottlesFor(aggregateOrders, pair.locationId, pair.lotId);
+      if (reserved > pair.onHand) {
+        throw new Error(`Invalid Stock Reservation: ${reserved} reserved bottles exceed ${pair.onHand} on hand for ${pair.lotId} at ${pair.locationId}.`);
+      }
+    }
+    for (const location of effectiveCollection('storageLocations')) {
+      if (!location?.id || !(location.capacityBottles > 0)) continue;
+      const onHand = stockByLocation.get(location.id) || 0;
+      if (onHand > location.capacityBottles) {
+        throw new Error(`Invalid Storage Capacity: ${onHand} bottles exceed ${location.capacityBottles} at ${location.id}.`);
+      }
+    }
   }
+}
+
+const RESPONSE_COLLECTION_DEPENDENCIES: Partial<Record<string, PermissionModule[]>> = {
+  // Lab entry needs active vessel IDs even though technicians do not manage the
+  // vessel module itself.
+  vessels: ['lab', 'recall'],
+  // Certification review is an evidence-aggregation workflow spanning origin,
+  // receiving, lab, and bottling records. These collections remain read-only
+  // unless their own module permission grants writes.
+  lots: ['certification', 'recall'],
+  blocks: ['certification'],
+  grapeIntakes: ['certification', 'recall'],
+  lablogs: ['certification'],
+  bottlingRuns: ['certification', 'recall'],
+  // A recall is a business containment workflow, but its evidence spans the
+  // full chain from harvest through customer dispatch. These dependencies are
+  // projections only: write access still belongs to each collection's owner.
+  harvests: ['recall'],
+  cellarOps: ['recall'],
+  transfers: ['recall'],
+  storageLocations: ['recall'],
+  stockMovements: ['recall'],
+  salesOrders: ['recall'],
+  salesDispatches: ['recall'],
+  tasks: ['recall'],
+  // Purchasing needs the item catalogue to build and inspect order lines.
+  inventory: ['procurement'],
+};
+
+function mayViewResponseCollection(role: string, collection: string): boolean {
+  const directModule = collection === 'integrationHub'
+    ? 'company_profile'
+    : moduleForSyncCollection(collection);
+  if (directModule && canAccess(role, directModule, 'view')) return true;
+  return (RESPONSE_COLLECTION_DEPENDENCIES[collection] || [])
+    .some(module => canAccess(role, module, 'view'));
+}
+
+function omitRecordFields(record: any, fields: string[]): any {
+  if (!record || typeof record !== 'object') return record;
+  const copy = { ...record };
+  for (const field of fields) delete copy[field];
+  return copy;
+}
+
+/**
+ * Return a schema-complete, role-filtered DB snapshot. Unauthorized collections
+ * stay present as []/{} so hydration clears stale data from an earlier role or
+ * organization instead of retaining it client-side.
+ *
+ * `auditLogs` is additionally windowed to the newest
+ * `AUDIT_HYDRATION_WINDOW` records. It is the one collection with no natural
+ * display limit and unbounded growth, and it was previously the largest thing
+ * every client downloaded at login and carried for the life of the session. The
+ * full, verified chain is served by `GET /api/audit-trail` instead; see
+ * `lib/auditHydration.ts` for what a holder of a window may and may not claim
+ * about it.
+ *
+ * This function is the single choke point for `/api/db` and every sync response,
+ * so windowing here covers hydration and re-hydration alike.
+ */
+export function redactWineryDatabaseForRole(role: string, userDb: any): any {
+  const empty = createEmptyUserData() as any;
+  const response: any = {};
+  const canViewCosts = canAccess(role, 'costs', 'view');
+  const canViewStorage = canAccess(role, 'storage', 'view');
+  const canViewSales = canAccess(role, 'sales', 'view');
+
+  for (const [collection, emptyValue] of Object.entries(empty)) {
+    if (collection === 'syncDeletionLedger') continue;
+    const storedValue = collection === 'auditLogs'
+      ? windowAuditLogsForHydration(userDb?.[collection])
+      : userDb?.[collection];
+    if (collection === 'attachments') {
+      response.attachments = (Array.isArray(storedValue) ? storedValue : [])
+        .filter((attachment: any) => {
+          const module = moduleForAttachmentKind(attachment?.module);
+          return module && canAccess(role, module, 'view');
+        });
+      continue;
+    }
+    if (!mayViewResponseCollection(role, collection)) {
+      response[collection] = Array.isArray(emptyValue) ? [] : {};
+      continue;
+    }
+
+    if (!Array.isArray(emptyValue)) {
+      response[collection] = storedValue && typeof storedValue === 'object' && !Array.isArray(storedValue)
+        ? { ...storedValue }
+        : {};
+      continue;
+    }
+
+    let records = Array.isArray(storedValue) ? storedValue : [];
+    if (!canViewCosts) {
+      if (collection === 'inventory') {
+        records = records.map((record: any) => omitRecordFields(record, ['costPerUnit', 'lastInvoiceReceipt']));
+      } else if (collection === 'grapeIntakes') {
+        records = records.map((record: any) => {
+          const redacted = omitRecordFields(record, [
+            'costPerKg', 'totalCost', 'currency', 'grapePrice', 'paymentStatus',
+          ]);
+          if (redacted.reversalSnapshot?.costEntry) {
+            redacted.reversalSnapshot = omitRecordFields(redacted.reversalSnapshot, ['costEntry']);
+          }
+          return redacted;
+        });
+      } else if (collection === 'bottlingRuns') {
+        records = records.map((record: any) => omitRecordFields(record, [
+          'packagingCostTotal', 'bottlingServiceCost',
+        ]));
+      } else if (collection === 'salesDispatches' || collection === 'salesOrders') {
+        records = records.map((record: any) => omitRecordFields(record, [
+          'costPerBottle', 'cogs', 'grossProfit', 'marginPct',
+        ]));
+      }
+    }
+    if (!canViewStorage && collection === 'bottlingRuns') {
+      records = records.map((record: any) => omitRecordFields(record, [
+        'storageLocationId', 'storageMovementId', 'placedInStorageBottles',
+      ]));
+    }
+    if (!canViewSales && collection === 'salesDispatches') {
+      records = records.map((record: any) => omitRecordFields(record, [
+        'pricePerBottle', 'currency', 'revenue', 'costPerBottle', 'cogs',
+        'grossProfit', 'marginPct',
+      ]));
+    } else if (!canViewSales && collection === 'salesOrders') {
+      records = records.map((record: any) => omitRecordFields(record, [
+        'pricePerBottle', 'currency', 'revenue', 'costPerBottle', 'cogs',
+        'grossProfit', 'marginPct',
+      ]));
+    }
+    response[collection] = records;
+  }
+
+  return response;
+}
+
+export interface SyncCandidateResult {
+  candidateDb: any;
+  conflicts: ReturnType<typeof mergeCollections>;
+  deletionConflict: boolean;
+  deletionRejected?: boolean;
+  deletionError?: string;
+  recoverableCollections?: Record<string, any>;
+  /**
+   * What the merge did, per record. Travels on the result rather than being
+   * reported from inside the merge because a request may build several
+   * candidates — the optimistic-concurrency retry loop rebuilds on fresh state,
+   * and the deletion-recovery path builds a safe candidate beside the first.
+   * Only the candidate a request actually acts on should be counted, and only
+   * the caller knows which that was.
+   */
+  mergeOutcomes: MergeOutcomeTally;
+}
+
+export const MAX_SYNC_DELETION_LEDGER_ENTRIES = 20_000;
+
+interface SyncDeletionLedgerEntry {
+  id: string;
+  collection: string;
+  recordLastModified?: string;
+  recordFingerprint: string;
+  deletedAt: string;
+}
+
+const deletionIdentity = (collection: string, id: string): string => `${collection}\u0000${id}`;
+
+function normalizedDeletionLedger(userDb: any): SyncDeletionLedgerEntry[] {
+  if (!Array.isArray(userDb?.syncDeletionLedger)) return [];
+  return userDb.syncDeletionLedger.filter((entry: any): entry is SyncDeletionLedgerEntry => (
+    entry
+    && typeof entry === 'object'
+    && typeof entry.id === 'string'
+    && typeof entry.collection === 'string'
+    && typeof entry.recordFingerprint === 'string'
+    && typeof entry.deletedAt === 'string'
+  ));
+}
+
+function deletionVersionConflicts(
+  userDb: any,
+  deletedRecords: DeletedRecordRef[] | undefined,
+): ReturnType<typeof mergeCollections> {
+  const conflicts: ReturnType<typeof mergeCollections> = [];
+  for (const deletion of Array.isArray(deletedRecords) ? deletedRecords : []) {
+    if (!deletion || typeof deletion.collection !== 'string' || typeof deletion.id !== 'string') continue;
+    const existing = Array.isArray(userDb?.[deletion.collection])
+      ? userDb[deletion.collection].find((record: any) => record?.id === deletion.id)
+      : undefined;
+    if (!existing) continue; // delete/delete replay converges without conflict
+    const timestampChanged = typeof deletion.baselineTimestamp === 'string'
+      && deletion.baselineTimestamp !== existing.lastModified;
+    const contentChanged = typeof deletion.baselineFingerprint === 'string'
+      && deletion.baselineFingerprint !== syncRecordFingerprint(existing);
+    if (!timestampChanged && !contentChanged) continue;
+    conflicts.push({
+      collection: toClientKey(deletion.collection),
+      recordId: deletion.id,
+      local: null,
+      server: { ...existing },
+    });
+  }
+  return conflicts;
+}
+
+function prepareCollectionsAgainstDeletionLedger(
+  userDb: any,
+  collections: Record<string, any>,
+): {
+  safeCollections: Record<string, any>;
+  conflicts: ReturnType<typeof mergeCollections>;
+  recreatedIdentities: Set<string>;
+} {
+  const ledger = new Map(normalizedDeletionLedger(userDb).map(entry => (
+    [deletionIdentity(entry.collection, entry.id), entry]
+  )));
+  if (ledger.size === 0) {
+    return { safeCollections: collections, conflicts: [], recreatedIdentities: new Set() };
+  }
+
+  const safeCollections: Record<string, any> = { ...collections };
+  const conflicts: ReturnType<typeof mergeCollections> = [];
+  const recreatedIdentities = new Set<string>();
+  for (const [collection, value] of Object.entries(collections)) {
+    if (!Array.isArray(value)) continue;
+    safeCollections[collection] = value.filter((record: any) => {
+      if (!record || typeof record.id !== 'string') return true;
+      const identity = deletionIdentity(collection, record.id);
+      const deletion = ledger.get(identity);
+      if (!deletion) return true;
+      const currentExists = Array.isArray(userDb?.[collection])
+        && userDb[collection].some((current: any) => current?.id === record.id);
+      if (currentExists) return true;
+      if (typeof record.baselineTimestamp === 'string') {
+        conflicts.push({
+          collection: toClientKey(collection),
+          recordId: record.id,
+          local: { ...record },
+          server: null,
+        });
+        return false;
+      }
+      if (syncRecordFingerprint(record) === deletion.recordFingerprint) {
+        // A full-collection sync can carry an untouched stale copy. The
+        // authoritative deletion wins silently instead of resurrecting it.
+        return false;
+      }
+      // No edit baseline and different content means an explicit new lifecycle
+      // reusing the id. Allow it and retire the previous lifecycle's ledger row.
+      recreatedIdentities.add(identity);
+      return true;
+    });
+  }
+  return { safeCollections, conflicts, recreatedIdentities };
+}
+
+function appendDeletionLedger(
+  candidateDb: any,
+  recordsBeforeDeletion: Array<{ collection: string; record: any; deletedAt?: string }>,
+  recreatedIdentities: Set<string>,
+): void {
+  const deletedIdentities = new Set(recordsBeforeDeletion.map(({ collection, record }) => (
+    deletionIdentity(collection, record.id)
+  )));
+  const ledger = normalizedDeletionLedger(candidateDb).filter(entry => {
+    const identity = deletionIdentity(entry.collection, entry.id);
+    return !deletedIdentities.has(identity) && !recreatedIdentities.has(identity);
+  });
+  for (const { collection, record, deletedAt } of recordsBeforeDeletion) {
+    ledger.push({
+      id: record.id,
+      collection,
+      ...(typeof record.lastModified === 'string' ? { recordLastModified: record.lastModified } : {}),
+      recordFingerprint: syncRecordFingerprint(record),
+      deletedAt: deletedAt || new Date().toISOString(),
+    });
+  }
+  candidateDb.syncDeletionLedger = ledger.slice(-MAX_SYNC_DELETION_LEDGER_ENTRIES);
+}
+
+/**
+ * Remove the compensating mutations that only make sense when their paired
+ * deletion succeeds. The remainder can be merged safely when the server has
+ * to reject or defer that deletion (for example after another session added a
+ * reference).
+ */
+export function prepareCollectionsForRejectedDeletion(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords?: any,
+): Record<string, any> {
+  const deletionMatcher = createDeletionMatcher(deletedIds, deletedRecords);
+  if (!deletionMatcher.hasDeletions) return collections;
+
+  const safeCollections: Record<string, any> = { ...collections };
+  const deletedRuns = (Array.isArray(userDb?.bottlingRuns) ? userDb.bottlingRuns : [])
+    .filter((run: any) => run?.id && deletionMatcher.isDeleted('bottlingRuns', run.id));
+  const deletedDispatches = (Array.isArray(userDb?.salesDispatches) ? userDb.salesDispatches : [])
+    .filter((dispatch: any) => dispatch?.id && deletionMatcher.isDeleted('salesDispatches', dispatch.id));
+
+  if (deletedRuns.length > 0 && Array.isArray(collections.lots)) {
+    const runByLotId = new Map(deletedRuns.map((run: any) => [run.lotId, run]));
+    safeCollections.lots = collections.lots.map((lot: any) => {
+      const run: any = runByLotId.get(lot?.id);
+      const existing = Array.isArray(userDb?.lots)
+        ? userDb.lots.find((candidate: any) => candidate?.id === lot?.id)
+        : undefined;
+      if (!run || !existing) return lot;
+      const isRollbackMutation = lot.stage === run.previousLotStage
+        && lot.currentVolume === run.previousLotVolumeL;
+      if (!isRollbackMutation) return lot;
+
+      const incomingHistory = Array.isArray(lot.history) ? [...lot.history] : undefined;
+      const serverHistory = Array.isArray(existing.history) ? existing.history : [];
+      const sourceEvents = serverHistory
+        .map((event: any, index: number) => ({ event, index }))
+        .filter(({ event }: { event: any; index: number }) => event?.sourceRef === run.id);
+      if (incomingHistory) {
+        for (const { event, index } of sourceEvents) {
+          if (incomingHistory.some((candidate: any) => JSON.stringify(candidate) === JSON.stringify(event))) continue;
+          incomingHistory.splice(Math.min(index, incomingHistory.length), 0, event);
+        }
+      }
+
+      return {
+        ...lot,
+        stage: existing.stage,
+        currentVolume: existing.currentVolume,
+        ...(incomingHistory ? { history: incomingHistory } : {}),
+      };
+    });
+  }
+
+  if (deletedRuns.length > 0 && Array.isArray(collections.inventory)) {
+    const restoredByMaterialId = new Map<string, number>();
+    for (const run of deletedRuns) {
+      for (const [materialId, quantity] of Object.entries(run?.packagingDeductions || {})) {
+        if (typeof quantity !== 'number' || quantity <= 0) continue;
+        restoredByMaterialId.set(materialId, (restoredByMaterialId.get(materialId) || 0) + quantity);
+      }
+    }
+    safeCollections.inventory = collections.inventory.map((item: any) => {
+      const restored = restoredByMaterialId.get(item?.id);
+      const existing = Array.isArray(userDb?.inventory)
+        ? userDb.inventory.find((candidate: any) => candidate?.id === item?.id)
+        : undefined;
+      if (!restored || !existing || typeof item.stock !== 'number' || typeof existing.stock !== 'number') return item;
+      const expectedRollbackStock = Math.round((existing.stock + restored) * 1000) / 1000;
+      return item.stock === expectedRollbackStock ? { ...item, stock: existing.stock } : item;
+    });
+  }
+
+  if (deletedDispatches.length > 0 && Array.isArray(collections.salesOrders)) {
+    const deletedDispatchIds = new Set(deletedDispatches.map((dispatch: any) => dispatch.id));
+    safeCollections.salesOrders = collections.salesOrders.map((order: any) => {
+      const existing = Array.isArray(userDb?.salesOrders)
+        ? userDb.salesOrders.find((candidate: any) => candidate?.id === order?.id)
+        : undefined;
+      if (!existing?.dispatchId || !deletedDispatchIds.has(existing.dispatchId) || order.dispatchId) return order;
+      return {
+        ...order,
+        dispatchId: existing.dispatchId,
+        status: existing.status,
+        fulfilledAt: existing.fulfilledAt,
+      };
+    });
+  }
+
+  return safeCollections;
+}
+
+/**
+ * Build the state that would actually be saved without mutating the current
+ * server snapshot. Deletions are applied only after every incoming update has
+ * merged cleanly and the resulting references have been revalidated.
+ */
+export function buildSyncCandidate(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  historyScope = '',
+  deletedRecords?: DeletedRecordRef[],
+): SyncCandidateResult {
+  const originalDb = JSON.parse(JSON.stringify(userDb));
+  const mergeOutcomes = createMergeOutcomeTally();
+  const hasDeletions = createDeletionMatcher(deletedIds, deletedRecords).hasDeletions;
+  const versionConflicts = deletionVersionConflicts(userDb, deletedRecords);
+  if (versionConflicts.length > 0) {
+    return { candidateDb: originalDb, conflicts: versionConflicts, deletionConflict: true, mergeOutcomes };
+  }
+
+  const ledgerPreparation = prepareCollectionsAgainstDeletionLedger(userDb, collections);
+  if (ledgerPreparation.conflicts.length > 0) {
+    return {
+      candidateDb: originalDb,
+      conflicts: ledgerPreparation.conflicts,
+      deletionConflict: hasDeletions,
+      mergeOutcomes,
+    };
+  }
+
+  const candidateDb = JSON.parse(JSON.stringify(userDb));
+  const conflicts = mergeCollections(candidateDb, ledgerPreparation.safeCollections, historyScope, mergeOutcomes);
+
+  // A multi-collection payload represents one client transaction (dispatch +
+  // stock movement + order update, bottling + lot rollback, etc.). Persisting
+  // clean siblings while an anchor record conflicts creates orphan workflows,
+  // so conservatively defer the entire payload.
+  if (conflicts.length > 0) {
+    return { candidateDb: originalDb, conflicts, deletionConflict: hasDeletions, mergeOutcomes };
+  }
+
+  if (hasDeletions) {
+    validateSyncPayload(candidateDb, {}, deletedIds, deletedRecords);
+    const deletionMatcher = createDeletionMatcher(deletedIds, deletedRecords);
+    const deletionMetadata = new Map(
+      (Array.isArray(deletedRecords) ? deletedRecords : []).map(record => (
+        [deletionIdentity(record.collection, record.id), record]
+      )),
+    );
+    const recordsBeforeDeletion: Array<{ collection: string; record: any; deletedAt?: string }> = [];
+    for (const [collection, records] of Object.entries(candidateDb)) {
+      if (collection === 'syncDeletionLedger' || !Array.isArray(records)) continue;
+      for (const record of records) {
+        if (!record?.id || !deletionMatcher.isDeleted(collection, record.id)) continue;
+        const metadata = deletionMetadata.get(deletionIdentity(collection, record.id));
+        recordsBeforeDeletion.push({
+          collection,
+          record,
+          ...(typeof metadata?.deletedAt === 'string' ? { deletedAt: metadata.deletedAt } : {}),
+        });
+      }
+    }
+    applyDeletions(candidateDb, deletedIds, deletedRecords);
+    appendDeletionLedger(candidateDb, recordsBeforeDeletion, ledgerPreparation.recreatedIdentities);
+  } else if (ledgerPreparation.recreatedIdentities.size > 0) {
+    appendDeletionLedger(candidateDb, [], ledgerPreparation.recreatedIdentities);
+  }
+
+  return { candidateDb, conflicts, deletionConflict: false, mergeOutcomes };
+}
+
+/**
+ * Build a sync result that never leaves deletion tombstones permanently stuck.
+ * A rejected/deferred deletion restores its server records while preserving
+ * unrelated clean updates from the same payload.
+ */
+export function buildRecoverableSyncCandidate(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  preflightDeletionError: string | null = null,
+  historyScope = '',
+  deletedRecords?: DeletedRecordRef[],
+): SyncCandidateResult {
+  const safeCollections = prepareCollectionsForRejectedDeletion(userDb, collections, deletedIds, deletedRecords);
+  const recover = (error: string): SyncCandidateResult => {
+    const safeCandidate = buildSyncCandidate(userDb, safeCollections, undefined, historyScope);
+    return {
+      ...safeCandidate,
+      deletionRejected: true,
+      deletionError: error,
+      recoverableCollections: safeCollections,
+    };
+  };
+
+  if (preflightDeletionError) return recover(preflightDeletionError);
+
+  try {
+    const candidate = buildSyncCandidate(userDb, collections, deletedIds, historyScope, deletedRecords);
+    if (!candidate.deletionConflict) return candidate;
+
+    const safeCandidate = buildSyncCandidate(userDb, safeCollections, undefined, historyScope);
+    return {
+      ...safeCandidate,
+      conflicts: candidate.conflicts,
+      deletionConflict: true,
+    };
+  } catch (err: any) {
+    return recover(err?.message || 'Deletion integrity validation failed');
+  }
+}
+
+export function prepareAttachmentsForServerMerge(attachments: any): any {
+  if (!Array.isArray(attachments)) return attachments;
+
+  return attachments.map((item: any) => {
+    if (!item || typeof item !== 'object') return item;
+
+    const fileName = normalizeAttachmentFileName(item.fileName) || item.fileName;
+    const rawStorage = item.storage && typeof item.storage === 'object' && !Array.isArray(item.storage)
+      ? item.storage
+      : {};
+    const storage = rawStorage.kind === 'inline'
+      ? { kind: 'inline', dataUrl: rawStorage.dataUrl }
+      : rawStorage.kind === 'external'
+        ? { kind: 'external', url: normalizeExternalAttachmentUrl(rawStorage.url) || rawStorage.url }
+        : rawStorage.kind === 'gcs' && isValidAttachmentObjectKey(rawStorage.objectKey)
+          ? { kind: 'gcs', objectKey: rawStorage.objectKey }
+          : { kind: 'metadata_only' };
+    const prepared: any = {
+      ...item,
+      fileName,
+      storage,
+    };
+
+    const mimeType = normalizeAttachmentMimeType(item.mimeType);
+    if (mimeType) {
+      prepared.mimeType = mimeType;
+    } else {
+      delete prepared.mimeType;
+    }
+
+    if (storage?.kind === 'inline' && typeof storage.dataUrl === 'string') {
+      prepared.checksum = item.checksum
+        ? String(item.checksum).toLowerCase()
+        : checksumAttachmentDataUrl(storage.dataUrl);
+    } else if (item.checksum) {
+      prepared.checksum = String(item.checksum).toLowerCase();
+    }
+
+    return prepared;
+  });
 }
 
 function syncActionsForCollection(userDb: any, collection: string, incoming: any): PermissionAction[] {
@@ -862,9 +3431,42 @@ function syncActionsForCollection(userDb: any, collection: string, incoming: any
   return [...actions];
 }
 
+function isCellarFloorOnlyProfileUpdate(stored: any, incoming: any): boolean {
+  if (!stored || !incoming || typeof stored !== 'object' || typeof incoming !== 'object'
+    || Array.isArray(stored) || Array.isArray(incoming) || incoming.cellarFloors === undefined) return false;
+  const { cellarFloors: _storedFloors, ...storedIdentity } = stored;
+  const { cellarFloors: _incomingFloors, ...incomingIdentity } = incoming;
+  return syncRecordFingerprint(storedIdentity) === syncRecordFingerprint(incomingIdentity);
+}
+
+export function syncMutatesCollection(
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords: any,
+  collection: string,
+): boolean {
+  const existing = Array.isArray(userDb?.[collection]) ? userDb[collection] : [];
+  const existingById = new Map(existing
+    .filter((item: any) => item?.id)
+    .map((item: any) => [item.id, item]));
+  const incoming = collections[collection];
+  if (Array.isArray(incoming) && incoming.some((item: any) => {
+    if (!item || typeof item !== 'object' || !item.id) return false;
+    const stored = existingById.get(item.id);
+    return !stored || syncRecordFingerprint(stored) !== syncRecordFingerprint(item);
+  })) return true;
+
+  if (Array.isArray(deletedRecords) && deletedRecords.some((record: any) => (
+    record?.collection === collection && existingById.has(record?.id)
+  ))) return true;
+  return Array.isArray(deletedIds) && deletedIds.some((id: any) => existingById.has(id));
+}
+
 function deletionTargetsForId(userDb: any, id: string): Array<{ collection: string; module: ReturnType<typeof moduleForSyncCollection>; action: PermissionAction }> {
   const targets: Array<{ collection: string; module: ReturnType<typeof moduleForSyncCollection>; action: PermissionAction }> = [];
   for (const [collection, value] of Object.entries(userDb || {})) {
+    if (collection === 'syncDeletionLedger') continue;
     if (!Array.isArray(value)) continue;
     for (const item of value) {
       if (!item || item.id !== id) continue;
@@ -881,13 +3483,21 @@ function deletionTargetsForId(userDb: any, id: string): Array<{ collection: stri
   return targets;
 }
 
-function authorizeDeletedIds(role: string, userDb: any, deletedIds: any): string | null {
-  if (!Array.isArray(deletedIds) || deletedIds.length === 0) return null;
+function authorizeDeletions(role: string, userDb: any, deletedIds: any, deletedRecords?: any): string | null {
+  const hasLegacyDeletions = Array.isArray(deletedIds) && deletedIds.length > 0;
+  const hasScopedDeletions = Array.isArray(deletedRecords) && deletedRecords.length > 0;
+  if (!hasLegacyDeletions && !hasScopedDeletions) return null;
   if (can(role, 'admin')) return null;
 
-  for (const id of deletedIds) {
+  const requested = [
+    ...(hasLegacyDeletions ? deletedIds.map((id: any) => ({ id, collection: null })) : []),
+    ...(hasScopedDeletions ? deletedRecords : []),
+  ];
+  for (const record of requested) {
+    const { id, collection } = record || {};
     if (!isValidId(id)) continue;
-    const targets = deletionTargetsForId(userDb, id);
+    const targets = deletionTargetsForId(userDb, id)
+      .filter(target => !collection || target.collection === collection);
     for (const target of targets) {
       if (!target.module) {
         return `Forbidden: deleting ${id} from ${target.collection} is not authorized.`;
@@ -900,26 +3510,55 @@ function authorizeDeletedIds(role: string, userDb: any, deletedIds: any): string
   return null;
 }
 
-export function authorizeSyncPayload(role: string, userDb: any, collections: Record<string, any>, deletedIds: any): string | null {
-  const deletionError = authorizeDeletedIds(role, userDb, deletedIds);
+export function authorizeSyncPayload(
+  role: string,
+  userDb: any,
+  collections: Record<string, any>,
+  deletedIds: any,
+  deletedRecords?: any,
+): string | null {
+  const deletionError = authorizeDeletions(role, userDb, deletedIds, deletedRecords);
   if (deletionError) return deletionError;
 
   for (const [collection, incoming] of Object.entries(collections)) {
+    if (collection === 'aiFindings') {
+      return 'Forbidden: AI findings are server-owned and cannot be modified via sync.';
+    }
     if (!moduleForSyncCollection(collection)) {
       return `Forbidden: ${collection} is not an authorized sync collection.`;
     }
     if (collection === 'attachments' && Array.isArray(incoming)) {
       const existing = Array.isArray(userDb[collection]) ? userDb[collection] : [];
-      const existingIds = new Set(existing.map((item: any) => item?.id).filter(Boolean));
+      const existingById = new Map<string, any>();
+      for (const existingItem of existing) {
+        if (existingItem?.id) existingById.set(existingItem.id, existingItem);
+      }
       for (const item of incoming) {
         if (!item || typeof item !== 'object' || !item.id) continue;
-        const module = moduleForAttachmentKind(item.module);
-        if (!module) return `Forbidden: attachment ${item.id} has unknown module.`;
-        const action: PermissionAction = existingIds.has(item.id) ? 'update' : 'create';
-        if (!canAccess(role, module, action)) {
-          return `Forbidden: ${role} cannot ${action} ${collection} for ${module}.`;
+        const existingItem = existingById.get(item.id);
+        const incomingModule = moduleForAttachmentKind(item.module);
+        if (!incomingModule) return `Forbidden: attachment ${item.id} has unknown module.`;
+        const action: PermissionAction = existingItem ? 'update' : 'create';
+        const modules = new Set([incomingModule]);
+        if (existingItem) {
+          const existingModule = moduleForAttachmentKind((existingItem as any).module);
+          if (!existingModule) return `Forbidden: attachment ${item.id} has unknown stored module.`;
+          modules.add(existingModule);
+        }
+        for (const module of modules) {
+          if (!canAccess(role, module, action)) {
+            return `Forbidden: ${role} cannot ${action} ${collection} for ${module}.`;
+          }
         }
       }
+      continue;
+    }
+    // Physical layout is an operational vessel concern. Winemakers and cellar
+    // workers may change only cellarFloors without gaining access to legal,
+    // contact, certification, or other company-profile fields.
+    if (collection === 'companyProfile'
+      && canAccess(role, 'vessels', 'update')
+      && isCellarFloorOnlyProfileUpdate(userDb.companyProfile, incoming)) {
       continue;
     }
     const actions = syncActionsForCollection(userDb, collection, incoming);
@@ -935,7 +3574,54 @@ export function authorizeSyncPayload(role: string, userDb: any, collections: Rec
 // POST /api/sync
 router.post('/sync', checkWineryScope('write'), async (req, res) => {
   const session = (req as any).wineryContext;
-  const { deletedIds, ...collections } = req.body;
+  const telemetryStartedAt = Date.now();
+  const telemetry = {
+    mergeMs: 0,
+    retryCount: 0,
+    conflict: false,
+  };
+  const telemetryPayload = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  const payloadBytes = Buffer.byteLength(JSON.stringify(req.body ?? null));
+  const tombstoneCount = ['deletedIds', 'deletedRecords'].reduce((total, key) => (
+    total + (Array.isArray(telemetryPayload[key]) ? telemetryPayload[key].length : 0)
+  ), 0);
+  const recordCount = Object.entries(telemetryPayload).reduce((total, [key, value]) => (
+    total + (!['deletedIds', 'deletedRecords'].includes(key) && Array.isArray(value) ? value.length : 0)
+  ), 0);
+  res.once('finish', () => {
+    recordSyncOperationalMetric({
+      payloadBytes,
+      recordCount,
+      tombstoneCount,
+      durationMs: Date.now() - telemetryStartedAt,
+      mergeMs: telemetry.mergeMs,
+      retryCount: telemetry.retryCount,
+      conflict: telemetry.conflict,
+      statusCode: res.statusCode,
+      outcome: telemetry.conflict ? 'conflict' : res.statusCode >= 200 && res.statusCode < 300
+        ? 'success'
+        : 'rejected',
+    });
+  });
+  try {
+    assertSyncPayloadWithinLimits(req.body);
+  } catch (error) {
+    if (error instanceof SyncPayloadLimitError) {
+      return res.status(error.statusCode).json({
+        code: error.code,
+        error: error.message,
+        limits: {
+          recordsPerCollection: MAX_SYNC_RECORDS_PER_COLLECTION,
+          totalRecords: MAX_SYNC_TOTAL_RECORDS,
+          tombstones: MAX_SYNC_TOMBSTONES,
+        },
+      });
+    }
+    throw error;
+  }
+  const { deletedIds, deletedRecords, ...collections } = req.body;
 
   // Optimistic-concurrency retry: a version conflict means another sync landed
   // between our reload and save. Per-item baselines make the merge idempotent,
@@ -944,6 +3630,7 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
   // conflicts are still reported per item via `conflicts`.
   const MAX_SAVE_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
+    telemetry.retryCount = attempt - 1;
     const refreshed = await reloadUserOrganizationDataFromPostgres(session.username);
     const expectedOrgStateVersion = refreshed?.meta.version ?? null;
     const userDb = refreshed?.data || await getUserData(session.username) || createEmptyUserData();
@@ -951,15 +3638,49 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     // the budget guard below can allow shrinking syncs even when already at cap.
     const inlineBytesBefore = sumInlineAttachmentBytes(userDb.attachments);
 
-    const permissionError = authorizeSyncPayload(session.role, userDb, collections, deletedIds);
+    if (syncMutatesCollection(userDb, collections, deletedIds, deletedRecords, 'costEntries')) {
+      const canTrackProductionCosts = await organizationHasFeature(
+        session.organizationId,
+        'production_cost_tracking',
+      );
+      if (!canTrackProductionCosts) {
+        return res.status(403).json({
+          code: 'subscription_feature_required',
+          feature: 'production_cost_tracking',
+          error: 'Production cost tracking is not included in the current subscription plan.',
+        });
+      }
+    }
+
+    const permissionError = authorizeSyncPayload(session.role, userDb, collections, undefined);
     if (permissionError) {
       return res.status(403).json({ error: permissionError });
     }
 
+    const safeCollections = prepareCollectionsForRejectedDeletion(userDb, collections, deletedIds, deletedRecords);
     try {
-      validateSyncPayload(userDb, collections, deletedIds);
+      validateSyncPayload(userDb, safeCollections, undefined);
     } catch (err: any) {
       return res.status(400).json({ error: err.message || 'Validation error' });
+    }
+
+    const deletionRequested = (
+      deletedIds !== undefined
+      && (!Array.isArray(deletedIds) || deletedIds.length > 0)
+    ) || (
+      deletedRecords !== undefined
+      && (!Array.isArray(deletedRecords) || deletedRecords.length > 0)
+    );
+    let deletionError: string | null = null;
+    if (deletionRequested) {
+      deletionError = authorizeSyncPayload(session.role, userDb, {}, deletedIds, deletedRecords);
+      if (!deletionError) {
+        try {
+          validateSyncPayload(userDb, collections, deletedIds, deletedRecords);
+        } catch (err: any) {
+          deletionError = err?.message || 'Deletion validation failed';
+        }
+      }
     }
 
     // Never mutate the client payload: a retry must re-prepare from the
@@ -972,22 +3693,61 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
           collections.auditLogs.map((log: any) => ({ ...log })),
         );
       }
+      if (Array.isArray(collections.attachments)) {
+        merging.attachments = prepareAttachmentsForServerMerge(collections.attachments);
+      }
     } catch (err: any) {
       return res.status(400).json({ error: err.message || 'Audit validation error' });
     }
 
-    // Apply deletions, then merge with optimistic-concurrency conflict detection.
-    applyDeletions(userDb, deletedIds);
-    const conflicts = mergeCollections(userDb, merging, session.organizationId);
+    const mergeStartedAt = Date.now();
+    const candidate = buildRecoverableSyncCandidate(
+      userDb,
+      merging,
+      deletedIds,
+      deletionError,
+      session.organizationId,
+      deletedRecords,
+    );
+    telemetry.mergeMs += Date.now() - mergeStartedAt;
+    const { candidateDb, conflicts } = candidate;
+    const deletionDeferred = candidate.deletionConflict;
+    if (conflicts.length > 0) {
+      // Recorded here as well as on the success path: a conflict IS the outcome
+      // being measured, and counting only successful syncs would omit every
+      // case the three-way merge failed to absorb.
+      recordSyncMergeOutcomeMetric(candidate.mergeOutcomes);
+      telemetry.conflict = true;
+      await setOrganizationStateHeaders(res, session.username);
+      return res.json({
+        hasConflicts: true,
+        conflicts,
+        serverDb: redactWineryDatabaseForRole(session.role, candidateDb),
+        ...(deletionDeferred ? { deletionDeferred: true } : {}),
+        ...(candidate.deletionRejected ? {
+          deletionRejected: true,
+          deletionError: candidate.deletionError,
+          recoverableCollections: Object.fromEntries(
+            Object.keys(candidate.recoverableCollections || {}).map(collection => {
+              const redacted = redactWineryDatabaseForRole(
+                session.role,
+                candidate.recoverableCollections,
+              );
+              return [collection, redacted[collection]];
+            }),
+          ),
+        } : {}),
+      });
+    }
     if (session.username === 'testuser1') {
-      pruneTestUserSeedDuplicates(userDb);
+      pruneTestUserSeedDuplicates(candidateDb);
     }
 
     // Org-wide inline-attachment budget. Inline blobs accumulate in the JSONB
     // state, so block syncs that GROW the footprint past the cap — but always
     // allow syncs that keep it flat or shrink it, so a user who is already at
     // the limit can still delete/externalize attachments to recover.
-    const inlineBytesAfter = sumInlineAttachmentBytes(userDb.attachments);
+    const inlineBytesAfter = sumInlineAttachmentBytes(candidateDb.attachments);
     if (inlineBytesAfter > MAX_TOTAL_INLINE_ATTACHMENT_BYTES && inlineBytesAfter > inlineBytesBefore) {
       const capMb = (MAX_TOTAL_INLINE_ATTACHMENT_BYTES / 1_000_000).toFixed(0);
       return res.status(413).json({
@@ -997,7 +3757,7 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
     }
 
     try {
-      await saveUserData(session.username, userDb, {
+      await saveUserData(session.username, candidateDb, {
         expectedVersion: expectedOrgStateVersion,
         updatedBy: `api-sync:${session.username}`,
       });
@@ -1012,18 +3772,51 @@ router.post('/sync', checkWineryScope('write'), async (req, res) => {
         return res.status(409).json({
           code: 'org_state_conflict',
           error: 'Organization data changed while saving. Please sync again before retrying.',
-          serverDb: latest?.data || userDb,
+          serverDb: redactWineryDatabaseForRole(session.role, latest?.data || candidateDb),
         });
       }
       throw err;
     }
 
-    await setOrganizationStateHeaders(res, session.username);
+    // Past the save: this attempt's merge is the one that persisted. Attempts
+    // abandoned by the optimistic-concurrency retry above never reach here, so
+    // a contended write is counted once rather than once per attempt.
+    recordSyncMergeOutcomeMetric(candidate.mergeOutcomes);
 
-    if (conflicts.length > 0) {
-      return res.json({ hasConflicts: true, conflicts, serverDb: userDb });
-    }
-    return res.json(userDb);
+    // Capacity is informational during harvest: usage is updated server-side,
+    // but exceeding a plan never blocks or discards operational records.
+    await recordProductionUsage(session.organizationId, candidateDb).catch((error) => {
+      console.error('[billing] failed to refresh production usage:', error instanceof Error ? error.message : 'unknown error');
+    });
+
+    await setOrganizationStateHeaders(res, session.username);
+    const responseDb = redactWineryDatabaseForRole(session.role, candidateDb);
+
+    // Report how close this workspace is to the sync ceilings. The append-only
+    // collections only grow, and without this the first signal that a winery has
+    // outgrown them is a rejected sync — long past the point where anything can
+    // be done calmly. Reported only once it matters, so the normal response
+    // stays unchanged.
+    const pressure = assessFootprintPressure(
+      measureStateFootprint(candidateDb),
+      { maxRecords: MAX_SYNC_TOTAL_RECORDS, maxBytes: MAX_SYNC_BODY_BYTES },
+    );
+
+    return res.json({
+      ...responseDb,
+      ...(candidate.deletionRejected ? {
+        deletionRejected: true,
+        deletionError: candidate.deletionError,
+      } : {}),
+      ...(pressure.level === 'ok' ? {} : {
+        stateFootprint: {
+          level: pressure.level,
+          recordsPct: Math.round(pressure.recordsPct * 100),
+          bytesPct: Math.round(pressure.bytesPct * 100),
+          topCollections: pressure.topCollections,
+        },
+      }),
+    });
   }
 });
 
@@ -1038,7 +3831,7 @@ router.get('/db', checkWineryScope('read'), async (req, res) => {
     await saveUserData(session.username, userDb);
   }
   await setOrganizationStateHeaders(res, session.username);
-  res.json(userDb);
+  res.json(redactWineryDatabaseForRole(session.role, userDb));
 });
 
 export default router;

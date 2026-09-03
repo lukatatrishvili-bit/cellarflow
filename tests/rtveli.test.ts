@@ -75,6 +75,15 @@ describe('rtveli — supplier ledger', () => {
     const ledger = computeSupplierLedger(intakes, [], 2026);
     expect(ledger.map(r => r.supplierName)).toEqual(['B', 'A']);
   });
+
+  it('removes reversed receipts and correction rows from the live supplier balance', () => {
+    const original = intake({ id: 'original', commandId: 'cmd-intake', costPerKg: 2, reversedByCommandId: 'cmd-reversal' });
+    const correction = intake({
+      id: 'correction', recordKind: 'reversal', reversalOfIntakeId: original.id,
+      reversalOfCommandId: original.commandId,
+    });
+    expect(computeSupplierLedger([original, correction], [], 2026)).toEqual([]);
+  });
 });
 
 describe('rtveli — season stats', () => {
@@ -101,6 +110,15 @@ describe('rtveli — season stats', () => {
     expect(s.deliveries).toBe(2);
     expect(s.weightedAvgBrix).toBe(22);
     expect(seasonYears(intakes)).toEqual([2026, 2025]);
+  });
+
+  it('does not count reversed intake pairs as current season production', () => {
+    const original = intake({ id: 'original', commandId: 'cmd-intake', reversedAt: '2026-09-21T00:00:00Z' });
+    const correction = intake({ id: 'correction', recordKind: 'reversal', reversalOfIntakeId: original.id });
+    const stats = computeSeasonStats([original, correction], 2026);
+    expect(stats.totalKg).toBe(0);
+    expect(stats.deliveries).toBe(0);
+    expect(seasonYears([original, correction])).toEqual([]);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { UserDataState } from './db';
 
-type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'sparkling' | 'fortified' | 'base_wine';
+type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'qvevri' | 'sparkling' | 'fortified' | 'base_wine';
 type WinemakingStage = 'crushing' | 'fermenting' | 'maceration' | 'pressing' | 'aging' | 'stabilization' | 'filtration' | 'bottled' | 'sold';
 
 interface LotSpec {
@@ -858,6 +858,9 @@ export function getSeederData(orgId: string): UserDataState {
   ];
 
   return {
+    syncDeletionLedger: [],
+    invoiceReceipts: [],
+    inventoryMovements: [],
     companyProfile: {
       companyName: 'ყვარლის სადემონსტრაციო მარანი',
       wineryName: WINERY_NAME,
@@ -947,5 +950,14 @@ export function getSeederData(orgId: string): UserDataState {
     attachments: [],
     crmLeads: [],
     aiDrafts: [],
+    workflowApprovals: [],
+    qualitySops: [],
+    purchaseOrders: [],
+    productionPlans: [],
+    recallCases: [],
+    workOrders: [],
+    workOrderTemplates: [],
+    blendTrials: [],
+    aiFindings: [],
   };
 }

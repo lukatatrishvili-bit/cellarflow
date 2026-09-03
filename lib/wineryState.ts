@@ -1,13 +1,19 @@
 export type VesselType = 'stainless_steel' | 'qvevri' | 'barrel' | 'plastic' | 'concrete' | 'other';
-export type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'sparkling' | 'fortified' | 'base_wine';
+export type WineClass = 'white' | 'red' | 'rose' | 'amber' | 'qvevri' | 'sparkling' | 'fortified' | 'base_wine';
 export type WinemakingStage = 'crushing' | 'fermenting' | 'maceration' | 'pressing' | 'aging' | 'stabilization' | 'filtration' | 'bottled' | 'sold';
 export type LotClassification = 'PDO' | 'PGI' | 'table_wine' | 'other';
 export type CertificationStatus = 'not_started' | 'sample_prepared' | 'submitted' | 'approved' | 'rejected' | 'expired';
 export type OriginProofStatus = 'missing' | 'partial' | 'verified';
 export type MarketStatus = 'local' | 'export' | 'local_and_export' | 'unknown';
+export type WineSugarCategory = 'dry' | 'semi_dry' | 'semi_sweet' | 'sweet';
 
 export interface WineLot {
   id: string; // Lot Code
+  /** Durable command that created this lot, when applicable. */
+  commandId?: string;
+  /** Most recent durable command that changed this lot. */
+  lastCommandId?: string;
+  lastModified?: string;
   name: string;
   vintage: number;
   variety: string;
@@ -27,12 +33,20 @@ export interface WineLot {
   certificateFileName?: string;
   originProofStatus?: OriginProofStatus;
   marketStatus?: MarketStatus;
+  /** Declared product category by residual sugar for Wine Agency Annex 17. */
+  sugarCategory?: WineSugarCategory;
   history: Array<{
     date: string;
     type: string;
     description: string;
     operator: string;
+    /** Workflow record that created this timeline event, when reversible. */
+    sourceRef?: string;
   }>;
+  /** A command-created lot retained as audit evidence after its creating action was reversed. */
+  voidedAt?: string;
+  voidedByCommandId?: string;
+  voidReason?: string;
   sensoryProfile?: {
     tannins: number; // 1-10
     acidity: number; // 1-10
@@ -45,6 +59,8 @@ export interface WineLot {
 
 export interface Vessel {
   id: string; // Tank ID / Name
+  lastCommandId?: string;
+  lastModified?: string;
   type: VesselType;
   shape: 'vertical' | 'horizontal' | 'conical';
   capacity: number;
@@ -56,9 +72,20 @@ export interface Vessel {
   coolingJacketActive: boolean;
   targetTemperature: number | null;
   lastOperation: string;
-  locationDetails?: string; 
+  locationDetails?: string;
+  /** Physical cellar floor used by the visual winery plan. */
+  cellarFloorId?: string;
   xGrid?: number; // 0-100 percentage layout position
   yGrid?: number; // 0-100 percentage layout position
+  /** Visual model and real-world dimensions shared by the 2D and 3D winery plan. */
+  planModel?: VesselPlanModel;
+  planWidthMeters?: number;
+  planDepthMeters?: number;
+  planHeightMeters?: number;
+  /** Clearance beneath the vessel body, for legs, stands, or raised equipment. */
+  planElevationMeters?: number;
+  /** Free-form clockwise rotation used by the 3D editor. */
+  planRotationDegrees?: number;
   lastSealedDate?: string; // For Qvevri clay seals
   soilTemperature?: number; // For Qvevri underground soil temps
   qvevriNumber?: string;
@@ -81,8 +108,42 @@ export interface Vessel {
   sanitationHistory?: Array<{ date: string; action: string; operator?: string; notes?: string }>;
 }
 
+/** Exact completion-time facts required to safely compensate a fermentation close. */
+export interface FermentationCompletionReversalSnapshot {
+  version: 1;
+  lot: {
+    id: string;
+    stage: WinemakingStage;
+    currentVolume: number;
+    historyDescription: string;
+  };
+  vessel: {
+    id: string;
+    currentVolume: number;
+    assignedLotId: string | null;
+    lastOperation: string;
+  };
+  finalLog: {
+    id: string;
+    date: string;
+    temperature: number;
+    density: number;
+    sugar: number;
+    ph: number;
+    tastingNotes: string;
+    capManagement: string;
+    additives: string;
+  };
+  auditId: string;
+}
+
 export interface DailyFermLog {
   id: string;
+  /** Durable completion command that promoted this reading to final evidence. */
+  commandId?: string;
+  /** Reversals are compensating ledger facts and not physical measurements. */
+  recordKind?: 'reading' | 'completion' | 'reversal';
+  lastModified?: string;
   tankId: string;
   lotId: string;
   date: string;
@@ -93,6 +154,47 @@ export interface DailyFermLog {
   tastingNotes: string;
   capManagement: string; // Punchdown, pumpover, none
   additives: string;
+  /** Structured inventory-backed additions made with this reading. */
+  materialsUsed?: OperationMaterialUsage[];
+  /** Cellar operation that deducted the structured additions from inventory. */
+  linkedOperationId?: string;
+  isCompletion?: boolean;
+  completedAt?: string;
+  completedBy?: string;
+  /** Exact before-state captured by transactional completion commands. */
+  completionSnapshot?: FermentationCompletionReversalSnapshot;
+  reversalOfLogId?: string;
+  reversalOfCommandId?: string;
+  reversedByCommandId?: string;
+  reversedAt?: string;
+  reversalReason?: string;
+}
+
+export interface TransferVesselReversalSnapshot {
+  id: string;
+  currentVolume: number;
+  assignedLotId: string | null;
+  cleaningStatus: Vessel['cleaningStatus'];
+  lastOperation: string;
+  lastCommandId?: string;
+  lastModified?: string;
+}
+
+export interface TransferLotReversalSnapshot {
+  id: string;
+  currentVolume: number;
+  lastCommandId?: string;
+  lastModified?: string;
+}
+
+/** Minimal pre-command state required to compensate a transfer without deleting history. */
+export interface TransferReversalSnapshot {
+  version: 1;
+  sourceVessel: TransferVesselReversalSnapshot;
+  destinationVessel: TransferVesselReversalSnapshot;
+  sourceLot: TransferLotReversalSnapshot;
+  destinationLot?: TransferLotReversalSnapshot;
+  createdBlendLotId?: string;
 }
 
 export interface LabAnalysis {
@@ -157,7 +259,7 @@ export type DocumentAttachmentModule =
   | 'crm'
   | 'other';
 
-export type DocumentAttachmentStorageKind = 'inline' | 'external' | 'metadata_only';
+export type DocumentAttachmentStorageKind = 'inline' | 'external' | 'metadata_only' | 'gcs';
 
 export interface DocumentAttachment {
   id: string;
@@ -174,6 +276,8 @@ export interface DocumentAttachment {
     kind: DocumentAttachmentStorageKind;
     dataUrl?: string;
     url?: string;
+    // For kind 'gcs': the object key (bytes live in object storage, not state).
+    objectKey?: string;
   };
   checksum?: string;
 }
@@ -203,15 +307,60 @@ export interface CrmLeadRecord {
 
 export interface InventoryItem {
   id: string;
+  lastCommandId?: string;
+  lastModified?: string;
   name: string;
   category: string; // Dynamic categorie supports, e.g. 'additives', 'yeasts', 'nutritions', 'bottles', etc.
   stock: number; // Current count / weight (kg or units)
   minThreshold: number;
   unit: string;
   costPerUnit: number;
+  /** Currency of costPerUnit. Invoice receipts normalize this to the company currency. */
+  costCurrency?: string;
   supplierName: string;
   details?: string; // Additional winemaker remarks/specs
+  sku?: string;
+  brandName?: string;
+  manufacturerName?: string;
+  packageSize?: number;
+  packageUnit?: string;
+  activeIngredients?: string[];
+  recommendedDosage?: string;
+  usageInstructions?: string;
+  safetyNotes?: string;
+  productSourceUrls?: string[];
+  officialSourceUrls?: string[];
+  lastInvoiceReceipt?: {
+    analysisLineId: string;
+    invoiceNumber?: string;
+    invoiceDate?: string;
+    receivedAt: string;
+    supplierName: string;
+    quantity: number;
+    unit: string;
+    unitCost: number;
+    lineTotal?: number;
+    currency: string;
+    sourceUnitCost?: number;
+    sourceLineTotal?: number;
+    sourceCurrency?: string;
+    exchangeRate?: number;
+    invoiceReceiptId?: string;
+  };
 }
+
+export type VesselPlanModel =
+  | 'closed_top_jacket'
+  | 'closed_top'
+  | 'open_top_jacket'
+  | 'open_top'
+  | 'portable'
+  | 'insulated'
+  | 'horizontal_tank'
+  | 'barrel'
+  | 'qvevri'
+  | 'concrete'
+  | 'plastic';
 
 export interface Task {
   id: string;
@@ -219,8 +368,38 @@ export interface Task {
   priority: 'high' | 'medium' | 'low';
   dueDate: string;
   assignedTo: string;
+  assignedUserId?: string;
   status: 'pending' | 'completed';
   description: string;
+  /** Durable link back to the operational record that created this task. */
+  source?: TaskSourceReference;
+  notification?: {
+    status: 'sending' | 'sent' | 'partial' | 'failed';
+    deliveries?: Array<{
+      channel: 'email' | 'push';
+      status: 'sending' | 'sent' | 'failed';
+      attemptCount?: number;
+      error?: string;
+      updatedAt?: string;
+    }>;
+    updatedAt: string;
+    error?: string;
+  };
+}
+
+export interface TaskSourceReference {
+  type: 'production_plan';
+  id: string;
+  lotId?: string;
+  vesselIds?: string[];
+  blockId?: string;
+}
+
+export interface TaskAssignmentInput {
+  assignedUserId?: string;
+  assignedTo?: string;
+  notifyAssignee?: boolean;
+  source?: TaskSourceReference;
 }
 
 export interface TransferEvent {
@@ -237,6 +416,14 @@ export interface TransferEvent {
 
 export interface BottlingRunRecord {
   id: string;
+  /** Idempotent server command that created this run, when available. */
+  commandId?: string;
+  /** Reversal entries are compensating ledger facts, not new production. */
+  recordKind?: 'bottling' | 'reversal';
+  /** Sync timestamp for command-created records. */
+  lastModified?: string;
+  /** Actual record creation time; legacy runs may only have `date` or a timestamped id. */
+  createdAt?: string;
   lotId: string;
   lotName: string;
   date: string;
@@ -249,6 +436,12 @@ export interface BottlingRunRecord {
   /** Optional restoration metadata for reversing a newly-recorded run. */
   previousLotVolumeL?: number;
   previousLotStage?: WinemakingStage;
+  /** Physical vessel debited by this run. New command-created runs always capture it. */
+  sourceVesselId?: string;
+  previousSourceVesselVolumeL?: number;
+  previousSourceVesselAssignedLotId?: string | null;
+  previousSourceVesselCleaningStatus?: Vessel['cleaningStatus'];
+  previousSourceVesselLastOperation?: string;
   /**
    * Optional packaging materials consumed by the run. Keys are semantic
    * components such as bottle/closure/capsule/label/box, values are inventory IDs.
@@ -262,10 +455,58 @@ export interface BottlingRunRecord {
   storageLocationId?: string;
   storageMovementId?: string;
   placedInStorageBottles?: number;
+  /**
+   * Authoritative placement history for runs received after bottling. Legacy
+   * runs may only expose the singular storage fields above.
+   */
+  storagePlacements?: Array<{
+    movementId: string;
+    locationId: string;
+    bottles: number;
+    date: string;
+    commandId?: string;
+  }>;
+  /** Original bottling run and command compensated by this ledger entry. */
+  reversalOfRunId?: string;
+  reversalOfCommandId?: string;
+  /** Marker placed on the original run after compensation. */
+  reversedByCommandId?: string;
+  reversedAt?: string;
+  reversalReason?: string;
 }
 
 export interface CellarTransferRecord {
   id: string;
+  /** Idempotent server command that created this movement, when available. */
+  commandId?: string;
+  /** Reversal entries are compensating ledger facts and are not new physical lineage. */
+  recordKind?: 'transfer' | 'reversal';
+  /** Sync timestamp for command-created records. */
+  lastModified?: string;
+  /**
+   * Explicit lineage facts captured by the transactional transfer command.
+   * Legacy records may omit these fields and are resolved by the lineage
+   * engine's compatibility inference.
+   */
+  lineageVersion?: 1;
+  sourceLotId?: string;
+  /** Lot already present in the destination vessel before the movement. */
+  destinationLotId?: string;
+  /** Lot occupying the destination vessel after the movement. */
+  resultLotId?: string;
+  /** Gross source contribution before process loss. */
+  sourceContributionL?: number;
+  /** Existing destination-lot contribution used to create a blend. */
+  destinationContributionL?: number;
+  /** Net liquid arriving in the destination vessel. */
+  arrivalVolumeL?: number;
+  /** Captured by new transfer commands so compensation can restore exact business state. */
+  reversalSnapshot?: TransferReversalSnapshot;
+  reversalOfTransferId?: string;
+  reversalOfCommandId?: string;
+  reversalReason?: string;
+  reversedByCommandId?: string;
+  reversedAt?: string;
   sourceId: string;
   destId: string;
   volume: number;
@@ -279,8 +520,15 @@ export interface CellarTransferRecord {
 
 export interface SalesDispatchRecord {
   id: string;
+  /** Idempotent server command that created this dispatch, when available. */
+  commandId?: string;
+  /** Reversal entries are compensating financial/stock facts, not new sales. */
+  recordKind?: 'dispatch' | 'reversal';
+  lastModified?: string;
   date: string;
   customerName: string;
+  /** Wine Agency turnover classification for Annex 18. */
+  marketChannel?: 'domestic' | 'export';
   lotId: string;
   lotName: string;
   locationId: string;
@@ -296,6 +544,13 @@ export interface SalesDispatchRecord {
   stockMovementId: string;
   /** Optional source reservation/order fulfilled by this physical dispatch. */
   salesOrderId?: string;
+  /** Original dispatch and command compensated by a reversal entry. */
+  reversalOfDispatchId?: string;
+  reversalOfCommandId?: string;
+  /** Marker placed on the original dispatch after compensation. */
+  reversedByCommandId?: string;
+  reversedAt?: string;
+  reversalReason?: string;
   operator: string;
   notes?: string;
 }
@@ -304,12 +559,19 @@ export type SalesOrderStatus = 'reserved' | 'fulfilled' | 'cancelled';
 
 export interface SalesOrderRecord {
   id: string;
+  /** Idempotent server command that created this order, when available. */
+  commandId?: string;
+  /** Most recent command that changed the order lifecycle. */
+  lastCommandId?: string;
+  lastModified?: string;
   orderNumber?: string;
   orderDate: string;
   createdAt: string;
   requestedDispatchDate?: string;
   reservedUntil?: string;
   customerName: string;
+  /** Carried to the dispatch and Annex 18 when the order is fulfilled. */
+  marketChannel?: 'domestic' | 'export';
   lotId: string;
   lotName: string;
   locationId: string;
@@ -323,15 +585,54 @@ export interface SalesOrderRecord {
   grossProfit?: number;
   marginPct?: number | null;
   status: SalesOrderStatus;
-  dispatchId?: string;
-  fulfilledAt?: string;
+  dispatchId?: string | null;
+  fulfilledAt?: string | null;
   cancelledAt?: string;
+  cancelledBy?: string;
+  /** Fulfilled orders are cancelled, not reopened, when their dispatch is reversed. */
+  reversedByCommandId?: string;
+  reversedAt?: string;
+  reversalReason?: string;
   operator: string;
   notes?: string;
 }
 
 export type GrapeSource = 'own' | 'supplier';
 export type GrapeIntakeCondition = 'excellent' | 'good' | 'fair' | 'damaged';
+
+/** Exact state captured when a transactional intake is posted. */
+export interface HarvestIntakeReversalSnapshot {
+  version: 1;
+  lot: {
+    id: string;
+    initialVolume: number;
+    currentVolume: number;
+    stage: WineLot['stage'];
+    historyDescription: string;
+  };
+  harvest?: {
+    id: string;
+    sentToGvino: boolean;
+    actualHarvestedKg: number | null;
+    actualHarvestDate: string | null;
+    harvestedAreaHa: number | null;
+    associatedLotId: string | null;
+  };
+  vessel?: {
+    id: string;
+    currentVolume: number;
+    assignedLotId: string | null;
+    temperature: number;
+    lastOperation: string;
+  };
+  costEntry?: {
+    id: string;
+    amount: number;
+    currency: string;
+    quantity?: number;
+  };
+  auditId: string;
+}
 
 /**
  * Grape receiving / harvest intake (დურდოს მიღება). The single structured entry
@@ -342,6 +643,16 @@ export type GrapeIntakeCondition = 'excellent' | 'good' | 'fair' | 'damaged';
  */
 export interface GrapeIntakeRecord {
   id: string;
+  commandId?: string;
+  /** Reversal entries are compensating ledger facts, not new fruit receipts. */
+  recordKind?: 'intake' | 'reversal';
+  lastModified?: string;
+  reversalSnapshot?: HarvestIntakeReversalSnapshot;
+  reversalOfIntakeId?: string;
+  reversalOfCommandId?: string;
+  reversedByCommandId?: string;
+  reversedAt?: string;
+  reversalReason?: string;
   date: string;            // intake date (YYYY-MM-DD)
   time?: string;           // optional HH:mm
   source: GrapeSource;
@@ -358,6 +669,8 @@ export interface GrapeIntakeRecord {
   community?: string;
   municipality?: string;
   microzone?: string;
+  /** Area actually harvested for this receipt; feeds official Annex 2. */
+  harvestedAreaHa?: number;
   variety: string;
   vintage: number;
   grossWeightKg: number;
@@ -418,10 +731,98 @@ export type CellarOperationType =
   | 'crush_destem' | 'pressing' | 'ferment_start' | 'measurement'
   | 'pumpover' | 'punchdown' | 'racking' | 'blending' | 'sulfitation'
   | 'additive' | 'fining' | 'filtration' | 'stabilization'
-  | 'vessel_filling' | 'bottling' | 'cleaning' | 'correction' | 'custom';
+  | 'vessel_filling' | 'bottling' | 'cleaning' | 'correction' | 'topping' | 'custom';
+
+export interface OperationMaterialUsage {
+  materialId: string;
+  /** Immutable display facts captured when the material is consumed. */
+  materialName?: string;
+  category?: string;
+  quantity: number;
+  unit?: string;
+  /** Winemaker-entered role such as yeast, starter, nutrient, sulfur, or enzyme. */
+  purpose?: string;
+}
+
+export interface OperationCostProfile {
+  /** Expected hands-on time used to prefill an operation's automatic labor cost. */
+  laborHours: number;
+  /** Expected electricity use used to prefill an operation's automatic energy cost. */
+  energyKwh: number;
+}
+
+export interface CostAutomationSettings {
+  enabled: boolean;
+  laborRatePerHour: number;
+  energyRatePerKwh: number;
+  overheadPercent: number;
+  ownGrapeCostPerKg: number;
+  labAnalysisCost: number;
+  operationProfiles: Partial<Record<CellarOperationType, OperationCostProfile>>;
+}
+
+export interface CellarOperationReversalSnapshotV1 {
+  version: 1;
+  lot: {
+    id: string;
+    currentVolume: number;
+    stage: WinemakingStage;
+  };
+  vessel?: {
+    id: string;
+    currentVolume: number;
+    lastOperation: string;
+  };
+  inventory?: {
+    id: string;
+    stock: number;
+  };
+  costEntry?: {
+    id: string;
+    amount: number;
+    currency: string;
+    quantity?: number;
+  };
+  auditId: string;
+  operationDescription: string;
+}
+
+export interface CellarOperationReversalSnapshotV2 {
+  version: 2;
+  lot: {
+    id: string;
+    currentVolume: number;
+    stage: WinemakingStage;
+  };
+  vessel?: {
+    id: string;
+    currentVolume: number;
+    lastOperation: string;
+  };
+  inventory: Array<{
+    id: string;
+    stock: number;
+  }>;
+  costEntries: Array<{
+    id: string;
+    amount: number;
+    currency: string;
+    quantity?: number;
+  }>;
+  auditId: string;
+  operationDescription: string;
+}
+
+export type CellarOperationReversalSnapshot =
+  | CellarOperationReversalSnapshotV1
+  | CellarOperationReversalSnapshotV2;
 
 export interface CellarOperation {
   id: string;
+  commandId?: string;
+  /** Reversal entries are compensating facts, not a second physical treatment. */
+  recordKind?: 'operation' | 'reversal';
+  lastModified?: string;
   date: string;          // ISO datetime
   type: CellarOperationType;
   customLabel?: string;  // free text when type === 'custom'
@@ -429,26 +830,48 @@ export interface CellarOperation {
   lotName: string;
   vesselId?: string | null;
   vesselToId?: string | null;
+  /** Topping only: the vessel the make-up wine was drawn from. */
+  sourceVesselId?: string | null;
+  /**
+   * Topping only: litres added. Stored as an amount rather than a resulting
+   * total because a lot spread across many barrels is topped one at a time,
+   * and `volumeAfterL` describes the lot, not the barrel.
+   */
+  toppingVolumeL?: number;
   volumeBeforeL?: number;
   volumeAfterL?: number;
   materialId?: string;
   materialName?: string;
   dose?: number;         // amount used, in the material's stock unit
   unit?: string;
+  /** One or more inventory-backed materials consumed by this operation. */
+  materials?: OperationMaterialUsage[];
+  /** Captured cost-driver facts used by automatic costing. */
+  laborHours?: number;
+  energyKwh?: number;
   operator: string;
   notes: string;
+  /** Exact before-state captured by new transactional operation commands. */
+  reversalSnapshot?: CellarOperationReversalSnapshot;
+  reversalOfOperationId?: string;
+  reversalOfCommandId?: string;
+  reversedByCommandId?: string;
+  reversedAt?: string;
+  reversalReason?: string;
 }
 
 export interface CellarOperationMeta {
   key: CellarOperationType;
   en: string;
   ka: string;
-  /** Consumes an inventory material (additive / agent). */
+  /** Material use is common for this operation, so the UI should foreground suggestions. */
   needsMaterial?: boolean;
   /** Typically changes the batch volume (loss or addition). */
   affectsVolume?: boolean;
   /** Moves liquid to a second vessel. */
   needsVesselTo?: boolean;
+  /** Draws liquid FROM a second vessel — topping's make-up wine. */
+  needsSourceVessel?: boolean;
 }
 
 // Empty seed datasets live in ./wineryDefaults (lazy-loaded so they stay out of
@@ -631,12 +1054,16 @@ export interface GrapeSamplingRecord {
 
 export interface HarvestRecord {
   id: string;
+  lastCommandId?: string;
+  lastModified?: string;
   blockId: string;
   variety: string;
   estimatedHarvestDate: string;
   estimatedTons: number;
   actualHarvestDate?: string;
   actualHarvestedKg?: number;
+  /** Area actually harvested, not the vineyard block's total area. */
+  harvestedAreaHa?: number;
   pickingMethod: 'hand' | 'machine';
   crateQuantity?: number;
   grapeCondition: 'excellent' | 'good' | ' fair' | 'damaged';
@@ -648,8 +1075,11 @@ export interface HarvestRecord {
 }
 
 // Global Audit Log
+export type VinOSAuditLog = MaraniOSAuditLog;
 export interface MaraniOSAuditLog {
   id: string;
+  commandId?: string;
+  lastModified?: string;
   timestamp: string;
   user: string;
   module: 'MARANIOS' | 'VAZI' | 'GVINO';
@@ -675,9 +1105,15 @@ export interface UserProfile {
   fullName: string;
   role: 'Owner/Admin' | 'Viticulturist' | 'Winemaker' | 'Lab Technician' | 'Cellar Worker' | 'Read-Only';
   language: 'en' | 'ka';
+  /** Personal international number; never exposed for other workspace members. */
+  phone?: string;
   enabledModules?: string[];
   enabledWidgets?: string[];
   registrationComplete?: boolean;
+  /** Server-issued UI capability. Never infer this from role or cached identity. */
+  isMasterAdmin?: boolean;
+  /** Present only during an audited master-administrator support session. */
+  impersonatedBy?: string;
 }
 
 export interface CompanyProfile {
@@ -689,6 +1125,8 @@ export interface CompanyProfile {
   address: string;
   identificationCode?: string;
   wineAgencyRegistrationCode?: string;
+  /** Last producer identity confirmed against the Agency's public directory. */
+  wineAgencyVerification?: WineAgencyVerificationEvidence;
   legalAddress?: string;
   factualAddress?: string;
   certificateContactPerson?: string;
@@ -701,8 +1139,79 @@ export interface CompanyProfile {
   measurementUnits: 'metric' | 'imperial';
   /** ISO-ish currency code for cost accounting (GEL/EUR/USD/…). Defaults to GEL. */
   currency?: string;
+  /** Automatic production-cost drivers and rates. Disabled until explicitly enabled. */
+  costAutomation?: CostAutomationSettings;
+  /**
+   * Intelligence-layer settings and winery-specific targets (SO₂ band,
+   * fermentation temperature range, VA ceiling, stock cover). Stored loosely so
+   * an older client never loses a newer winery's configuration; read it through
+   * `resolveAiConfig` in lib/ai/config, never directly.
+   */
+  aiConfig?: unknown;
+  /** Multi-floor physical cellar plan. Existing wineries default to one main floor. */
+  cellarFloors?: CellarFloor[];
   latitude?: number;
   longitude?: number;
+}
+
+export interface CellarFloor {
+  id: string;
+  name: string;
+  /** Human floor order: basement is commonly -1, ground floor is 0. */
+  level: number;
+  widthMeters: number;
+  heightMeters: number;
+  gridMeters: number;
+  notes?: string;
+  /** Winery-specific spatial objects drawn on this floor's scaled plan. */
+  planObjects?: CellarPlanObject[];
+}
+
+export type CellarZoneUse =
+  | 'general'
+  | 'receiving'
+  | 'fermentation'
+  | 'aging'
+  | 'bottling'
+  | 'laboratory'
+  | 'storage'
+  | 'utility';
+
+export type CellarPlanObjectKind =
+  | 'zone'
+  | 'door'
+  | 'drain'
+  | 'water'
+  | 'power'
+  | 'pump'
+  | 'press';
+
+export interface CellarPlanObject {
+  id: string;
+  kind: CellarPlanObjectKind;
+  label: string;
+  /** Centre point in real-world metres from the plan's top-left corner. */
+  xMeters: number;
+  yMeters: number;
+  /** Physical footprint; zones use both dimensions, fixtures use a compact default. */
+  widthMeters: number;
+  heightMeters: number;
+  /** Clockwise drawing rotation. Kept to right angles for predictable snapping. */
+  rotation?: 0 | 90 | 180 | 270;
+  zoneUse?: CellarZoneUse;
+}
+
+export interface WineAgencyVerificationEvidence {
+  registrationNumber: string;
+  name: string;
+  legalForm?: string;
+  identificationCode?: string;
+  address?: string;
+  website?: string;
+  sourceUrl: string;
+  verifiedAt: string;
+  officialApi: false;
+  transport: 'public_html_registry';
 }
 
 // Vazi seed datasets also live in ./wineryDefaults.

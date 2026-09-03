@@ -5,6 +5,7 @@ import type {
   ReservationPosition,
   StockAvailabilityPosition,
 } from './types';
+import type { SalesDispatchRecord } from '../wineryState';
 
 function round2(n: number): number {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -12,6 +13,18 @@ function round2(n: number): number {
 
 function positive(n: unknown): number {
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** True for an append-only compensation entry rather than a physical sale. */
+export function isSalesDispatchReversal(dispatch: Pick<SalesDispatchRecord, 'recordKind'>): boolean {
+  return dispatch.recordKind === 'reversal';
+}
+
+/** Sale records that should contribute to current revenue and dispatched totals. */
+export function isActiveSalesDispatch(
+  dispatch: Pick<SalesDispatchRecord, 'recordKind' | 'reversedByCommandId' | 'reversedAt'>,
+): boolean {
+  return !isSalesDispatchReversal(dispatch) && !dispatch.reversedByCommandId && !dispatch.reversedAt;
 }
 
 export function computeDispatchFinancials(input: DispatchFinancialInput): DispatchFinancials {

@@ -34,6 +34,7 @@ const block: VineyardBlock = {
   locationName: 'Mukuzani, Gurjaani, Kakheti',
   cadastralCode: '51.01.01.001',
   municipality: 'Gurjaani',
+  community: 'Mukuzani',
   village: 'Mukuzani',
   microzone: 'Mukuzani',
   latitude: 41.8,
@@ -89,6 +90,7 @@ const intake: GrapeIntakeRecord = {
   labAnalysisNumber: 'LAB-1',
   cadastralCode: '51.01.01.001',
   municipality: 'Gurjaani',
+  community: 'Mukuzani',
   village: 'Mukuzani',
   microzone: 'Mukuzani',
   variety: 'Saperavi',
@@ -285,7 +287,6 @@ describe('qvevri durations', () => {
     expect(readiness.missing).toEqual(expect.arrayContaining([
       'Marani location',
       'Lime wash status',
-      'Waxing status',
       'Inspection notes',
       'Filling date',
       'Grape variety',

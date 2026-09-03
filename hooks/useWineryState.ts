@@ -1,6 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
-import type { Language } from '../lib/i18n';
-import { SyncQueueManager, IndexedDBQueue } from '../lib/syncQueue';
+import { useWorkspaceRoute } from './useWorkspaceRoute';
+import { normalizeSupportedLanguage, type Language } from '../lib/language';
+import type { SidebarMode } from '../lib/workspaceNavigation';
+import type { WorkOrder, WorkOrderTemplate } from '../lib/workOrders';
+import type { BlendTrial } from '../lib/blendTrials';
+import {
+  fulfilProductionPlanItem,
+  planFulfilmentMessage,
+  type PendingPlanFulfilment,
+  type PlanFulfilmentKind,
+} from '../lib/planFulfilment';
+import {
+  SyncQueueManager,
+  IndexedDBQueue,
+  type PendingConflictSyncIntent,
+} from '../lib/syncQueue';
 import type {
   Vessel,
   WineLot,
@@ -8,6 +22,7 @@ import type {
   LabAnalysis,
   InventoryItem,
   Task,
+  TaskAssignmentInput,
   VineyardBlock,
   PhenologyRecord,
   SprayRecord,
@@ -32,15 +47,36 @@ import type {
   DocumentAttachment,
   CrmLeadRecord,
 } from '../lib/wineryState';
-import { CELLAR_OPERATIONS, deductStock, estimateMustVolumeL } from '../lib/wineryOperations';
+import { CELLAR_OPERATIONS, estimateMustVolumeL, isQuickCellarOperation } from '../lib/wineryOperations';
 import { signAuditEntries } from '../lib/auditHash';
 import type { CostEntry } from '../lib/costing';
-import { grapeIntakeCostEntry, materialCostEntryFromOperation } from '../lib/costing';
+import {
+  automaticLabCostEntry,
+  grapeIntakeCostEntry,
+  materialCostEntryFromOperation,
+  resolveCostAutomationSettings,
+} from '../lib/costing';
 import type { WinePricing } from '../lib/costing/store';
-import type { StorageLocation, StockMovement } from '../lib/storage';
+import {
+  storageLocationReferences,
+  storageMovementDeletionBlockers,
+  type StorageLocation,
+  type StockMovement,
+} from '../lib/storage';
+import type { InventoryMovementRecord, InvoiceReceiptRecord } from '../lib/commands/invoiceReceipt';
 import { PDO_RULES } from '../lib/pdo';
 import { createDocumentAttachmentRecord, type DocumentAttachmentInput } from '../lib/attachments';
 import { createCrmLeadRecord, upsertCrmLeadRecord, type CrmLeadRecordInput } from '../lib/crm';
+import {
+  persistDeletionTombstones,
+  syncRecordFingerprint,
+  type DeletionTombstone,
+} from '../lib/deletionTombstones';
+import { createUniqueLotId, createUniqueRecordId } from '../lib/recordIds';
+import { recordContentEquals } from '../lib/recordEquality';
+import { useStatusToastControls } from './useStatusToast';
+import { useStableCallbacks } from './useStableCallbacks';
+import { localISODate } from '../lib/weatherApi';
 import {
   createAiDraftQueueItems,
   upsertAiDraftQueueItems,
@@ -48,6 +84,146 @@ import {
   type AiDraftQueueItem,
   type AiDraftQueueStatus,
 } from '../lib/aiDraftActions';
+import { isKnownRole } from '../server/permissions';
+import type {
+  BottlingCommandResponse,
+  CellarOperationCommandResponse,
+  FermentationCompletionCommandResponse,
+  FermentationCompletionReversalCommandResponse,
+  HarvestIntakeCommandResponse,
+  InvoiceReceiptCommandResponse,
+  LotStageTransitionCommandResponse,
+  SalesStockCommandResponse,
+  StorageMovementCommandResponse,
+  TransferCommandResponse,
+  TransferReversalCommandResponse,
+} from '../lib/commands/client';
+import type {
+  ProductionPlanItem,
+  PurchaseOrder,
+  QualitySop,
+  RecallCase,
+} from '../lib/operationsControl';
+
+interface RolePersistence {
+  setItem(key: string, value: string): void;
+}
+
+export function cacheSafeUserProfile(user: UserProfile): UserProfile {
+  const cachedUser = { ...user };
+  delete cachedUser.isMasterAdmin;
+  delete cachedUser.impersonatedBy;
+  return cachedUser;
+}
+
+export function applyOrganizationSwitchRole(
+  currentUser: UserProfile,
+  response: unknown,
+  storage?: RolePersistence,
+): UserProfile | null {
+  const role = response && typeof response === 'object'
+    ? (response as { role?: unknown }).role
+    : undefined;
+  if (!isKnownRole(role)) return null;
+
+  const updatedUser: UserProfile = { ...currentUser, role };
+  try {
+    storage?.setItem('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(updatedUser)));
+  } catch {
+    // React state remains authoritative when persistent storage is unavailable.
+  }
+  return updatedUser;
+}
+
+export function applyLiveSessionProfile(
+  currentUser: UserProfile,
+  response: unknown,
+  storage?: RolePersistence,
+): UserProfile | null {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return null;
+  const candidate = response as Partial<UserProfile>;
+  if (!isKnownRole(candidate.role)) return null;
+  if (typeof candidate.username !== 'string' || candidate.username !== currentUser.username) return null;
+
+  const updatedUser: UserProfile = {
+    ...currentUser,
+    username: candidate.username,
+    role: candidate.role,
+    ...(typeof candidate.email === 'string' ? { email: candidate.email } : {}),
+    ...(typeof candidate.fullName === 'string' ? { fullName: candidate.fullName } : {}),
+    ...(candidate.language === 'en' || candidate.language === 'ka' ? { language: candidate.language } : {}),
+    ...(typeof candidate.phone === 'string' ? { phone: candidate.phone } : {}),
+    ...(Array.isArray(candidate.enabledModules)
+      ? { enabledModules: candidate.enabledModules.filter((item): item is string => typeof item === 'string') }
+      : {}),
+    ...(Array.isArray(candidate.enabledWidgets)
+      ? { enabledWidgets: candidate.enabledWidgets.filter((item): item is string => typeof item === 'string') }
+      : {}),
+    ...(typeof candidate.registrationComplete === 'boolean'
+      ? { registrationComplete: candidate.registrationComplete }
+      : {}),
+    isMasterAdmin: candidate.isMasterAdmin === true,
+    ...(typeof candidate.impersonatedBy === 'string'
+      ? { impersonatedBy: candidate.impersonatedBy }
+      : { impersonatedBy: undefined }),
+  };
+  try {
+    storage?.setItem('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(updatedUser)));
+  } catch {
+    // React state remains authoritative when persistent storage is unavailable.
+  }
+  return updatedUser;
+}
+
+export function isWineryDatabaseSnapshot(value: unknown): value is Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const arrayKeys = [
+    'vessels', 'lots', 'fermlogs', 'lablogs', 'inventory', 'tasks', 'notes',
+    'blocks', 'vineyardProjects', 'phenologyLogs', 'sprays', 'scoutings',
+    'soilRecords', 'samplings', 'harvests', 'irrigationLogs', 'fertilizerLogs',
+    'auditLogs', 'bottlingRuns', 'transfers', 'grapeIntakes', 'cellarOps',
+    'costEntries', 'storageLocations', 'stockMovements', 'invoiceReceipts', 'inventoryMovements', 'salesDispatches',
+    'salesOrders', 'supplierPayments', 'certificationRecords', 'attachments',
+    'crmLeads', 'aiDrafts', 'qualitySops', 'purchaseOrders', 'productionPlans', 'recallCases',
+    'workOrders', 'workOrderTemplates', 'blendTrials',
+  ];
+  return arrayKeys.every(key => Array.isArray(candidate[key]))
+    && Boolean(candidate.winePricing && typeof candidate.winePricing === 'object' && !Array.isArray(candidate.winePricing))
+    && Boolean(candidate.companyProfile && typeof candidate.companyProfile === 'object' && !Array.isArray(candidate.companyProfile));
+}
+
+const createBlankCompanyProfile = (): CompanyProfile => ({
+  companyName: '',
+  wineryName: '',
+  country: '',
+  region: '',
+  municipality: '',
+  address: '',
+  identificationCode: '',
+  wineAgencyRegistrationCode: '',
+  legalAddress: '',
+  factualAddress: '',
+  certificateContactPerson: '',
+  certificatePhone: '',
+  certificateEmail: '',
+  producerRegistrationNotes: '',
+  contactEmail: '',
+  phone: '',
+  website: '',
+  measurementUnits: 'metric',
+  currency: 'GEL',
+});
+
+const createSignedOutUser = (): UserProfile => ({
+  username: '',
+  email: '',
+  fullName: '',
+  role: 'Read-Only',
+  language: 'en',
+  phone: '',
+  registrationComplete: true,
+});
 
 export interface CellarNote {
   id: string;
@@ -60,15 +236,16 @@ export interface CellarNote {
 }
 
 interface RegistrationProfileData {
-  username: string;
+  /** Optional compatibility key; new registration derives this from email. */
+  username?: string;
   email: string;
   fullName: string;
-  role: UserProfile['role'];
+  role?: UserProfile['role'];
   language: UserProfile['language'];
   rememberMe?: boolean;
   passcode: string;
   companyProfile: Partial<CompanyProfile>;
-  enabledModules: string[];
+  enabledModules?: string[];
   enabledWidgets?: string[];
 }
 
@@ -103,21 +280,43 @@ const inferOriginProofStatus = (...values: Array<string | undefined>): WineLot['
 
 const initialCellarNotes: CellarNote[] = [];
 
+/** Shared empty baseline, so a missing mirror allocates nothing. */
+const EMPTY_RECORD_MAP: Map<string, any> = new Map();
+
 export function useWineryState() {
   const [lang, setLang] = useState<Language>(() => {
     // Restore the chosen language across reloads (set by the header toggle and
     // by login, which adopts the account's saved language).
     try {
       const stored = typeof window !== 'undefined' ? localStorage.getItem('vinea_lang') : null;
-      if (stored === 'ka' || stored === 'en' || stored === 'it' || stored === 'fr' || stored === 'de') return stored;
+      if (stored) {
+        const supported = normalizeSupportedLanguage(stored);
+        if (supported !== stored) localStorage.setItem('vinea_lang', supported);
+        return supported;
+      }
     } catch { /* ignore */ }
     return 'en';
   });
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isClient, setIsClient] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isAuthResolved, setIsAuthResolved] = useState(false);
+  // Toast state lives in StatusToastProvider, not here. `setToastMessage` is stable
+  // for the provider's lifetime, so the ~90 call sites below raise toasts
+  // without this hook — or anything rendering from it — re-rendering when one
+  // appears or auto-dismisses. See hooks/useStatusToast.tsx.
+  const { setToastMessage } = useStatusToastControls();
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [verificationPending, setVerificationPending] = useState<{ email: string; devVerifyUrl?: string } | null>(null);
+  // Post-signup waiting room: the address still needs confirming, an operator
+  // still needs to approve the account, or both.
+  const [verificationPending, setVerificationPending] = useState<{
+    email: string;
+    devVerifyUrl?: string;
+    devApprovalUrl?: string;
+    /** The account also waits on a human decision before it can sign in. */
+    requiresApproval?: boolean;
+    /** Email is already confirmed — only the approval is outstanding. */
+    approvalOnly?: boolean;
+  } | null>(null);
   const [demoLoginEnabled, setDemoLoginEnabled] = useState(false);
   const [passportLotId, setPassportLotId] = useState<string | null>(null);
   const [syncConflicts, setSyncConflicts] = useState<any[] | null>(null);
@@ -125,23 +324,23 @@ export function useWineryState() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   // Auth States
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUser, setCurrentUser] = useState<UserProfile>({
-    username: '',
-    email: '',
-    fullName: '',
-    role: 'Read-Only',
-    language: 'en',
-    registrationComplete: true,
-  });
+  const [currentUser, setCurrentUser] = useState<UserProfile>(createSignedOutUser);
 
   const [organizations, setOrganizations] = useState<{ id: string; name: string; role: string; isActive: boolean }[]>([]);
+  const [isSwitchingOrganization, setIsSwitchingOrganization] = useState(false);
+  const [workspaceHydrationError, setWorkspaceHydrationError] = useState<string | null>(null);
+  const organizationSwitchInFlight = useRef(false);
+  const workspaceTransitionRef = useRef(false);
 
   const fetchOrganizations = async () => {
+    const requestEpoch = syncEpoch.current;
     try {
       const res = await fetch('/api/org/list');
       if (res.ok) {
         const list = await res.json();
-        setOrganizations(list);
+        if (requestEpoch === syncEpoch.current && Array.isArray(list)) {
+          setOrganizations(list);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch organizations:', err);
@@ -149,52 +348,84 @@ export function useWineryState() {
   };
 
   const handleSwitchOrganization = async (orgId: string): Promise<boolean> => {
+    if (organizationSwitchInFlight.current) return false;
+    organizationSwitchInFlight.current = true;
+    workspaceTransitionRef.current = true;
+    setIsSwitchingOrganization(true);
+    setWorkspaceHydrationError(null);
+    invalidateSyncWork(true);
     try {
-      const res = await fetch('/api/org/switch', {
+      const res = await SyncQueueManager.switchOrganizationContext(() => fetch('/api/org/switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ organizationId: orgId })
-      });
+      }));
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        const { clearTenantCachedData } = await import('../lib/tenantCache');
+        clearTenantCachedData(localStorage);
+        // Conflict snapshots are tenant data. Invalidate them as soon as the
+        // server commits the switch, before any new-workspace screen can open.
+        setSyncConflicts(null);
+        setPendingServerDb(null);
+        pendingConflictSyncIntent.current = null;
+        const switchedUser = applyOrganizationSwitchRole(currentUser, data, localStorage);
+        if (!switchedUser) {
+          const message = lang === 'ka'
+            ? 'სამუშაო სივრცე შეიცვალა, მაგრამ ახალი როლის ჩატვირთვა ვერ მოხერხდა. უსაფრთხოდ გასაგრძელებლად განაახლეთ გვერდი.'
+            : 'The workspace changed, but its role could not be loaded. Reload before continuing safely.';
+          setWorkspaceHydrationError(message);
+          setToastMessage(`⚠️ ${message}`);
+          return false;
+        }
+
+        const dbData = await SyncQueueManager.sync({});
+        if (!isWineryDatabaseSnapshot(dbData)) {
+          const message = lang === 'ka'
+            ? 'ახალი სამუშაო სივრცის მონაცემები ვერ ჩაიტვირთა. ძველი მონაცემების ახალ სივრცეში მოხვედრის თავიდან ასაცილებლად მუშაობა შეჩერებულია — განაახლეთ გვერდი.'
+            : 'The new workspace data could not be loaded. Editing is blocked to prevent old data entering the new workspace; reload the page.';
+          setWorkspaceHydrationError(message);
+          setToastMessage(`⚠️ ${message}`);
+          return false;
+        }
+
+        // Commit role and data together while the transition overlay still
+        // blocks interaction with the old workspace snapshot.
+        updateAllStates(dbData);
+        setCurrentUser(switchedUser);
+        hasHydrated.current = true;
+        workspaceTransitionRef.current = false;
         await fetchOrganizations();
-        await discardLocalUnsyncedChanges();
+        setLastSyncError(null);
         setToastMessage(lang === 'ka' ? 'სამუშაო სივრცე შეიცვალა!' : 'Switched winery workspace!');
         return true;
       } else {
-        const err = await res.json().catch(() => ({}));
-        setToastMessage(`⚠️ ${err.error || 'Failed to switch workspace'}`);
+        hasHydrated.current = true;
+        workspaceTransitionRef.current = false;
+        setToastMessage(`⚠️ ${data.error || 'Failed to switch workspace'}`);
         return false;
       }
     } catch (err) {
-      setToastMessage(lang === 'ka' ? '⚠️ კავშირის შეცდომა სამუშაო სივრცის შეცვლისას.' : '⚠️ Connection error while switching workspace.');
+      const message = lang === 'ka'
+        ? 'სამუშაო სივრცის შეცვლა უსაფრთხოდ ვერ დასრულდა. მონაცემების შერევის თავიდან ასაცილებლად განაახლეთ გვერდი.'
+        : 'The workspace transition could not finish safely. Reload the page to prevent data from different workspaces mixing.';
+      setWorkspaceHydrationError(message);
+      setToastMessage(`⚠️ ${message}`);
       return false;
+    } finally {
+      organizationSwitchInFlight.current = false;
+      setIsSwitchingOrganization(false);
     }
   };
 
-  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>({
-    companyName: '',
-    wineryName: '',
-    country: '',
-    region: '',
-    municipality: '',
-    address: '',
-    identificationCode: '',
-    wineAgencyRegistrationCode: '',
-    legalAddress: '',
-    factualAddress: '',
-    certificateContactPerson: '',
-    certificatePhone: '',
-    certificateEmail: '',
-    producerRegistrationNotes: '',
-    contactEmail: '',
-    phone: '',
-    website: '',
-    measurementUnits: 'metric',
-    currency: 'GEL'
-  });
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(createBlankCompanyProfile);
 
-  const [activeModule, setActiveModule] = useState<'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'storage' | 'sales' | 'analytics'>('portal');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeModule, setActiveModule] = useState<'portal' | 'work' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'certification' | 'costs' | 'inventory' | 'storage' | 'sales' | 'recall' | 'procurement' | 'analytics' | 'master-admin'>('portal');
+  // Three states, not two: 'full' labels every destination, 'rail' keeps the
+  // icons and their grouping in 56px, 'hidden' gives the whole width to the
+  // content for the wide tables. Persisted, and migrated from the old boolean
+  // so anyone who had the sidebar collapsed lands in 'rail'.
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>('full');
 
   // Datasets
   const [vessels, setVessels] = useState<Vessel[]>([]);
@@ -225,6 +456,8 @@ export function useWineryState() {
   const [winePricing, setWinePricing] = useState<WinePricing>({});
   const [storageLocations, setStorageLocations] = useState<StorageLocation[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [invoiceReceipts, setInvoiceReceipts] = useState<InvoiceReceiptRecord[]>([]);
+  const [inventoryMovements, setInventoryMovements] = useState<InventoryMovementRecord[]>([]);
   const [salesDispatches, setSalesDispatches] = useState<SalesDispatchRecord[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrderRecord[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([]);
@@ -232,22 +465,58 @@ export function useWineryState() {
   const [attachments, setAttachments] = useState<DocumentAttachment[]>([]);
   const [crmLeads, setCrmLeads] = useState<CrmLeadRecord[]>([]);
   const [aiDrafts, setAiDrafts] = useState<AiDraftQueueItem[]>([]);
+  const [qualitySops, setQualitySops] = useState<QualitySop[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [productionPlans, setProductionPlans] = useState<ProductionPlanItem[]>([]);
+  const [recallCases, setRecallCases] = useState<RecallCase[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [workOrderTemplates, setWorkOrderTemplates] = useState<WorkOrderTemplate[]>([]);
+  const [blendTrials, setBlendTrials] = useState<BlendTrial[]>([]);
 
-  // Daily fermentation inputs
-  const [logTankId, setLogTankId] = useState('');
-  const [logLotId, setLogLotId] = useState('');
-  const [logTemp, setLogTemp] = useState(20);
-  const [logDensity, setLogDensity] = useState(1.005);
-  const [logSugar, setLogSugar] = useState(12);
-  const [logPH, setLogPH] = useState(3.5);
-  const [logNotes, setLogNotes] = useState('');
-  const [logCap, setLogCap] = useState('Punchdowns - 2X');
+  // Planned work an operator has been sent off to record. The planner sets it;
+  // whichever recorder saves the matching record settles it.
+  const [pendingPlanFulfilment, setPendingPlanFulfilment] = useState<PendingPlanFulfilment | null>(null);
+  const [planRecordSignal, setPlanRecordSignal] = useState<{ kind: PlanFulfilmentKind; at: string } | null>(null);
+
+  /**
+   * Announce that a recorder just wrote something. Deliberately a signal rather
+   * than a direct settle: several save paths hand the server's own projection
+   * back through `updateAllStates`, and settling inline would compute the next
+   * plan and task arrays from the very state those writes are about to replace.
+   * Resolving in an effect means it always runs against what actually landed.
+   */
+  const signalPlanRecord = (kind: PlanFulfilmentKind): void => {
+    setPlanRecordSignal({ kind, at: new Date().toISOString() });
+  };
+
+  useEffect(() => {
+    if (!planRecordSignal) return;
+    setPlanRecordSignal(null);
+    const settled = fulfilProductionPlanItem({
+      fulfilment: pendingPlanFulfilment,
+      kind: planRecordSignal.kind,
+      items: productionPlans,
+      tasks,
+      completedAt: planRecordSignal.at,
+    });
+    if (!settled.closed) return;
+    setProductionPlans(settled.items);
+    setTasks(settled.tasks);
+    setPendingPlanFulfilment(null);
+    setToastMessage(planFulfilmentMessage(settled.closed, lang === 'ka' ? 'ka' : 'en'));
+  }, [planRecordSignal, pendingPlanFulfilment, productionPlans, tasks, lang, setToastMessage]);
+
+  // FermentationTab owns its own daily-reading form state and commit handler.
   const [chartLotId, setChartLotId] = useState<string>('');
   const [selectedTankId, setSelectedTankId] = useState<string | null>(null);
 
   // Lab entry inputs
   const [labLotId, setLabLotId] = useState('');
   const [labTankId, setLabTankId] = useState('');
+  const [labDate, setLabDate] = useState(() => localISODate());
+  const [labPH, setLabPH] = useState(3.5);
+  const [labMalic, setLabMalic] = useState(0);
+  const [labTechnician, setLabTechnician] = useState('');
   const [labABV, setLabABV] = useState(13.5);
   const [labVA, setLabVA] = useState(0.4);
   const [labFSO2, setLabFSO2] = useState(25);
@@ -256,6 +525,12 @@ export function useWineryState() {
   const [labLactic, setLabLactic] = useState(1.2);
   const [labTurbidity, setLabTurbidity] = useState(20);
   const [labTA, setLabTA] = useState(5.8);
+
+  useEffect(() => {
+    if (!labTechnician.trim() && (currentUser.fullName || currentUser.username)) {
+      setLabTechnician(currentUser.fullName || currentUser.username);
+    }
+  }, [currentUser.fullName, currentUser.username, labTechnician]);
 
   // Lab filters
   const [labFilterType, setLabFilterType] = useState('all');
@@ -270,26 +545,83 @@ export function useWineryState() {
   const [prefilledTaskPriority, setPrefilledTaskPriority] = useState<'high' | 'medium' | 'low'>('medium');
   const [prefilledTaskDesc, setPrefilledTaskDesc] = useState('');
   const [prefilledSourceId, setPrefilledSourceId] = useState('');
+  const [prefilledIntakeHarvestId, setPrefilledIntakeHarvestId] = useState<string | null>(null);
   // Vessel preselected for the quick-operation form (QR scan / drawer action).
   const [prefilledOpVesselId, setPrefilledOpVesselId] = useState('');
   const [prefilledDestId, setPrefilledDestId] = useState('');
 
   // Synchronization refs to manage server state & loop prevention
   const isSyncing = useRef(false);
+  // State-pressure is a plan-ahead warning, so it is raised at most once per
+  // session instead of on every sync response that carries it.
+  const footprintWarningShown = useRef(false);
   const hasHydrated = useRef(false);
-  const pendingSync = useRef<{ payload: any } | null>(null);
+  const pendingSync = useRef<{ payload: any; epoch: number } | null>(null);
+  const pendingConflictSyncIntent = useRef<PendingConflictSyncIntent | null>(null);
+  const syncEpoch = useRef(0);
+  const conflictResolutionInFlight = useRef(false);
   const [lastSyncError, setLastSyncError] = useState<string | null>(null);
   const lastServerState = useRef<Record<string, string>>({});
 
-  // Auto-dismiss toast messages after 5 seconds
+  const invalidateSyncWork = (pauseHydration = false) => {
+    syncEpoch.current += 1;
+    pendingSync.current = null;
+    if (pauseHydration) hasHydrated.current = false;
+  };
+
   useEffect(() => {
-    if (toastMessage) {
-      const timer = setTimeout(() => {
-        setToastMessage(null);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [toastMessage]);
+    if (typeof window === 'undefined') return;
+    const handleOrganizationContextChanged = (event: StorageEvent) => {
+      if (event.key !== 'cellarflow_org_state_org_id' || event.oldValue === event.newValue) return;
+      workspaceTransitionRef.current = true;
+      invalidateSyncWork(true);
+      setSyncConflicts(null);
+      setPendingServerDb(null);
+      pendingConflictSyncIntent.current = null;
+      setWorkspaceHydrationError(lang === 'ka'
+        ? 'სამუშაო სივრცე სხვა ჩანართში შეიცვალა. უსაფრთხოდ გასაგრძელებლად განაახლეთ ეს გვერდი.'
+        : 'The workspace changed in another tab. Reload this page before continuing safely.');
+    };
+    window.addEventListener('storage', handleOrganizationContextChanged);
+    return () => window.removeEventListener('storage', handleOrganizationContextChanged);
+  }, [lang]);
+
+  /**
+   * Cache of `id -> record` maps built from serialized collections.
+   *
+   * Every collection write rebuilds two of these — the previous local list and
+   * the last server-acknowledged list — by parsing a stored JSON string and
+   * walking the result. For a winery holding thousands of audit or fermentation
+   * entries that is the dominant cost of a write, and a single sync response
+   * triggers it across all 33 collections.
+   *
+   * The entry is keyed by the exact source string, so it is self-validating: a
+   * logout, an organization switch, or another tab writing the key all change
+   * (or remove) that string and the cache misses. That matters more than the
+   * speed here — a mirror invalidated by hand would have to be kept in step with
+   * every `removeItem` call site, and going stale would mean serving a previous
+   * tenant's records as the comparison baseline.
+   *
+   * Returned maps are READ-ONLY; callers compare against them and must not
+   * mutate the records they hold.
+   */
+  const recordMapCache = useRef<Map<string, { raw: string; map: Map<string, any> }>>(new Map());
+
+  const cachedRecordMap = (cacheKey: string, raw: string | null | undefined): Map<string, any> => {
+    if (!raw) return EMPTY_RECORD_MAP;
+    const cached = recordMapCache.current.get(cacheKey);
+    if (cached && cached.raw === raw) return cached.map;
+
+    const map = new Map<string, any>();
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) map.set(item?.id, item);
+      }
+    } catch { /* a corrupt mirror simply yields no baseline */ }
+    recordMapCache.current.set(cacheKey, { raw, map });
+    return map;
+  };
 
   const updateAllStates = (data: any) => {
 
@@ -308,7 +640,7 @@ export function useWineryState() {
       setter(val);
       try { localStorage.setItem(localKey, serialized); } catch { /* ignore */ }
     };
-    
+
     setSafe(setVessels, data.vessels, 'vessels', 'cf_vessels');
     setSafe(setLots, data.lots, 'lots', 'cf_lots');
     setSafe(setFermLogs, data.fermlogs, 'fermLogs', 'cf_fermlogs');
@@ -335,6 +667,8 @@ export function useWineryState() {
     setSafe(setWinePricing, data.winePricing, 'winePricing', 'cf_wine_pricing');
     setSafe(setStorageLocations, data.storageLocations, 'storageLocations', 'cf_storage_locations');
     setSafe(setStockMovements, data.stockMovements, 'stockMovements', 'cf_storage_movements');
+    setSafe(setInvoiceReceipts, data.invoiceReceipts, 'invoiceReceipts', 'cf_invoice_receipts');
+    setSafe(setInventoryMovements, data.inventoryMovements, 'inventoryMovements', 'cf_inventory_movements');
     setSafe(setSalesDispatches, data.salesDispatches, 'salesDispatches', 'cf_sales_dispatches');
     setSafe(setSalesOrders, data.salesOrders, 'salesOrders', 'cf_sales_orders');
     setSafe(setSupplierPayments, data.supplierPayments, 'supplierPayments', 'cf_supplier_payments');
@@ -342,6 +676,13 @@ export function useWineryState() {
     setSafe(setAttachments, data.attachments, 'attachments', 'cf_attachments');
     setSafe(setCrmLeads, data.crmLeads, 'crmLeads', 'cf_crm_leads');
     setSafe(setAiDrafts, data.aiDrafts, 'aiDrafts', 'cf_ai_drafts');
+    setSafe(setQualitySops, data.qualitySops, 'qualitySops', 'cf_quality_sops');
+    setSafe(setPurchaseOrders, data.purchaseOrders, 'purchaseOrders', 'cf_purchase_orders');
+    setSafe(setProductionPlans, data.productionPlans, 'productionPlans', 'cf_production_plans');
+    setSafe(setRecallCases, data.recallCases, 'recallCases', 'cf_recall_cases');
+    setSafe(setWorkOrders, data.workOrders, 'workOrders', 'cf_work_orders');
+    setSafe(setWorkOrderTemplates, data.workOrderTemplates, 'workOrderTemplates', 'cf_work_order_templates');
+    setSafe(setBlendTrials, data.blendTrials, 'blendTrials', 'cf_blend_trials');
     setSafe(setCompanyProfile, data.companyProfile, 'companyProfile', 'vinea_company_profile');
     const syncedAt = new Date().toISOString();
     setLastSyncAt(syncedAt);
@@ -349,49 +690,86 @@ export function useWineryState() {
   };
 
   const triggerSync = async (forcePayload?: any) => {
+    if (!hasHydrated.current || workspaceTransitionRef.current) return;
     if (isSyncing.current) {
       // Don't drop syncs requested while one is in flight (the dropped data —
       // e.g. a freshly added task — would be reverted by the in-flight
       // response). Remember the latest request and run it afterwards.
-      pendingSync.current = { payload: forcePayload };
+      pendingSync.current = { payload: forcePayload, epoch: syncEpoch.current };
       return;
     }
     isSyncing.current = true;
+    const requestEpoch = syncEpoch.current;
 
     try {
       const latestState = forcePayload || {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
         companyProfile
       };
 
       const response = await SyncQueueManager.sync(latestState);
+      if (requestEpoch !== syncEpoch.current) return;
       if (response) {
+        const hasNewerPendingPayload = Boolean(pendingSync.current)
+          && !response.hasConflicts
+          && !response.orgStateConflict
+          && !response.syncError;
+        if (hasNewerPendingPayload) return;
         if (response.hasConflicts) {
           setSyncConflicts(response.conflicts);
           setPendingServerDb(response.serverDb);
-          setToastMessage(lang === 'ka' ? 'კონფლიქტი აღმოჩენილია სინქრონიზაციისას!' : 'Sync conflict detected! Review required.');
+          pendingConflictSyncIntent.current = response.pendingSyncIntent
+            || SyncQueueManager.getPendingConflictSyncIntent();
+          setToastMessage(response.deletionRejected
+            ? (lang === 'ka'
+              ? 'წაშლა გაუქმდა და ჩანაწერი აღდგა, რადგან დაკავშირებული მონაცემები სხვა სესიაში შეიცვალა. ჯერ მოაგვარეთ კონფლიქტი.'
+              : 'Deletion was cancelled and the record restored because linked data changed in another session. Resolve the conflict first.')
+            : response.deletionDeferred
+            ? (lang === 'ka'
+              ? 'წაშლა შეჩერდა, რადგან დაკავშირებული ჩანაწერი სხვა სესიაში შეიცვალა. მოაგვარეთ კონფლიქტი და შემდეგ სცადეთ წაშლა ხელახლა.'
+              : 'Deletion was paused because a linked record changed in another session. Resolve the conflict, then retry the deletion.')
+            : (lang === 'ka' ? 'კონფლიქტი აღმოჩენილია სინქრონიზაციისას!' : 'Sync conflict detected! Review required.'));
         } else if (response.orgStateConflict) {
-          if (response.serverDb) {
-            await SyncQueueManager.clearOfflineQueue();
-            updateAllStates(response.serverDb);
-          }
+          // A second whole-document race is not an acknowledgement. Keep the
+          // local transaction and its dirty revisions intact for a later retry.
           setLastSyncError(response.syncError || 'Organization state conflict');
           setToastMessage(lang === 'ka'
-            ? '⚠️ მონაცემები განახლდა სერვერიდან. თქვენი ბოლო ცვლილება არ ჩაიწერა, რადგან მეღვინეობის მონაცემები სხვა სესიამ შეცვალა.'
-            : '⚠️ Refreshed from server. Your last change was not saved because this winery changed in another session.');
+            ? '⚠️ მეღვინეობის მონაცემები სხვა სესიამ შეცვალა. თქვენი ლოკალური ცვლილება შენახულია და ხელახლა სინქრონიზაციისთვის მზადაა.'
+            : '⚠️ This winery changed in another session. Your local change was kept and is ready to retry.');
         } else if (response.syncError) {
           // The server rejected the whole sync — keep data dirty for retry,
-          // but tell the user instead of failing silently.
+          // but tell the user instead of failing silently. The server speaks
+          // English; translate by response code so the whole sentence lands in
+          // one language rather than switching halfway.
+          //
+          // The dictionary is fetched on demand rather than imported: it is
+          // error-path-only text, and Georgian is three bytes per character in
+          // UTF-8, so bundling it charged every boot for a message most sessions
+          // never show. It exceeded the critical-path budget when imported.
           if (response.syncError !== lastSyncError) {
             setLastSyncError(response.syncError);
-            setToastMessage(`⚠️ ${lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected'}: ${response.syncError}`);
+            const prefix = lang === 'ka' ? 'სინქრონიზაცია უარყოფილია' : 'Sync rejected';
+            void import('../lib/serverErrorMessages')
+              .then(({ localizeServerError }) => {
+                setToastMessage(`⚠️ ${prefix}: ${localizeServerError(response.code, response.syncError, lang)}`);
+              })
+              .catch(() => {
+                // Offline with the chunk uncached: the server's own text still
+                // beats saying nothing.
+                setToastMessage(`⚠️ ${prefix}: ${response.syncError}`);
+              });
           }
         } else {
           updateAllStates(response);
-          if (response.recoveredOrgStateConflict) {
+          pendingConflictSyncIntent.current = null;
+          if (response.deletionRejected) {
+            setToastMessage(lang === 'ka'
+              ? 'წაშლა გაუქმდა. ჩანაწერი აღდგა სერვერიდან, რადგან მასთან დაკავშირებული მონაცემები შეიცვალა.'
+              : 'Deletion cancelled. The record was restored from the server because its linked data changed.');
+          } else if (response.recoveredOrgStateConflict) {
             setToastMessage(lang === 'ka'
               ? '✓ მონაცემები განახლდა და ცვლილება უსაფრთხოდ ჩაიწერა.'
               : '✓ Data refreshed and your change was saved safely.');
@@ -406,6 +784,22 @@ export function useWineryState() {
           } else {
             setLastSyncError(null);
           }
+
+          // The server flags a workspace approaching the sync ceilings. Warn
+          // once per session rather than on every sync: this is a "plan some
+          // archiving" signal, not something to act on mid-task.
+          if (response.stateFootprint && !footprintWarningShown.current) {
+            footprintWarningShown.current = true;
+            const { level, recordsPct, bytesPct } = response.stateFootprint;
+            const biggest = response.stateFootprint.topCollections?.[0]?.collection || '';
+            const used = Math.max(recordsPct, bytesPct);
+            console.warn('[sync] organization state pressure', response.stateFootprint);
+            if (level === 'critical') {
+              setToastMessage(lang === 'ka'
+                ? `⚠️ სამუშაო სივრცე სინქრონიზაციის ზღვრის ${used}%-ს იყენებს (ყველაზე დიდი: ${biggest}). დაგეგმეთ არქივირება.`
+                : `⚠️ This workspace is using ${used}% of the sync limit (largest: ${biggest}). Plan an archive soon.`);
+            }
+          }
         }
       }
     } catch (err) {
@@ -413,20 +807,300 @@ export function useWineryState() {
     } finally {
       isSyncing.current = false;
       if (pendingSync.current) {
-        const { payload } = pendingSync.current;
+        const { payload, epoch } = pendingSync.current;
         pendingSync.current = null;
-        triggerSync(payload);
+        if (epoch === syncEpoch.current && hasHydrated.current && !workspaceTransitionRef.current) {
+          triggerSync(payload);
+        }
       }
     }
   };
 
+  const applyTransferCommandResponse = (response: TransferCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    // A committed command remains recoverable even if the follow-up collection
+    // projection could not be attached to the response. Reconcile the exact
+    // entities from the durable result and let the normal server refresh repair
+    // anything unrelated on the next sync.
+    const result = response.result;
+    const changedLots = new Map(result.changedLots.map(lot => [lot.id, lot]));
+    const nextLots = lots.map(lot => changedLots.get(lot.id) || lot);
+    for (const lot of result.changedLots) {
+      if (!lots.some(existing => existing.id === lot.id)) nextLots.push(lot);
+    }
+    updateAllStates({
+      vessels: vessels.map(vessel => {
+        if (vessel.id === result.sourceVessel.id) return result.sourceVessel;
+        if (vessel.id === result.destinationVessel.id) return result.destinationVessel;
+        return vessel;
+      }),
+      lots: nextLots,
+      transfers: transfers.some(transfer => transfer.id === result.transfer.id)
+        ? transfers
+        : [result.transfer, ...transfers],
+      costEntries: result.costEntries.length
+        ? [...result.costEntries, ...costEntries.filter(entry => (
+            !result.costEntries.some(changed => changed.id === entry.id)
+          ))]
+        : costEntries,
+    });
+  };
+
+  const applyTransferReversalCommandResponse = (response: TransferReversalCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    const changedVessels = new Map(result.changedVessels.map(vessel => [vessel.id, vessel]));
+    const changedLots = new Map(result.changedLots.map(lot => [lot.id, lot]));
+    const changedTransfers = new Map([
+      [result.originalTransfer.id, result.originalTransfer],
+      [result.reversalTransfer.id, result.reversalTransfer],
+    ]);
+    const nextTransfers = transfers.map(transfer => changedTransfers.get(transfer.id) || transfer);
+    if (!nextTransfers.some(transfer => transfer.id === result.reversalTransfer.id)) {
+      nextTransfers.unshift(result.reversalTransfer);
+    }
+    updateAllStates({
+      vessels: vessels.map(vessel => changedVessels.get(vessel.id) || vessel),
+      lots: lots.map(lot => changedLots.get(lot.id) || lot),
+      transfers: nextTransfers,
+      costEntries: result.changedCostEntries.length
+        ? [
+            ...result.changedCostEntries,
+            ...costEntries.filter(entry => (
+              !result.changedCostEntries.some(changed => changed.id === entry.id)
+            )),
+          ]
+        : costEntries,
+    });
+  };
+
+  const applyBottlingCommandResponse = (response: BottlingCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    const changedInventory = new Map(result.updatedInventoryItems.map(item => [item.id, item]));
+    updateAllStates({
+      lots: lots.map(lot => lot.id === result.updatedLot.id ? result.updatedLot : lot),
+      vessels: vessels.map(vessel => vessel.id === result.updatedVessel.id ? result.updatedVessel : vessel),
+      bottlingRuns: bottlingRuns.some(run => run.id === result.run.id)
+        ? bottlingRuns
+        : [result.run, ...bottlingRuns],
+      inventory: inventory.map(item => changedInventory.get(item.id) || item),
+      costEntries: [
+        ...result.createdCostEntries.filter(entry => !costEntries.some(existing => existing.id === entry.id)),
+        ...costEntries,
+      ],
+      stockMovements: result.storageMovement && !stockMovements.some(item => item.id === result.storageMovement?.id)
+        ? [result.storageMovement, ...stockMovements]
+        : stockMovements,
+    });
+  };
+
+  const applySalesStockCommandResponse = (response: SalesStockCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    let nextOrders = salesOrders;
+    if (result.order) {
+      nextOrders = salesOrders.some(order => order.id === result.order?.id)
+        ? salesOrders.map(order => order.id === result.order?.id ? result.order as SalesOrderRecord : order)
+        : [result.order, ...salesOrders];
+    }
+    updateAllStates({
+      salesOrders: nextOrders,
+      salesDispatches: result.dispatch && !salesDispatches.some(item => item.id === result.dispatch?.id)
+        ? [result.dispatch, ...salesDispatches]
+        : salesDispatches,
+      stockMovements: result.stockMovement && !stockMovements.some(item => item.id === result.stockMovement?.id)
+        ? [result.stockMovement, ...stockMovements]
+        : stockMovements,
+    });
+  };
+
+  const applyStorageMovementCommandResponse = (response: StorageMovementCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const changedRun = response.result.updatedBottlingRun;
+    updateAllStates({
+      bottlingRuns: changedRun
+        ? bottlingRuns.map(run => run.id === changedRun.id ? changedRun : run)
+        : bottlingRuns,
+      stockMovements: [
+        ...response.result.movements.filter(movement => (
+          !stockMovements.some(existing => existing.id === movement.id)
+        )),
+        ...stockMovements,
+      ],
+    });
+  };
+
+  const applyInvoiceReceiptCommandResponse = (response: InvoiceReceiptCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+    // The commit is already durable. A projection-less acknowledgement is
+    // reconciled by a read-only sync instead of reconstructing ledger state in
+    // the browser.
+    void triggerSync({});
+  };
+
+  const applyHarvestIntakeCommandResponse = (response: HarvestIntakeCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      harvests: result.updatedHarvest
+        ? harvests.map(item => item.id === result.updatedHarvest?.id ? result.updatedHarvest as HarvestRecord : item)
+        : harvests,
+      lots: lots.some(item => item.id === result.lot.id) ? lots : [result.lot, ...lots],
+      vessels: result.updatedVessel
+        ? vessels.map(item => item.id === result.updatedVessel?.id ? result.updatedVessel as Vessel : item)
+        : vessels,
+      grapeIntakes: grapeIntakes.some(item => item.id === result.intake.id)
+        ? grapeIntakes
+        : [result.intake, ...grapeIntakes],
+      costEntries: result.costEntry && !costEntries.some(item => item.id === result.costEntry?.id)
+        ? [result.costEntry, ...costEntries]
+        : costEntries,
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyFermentationCompletionCommandResponse = (
+    response: FermentationCompletionCommandResponse,
+  ): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      lots: lots.map(item => item.id === result.lot.id ? result.lot : item),
+      vessels: vessels.map(item => item.id === result.vessel.id ? result.vessel : item),
+      fermlogs: fermLogs.map(item => item.id === result.finalLog.id ? result.finalLog : item),
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyFermentationCompletionReversalCommandResponse = (
+    response: FermentationCompletionReversalCommandResponse,
+  ): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      lots: lots.map(item => item.id === result.lot.id ? result.lot : item),
+      vessels: vessels.map(item => item.id === result.vessel.id ? result.vessel : item),
+      fermlogs: [
+        result.reversalLog,
+        ...fermLogs.map(item => item.id === result.originalLog.id ? result.originalLog : item),
+      ],
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyCellarOperationCommandResponse = (response: CellarOperationCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    const changedInventoryItems = result.inventoryItems?.length
+      ? result.inventoryItems
+      : result.inventoryItem
+        ? [result.inventoryItem]
+        : [];
+    const changedInventoryById = new Map(
+      changedInventoryItems.map(item => [item.id, item]),
+    );
+    const generatedCostEntries = result.costEntries?.length
+      ? result.costEntries
+      : result.costEntry
+        ? [result.costEntry]
+        : [];
+    updateAllStates({
+      lots: lots.map(item => {
+        if (item.id === result.lot.id) return result.lot;
+        if (result.sourceLot && item.id === result.sourceLot.id) return result.sourceLot;
+        return item;
+      }),
+      vessels: vessels.map(item => {
+        if (result.vessel && item.id === result.vessel.id) return result.vessel;
+        if (result.sourceVessel && item.id === result.sourceVessel.id) return result.sourceVessel;
+        return item;
+      }),
+      inventory: inventory.map(item => changedInventoryById.get(item.id) || item),
+      cellarOps: cellarOps.some(item => item.id === result.operation.id)
+        ? cellarOps
+        : [result.operation, ...cellarOps],
+      costEntries: [
+        ...generatedCostEntries.filter(entry => !costEntries.some(item => item.id === entry.id)),
+        ...costEntries,
+      ],
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
+  const applyLotStageTransitionCommandResponse = (response: LotStageTransitionCommandResponse): void => {
+    if (response.collections) {
+      updateAllStates(response.collections);
+      return;
+    }
+
+    const result = response.result;
+    updateAllStates({
+      lots: lots.map(item => item.id === result.updatedLot.id ? result.updatedLot : item),
+      auditLogs: auditLogs.some(item => item.id === result.auditLog.id)
+        ? auditLogs
+        : [result.auditLog, ...auditLogs],
+    });
+  };
+
   const discardLocalUnsyncedChanges = async () => {
+    invalidateSyncWork();
     try {
-      await SyncQueueManager.clearOfflineQueue();
-      const dbData = await SyncQueueManager.sync({});
-      if (dbData) {
-        updateAllStates(dbData);
+      const dbData = await SyncQueueManager.discardPendingChangesAndFetch();
+      if (!isWineryDatabaseSnapshot(dbData)) {
+        const detail = dbData?.syncError || (lang === 'ka' ? 'სერვერის მონაცემები ვერ ჩაიტვირთა.' : 'Server state could not be loaded.');
+        setLastSyncError(detail);
+        setToastMessage(`⚠️ ${lang === 'ka' ? 'ლოკალური ცვლილებები არ გაუქმებულა' : 'Local changes were not discarded'}: ${detail}`);
+        return;
       }
+      updateAllStates(dbData);
       setLastSyncError(null);
       setToastMessage(lang === 'ka' ? 'ლოკალური ცვლილებები გაუქმებულია. სინქრონიზირებულია სერვერთან.' : 'Local changes discarded. Synchronized with server state.');
     } catch (err) {
@@ -477,6 +1151,8 @@ export function useWineryState() {
         const err = await res.json().catch(() => ({}));
         if (err.code === 'email_unverified') {
           setVerificationPending({ email: identifier });
+        } else if (err.code === 'approval_pending') {
+          setVerificationPending({ email: identifier, requiresApproval: true, approvalOnly: true });
         }
         setLoginError(err.error || 'Authentication failed');
         return false;
@@ -526,12 +1202,23 @@ export function useWineryState() {
   };
 
   const handleAuthLogout = async () => {
+    invalidateSyncWork();
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
     } catch (err) {
       console.error('Logout request failed:', err);
     }
+    await SyncQueueManager.discardPendingChanges();
+    SyncQueueManager.clearOrganizationContext();
     setIsLoggedIn(false);
+    setSyncConflicts(null);
+    setPendingServerDb(null);
+    pendingConflictSyncIntent.current = null;
+    setWorkspaceHydrationError(null);
+    workspaceTransitionRef.current = false;
+    setOrganizations([]);
+    setCompanyProfile(createBlankCompanyProfile());
+    setCurrentUser(createSignedOutUser());
     localStorage.removeItem('vinea_is_logged_in');
     localStorage.removeItem('vinea_curr_user');
     localStorage.removeItem('cf_vessels');
@@ -558,15 +1245,21 @@ export function useWineryState() {
     localStorage.removeItem('cf_wine_pricing');
     localStorage.removeItem('cf_storage_locations');
     localStorage.removeItem('cf_storage_movements');
+    localStorage.removeItem('cf_invoice_receipts');
+    localStorage.removeItem('cf_inventory_movements');
     localStorage.removeItem('cf_sales_dispatches');
     localStorage.removeItem('cf_sales_orders');
     localStorage.removeItem('cf_certification_records');
     localStorage.removeItem('cf_attachments');
     localStorage.removeItem('cf_crm_leads');
     localStorage.removeItem('cf_ai_drafts');
+    localStorage.removeItem('cf_quality_sops');
+    localStorage.removeItem('cf_purchase_orders');
+    localStorage.removeItem('cf_production_plans');
+    localStorage.removeItem('cf_recall_cases');
     localStorage.removeItem('vinea_company_profile');
     localStorage.removeItem('vinea_deleted_ids');
-    
+
     // Reset React state variables to initial values (clean slate for logout view)
     setVessels([]);
     setLots([]);
@@ -594,6 +1287,8 @@ export function useWineryState() {
     setWinePricing({});
     setStorageLocations([]);
     setStockMovements([]);
+    setInvoiceReceipts([]);
+    setInventoryMovements([]);
     setSalesDispatches([]);
     setSalesOrders([]);
     setSupplierPayments([]);
@@ -601,9 +1296,16 @@ export function useWineryState() {
     setAttachments([]);
     setCrmLeads([]);
     setAiDrafts([]);
+    setQualitySops([]);
+    setPurchaseOrders([]);
+    setProductionPlans([]);
+    setRecallCases([]);
+    setWorkOrders([]);
+    setWorkOrderTemplates([]);
+    setBlendTrials([]);
   };
 
-  const handleAuthRegister = async (profileData: RegistrationProfileData) => {
+  const handleAuthRegister = async (profileData: RegistrationProfileData): Promise<boolean> => {
     setLoginError(null);
     setVerificationPending(null);
     try {
@@ -617,8 +1319,13 @@ export function useWineryState() {
 
         // New accounts must confirm their email before the session is created.
         if (user && user.requiresVerification) {
-          setVerificationPending({ email: user.email || profileData.email, devVerifyUrl: user.devVerifyUrl });
-          return;
+          setVerificationPending({
+            email: user.email || profileData.email,
+            devVerifyUrl: user.devVerifyUrl,
+            devApprovalUrl: user.devApprovalUrl,
+            requiresApproval: user.requiresApproval === true,
+          });
+          return true;
         }
 
         setCurrentUser(user);
@@ -630,18 +1337,22 @@ export function useWineryState() {
           vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
           blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
           samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+          bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
           companyProfile
         } : {});
         if (initialDB) {
           updateAllStates(initialDB);
         }
+        return true;
       } else {
         const err = await res.json();
-        setLoginError(err.error || 'Registration failed');
+        const { localizeServerError } = await import('../lib/serverErrorMessages');
+        setLoginError(localizeServerError(err.code, err.error || 'Registration failed', lang));
+        return false;
       }
     } catch (err) {
       setLoginError('Could not reach secure registration gateway');
+      return false;
     }
   };
 
@@ -704,6 +1415,7 @@ export function useWineryState() {
   };
 
   const clearAllData = async () => {
+    invalidateSyncWork();
     try {
       const res = await fetch('/api/admin/reset', {
         method: 'POST',
@@ -711,7 +1423,7 @@ export function useWineryState() {
       });
       if (res.ok) {
         const cleanDB = await res.json();
-        
+
         // Clear local storage cache
         localStorage.removeItem('cf_vessels');
         localStorage.removeItem('cf_lots');
@@ -737,16 +1449,22 @@ export function useWineryState() {
         localStorage.removeItem('cf_wine_pricing');
         localStorage.removeItem('cf_storage_locations');
         localStorage.removeItem('cf_storage_movements');
+        localStorage.removeItem('cf_invoice_receipts');
+        localStorage.removeItem('cf_inventory_movements');
         localStorage.removeItem('cf_sales_dispatches');
         localStorage.removeItem('cf_sales_orders');
         localStorage.removeItem('cf_certification_records');
         localStorage.removeItem('cf_attachments');
         localStorage.removeItem('cf_crm_leads');
         localStorage.removeItem('cf_ai_drafts');
+        localStorage.removeItem('cf_quality_sops');
+        localStorage.removeItem('cf_purchase_orders');
+        localStorage.removeItem('cf_production_plans');
+        localStorage.removeItem('cf_recall_cases');
         localStorage.removeItem('vinea_company_profile');
         localStorage.removeItem('vinea_deleted_ids');
 
-        await SyncQueueManager.clearOfflineQueue();
+        await SyncQueueManager.discardPendingChanges();
 
         // Hydrate empty states locally
         updateAllStates(cleanDB);
@@ -806,6 +1524,8 @@ export function useWineryState() {
       setWinePricing(parseCached('cf_wine_pricing', {}));
       setStorageLocations(parseCached('cf_storage_locations', []));
       setStockMovements(parseCached('cf_storage_movements', []));
+      setInvoiceReceipts(parseCached('cf_invoice_receipts', []));
+      setInventoryMovements(parseCached('cf_inventory_movements', []));
       setSalesDispatches(parseCached('cf_sales_dispatches', defaults.initialSalesDispatches));
       setSalesOrders(parseCached('cf_sales_orders', defaults.initialSalesOrders));
       setSupplierPayments(parseCached('cf_supplier_payments', defaults.initialSupplierPayments));
@@ -813,6 +1533,13 @@ export function useWineryState() {
       setAttachments(parseCached('cf_attachments', []));
       setCrmLeads(parseCached('cf_crm_leads', []));
       setAiDrafts(parseCached('cf_ai_drafts', []));
+      setQualitySops(parseCached('cf_quality_sops', []));
+      setPurchaseOrders(parseCached('cf_purchase_orders', []));
+      setProductionPlans(parseCached('cf_production_plans', []));
+      setRecallCases(parseCached('cf_recall_cases', []));
+      setWorkOrders(parseCached('cf_work_orders', []));
+      setWorkOrderTemplates(parseCached('cf_work_order_templates', []));
+      setBlendTrials(parseCached('cf_blend_trials', []));
 
       setBlocks(parseCached('vinea_blocks', defaults.initialVineyardBlocks));
       setVineyardProjects(parseCached('vinea_projects', defaults.initialVineyardPlantingProjects));
@@ -828,13 +1555,27 @@ export function useWineryState() {
     };
 
     const hasLocalSession = localStorage.getItem('vinea_is_logged_in') === 'true';
-    setIsSidebarCollapsed(localStorage.getItem('cf_sidebar_collapsed') === 'true');
+    const storedSidebarMode = localStorage.getItem('cf_sidebar_mode');
+    if (storedSidebarMode === 'full' || storedSidebarMode === 'rail' || storedSidebarMode === 'auto') {
+      setSidebarMode(storedSidebarMode);
+    } else if (storedSidebarMode === 'hidden') {
+      // 'hidden' became 'auto': same reclaimed width, but the sidebar comes
+      // back on approach instead of needing a click.
+      setSidebarMode('auto');
+    } else if (localStorage.getItem('cf_sidebar_collapsed') === 'true') {
+      setSidebarMode('rail');
+    }
     setLastSyncAt(localStorage.getItem('vinea_last_sync_at'));
 
     setIsLoggedIn(hasLocalSession);
     const storedUser = localStorage.getItem('vinea_curr_user');
     if (storedUser) {
-      try { setCurrentUser(JSON.parse(storedUser)); } catch { /* ignore */ }
+      try {
+        const cachedUser = JSON.parse(storedUser);
+        // Privileged/support-session capabilities are valid only when freshly
+        // issued by the server. Local storage must never restore them.
+        setCurrentUser(cacheSafeUserProfile(cachedUser));
+      } catch { /* ignore */ }
     }
     const storedCompany = localStorage.getItem('vinea_company_profile');
     if (storedCompany) {
@@ -842,6 +1583,8 @@ export function useWineryState() {
     }
     const storedModule = localStorage.getItem('vinea_active_module');
     if (storedModule) setActiveModule(storedModule as any);
+    const storedTab = localStorage.getItem('vinea_active_tab');
+    if (storedTab) setActiveTab(storedTab === 'qvevri' ? 'vessels' : storedTab);
 
     // Restore session and sync from server
     const checkSessionAndSync = async () => {
@@ -852,18 +1595,26 @@ export function useWineryState() {
           if (cancelled) return;
           setCurrentUser(user);
           setIsLoggedIn(true);
-          
+
           await fetchOrganizations();
-          
+
           const dbData = await SyncQueueManager.sync({});
           if (!cancelled && dbData) {
             updateAllStates(dbData);
           }
+        } else if (res.status === 401 && hasLocalSession && !cancelled) {
+          // A cached flag must never impersonate an authenticated session. Keep
+          // offline operation on network failure, but an authoritative 401
+          // clears stale identity and cached winery data.
+          await handleAuthLogout();
         }
       } catch (err) {
         console.error('Failed to restore session:', err);
       } finally {
-        if (!cancelled) hasHydrated.current = true;
+        if (!cancelled) {
+          hasHydrated.current = true;
+          setIsAuthResolved(true);
+        }
       }
     };
 
@@ -906,9 +1657,19 @@ export function useWineryState() {
     const params = new URLSearchParams(window.location.search);
     const verified = params.get('verified');
     const verifyError = params.get('verify_error');
-    if (verified || verifyError) {
+    const approval = params.get('approval');
+    if (verified || verifyError || approval) {
       const isKa = (localStorage.getItem('vinea_lang') as Language) === 'ka';
-      if (verified) {
+      if (approval === 'pending') {
+        setVerificationPending({ email: '', requiresApproval: true, approvalOnly: true });
+        setToastMessage(isKa
+          ? '⏳ ანგარიში ელოდება ადმინისტრატორის დადასტურებას.'
+          : '⏳ Your account is waiting for administrator approval.');
+      } else if (approval === 'rejected') {
+        setToastMessage(isKa
+          ? '⚠️ ანგარიშზე წვდომა არ დამტკიცდა.'
+          : '⚠️ This account was not approved for access.');
+      } else if (verified) {
         setToastMessage(isKa ? '✅ ელფოსტა დადასტურდა — ახლა შეგიძლიათ შესვლა.' : '✅ Email verified — you can now sign in.');
       } else {
         setToastMessage(verifyError === 'expired'
@@ -927,53 +1688,62 @@ export function useWineryState() {
   // Atomic sync to Local Storage with Auto-API sync wrappers
   const handleCollectionUpdate = (key: string, localKey: string, value: any) => {
     if (!isClient || !isLoggedIn || !hasHydrated.current) return;
-    
+
     // Auto-inject lastModified timestamps for arrays of objects
     let processedValue = value;
+    // Set whenever the mapping below returns a record that differs from its
+    // input. It replaces a `JSON.stringify(processedValue) !== JSON.stringify(value)`
+    // check further down: that serialized the whole collection twice more just
+    // to answer a question the mapping already knows the answer to.
+    let stampedAnyItem = false;
     const modifiedOrAddedItems: Array<{ item: any; baselineTimestamp?: string }> = [];
-    
+
     if (Array.isArray(value)) {
-      let prevList: any[] = [];
-      try {
-        const stored = localStorage.getItem(localKey);
-        if (stored) prevList = JSON.parse(stored);
-      } catch { /* ignore */ }
+      let storedPrevious: string | null = null;
+      try { storedPrevious = localStorage.getItem(localKey); } catch { /* ignore */ }
+      const prevMap = cachedRecordMap(`local:${localKey}`, storedPrevious);
 
       // Last server-acknowledged versions: the true baseline for conflict
       // detection. Using the local previous timestamp instead would make
       // chained local edits look like conflicts.
-      let serverMap = new Map<string, any>();
-      try {
-        const serverJson = lastServerState.current[key];
-        if (serverJson) {
-          const serverList = JSON.parse(serverJson);
-          if (Array.isArray(serverList)) {
-            serverMap = new Map(serverList.map((item: any) => [item.id, item]));
-          }
-        }
-      } catch { /* ignore */ }
+      const serverMap = cachedRecordMap(`server:${key}`, lastServerState.current[key]);
 
-      const prevMap = new Map(prevList.map(item => [item.id, item]));
       const nowStr = new Date().toISOString();
 
       processedValue = value.map(item => {
         if (item && typeof item === 'object' && 'id' in item) {
           const prevItem = prevMap.get(item.id);
+          // Audit entries are append-only records whose integrity metadata is
+          // owned by the server. In particular, the server deliberately does
+          // not persist the client's generic `lastModified` stamp. Adding one
+          // here made every sync response look locally modified again, causing
+          // an endless auditLogs POST loop until the rate limiter fired.
+          // Track genuinely new entries so delta sync can still send them, but
+          // leave established audit records byte-for-byte as hydrated.
+          if (key === 'auditLogs') {
+            if (!prevItem || !recordContentEquals(item, prevItem)) {
+              modifiedOrAddedItems.push({ item });
+            }
+            return item;
+          }
           if (!prevItem) {
             // New item
             const newItem = { ...item, lastModified: nowStr };
+            stampedAnyItem = true;
             modifiedOrAddedItems.push({ item: newItem });
             return newItem;
           } else {
-            // Compare fields ignoring sync metadata
-            const { lastModified: _, baselineTimestamp: _b, ...itemWithoutTs } = item;
-            const { lastModified: __, baselineTimestamp: _pb, ...prevWithoutTs } = prevItem;
-            if (JSON.stringify(itemWithoutTs) !== JSON.stringify(prevWithoutTs)) {
+            // Compare fields ignoring sync metadata. This runs for every record
+            // of every collection on every write, so it walks the two records
+            // and stops at the first difference instead of allocating a stripped
+            // copy and a JSON string for each side.
+            if (!recordContentEquals(item, prevItem)) {
               // Modified item: carry the server baseline on the item so
               // /api/sync can detect concurrent edits from other sessions.
               const serverItem = serverMap.get(item.id);
               const baselineTimestamp = item.baselineTimestamp ?? serverItem?.lastModified;
               const modifiedItem = { ...item, lastModified: nowStr, ...(baselineTimestamp ? { baselineTimestamp } : {}) };
+              stampedAnyItem = true;
               modifiedOrAddedItems.push({
                 item: modifiedItem,
                 baselineTimestamp
@@ -985,7 +1755,9 @@ export function useWineryState() {
               // timestamp here left local/server timestamps permanently
               // diverged, re-marking collections dirty after every sync —
               // an endless sync/re-render loop.
-              return { ...item, lastModified: item.lastModified || prevItem.lastModified || nowStr };
+              const carried = item.lastModified || prevItem.lastModified || nowStr;
+              if (carried !== item.lastModified) stampedAnyItem = true;
+              return { ...item, lastModified: carried };
             }
           }
         }
@@ -1018,17 +1790,41 @@ export function useWineryState() {
       certificationRecords: setCertificationRecords,
       attachments: setAttachments,
       crmLeads: setCrmLeads,
-      aiDrafts: setAiDrafts
+      aiDrafts: setAiDrafts,
+      qualitySops: setQualitySops,
+      purchaseOrders: setPurchaseOrders,
+      productionPlans: setProductionPlans,
+      recallCases: setRecallCases,
+      workOrders: setWorkOrders,
+      workOrderTemplates: setWorkOrderTemplates,
+      blendTrials: setBlendTrials,
     };
 
+    // One serialization for this call, reused by every branch below. It was
+    // previously recomputed for the storage write, the dirty check, and the
+    // comparison above — four full passes over the collection per write.
+    const serializedProcessed = JSON.stringify(processedValue);
+
     const setter = setters[key];
-    if (setter && JSON.stringify(processedValue) !== JSON.stringify(value)) {
+    if (setter && stampedAnyItem) {
       // Persist BEFORE updating state: the effect re-runs after the setter,
       // and must find storage already matching, or it re-stamps lastModified
       // with a fresh timestamp on every pass — an infinite update loop that
       // previously only terminated when two passes landed on the same
       // millisecond. The re-run becomes a no-op and handles dirty-marking.
-      localStorage.setItem(localKey, JSON.stringify(processedValue));
+      localStorage.setItem(localKey, serializedProcessed);
+      // For the same reason offline mutations are queued here, the changed
+      // record ids are staged here: the re-run that marks the collection dirty
+      // no longer sees which records moved, and without them the push widens
+      // back to the whole collection.
+      if (hasHydrated.current && modifiedOrAddedItems.length > 0) {
+        SyncQueueManager.noteChangedRecords(
+          key,
+          modifiedOrAddedItems
+            .map(({ item }) => item?.id)
+            .filter((id): id is string => typeof id === 'string' && !!id),
+        );
+      }
       // The re-run sees no modified items, so offline mutations (which carry
       // the conflict baselines) must be queued on this first pass.
       if (hasHydrated.current && !SyncQueueManager.isOnline()) {
@@ -1046,12 +1842,21 @@ export function useWineryState() {
       return;
     }
 
-    localStorage.setItem(localKey, JSON.stringify(processedValue));
+    localStorage.setItem(localKey, serializedProcessed);
 
-    const currentStr = JSON.stringify(processedValue);
-    if (hasHydrated.current && currentStr !== lastServerState.current[key]) {
-      SyncQueueManager.markDirty(key);
-      
+    if (hasHydrated.current && serializedProcessed !== lastServerState.current[key]) {
+      // The mapping above already worked out exactly which records changed, so
+      // the push can carry those instead of the whole collection. A non-array
+      // collection (companyProfile, winePricing) has no records to name and is
+      // still sent whole.
+      // Passed even when empty: this effect re-runs once the local mirror has
+      // been written, and that second pass has nothing new to name rather than
+      // no idea what changed. `markDirty` relies on the difference.
+      const changedIds = Array.isArray(processedValue)
+        ? modifiedOrAddedItems.map(({ item }) => item?.id).filter((id): id is string => typeof id === 'string' && !!id)
+        : undefined;
+      SyncQueueManager.markDirty(key, changedIds);
+
       // If offline, queue specific mutations in IndexedDB!
       if (!SyncQueueManager.isOnline()) {
         modifiedOrAddedItems.forEach(({ item, baselineTimestamp }) => {
@@ -1069,10 +1874,10 @@ export function useWineryState() {
         vessels, lots, fermLogs, labLogs, inventory, tasks, notesList,
         blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords,
         samplings, harvests, irrigationLogs, fertilizerLogs, auditLogs,
-        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts,
+        bottlingRuns, transfers, grapeIntakes, cellarOps, costEntries, winePricing, storageLocations, stockMovements, invoiceReceipts, inventoryMovements, salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments, crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
         companyProfile
       };
-      
+
       triggerSync({
         ...currentFullState,
         [key]: processedValue
@@ -1095,6 +1900,8 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('winePricing', 'cf_wine_pricing', winePricing); }, [winePricing, isClient]);
   useEffect(() => { handleCollectionUpdate('storageLocations', 'cf_storage_locations', storageLocations); }, [storageLocations, isClient]);
   useEffect(() => { handleCollectionUpdate('stockMovements', 'cf_storage_movements', stockMovements); }, [stockMovements, isClient]);
+  useEffect(() => { handleCollectionUpdate('invoiceReceipts', 'cf_invoice_receipts', invoiceReceipts); }, [invoiceReceipts, isClient]);
+  useEffect(() => { handleCollectionUpdate('inventoryMovements', 'cf_inventory_movements', inventoryMovements); }, [inventoryMovements, isClient]);
   useEffect(() => { handleCollectionUpdate('salesDispatches', 'cf_sales_dispatches', salesDispatches); }, [salesDispatches, isClient]);
   useEffect(() => { handleCollectionUpdate('salesOrders', 'cf_sales_orders', salesOrders); }, [salesOrders, isClient]);
   useEffect(() => { handleCollectionUpdate('supplierPayments', 'cf_supplier_payments', supplierPayments); }, [supplierPayments, isClient]);
@@ -1102,12 +1909,30 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('attachments', 'cf_attachments', attachments); }, [attachments, isClient]);
   useEffect(() => { handleCollectionUpdate('crmLeads', 'cf_crm_leads', crmLeads); }, [crmLeads, isClient]);
   useEffect(() => { handleCollectionUpdate('aiDrafts', 'cf_ai_drafts', aiDrafts); }, [aiDrafts, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_collapsed', String(isSidebarCollapsed)); }, [isSidebarCollapsed, isClient]);
+  useEffect(() => { handleCollectionUpdate('qualitySops', 'cf_quality_sops', qualitySops); }, [qualitySops, isClient]);
+  useEffect(() => { handleCollectionUpdate('purchaseOrders', 'cf_purchase_orders', purchaseOrders); }, [purchaseOrders, isClient]);
+  useEffect(() => { handleCollectionUpdate('productionPlans', 'cf_production_plans', productionPlans); }, [productionPlans, isClient]);
+  useEffect(() => { handleCollectionUpdate('recallCases', 'cf_recall_cases', recallCases); }, [recallCases, isClient]);
+  useEffect(() => { handleCollectionUpdate('workOrders', 'cf_work_orders', workOrders); }, [workOrders, isClient]);
+  useEffect(() => { handleCollectionUpdate('workOrderTemplates', 'cf_work_order_templates', workOrderTemplates); }, [workOrderTemplates, isClient]);
+  useEffect(() => { handleCollectionUpdate('blendTrials', 'cf_blend_trials', blendTrials); }, [blendTrials, isClient]);
+  // The company profile is one tenant-scoped document, not a record
+  // collection. Reuse the object-aware sync path without registering it as a
+  // collection (the collection registry intentionally covers list/map ledgers).
+  useEffect(() => {
+    const profileSyncKey = 'companyProfile';
+    const profileStorageKey = 'vinea_company_profile';
+    handleCollectionUpdate(profileSyncKey, profileStorageKey, companyProfile);
+  }, [companyProfile, isClient]);
+  useEffect(() => { if (isClient) localStorage.setItem('cf_sidebar_mode', sidebarMode); }, [sidebarMode, isClient]);
 
   useEffect(() => { if (isClient) localStorage.setItem('vinea_is_logged_in', String(isLoggedIn)); }, [isLoggedIn, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_curr_user', JSON.stringify(currentUser)); }, [currentUser, isClient]);
-  useEffect(() => { if (isClient) localStorage.setItem('vinea_company_profile', JSON.stringify(companyProfile)); }, [companyProfile, isClient]);
+  useEffect(() => {
+    if (!isClient) return;
+    localStorage.setItem('vinea_curr_user', JSON.stringify(cacheSafeUserProfile(currentUser)));
+  }, [currentUser, isClient]);
   useEffect(() => { if (isClient) localStorage.setItem('vinea_active_module', activeModule); }, [activeModule, isClient]);
+  useEffect(() => { if (isClient) localStorage.setItem('vinea_active_tab', activeTab); }, [activeTab, isClient]);
 
   useEffect(() => { handleCollectionUpdate('blocks', 'vinea_blocks', blocks); }, [blocks, isClient]);
   useEffect(() => { handleCollectionUpdate('vineyardProjects', 'vinea_projects', vineyardProjects); }, [vineyardProjects, isClient]);
@@ -1121,9 +1946,24 @@ export function useWineryState() {
   useEffect(() => { handleCollectionUpdate('fertilizerLogs', 'vinea_fertilizer', fertilizerLogs); }, [fertilizerLogs, isClient]);
   useEffect(() => { handleCollectionUpdate('auditLogs', 'vinea_audit_logs', auditLogs); }, [auditLogs, isClient]);
 
+  // Declared after the localStorage restore above so a destination named in the
+  // URL wins over the last one this browser happened to be on: effects run in
+  // declaration order, and a shared link must land where it points.
+  useWorkspaceRoute({
+    isActive: isClient && isLoggedIn,
+    activeModule,
+    activeTab,
+    setActiveModule,
+    setActiveTab,
+    passportLotId,
+    setPassportLotId,
+    selectedTankId,
+    setSelectedTankId,
+  });
+
   // Input Sanitizer/Validator Helper for ID poisoning prevention
   const sanitizeId = (id: string): string => {
-    return id.trim().replace(/[^a-zA-Z0-9_\-]/g, '').substring(0, 128);
+    return id.trim().replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 128);
   };
 
   const handleToggleCoolingJacket = (vesselId: string) => {
@@ -1172,7 +2012,7 @@ export function useWineryState() {
   };
 
   const handleAddBlock = (block: Omit<VineyardBlock, 'id'>) => {
-    const id = `block-${Date.now()}`;
+    const id = createUniqueRecordId('block', blocks.map(item => item.id));
     setBlocks(prev => [...prev, { ...block, id }]);
   };
 
@@ -1181,7 +2021,7 @@ export function useWineryState() {
   };
 
   const handleAddVineyardProject = (project: Omit<VineyardPlantingProject, 'id'>) => {
-    const id = sanitizeId(`vp-${Date.now()}`);
+    const id = createUniqueRecordId('vp', vineyardProjects.map(item => item.id));
     setVineyardProjects(prev => [...prev, { ...project, id }]);
   };
 
@@ -1190,27 +2030,27 @@ export function useWineryState() {
   };
 
   const handleAddPhenologyLog = (log: Omit<PhenologyRecord, 'id'>) => {
-    const id = `ph-${Date.now()}`;
+    const id = createUniqueRecordId('ph', phenologyLogs.map(item => item.id));
     setPhenologyLogs(prev => [...prev, { ...log, id }]);
   };
 
   const handleAddSprayRecord = (rec: Omit<SprayRecord, 'id'>) => {
-    const id = `spray-${Date.now()}`;
+    const id = createUniqueRecordId('spray', sprays.map(item => item.id));
     setSprays(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddScoutingRecord = (rec: Omit<ScoutingRecord, 'id'>) => {
-    const id = `scout-${Date.now()}`;
+    const id = createUniqueRecordId('scout', scoutings.map(item => item.id));
     setScoutings(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddSamplings = (rec: Omit<GrapeSamplingRecord, 'id'>) => {
-    const id = `sample-${Date.now()}`;
+    const id = createUniqueRecordId('sample', samplings.map(item => item.id));
     setSamplings(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddHarvestRecord = (rec: Omit<HarvestRecord, 'id'>) => {
-    const id = `harv-${Date.now()}`;
+    const id = createUniqueRecordId('harv', harvests.map(item => item.id));
     setHarvests(prev => [...prev, { ...rec, id }]);
   };
 
@@ -1219,24 +2059,33 @@ export function useWineryState() {
   };
 
   const handleAddIrrigation = (rec: Omit<IrrigationRecord, 'id'>) => {
-    const id = `irrig-${Date.now()}`;
+    const id = createUniqueRecordId('irrig', irrigationLogs.map(item => item.id));
     setIrrigationLogs(prev => [...prev, { ...rec, id }]);
   };
 
   const handleAddFertilizer = (rec: Omit<FertilizationRecord, 'id'>) => {
-    const id = `fert-${Date.now()}`;
+    const id = createUniqueRecordId('fert', fertilizerLogs.map(item => item.id));
     setFertilizerLogs(prev => [...prev, { ...rec, id }]);
   };
 
   const handleSendHarvestToGvino = (
-    blockId: string, 
-    harvestedKg: number, 
-    variety: string, 
-    vintage: number, 
+    blockId: string,
+    harvestedKg: number,
+    variety: string,
+    vintage: number,
     harvestedDate: string
   ): string => {
-    const rawLotId = `LOT-${variety.substring(0, 2).toUpperCase()}-${vintage}-${Date.now().toString().slice(-4)}`;
-    const lotId = sanitizeId(rawLotId);
+    if (!Number.isFinite(harvestedKg) || harvestedKg <= 0) {
+      throw new Error('Harvest weight must be greater than zero.');
+    }
+    if (!Number.isInteger(vintage) || vintage < 1900 || vintage > 2200) {
+      throw new Error('Harvest vintage must match a valid harvest year.');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(harvestedDate)) {
+      throw new Error('Harvest date must use YYYY-MM-DD format.');
+    }
+
+    const lotId = createUniqueLotId(variety, vintage, lots.map(item => item.id));
     const assocBlock = blocks.find(b => b.id === blockId);
     const lotName = `${variety} - ${assocBlock ? assocBlock.name : 'Ridge'} Crop`;
     const intendedAppellation = cleanText(assocBlock?.microzone);
@@ -1274,25 +2123,9 @@ export function useWineryState() {
 
     setLots(prev => [...prev, newLot]);
 
-    // Add initial fermentation tracking node
-    const firstDailyFermLog: DailyFermLog = {
-      id: sanitizeId(`fl-${Date.now()}`),
-      tankId: 'T-1',
-      lotId,
-      date: harvestedDate,
-      temperature: 16.0,
-      density: 1.090,
-      sugar: 21.5,
-      ph: 3.25,
-      tastingNotes: 'Crushed and direct-pumped. Cold settle initiated.',
-      capManagement: 'None',
-      additives: 'None'
-    };
-    setFermLogs(prev => [...prev, firstDailyFermLog]);
-
     // Record system audit log
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: currentUser.fullName,
       module: 'MARANIOS',
@@ -1309,19 +2142,18 @@ export function useWineryState() {
 
   /**
    * Structured grape receiving / intake. Creates a wine batch (WineLot) from the
-   * captured fruit, optionally fills a destination vessel, seeds the first
-   * fermentation log with the chemistry measured at the weighbridge, records the
-   * intake document, and writes an audit entry. Returns the new lot id.
+   * captured fruit, optionally fills a destination vessel, records the intake
+   * document, and writes an audit entry. Fermentation telemetry is intentionally
+   * not fabricated here; the first log belongs to an actual cellar reading.
+   * Returns the new lot id.
    */
   const handleReceiveGrapes = (
     input: Omit<GrapeIntakeRecord, 'id' | 'createdLotId' | 'netWeightKg' | 'estimatedVolumeL'>,
   ): string => {
     const netWeightKg = Math.max(0, (input.grossWeightKg || 0) - (input.tareWeightKg || 0));
     const estimatedVolumeL = estimateMustVolumeL(netWeightKg, input.juiceYieldPct || 0);
-    const intakeId = sanitizeId(`intake-${Date.now()}`);
-
-    const rawLotId = `LOT-${(input.variety || 'XX').substring(0, 2).toUpperCase()}-${input.vintage}-${Date.now().toString().slice(-4)}`;
-    const lotId = sanitizeId(rawLotId);
+    const intakeId = createUniqueRecordId('intake', grapeIntakes.map(item => item.id));
+    const lotId = createUniqueLotId(input.variety || 'XX', input.vintage, lots.map(item => item.id));
     const origin = input.source === 'own'
       ? (input.blockName || 'Own vineyard')
       : (input.supplierName || 'Supplier');
@@ -1370,22 +2202,6 @@ export function useWineryState() {
       }));
     }
 
-    // Seed the first fermentation log with the real measured chemistry.
-    const firstFermLog: DailyFermLog = {
-      id: sanitizeId(`flog-${Date.now()}`),
-      tankId: input.destinationVesselId || '',
-      lotId,
-      date: input.date,
-      temperature: input.temperatureC,
-      density: 1.090,
-      sugar: input.brix,
-      ph: input.ph,
-      tastingNotes: `Received ${input.condition} condition fruit (${input.pickingMethod} picked).`,
-      capManagement: 'None',
-      additives: 'None',
-    };
-    setFermLogs(prev => [...prev, firstFermLog]);
-
     const intakeRecord: GrapeIntakeRecord = {
       ...input,
       id: intakeId,
@@ -1411,12 +2227,13 @@ export function useWineryState() {
         sentToGvino: true,
         actualHarvestedKg: netWeightKg,
         actualHarvestDate: input.date,
+        ...(input.harvestedAreaHa ? { harvestedAreaHa: input.harvestedAreaHa } : {}),
         associatedLotId: lotId,
       }));
     }
 
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: input.operator || currentUser.fullName,
       module: 'GVINO',
@@ -1433,8 +2250,8 @@ export function useWineryState() {
 
   /**
    * Fast cellar-operation entry. Records a single winemaking action against a
-   * batch: appends a readable entry to the lot timeline, deducts an inventory
-   * material when one is consumed, applies a volume change (loss/addition) to the
+   * batch: appends a readable entry to the lot timeline, deducts every inventory
+   * material consumed, applies a volume change (loss/addition) to the
    * lot and its vessel, and writes an audit entry. Returns the operation id.
    */
   /**
@@ -1443,7 +2260,7 @@ export function useWineryState() {
    * and an audit entry.
    */
   const handleAddSupplierPayment = (input: Omit<SupplierPayment, 'id' | 'operator'> & { operator?: string }): string => {
-    const id = sanitizeId(`spay-${Date.now()}`);
+    const id = createUniqueRecordId('spay', supplierPayments.map(item => item.id));
     const payment: SupplierPayment = {
       ...input,
       id,
@@ -1452,7 +2269,7 @@ export function useWineryState() {
     setSupplierPayments(prev => [payment, ...prev]);
 
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: payment.operator,
       module: 'GVINO',
@@ -1471,7 +2288,7 @@ export function useWineryState() {
     setSupplierPayments(prev => prev.filter(p => p.id !== id));
     if (payment) {
       const audit: MaraniOSAuditLog = {
-        id: sanitizeId(`audit-${Date.now()}`),
+        id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
         timestamp: new Date().toISOString(),
         user: currentUser.fullName,
         module: 'GVINO',
@@ -1490,24 +2307,69 @@ export function useWineryState() {
   ): string => {
     const lot = lots.find(l => l.id === input.lotId);
     if (!lot) return '';
+    if (!isQuickCellarOperation(input.type)) {
+      setToastMessage(lang === 'ka'
+        ? 'ეს ფიზიკური მოქმედება შეასრულეთ მის სპეციალურ პროცესში.'
+        : 'Use the dedicated workflow for this physical cellar action.');
+      return '';
+    }
 
     const meta = CELLAR_OPERATIONS.find(o => o.key === input.type);
     const opLabel = input.type === 'custom'
       ? (input.customLabel || 'Custom operation')
       : (lang === 'ka' ? (meta?.ka || input.type) : (meta?.en || input.type));
 
-    const material = input.materialId ? inventory.find(i => i.id === input.materialId) : undefined;
+    const requestedMaterials = input.materials?.length
+      ? input.materials
+      : input.materialId && input.dose
+        ? [{ materialId: input.materialId, quantity: input.dose }]
+        : [];
+    const materialUsages = requestedMaterials.flatMap(usage => {
+      const material = inventory.find(item => item.id === usage.materialId);
+      if (!material || !(usage.quantity > 0)) return [];
+      return [{
+        material,
+        usage: {
+          ...usage,
+          materialName: material.name,
+          category: material.category,
+          unit: material.unit,
+        },
+      }];
+    });
+    if (materialUsages.length !== requestedMaterials.length
+      || materialUsages.some(({ material, usage }) => usage.quantity > material.stock)) {
+      setToastMessage(lang === 'ka'
+        ? 'ოპერაცია არ ჩაიწერა: შეამოწმეთ დანამატები და ხელმისაწვდომი მარაგი.'
+        : 'Operation not recorded: check materials and available stock.');
+      return '';
+    }
     const volumeBeforeL = lot.currentVolume;
     const hasVolumeChange = input.volumeAfterL != null && Number.isFinite(input.volumeAfterL);
     const volumeAfterL = hasVolumeChange ? Math.max(0, input.volumeAfterL as number) : undefined;
 
-    const opId = sanitizeId(`op-${Date.now()}`);
+    // This fallback path only runs when the command bindings are absent, and it
+    // cannot express topping: it sets a lot's new total onto one vessel, which
+    // for a lot spread across barrels is wrong. Refusing beats approximating —
+    // the recorder's command path handles topping properly.
+    if (input.type === 'topping') {
+      setToastMessage(lang === 'ka'
+        ? 'დოლივა ჩაიწერება ოპერაციების ფორმიდან.'
+        : 'Record topping from the operations recorder.');
+      return '';
+    }
+
+    const opId = createUniqueRecordId('op', cellarOps.map(item => item.id));
     const operator = input.operator || currentUser.fullName;
     const dateOnly = (input.date || new Date().toISOString()).slice(0, 10);
 
     // Build a readable timeline description.
     const parts: string[] = [opLabel];
-    if (material && input.dose) parts.push(`${material.name} ${input.dose}${material.unit || ''}`);
+    if (materialUsages.length) {
+      parts.push(materialUsages.map(({ material, usage }) => (
+        `${material.name} ${usage.quantity}${material.unit || ''}${usage.purpose ? ` (${usage.purpose})` : ''}`
+      )).join(', '));
+    }
     if (input.vesselId) parts.push(input.vesselToId ? `${input.vesselId} → ${input.vesselToId}` : `${input.vesselId}`);
     if (hasVolumeChange) parts.push(`${volumeBeforeL} → ${volumeAfterL} L`);
     if (input.notes) parts.push(input.notes);
@@ -1534,11 +2396,17 @@ export function useWineryState() {
       setVessels(prev => prev.map(v => v.id !== input.vesselId ? v : { ...v, lastOperation: description }));
     }
 
-    // 3) Inventory: deduct the consumed material (clamped at zero).
-    if (material && input.dose && input.dose > 0) {
-      setInventory(prev => prev.map(i => i.id !== material.id ? i : {
-        ...i,
-        stock: deductStock(i.stock, input.dose as number),
+    // 3) Inventory: exact validated deduction; insufficient stock is rejected above.
+    if (materialUsages.length) {
+      const deductions = new Map(
+        materialUsages.map(({ material, usage }) => [material.id, usage.quantity]),
+      );
+      setInventory(prev => prev.map(item => {
+        const quantity = deductions.get(item.id);
+        return quantity == null ? item : {
+          ...item,
+          stock: Math.round((item.stock - quantity) * 1000) / 1000,
+        };
       }));
     }
 
@@ -1550,22 +2418,34 @@ export function useWineryState() {
       operator,
       volumeBeforeL,
       volumeAfterL,
-      materialName: material?.name,
-      unit: material?.unit,
+      ...(materialUsages.length ? { materials: materialUsages.map(item => item.usage) } : {}),
+      ...(materialUsages.length === 1 && input.materialId ? {
+        materialName: materialUsages[0].material.name,
+        unit: materialUsages[0].material.unit,
+      } : {}),
     };
     setCellarOps(prev => [op, ...prev]);
 
-    const materialCost = materialCostEntryFromOperation(op, material, {
-      currency: companyProfile.currency || 'GEL',
-      createdBy: operator,
+    const materialCosts = materialUsages.flatMap(({ material, usage }) => {
+      const materialCost = materialCostEntryFromOperation({
+        ...op,
+        materialId: material.id,
+        materialName: material.name,
+        dose: usage.quantity,
+        unit: material.unit,
+      }, material, {
+        currency: companyProfile.currency || 'GEL',
+        createdBy: operator,
+      });
+      return materialCost ? [materialCost] : [];
     });
-    if (materialCost) {
-      setCostEntries(prev => [materialCost, ...prev]);
+    if (materialCosts.length) {
+      setCostEntries(prev => [...materialCosts, ...prev]);
     }
 
     // 5) Audit.
     const audit: MaraniOSAuditLog = {
-      id: sanitizeId(`audit-${Date.now()}`),
+      id: createUniqueRecordId('audit', auditLogs.map(item => item.id)),
       timestamp: new Date().toISOString(),
       user: operator,
       module: 'GVINO',
@@ -1580,53 +2460,59 @@ export function useWineryState() {
     return opId;
   };
 
-  const handleAddFermLog = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!logLotId || !logTankId) return;
-
-    const newLog: DailyFermLog = {
-      id: sanitizeId(`flog-${Date.now()}`),
-      tankId: logTankId,
-      lotId: logLotId,
-      date: new Date().toISOString().split('T')[0],
-      temperature: logTemp,
-      density: logDensity,
-      sugar: logSugar,
-      ph: logPH,
-      tastingNotes: logNotes || 'Healthy cap dynamics, fermenting raw juice perfectly.',
-      capManagement: logCap,
-      additives: 'None / DAP calculated'
-    };
-
-    setFermLogs([newLog, ...fermLogs]);
-    setLogNotes('');
-    setToastMessage(lang === 'ka' ? 'ფერმენტაციის ჩანაწერი დაემატა!' : 'Fermentation log added successfully!');
-  };
-
   const handleAddLabLog = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!labLotId || !labTankId) return;
+    const selectedLot = lots.find(lot => lot.id === labLotId && !lot.voidedAt);
+    const selectedVessel = vessels.find(vessel => vessel.id === labTankId);
+    const operator = labTechnician.trim();
+    const readings = [labABV, labVA, labFSO2, labTSO2, labResidualSugar, labPH, labMalic, labLactic, labTurbidity, labTA];
+    const invalidReading = readings.some(reading => !Number.isFinite(reading) || reading < 0);
+
+    if (!selectedLot || !selectedVessel || selectedVessel.assignedLotId !== selectedLot.id || selectedVessel.currentVolume <= 0) {
+      setToastMessage(lang === 'ka'
+        ? 'აირჩიეთ პარტიაზე რეალურად მიბმული, შევსებული ჭურჭელი.'
+        : 'Choose a filled vessel that is actually assigned to the selected lot.');
+      return;
+    }
+    if (!labDate || labDate > localISODate() || !operator || invalidReading || labPH > 14 || labTSO2 < labFSO2) {
+      setToastMessage(lang === 'ka'
+        ? 'შეამოწმეთ თარიღი, შემსრულებელი და მაჩვენებლები. საერთო SO₂ არ უნდა იყოს თავისუფალ SO₂-ზე ნაკლები.'
+        : 'Check the date, technician and readings. Total SO₂ cannot be lower than free SO₂.');
+      return;
+    }
 
     const newLab: LabAnalysis = {
-      id: sanitizeId(`lab-${Date.now()}`),
+      id: createUniqueRecordId('lab', labLogs.map(item => item.id)),
       lotId: labLotId,
       tankId: labTankId,
-      date: new Date().toISOString().split('T')[0],
+      date: labDate,
       alcoholPct: labABV,
       volatileAcid: labVA,
       freeSo2: labFSO2,
       totalSo2: labTSO2,
       residualSugar: labResidualSugar,
-      ph: 3.55,
-      malicAcid: 1.2,
+      ph: labPH,
+      malicAcid: labMalic,
       lacticAcid: labLactic,
       turbidity: labTurbidity,
-      technician: 'Sophia Rossi',
+      technician: operator,
       titratableAcidity: labTA
     };
 
-    setLabLogs([newLab, ...labLogs]);
-    
+    setLabLogs(previous => [newLab, ...previous]);
+    signalPlanRecord('lab');
+    const automaticLabCost = automaticLabCostEntry({
+      analysisId: newLab.id,
+      date: newLab.date,
+      lotId: newLab.lotId,
+      currency: companyProfile.currency || 'GEL',
+      createdBy: currentUser.fullName || currentUser.username,
+      settings: resolveCostAutomationSettings(companyProfile.costAutomation),
+    });
+    if (automaticLabCost && !costEntries.some(entry => entry.id === automaticLabCost.id)) {
+      setCostEntries(previous => [automaticLabCost, ...previous]);
+    }
+
     // Auto-update wine lots
     const targetLot = lots.find(l => l.id === labLotId);
     if (targetLot) {
@@ -1635,12 +2521,12 @@ export function useWineryState() {
           return {
             ...l,
             history: [
-              ...l.history,
+              ...(l.history || []),
               {
-                date: new Date().toISOString().split('T')[0],
+                date: labDate,
                 type: 'Lab Analysis Audit',
                 description: `Completed chemical panel: ABV%: ${labABV}%, Free SO2: ${labFSO2} mg/L, VA: ${labVA} g/L, TA: ${labTA} g/L.`,
-                operator: 'Sophia Rossi'
+                operator
               }
             ]
           };
@@ -1648,10 +2534,21 @@ export function useWineryState() {
         return l;
       }));
     }
+    setLabLotId('');
+    setLabTankId('');
+    setLabDate(localISODate());
     setToastMessage(lang === 'ka' ? 'ლაბორატორიული ანალიზი დაემატა!' : 'Lab analysis added successfully!');
   };
 
   const handleToggleTaskStatus = (taskId: string) => {
+    const lockedRecall = recallCases.find(recall => (
+      ['contained', 'closed'].includes(recall.status) && recall.containmentTaskIds.includes(taskId)
+    ));
+    const task = tasks.find(item => item.id === taskId);
+    if (lockedRecall && task?.status === 'completed') {
+      setToastMessage(lang === 'ka' ? 'შეკავებული ან დახურული გაწვევის დავალება ვეღარ გაიხსნება.' : 'A task evidenced by a contained or closed recall cannot be reopened.');
+      return;
+    }
     setTasks(prev => prev.map(tk => {
       if (tk.id === taskId) {
         return {
@@ -1663,35 +2560,203 @@ export function useWineryState() {
     }));
   };
 
-  const handleAddNewTask = (title: string, priority: 'high' | 'medium' | 'low', dueDate: string, description: string) => {
+  const handleAddNewTask = (
+    title: string,
+    priority: 'high' | 'medium' | 'low',
+    dueDate: string,
+    description: string,
+    assignment: TaskAssignmentInput = {},
+  ) => {
     const newTask: Task = {
-      id: sanitizeId(`task-${Date.now()}`),
+      id: createUniqueRecordId('task', tasks.map(item => item.id)),
       title,
       priority,
       dueDate: dueDate || new Date().toISOString().split('T')[0],
-      assignedTo: 'Luka Tatrishvili',
+      assignedTo: assignment.assignedTo || currentUser.fullName || currentUser.username,
+      ...(assignment.assignedUserId ? { assignedUserId: assignment.assignedUserId } : {}),
+      ...(assignment.source ? {
+        source: {
+          ...assignment.source,
+          ...(assignment.source.vesselIds ? { vesselIds: [...assignment.source.vesselIds] } : {}),
+        },
+      } : {}),
       status: 'pending',
-      description
+      description,
+      ...(assignment.notifyAssignee ? {
+        notification: {
+          status: 'sending' as const,
+          updatedAt: new Date().toISOString(),
+        },
+      } : {}),
     };
     setTasks(prev => [newTask, ...prev]);
     setToastMessage(lang === 'ka' ? 'ახალი დავალება დაემატა!' : 'New task assigned successfully!');
+    return newTask;
   };
 
-  const recordDeletion = (id: string) => {
-    try {
-      const stored = localStorage.getItem('vinea_deleted_ids');
-      const list = stored ? JSON.parse(stored) : [];
-      list.push(id);
-      localStorage.setItem('vinea_deleted_ids', JSON.stringify(list));
-      
-      if (!SyncQueueManager.isOnline()) {
+  const handleUpdateTaskNotification = (
+    taskId: string,
+    notification: NonNullable<Task['notification']>,
+  ) => {
+    setTasks(prev => prev.map(task => task.id === taskId ? {
+      ...task,
+      notification,
+    } : task));
+  };
+
+  const recordDeletions = (records: DeletionTombstone[]): boolean => {
+    const collectionsByServerKey: Record<string, any[]> = {
+      vessels, lots, fermlogs: fermLogs, lablogs: labLogs, inventory, tasks, notes: notesList,
+      blocks, vineyardProjects, phenologyLogs, sprays, scoutings, soilRecords, samplings,
+      harvests, irrigationLogs, fertilizerLogs, auditLogs, bottlingRuns, transfers,
+      grapeIntakes, cellarOps, costEntries, storageLocations, stockMovements,
+      salesDispatches, salesOrders, supplierPayments, certificationRecords, attachments,
+      crmLeads, aiDrafts, qualitySops, purchaseOrders, productionPlans, recallCases, workOrders, workOrderTemplates, blendTrials,
+    };
+    const capturedAt = new Date().toISOString();
+    const versionedRecords = records.map(record => {
+      const source = record.collection
+        ? collectionsByServerKey[record.collection]?.find(item => item?.id === record.id)
+        : undefined;
+      const clientCollectionKey = record.collection === 'fermlogs'
+        ? 'fermLogs'
+        : record.collection === 'lablogs'
+          ? 'labLogs'
+          : record.collection === 'notes' ? 'notesList' : record.collection;
+      let serverSource: any;
+      try {
+        const serverRecords = clientCollectionKey
+          ? JSON.parse(lastServerState.current[clientCollectionKey] || '[]')
+          : [];
+        if (Array.isArray(serverRecords)) {
+          serverSource = serverRecords.find(item => item?.id === record.id);
+        }
+      } catch {
+        // The current record still supplies fail-closed version evidence.
+      }
+      const baselineTimestamp = record.baselineTimestamp
+        || source?.baselineTimestamp
+        || serverSource?.lastModified
+        || source?.lastModified;
+      const baselineSource = serverSource || source;
+      return {
+        ...record,
+        ...(baselineTimestamp ? { baselineTimestamp } : {}),
+        ...(record.baselineFingerprint
+          ? { baselineFingerprint: record.baselineFingerprint }
+          : baselineSource ? { baselineFingerprint: syncRecordFingerprint(baselineSource) } : {}),
+        deletedAt: record.deletedAt || capturedAt,
+      };
+    });
+    if (!persistDeletionTombstones(versionedRecords, localStorage)) {
+      setToastMessage(lang === 'ka'
+        ? 'წაშლა ვერ დაიწყო, რადგან ამ მოწყობილობაზე ცვლილების უსაფრთხოდ შენახვა ვერ მოხერხდა. გაათავისუფლეთ საცავი ან განაახლეთ გვერდი და სცადეთ ხელახლა.'
+        : 'Deletion could not start because this device could not save it safely. Free browser storage or refresh, then try again.');
+      return false;
+    }
+
+    if (!SyncQueueManager.isOnline()) {
+      versionedRecords.forEach(({ id, collection, baselineTimestamp }) => {
+        if (!collection) return;
         IndexedDBQueue.addMutation({
           action: 'delete',
-          collection: 'any',
-          recordId: id
+          collection,
+          recordId: id,
+          baselineTimestamp,
         });
-      }
-    } catch { /* ignore */ }
+      });
+    }
+    return true;
+  };
+
+  const recordDeletion = (id: string, collection: string): boolean => (
+    recordDeletions([{ id, collection }])
+  );
+
+  const handleDeleteStorageLocation = (locationId: string): boolean => {
+    const location = storageLocations.find(item => item.id === locationId);
+    if (!location) return false;
+
+    const references = storageLocationReferences(locationId, {
+      movements: stockMovements,
+      bottlingRuns,
+      orders: salesOrders,
+      dispatches: salesDispatches,
+    });
+    if (references.total > 0) {
+      setToastMessage(lang === 'ka'
+        ? 'შენახვის ლოკაცია ვერ წაიშლება, სანამ მასთან დაკავშირებული ჩანაწერები არსებობს.'
+        : 'This storage location cannot be deleted while operational records still reference it.');
+      return false;
+    }
+
+    if (!recordDeletion(locationId, 'storageLocations')) return false;
+    setStorageLocations(prev => prev.filter(item => item.id !== locationId));
+    setToastMessage(lang === 'ka' ? 'შენახვის ლოკაცია წაიშალა.' : 'Storage location deleted.');
+    return true;
+  };
+
+  const handleDeleteStockMovement = (movementId: string): boolean => {
+    const blockers = storageMovementDeletionBlockers(movementId, {
+      movements: stockMovements,
+      bottlingRuns,
+      orders: salesOrders,
+      dispatches: salesDispatches,
+    });
+    if (!blockers) return false;
+    if (blockers.blocked) {
+      setToastMessage(lang === 'ka'
+        ? 'მარაგის მოძრაობა ვერ წაიშლება, რადგან ეს დაარღვევს დაკავშირებულ ჩანაწერს ან მარაგის ბალანსს.'
+        : 'This stock movement cannot be deleted because it would break a linked record or stock balance.');
+      return false;
+    }
+
+    if (!recordDeletion(movementId, 'stockMovements')) return false;
+    setStockMovements(prev => prev.filter(item => item.id !== movementId));
+    setToastMessage(lang === 'ka' ? 'მარაგის მოძრაობა წაიშალა.' : 'Stock movement deleted.');
+    return true;
+  };
+
+  // Offload an inline attachment's bytes to object storage and swap the record
+  // to a lightweight GCS reference, so the bytes never persist in the org JSONB
+  // blob. Runs in the background after the optimistic local add — on any failure
+  // the inline record is kept, so offline uploads still work.
+  const offloadAttachmentToObjectStore = async (local: DocumentAttachment, input: DocumentAttachmentInput) => {
+    if (!SyncQueueManager.isOnline()) return;
+    if (local.storage.kind !== 'inline' || !local.storage.dataUrl) return;
+    const operationEpoch = syncEpoch.current;
+    try {
+      const res = await SyncQueueManager.runInOrganizationContext(() => fetch('/api/attachments/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          dataUrl: local.storage.dataUrl,
+          sizeBytes: input.sizeBytes ?? local.sizeBytes,
+          module: input.module,
+          linkedRecordType: input.linkedRecordType,
+          linkedRecordId: input.linkedRecordId,
+          description: input.description,
+        }),
+      }));
+      if (!res.ok) return;
+      const body = await res.json().catch(() => null);
+      const objectKey = body?.attachment?.storage?.objectKey;
+      if (!objectKey || operationEpoch !== syncEpoch.current || workspaceTransitionRef.current) return;
+      setAttachments(prev => prev.map(a => (
+        a.id === local.id
+          ? {
+              ...a,
+              sizeBytes: body.attachment.sizeBytes ?? a.sizeBytes,
+              checksum: body.attachment.checksum ?? a.checksum,
+              storage: { kind: 'gcs' as const, objectKey },
+            }
+          : a
+      )));
+    } catch {
+      /* keep the inline record — it still syncs (small) and works offline */
+    }
   };
 
   const handleAddAttachment = (input: DocumentAttachmentInput): DocumentAttachment => {
@@ -1701,11 +2766,12 @@ export function useWineryState() {
     });
     setAttachments(prev => [attachment, ...prev.filter(item => item.id !== attachment.id)]);
     setToastMessage(lang === 'ka' ? 'Attachment saved for review.' : 'Attachment saved for review.');
+    void offloadAttachmentToObjectStore(attachment, input);
     return attachment;
   };
 
   const handleDeleteAttachment = (attachmentId: string) => {
-    recordDeletion(attachmentId);
+    if (!recordDeletion(attachmentId, 'attachments')) return;
     setAttachments(prev => prev.filter(item => item.id !== attachmentId));
     setToastMessage(lang === 'ka' ? 'Attachment removed.' : 'Attachment removed.');
   };
@@ -1729,7 +2795,7 @@ export function useWineryState() {
   };
 
   const handleDeleteCrmLead = (leadId: string) => {
-    recordDeletion(leadId);
+    if (!recordDeletion(leadId, 'crmLeads')) return;
     setCrmLeads(prev => prev.filter(lead => lead.id !== leadId));
     setToastMessage(lang === 'ka' ? 'CRM lead removed.' : 'CRM lead removed.');
   };
@@ -1755,14 +2821,19 @@ export function useWineryState() {
   };
 
   const handleDeleteTask = (taskId: string) => {
-    recordDeletion(taskId);
+    const linkedRecall = recallCases.find(recall => recall.containmentTaskIds.includes(taskId));
+    if (linkedRecall) {
+      setToastMessage(lang === 'ka' ? 'გაწვევასთან დაკავშირებული დავალება აუდიტის მტკიცებულებაა და ვერ წაიშლება.' : 'A recall containment task is audit evidence and cannot be deleted.');
+      return;
+    }
+    if (!recordDeletion(taskId, 'tasks')) return;
     setTasks(prev => prev.filter(t => t.id !== taskId));
     setToastMessage(lang === 'ka' ? 'დავალება წაიშალა!' : 'Task deleted successfully!');
   };
 
   const handleAddNewNote = (title: string, category: 'Enology' | 'Tasting' | 'Sanitation' | 'General', content: string, relatedLotId?: string) => {
     const newNote: CellarNote = {
-      id: sanitizeId(`note-${Date.now()}`),
+      id: createUniqueRecordId('note', notesList.map(item => item.id)),
       title,
       category,
       content,
@@ -1775,7 +2846,7 @@ export function useWineryState() {
   };
 
   const handleDeleteNote = (noteId: string) => {
-    recordDeletion(noteId);
+    if (!recordDeletion(noteId, 'notes')) return;
     setNotesList(prev => prev.filter(n => n.id !== noteId));
     setToastMessage(lang === 'ka' ? 'შენიშვნა წაიშალა!' : 'Note removed successfully!');
   };
@@ -1794,46 +2865,76 @@ export function useWineryState() {
   };
 
   const resolveConflict = async (resolutions: Record<string, 'local' | 'server'>) => {
-    if (!syncConflicts || !pendingServerDb) return;
-    
-    const db = { ...pendingServerDb };
-    
-    syncConflicts.forEach(conflict => {
-      const choice = resolutions[`${conflict.collection}-${conflict.recordId}`] || 'server';
-      
-      // Map client-side collection names to server-side keys
-      let colKey = conflict.collection;
-      if (conflict.collection === 'notesList') colKey = 'notes';
-      if (conflict.collection === 'fermLogs') colKey = 'fermlogs';
-      if (conflict.collection === 'labLogs') colKey = 'lablogs';
-      
-      const list = db[colKey];
-      if (list) {
-        const index = list.findIndex((x: any) => x.id === conflict.recordId);
-        let resolvedItem = choice === 'local' ? { ...conflict.local } : { ...conflict.server };
+    if (!syncConflicts || !pendingServerDb || conflictResolutionInFlight.current || workspaceTransitionRef.current) return;
+    conflictResolutionInFlight.current = true;
+    const resolutionEpoch = syncEpoch.current;
+    const conflictsToResolve = syncConflicts;
+    try {
+    const pendingIntent = pendingConflictSyncIntent.current
+      || SyncQueueManager.getPendingConflictSyncIntent();
+    if (!pendingIntent) {
+      throw new Error('The original sync transaction could not be recovered. Local changes were kept.');
+    }
 
-        // If choosing local, bump lastModified and rebase onto the server
-        // version we just reviewed — otherwise the re-push would conflict again.
-        if (choice === 'local') {
-          resolvedItem.lastModified = new Date().toISOString();
-          resolvedItem.baselineTimestamp = conflict.server?.lastModified;
-        }
-        
-        if (index !== -1) {
-          list[index] = resolvedItem;
-        } else {
-          list.push(resolvedItem);
-        }
-      }
+    const { buildResolvedSyncState, resolveDeletionIntent } = await import('../lib/syncConflictRecovery');
+
+    const deletionIntent = resolveDeletionIntent(
+      pendingIntent.payload,
+      conflictsToResolve,
+      resolutions,
+    );
+    const discardedDeletions: DeletionTombstone[] = [
+      ...deletionIntent.discardedRecords,
+      ...deletionIntent.discardedLegacyIds.map(id => ({ id })),
+    ];
+    if (
+      (discardedDeletions.length > 0 || deletionIntent.retainedRecords.length > 0)
+      && !(await SyncQueueManager.reconcilePendingConflictDeletionRecords(
+        deletionIntent.retainedRecords,
+        discardedDeletions,
+        pendingIntent.organizationId,
+      ))
+    ) {
+      throw new Error('The deletion conflict choices could not be saved safely. Local changes were kept.');
+    }
+
+    const inMemoryRetryPayload = { ...pendingIntent.payload };
+    if (deletionIntent.retainedRecords.length > 0) {
+      inMemoryRetryPayload.deletedRecords = deletionIntent.retainedRecords;
+    } else {
+      delete inMemoryRetryPayload.deletedRecords;
+    }
+    if (deletionIntent.retainedLegacyIds.length > 0) {
+      inMemoryRetryPayload.deletedIds = deletionIntent.retainedLegacyIds;
+    } else {
+      delete inMemoryRetryPayload.deletedIds;
+    }
+    const retryIntent = SyncQueueManager.getPendingConflictSyncIntent() || {
+      ...pendingIntent,
+      payload: inMemoryRetryPayload,
+    };
+    if (!await SyncQueueManager.isPendingConflictSyncIntentCurrent(retryIntent)) {
+      throw new Error('Newer local changes were made after this conflict appeared. Retry sync before resolving it.');
+    }
+
+    const db = buildResolvedSyncState({
+      serverDb: pendingServerDb,
+      attemptedPayload: retryIntent.payload,
+      conflicts: conflictsToResolve,
+      resolutions,
     });
 
     // Clear mutations queue from IndexedDB
     await SyncQueueManager.clearOfflineQueue();
+    if (resolutionEpoch !== syncEpoch.current || workspaceTransitionRef.current || !hasHydrated.current) return;
 
-    // Re-mark collections dirty so standard sync pushes modifications back
-    syncConflicts.forEach(conflict => {
-      SyncQueueManager.markDirty(conflict.collection);
-    });
+    // Re-mark every collection in the attempted transaction, including clean
+    // siblings that were deferred when one anchor record conflicted.
+    const retryCollections = new Set([
+      ...retryIntent.dirtyCollections,
+      ...conflictsToResolve.map(conflict => conflict.collection),
+    ]);
+    retryCollections.forEach(collection => SyncQueueManager.markDirty(collection));
 
     setSyncConflicts(null);
     setPendingServerDb(null);
@@ -1863,10 +2964,14 @@ export function useWineryState() {
       auditLogs: db.auditLogs || auditLogs,
       bottlingRuns: db.bottlingRuns || bottlingRuns,
       transfers: db.transfers || transfers,
+      grapeIntakes: db.grapeIntakes || grapeIntakes,
+      cellarOps: db.cellarOps || cellarOps,
       costEntries: db.costEntries || costEntries,
       winePricing: db.winePricing || winePricing,
       storageLocations: db.storageLocations || storageLocations,
       stockMovements: db.stockMovements || stockMovements,
+      invoiceReceipts: db.invoiceReceipts || invoiceReceipts,
+      inventoryMovements: db.inventoryMovements || inventoryMovements,
       salesDispatches: db.salesDispatches || salesDispatches,
       salesOrders: db.salesOrders || salesOrders,
       supplierPayments: db.supplierPayments || supplierPayments,
@@ -1874,19 +2979,41 @@ export function useWineryState() {
       attachments: db.attachments || attachments,
       crmLeads: db.crmLeads || crmLeads,
       aiDrafts: db.aiDrafts || aiDrafts,
+      qualitySops: db.qualitySops || qualitySops,
+      purchaseOrders: db.purchaseOrders || purchaseOrders,
+      productionPlans: db.productionPlans || productionPlans,
+      workOrders: db.workOrders || workOrders,
+      workOrderTemplates: db.workOrderTemplates || workOrderTemplates,
+      blendTrials: db.blendTrials || blendTrials,
+      recallCases: db.recallCases || recallCases,
       companyProfile: db.companyProfile || companyProfile
     };
 
-    triggerSync(currentFullState);
-    
+    await triggerSync(currentFullState);
+
     setToastMessage(lang === 'ka' ? 'კონფლიქტები წარმატებით მოგვარდა!' : 'Conflicts resolved successfully!');
+    } catch (error) {
+      setLastSyncError(error instanceof Error ? error.message : 'Conflict resolution failed');
+      setToastMessage(lang === 'ka'
+        ? '⚠️ კონფლიქტის მოგვარება ვერ დასრულდა. მონაცემები არ გაგზავნილა.'
+        : '⚠️ Conflict resolution could not finish. No resolved data was sent.');
+    } finally {
+      conflictResolutionInFlight.current = false;
+    }
   };
 
-  return {
+  // Every handler below is declared fresh on each render. Wrapping the result
+  // gives each one a fixed identity (forwarding to the current implementation),
+  // which is what allows the memoized module components to skip a render when
+  // only unrelated state moved. Data entries pass through by reference.
+  return useStableCallbacks({
     lang, setLang,
     activeTab, setActiveTab,
     isClient,
-    toastMessage, setToastMessage,
+    isAuthResolved,
+    // `toastMessage` is intentionally absent: StatusToastHost subscribes to it
+    // directly so raising one does not re-render every consumer of this hook.
+    setToastMessage,
     loginError, setLoginError,
     verificationPending, setVerificationPending,
     demoLoginEnabled,
@@ -1895,8 +3022,9 @@ export function useWineryState() {
     currentUser, setCurrentUser,
     companyProfile, setCompanyProfile,
     activeModule, setActiveModule,
-    isSidebarCollapsed, setIsSidebarCollapsed,
-    
+    sidebarMode, setSidebarMode,
+    pendingPlanFulfilment, setPendingPlanFulfilment, signalPlanRecord,
+
     // Data
     vessels, setVessels,
     lots, setLots,
@@ -1924,6 +3052,8 @@ export function useWineryState() {
     winePricing, setWinePricing,
     storageLocations, setStorageLocations,
     stockMovements, setStockMovements,
+    invoiceReceipts, setInvoiceReceipts,
+    inventoryMovements, setInventoryMovements,
     salesDispatches, setSalesDispatches,
     salesOrders, setSalesOrders,
     supplierPayments, setSupplierPayments,
@@ -1931,21 +3061,24 @@ export function useWineryState() {
     attachments, setAttachments,
     crmLeads, setCrmLeads,
     aiDrafts, setAiDrafts,
+    qualitySops, setQualitySops,
+    purchaseOrders, setPurchaseOrders,
+    productionPlans, setProductionPlans,
+    workOrders, setWorkOrders,
+    workOrderTemplates, setWorkOrderTemplates,
+    blendTrials, setBlendTrials,
+    recallCases, setRecallCases,
 
     // Inputs
-    logTankId, setLogTankId,
-    logLotId, setLogLotId,
-    logTemp, setLogTemp,
-    logDensity, setLogDensity,
-    logSugar, setLogSugar,
-    logPH, setLogPH,
-    logNotes, setLogNotes,
-    logCap, setLogCap,
     chartLotId, setChartLotId,
     selectedTankId, setSelectedTankId,
 
     labLotId, setLabLotId,
     labTankId, setLabTankId,
+    labDate, setLabDate,
+    labPH, setLabPH,
+    labMalic, setLabMalic,
+    labTechnician, setLabTechnician,
     labABV, setLabABV,
     labVA, setLabVA,
     labFSO2, setLabFSO2,
@@ -1965,12 +3098,24 @@ export function useWineryState() {
     prefilledTaskPriority, setPrefilledTaskPriority,
     prefilledTaskDesc, setPrefilledTaskDesc,
     prefilledSourceId, setPrefilledSourceId,
+    prefilledIntakeHarvestId, setPrefilledIntakeHarvestId,
     prefilledOpVesselId, setPrefilledOpVesselId,
     prefilledDestId, setPrefilledDestId,
 
     // Actions
     sanitizeId,
     triggerSync,
+    applyTransferCommandResponse,
+    applyTransferReversalCommandResponse,
+    applyBottlingCommandResponse,
+    applySalesStockCommandResponse,
+    applyStorageMovementCommandResponse,
+    applyInvoiceReceiptCommandResponse,
+    applyHarvestIntakeCommandResponse,
+    applyFermentationCompletionCommandResponse,
+    applyFermentationCompletionReversalCommandResponse,
+    applyCellarOperationCommandResponse,
+    applyLotStageTransitionCommandResponse,
     handleToggleCoolingJacket,
     handleAdjustTargetTemp,
     handleToggleSanitation,
@@ -1991,10 +3136,10 @@ export function useWineryState() {
     handleAddCellarOperation,
     handleAddSupplierPayment,
     handleDeleteSupplierPayment,
-    handleAddFermLog,
     handleAddLabLog,
     handleToggleTaskStatus,
     handleAddNewTask,
+    handleUpdateTaskNotification,
     handleAddAttachment,
     handleDeleteAttachment,
     handleSaveCrmLead,
@@ -2005,6 +3150,8 @@ export function useWineryState() {
     handleDeleteTask,
     handleAddNewNote,
     handleDeleteNote,
+    handleDeleteStorageLocation,
+    handleDeleteStockMovement,
     handleAddInventory,
     handleAuthLogin,
     handleDemoLogin,
@@ -2014,6 +3161,8 @@ export function useWineryState() {
     handleResendVerification,
     handleUpdateProfile,
     organizations,
+    isSwitchingOrganization,
+    workspaceHydrationError,
     fetchOrganizations,
     handleSwitchOrganization,
     syncConflicts,
@@ -2024,5 +3173,5 @@ export function useWineryState() {
     lastSyncAt,
     discardLocalUnsyncedChanges,
     clearAllData
-  };
+  });
 }

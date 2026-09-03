@@ -1,39 +1,50 @@
-FROM node:20-slim
-RUN apt-get update -y && apt-get install -y openssl
+FROM node:24-slim AS build
 
-# Set working directory inside the container
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Copy dependency files
+# Build with the complete toolchain, but do not carry it into the runtime image.
 COPY package*.json ./
+RUN npm ci --no-audit
 
-# Install all dependencies
-RUN npm ci
-
-# Copy the remaining project files
 COPY . .
-
-# Generate Prisma Client
 RUN npx prisma generate
-
-# Build the frontend assets
 RUN npm run build
 
-# Ensure the database data directory exists
+FROM node:24-slim AS runtime
+
+RUN apt-get update -y \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# The runtime and migration jobs need Prisma and tsx, now classified as
+# production dependencies. Lint, test, and frontend build tools stay behind.
+COPY package*.json ./
+COPY prisma ./prisma
+RUN npm ci --omit=dev --no-audit \
+    && npx prisma generate \
+    && npm audit --omit=dev --audit-level=high \
+    && npm cache clean --force
+
+COPY --from=build /app/dist ./dist
+COPY server.ts tsconfig.json ./
+COPY server ./server
+COPY lib ./lib
+COPY scripts ./scripts
+
 RUN mkdir -p /app/data
 
-# If db.json exists, copy it to the persistent data folder
-RUN if [ -f db.json ]; then cp db.json /app/data/db.json; fi
-
-# Expose port 3000 for the Express server
 EXPOSE 3000
 
-# Set production environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV DATABASE_PATH=/app/data/db.json
 
-# Start the application using tsx to run the TypeScript server.
-# In Cloud Run/Cloud SQL, PRISMA_DB_PUSH_ON_STARTUP=true lets the container
-# create additive schema changes (not destructive migrations) before serving.
-CMD ["sh", "-c", "if [ -n \"$DATABASE_URL\" ] && [ \"$PRISMA_DB_PUSH_ON_STARTUP\" = \"true\" ]; then npx prisma db push --skip-generate; fi; npx tsx server.ts"]
+# Schema changes run in the controlled pre-deploy Cloud Run migration job.
+# The service container never mutates its database schema during startup.
+CMD ["node", "--import", "tsx", "server.ts"]

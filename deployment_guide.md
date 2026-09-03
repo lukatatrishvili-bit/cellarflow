@@ -1,6 +1,14 @@
-# Vinea ERP Deployment Guide
+# VinOS Deployment Guide
 
-This guide explains how to build, run, and publish the Vinea ERP application in a production environment.
+This guide explains how to build, run, and publish VinOS in a production environment.
+
+## Canonical deployment target
+
+This repository deploys to **Google Cloud Run only**. The production service is
+`cellarflow-app` in project `cellarflow`, region `europe-west1`. Do not publish
+this application through ChatGPT Sites or another static hosting target: the
+application depends on its Express API, Cloud SQL, Secret Manager, and GCS
+backup configuration.
 
 ---
 
@@ -60,11 +68,21 @@ gcloud run deploy cellarflow-app --source . --region europe-west1 --allow-unauth
   --max-instances=1 \
   --add-cloudsql-instances cellarflow:europe-west1:cellarflow-postgres \
   --update-secrets DATABASE_URL=cellarflow-database-url:latest \
-  --update-env-vars NODE_ENV=production,PRISMA_DB_PUSH_ON_STARTUP=true,GCS_BUCKET=cellarflow-db,GCS_DB_OBJECT=db.json
+  --update-env-vars NODE_ENV=production,GCS_BUCKET=cellarflow-db,GCS_DB_OBJECT=db.json
 ```
 
-`PRISMA_DB_PUSH_ON_STARTUP=true` lets the container apply additive Prisma schema
-changes before serving. Start new production deployments with
+Do not use this manual service command when a schema migration is pending. The
+GitHub deployment workflow runs the verified image as a one-task Cloud Run
+migration job and waits for it to succeed before updating the service. The
+service container never mutates the schema during startup.
+
+The first migration-enabled rollout transitions the existing `db push` schema
+to the committed `20260719000000_baseline`. It marks that baseline as applied
+only after `prisma migrate diff --exit-code` proves the live database exactly
+matches `prisma/schema.prisma`; any drift or migration failure stops deployment
+before a new service revision is created.
+
+Start new production deployments with
 `--max-instances=1`, verify the Master Admin "Cloud Run Scaling Readiness"
 panel, then raise max instances gradually only after smoke/load testing. Cloud
 SQL deployments now use PostgreSQL-backed auth/org metadata, a shared login
@@ -104,31 +122,115 @@ Auth uses the service account automatically (Application Default Credentials) �
 no key files. On first boot the freshly-seeded DB is uploaded; thereafter every
 revision restores from the bucket, so data survives redeploys.
 
-### Step 0.4: Deploy from GitHub Actions
-This repository includes a manual workflow:
+### Step 0.4: Verify and deploy from GitHub Actions
+
+The repository has two release workflows:
 
 ```text
+.github/workflows/ci.yml
 .github/workflows/google-cloud-run.yml
 ```
 
-It deploys with:
+`Continuous Integration` runs on every pull request to `main`, every push to
+`main`, manual dispatch, and as the first job of a production deployment. It
+runs a high/critical production-dependency audit, locked dependency
+installation, Prisma generation, typecheck, the
+pre-build tests, a fresh production build, bundle budgets, and the production
+boot smoke in that order.
 
-* Cloud Run source deploy (`gcloud run deploy --source .`)
+`Google Cloud Run Deploy` then:
+
+* builds one commit/run-tagged container image;
+* verifies required-secret fail-fast behavior inside that image;
+* boots that exact image and runs the HTTP production smoke against it;
+* pushes it to an immutable-tag Artifact Registry repository;
+* runs the image as a single-task, zero-retry Cloud Run migration job and waits for success;
+* resolves the image digest and deploys with `gcloud run deploy --image`;
+* verifies that Cloud Run's latest ready revision references the expected digest;
+* updates three deterministic AI monitoring jobs (hourly, daily, and weekly);
+* updates an AI email delivery job and schedules it every 15 minutes;
+* secures every AI schedule with an OAuth-authenticated Cloud Scheduler trigger;
 * public unauthenticated access
 * `--max-instances=1` by default for conservative rollout
-* GCS-backed `db.json` persistence when Cloud SQL is not configured
+* GCS-backed `db.json` backup
 * automatic bucket creation if missing
-* `/api/health` verification after deploy
+* `/api/health` verification and an explicit commit/revision/image summary
 
-Configure GitHub repository secrets:
+The scheduled AI jobs run the same verified image digest as the service.
+Monitoring remains rules-only and cannot spend model tokens. Delivery reads the
+durable outbox, rechecks the recipient's current opt-in and role, and processes
+at most 100 records per execution. Master administrators can inspect run leases,
+delivery backlog, and terminal failures from **AI Operations** in the admin
+console; manual retry is available only after eligibility is revalidated.
+
+There is no deployment-time source rebuild. The digest that passed the
+container smoke is used by both the migration job and the Cloud Run service.
+
+In GitHub repository settings:
+
+1. Protect `main` and require the **Continuous Integration / Release gates** status check before merge.
+2. Create a `production` environment, add required reviewers, prevent self-review where available, and restrict deployment branches to `main` or the release branches you explicitly support.
+3. Keep deployment concurrency enabled; a second production run queues instead of cancelling an active rollout.
+
+The named live application secrets are read from **Google Cloud Secret
+Manager**, not GitHub. Create these secret resources in the target project and
+grant the Cloud Run runtime service account access:
 
 ```text
-GEMINI_API_KEY                 optional but needed for AI features
-GOOGLE_CLIENT_ID               optional Google OAuth client ID
-GOOGLE_CLIENT_SECRET           optional Google OAuth secret
-ADMIN_USERNAME                 optional production admin username
-ADMIN_PASSCODE                 optional production admin passcode
+cellarflow-session-secret
+cellarflow-database-url
+cellarflow-gemini-api-key
+cellarflow-google-client-id
+cellarflow-google-client-secret
+cellarflow-admin-username
+cellarflow-admin-passcode
+cellarflow-smtp-pass
 ```
+
+Optional non-secret SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`,
+`SMTP_USER`, and `MAIL_FROM`) remain GitHub repository or `production`
+environment secrets.
+
+### Custom domain: `PUBLIC_APP_URL`
+
+Mapping a domain to the Cloud Run service is only half the job. The service will
+answer on the domain immediately, but every link the server *generates* comes
+from `APP_URL`, which the deploy workflow sets — and with no configuration it
+sets it to the generated `*.run.app` URL.
+
+After mapping the domain, set a repository variable:
+
+```text
+PUBLIC_APP_URL = https://vinos.ge
+```
+
+Absolute `https`, no trailing slash; the deploy fails fast on anything else.
+Then redeploy so the new value reaches the service and the AI delivery job.
+
+Until this is set, the app still works, but:
+
+* Google sign-in started on the domain completes on run.app. The session cookie
+  is host-only, so the user lands back on the domain **appearing signed out**,
+  with nothing to indicate why.
+* Email verification, password reset, invitation, and approval-review links all
+  point at run.app.
+* AI notification deep links point at run.app.
+
+Register the same origin as an authorized JavaScript origin and redirect URI on
+the Google OAuth client (section 6). `tests/deployAppUrl.test.ts` guards the
+workflow behaviour.
+
+`APP_URL` also decides which origin search engines may index. The service
+answers on both the custom domain and the generated Cloud Run hostname with
+byte-identical pages, so any request arriving on a host other than `APP_URL`
+is served `X-Robots-Tag: noindex, nofollow`. Without that, the run.app URL
+competes with the real domain in search results and can outrank it. Requests are
+not redirected — reaching the service directly by its Cloud Run hostname stays a
+valid way to check a deployment.
+
+`public/robots.txt` and `public/sitemap.xml` both name `https://vinos.ge`
+explicitly, because those files require absolute URLs. Update them if the
+canonical domain ever changes.
 
 For Google Cloud authentication, use one of these options:
 
@@ -145,6 +247,12 @@ GCP_SERVICE_ACCOUNT
 GCP_SA_KEY
 ```
 
+The Google identity used by the workflow must be able to push/create the
+Artifact Registry repository, deploy and inspect Cloud Run revisions, enable
+the required services, manage the configured bucket IAM policy, and act as the
+runtime service account. Pre-provision the repository, bucket, and APIs if you
+want to grant a narrower day-to-day deployment role.
+
 Then open GitHub Actions, choose **Google Cloud Run Deploy**, run the workflow,
 and enter:
 
@@ -152,6 +260,8 @@ and enter:
 project_id: your-gcp-project-id
 region: europe-west1
 service: cellarflow-app
+artifact_repository: cellarflow
+cloudsql_instance: your-project:europe-west1:cellarflow-postgres
 gcs_bucket: cellarflow-db
 gcs_db_object: db.json
 demo_login_enabled: false
@@ -308,12 +418,30 @@ For the "Continue with Google" button to successfully authenticate users using t
 4. Search for and open the **Credentials** page:
    * Click **Create Credentials** > **OAuth Client ID**.
    * Select **Web Application** as the Application Type.
-    * Add **Authorized JavaScript Origins** (if running custom domains or testing):
+    * Add **Authorized JavaScript Origins** — every hostname the service answers
+      on:
       * Local: `http://localhost:3000`
+      * Production (custom domain): `https://vinos.ge`
       * Production: `https://cellarflow-app-445298255193.europe-west1.run.app`
+      * Production (alternate Cloud Run hostname): `https://cellarflow-app-tzjx5orr7q-ew.a.run.app`
     * Add **Authorized Redirect URIs**:
       * Local: `http://localhost:3000/api/auth/google/callback`
+      * Production (custom domain): `https://vinos.ge/api/auth/google/callback`
       * Production: `https://cellarflow-app-445298255193.europe-west1.run.app/api/auth/google/callback`
+      * Production (alternate): `https://cellarflow-app-tzjx5orr7q-ew.a.run.app/api/auth/google/callback`
+
+      > **Which one is actually used.** `appBaseUrl` returns `APP_URL` whenever
+      > it is set, and the deploy workflow always sets it, so in production the
+      > callback is built from `APP_URL` alone — *not* from the host the user
+      > arrived on. Only the `APP_URL` origin's redirect URI is exercised there;
+      > the others are for local work and for reaching the service directly by
+      > its Cloud Run hostname before `APP_URL` is configured.
+      >
+      > This is why `PUBLIC_APP_URL` must point at the custom domain. With
+      > `APP_URL` left on the run.app URL, a user who signs in from `vinos.ge`
+      > is redirected to run.app, and the session cookie — host-only, with no
+      > `Domain=` attribute — is set there. Returning to `vinos.ge` they appear
+      > signed out, with no error to explain it.
     * Click **Create** and copy the generated **Client ID** and **Client Secret**.
  
  ### Step 6.2: Set Environment Variables
@@ -329,6 +457,47 @@ For the "Continue with Google" button to successfully authenticate users using t
   gcloud run deploy cellarflow-app --set-env-vars GOOGLE_CLIENT_ID="your_client_id_here",GOOGLE_CLIENT_SECRET="your_client_secret_here",ALLOW_RUNTIME_OAUTH_CONFIG=false --region europe-west1
   ```
 * **Production safety**: keep `ALLOW_RUNTIME_OAUTH_CONFIG=false`. In production, the in-browser setup screen at `/api/auth/google/login?reconfigure=true` and the `/api/auth/google/configure` endpoint are blocked by default so OAuth credentials cannot be changed from the public app. If you ever enable `ALLOW_RUNTIME_OAUTH_CONFIG=true` for maintenance, redeploy it back to `false` immediately after updating credentials.
+
+### Step 6.3: Replacing a deleted or rotated OAuth client
+
+`Access blocked: Authorization Error — Error 401: deleted_client` on the Google
+consent page means the client ID the app sent no longer exists in Cloud Console.
+No code change can revive it; a new client has to be created and rolled out.
+
+Confirm which failure you have before rebuilding anything — a dead client answers
+the token endpoint distinctly (`deleted_client` vs `invalid_client` for a wrong
+secret, and `invalid_grant` for a client that is alive and well):
+
+```bash
+curl -s -X POST https://oauth2.googleapis.com/token -d "grant_type=authorization_code&code=probe&client_id=$GOOGLE_CLIENT_ID&client_secret=$GOOGLE_CLIENT_SECRET&redirect_uri=http://localhost:3000/api/auth/google/callback"
+```
+
+Then create a replacement client per Step 6.1 and publish it:
+
+```bash
+printf %s "NEW_CLIENT_ID" | gcloud secrets versions add cellarflow-google-client-id --project=cellarflow --data-file=-
+```
+
+```bash
+printf %s "NEW_CLIENT_SECRET" | gcloud secrets versions add cellarflow-google-client-secret --project=cellarflow --data-file=-
+```
+
+```bash
+gcloud run services update cellarflow-app --region europe-west1 --project cellarflow --update-secrets "GOOGLE_CLIENT_ID=cellarflow-google-client-id:latest,GOOGLE_CLIENT_SECRET=cellarflow-google-client-secret:latest"
+```
+
+Cloud Run resolves `:latest` at instance start, so the service update above is
+what actually picks up the new secret versions. Use `printf %s` (never `echo` or
+PowerShell `Out-File`) — a trailing newline or a UTF-8 BOM in the secret payload
+makes Google reject the token exchange with a misleading `invalid_client`.
+
+Finally, verify the deployed service is pointing at the new client:
+
+```bash
+curl -s -o /dev/null -D - https://cellarflow-app-445298255193.europe-west1.run.app/api/auth/google/login
+```
+
+The `location:` header shows the `client_id` in use.
 
 ---
 

@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck,
   Boxes,
   GitMerge,
   Grape,
-  Info,
+  Maximize2,
+  Minimize2,
   PackageCheck,
   Search,
   ShoppingCart,
@@ -28,15 +29,19 @@ import type {
   WineLot,
 } from '../lib/wineryState';
 import type { StorageLocation, StockMovement } from '../lib/storage';
+import { stageLabel } from '../lib/enumLabels';
 import {
   buildLotLineageGraph,
+  fitLineageZoom,
   layoutLineageGraph,
+  lineagePathTargets,
   LINEAGE_NODE_HEIGHT,
   LINEAGE_NODE_WIDTH,
   type LineageEdge,
   type LineageNode,
   type LineageNodeType,
   type PositionedLineageNode,
+  shortestPathNodeIds,
 } from '../lib/lineage';
 import { EmptyState, PageHeader, SectionCard, StatusBadge } from './ui/primitives';
 
@@ -89,7 +94,7 @@ const typeMeta: Record<LineageNodeType, {
   },
   transfer: {
     label: 'Transfer',
-    labelKa: 'გადაღება',
+    labelKa: 'გადატანა',
     icon: Shuffle,
     card: 'border-sky-200 bg-sky-50/80 dark:border-sky-900 dark:bg-sky-950/20',
     badge: 'bg-sky-100 text-sky-800 border-sky-200',
@@ -147,7 +152,7 @@ const typeMeta: Record<LineageNodeType, {
 
 const edgeLabel: Record<LineageEdge['type'], { en: string; ka: string }> = {
   created: { en: 'created', ka: 'შეიქმნა' },
-  transferred: { en: 'moved', ka: 'გადაღება' },
+  transferred: { en: 'moved', ka: 'გადატანა' },
   blended: { en: 'blend component', ka: 'კუპაჟის ნაწილი' },
   operated: { en: 'operation', ka: 'ოპერაცია' },
   bottled: { en: 'bottled', ka: 'ჩამოისხა' },
@@ -258,21 +263,7 @@ function LineageCard({
 }
 
 function DetailPanel({ node, edges, ka }: { node: LineageNode | null; edges: LineageEdge[]; ka: boolean }) {
-  if (!node) {
-    return (
-      <SectionCard
-        title={ka ? 'კვანძის დეტალები' : 'Node details'}
-        subtitle={ka ? 'აირჩიეთ ბარათი გრაფზე დეტალების სანახავად.' : 'Select a card in the graph to inspect its metadata.'}
-        icon={Info}
-      >
-        <p className="text-xs text-stone-400 leading-relaxed">
-          {ka
-            ? 'აქ გამოჩნდება მოცულობა, ბოთლები, თარიღი, დაკავშირებული ოპერაციები და აუდიტის მონაცემები.'
-            : 'You will see volume, bottles, date, linked operations, and audit metadata for the selected traceability event.'}
-        </p>
-      </SectionCard>
-    );
-  }
+  if (!node) return null;
 
   const meta = nodeMeta(node);
   const Icon = meta.icon;
@@ -280,7 +271,7 @@ function DetailPanel({ node, edges, ka }: { node: LineageNode | null; edges: Lin
   const metadata = Object.entries(node.metadata || {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
 
   return (
-    <SectionCard title={node.label} subtitle={ka ? meta.labelKa : meta.label} icon={Icon}>
+    <SectionCard title={node.label} icon={Icon}>
       <div className="grid grid-cols-2 gap-2 text-[11px]">
         {[
           [ka ? 'თარიღი' : 'Date', node.date || '—'],
@@ -313,11 +304,23 @@ function DetailPanel({ node, edges, ka }: { node: LineageNode | null; edges: Lin
         <div className="mt-3">
           <span className="text-[9px] uppercase font-mono text-stone-400 font-bold">{ka ? 'მეტამონაცემები' : 'Metadata'}</span>
           <div className="mt-1 space-y-1.5 max-h-44 overflow-y-auto pr-1">
-            {metadata.slice(0, 8).map(([key, value]) => (
-              <div key={key} className="text-[10px] rounded-lg bg-stone-50 px-2 py-1.5 text-stone-600 dark:bg-stone-950/50 dark:text-stone-300">
-                <strong className="font-mono">{key}</strong>: {String(value)}
-              </div>
-            ))}
+            {metadata.slice(0, 8).map(([key, value]) => {
+              const keyKa: Record<string, string> = {
+                vintage: 'მოსავალი', variety: 'ჯიში', stage: 'ეტაპი', wineClass: 'ღვინის კლასი',
+                region: 'რეგიონი', block: 'ნაკვეთი', operator: 'ოპერატორი', supplier: 'მომწოდებელი',
+              };
+              const displayKey = ka ? (keyKa[key] || key) : key;
+              const displayValue = key === 'stage'
+                ? stageLabel(String(value), ka ? 'ka' : 'en')
+                : key === 'wineClass' && ka
+                  ? ({red_dry: 'წითელი მშრალი', white_dry: 'თეთრი მშრალი', amber_dry: 'ქარვისფერი მშრალი', rose: 'ვარდისფერი'} as Record<string, string>)[String(value)] || String(value)
+                  : String(value);
+              return (
+                <div key={key} className="text-[10px] rounded-lg bg-stone-50 px-2 py-1.5 text-stone-600 dark:bg-stone-950/50 dark:text-stone-300">
+                  <strong className="font-mono">{displayKey}</strong>: {displayValue}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -333,7 +336,6 @@ function MiniMap({
   width,
   height,
   selectedNodeId,
-  zoom,
 }: {
   ka: boolean;
   nodes: PositionedLineageNode[];
@@ -342,14 +344,13 @@ function MiniMap({
   width: number;
   height: number;
   selectedNodeId?: string;
-  zoom: number;
 }) {
   if (nodes.length === 0) return null;
   const safeWidth = Math.max(width, 1);
   const safeHeight = Math.max(height, 1);
 
   return (
-    <SectionCard title={ka ? 'მინი რუკა' : 'Mini map'} subtitle={`${Math.round(zoom * 100)}% zoom`}>
+    <SectionCard title={ka ? 'მინი რუკა' : 'Mini map'}>
       <div className="relative h-20 overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-950/40">
         <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
           {edges.map(edge => {
@@ -389,7 +390,7 @@ function MiniMap({
   );
 }
 
-export default function LotLineageGraphTab({
+export function LotLineageGraphTab({
   lang,
   lots,
   grapeIntakes,
@@ -409,6 +410,10 @@ export default function LotLineageGraphTab({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [focusPathOnly, setFocusPathOnly] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const lastAutoFitKeyRef = useRef('');
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 
   const lotOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -427,6 +432,7 @@ export default function LotLineageGraphTab({
     if (focusLotId && lots.some(l => l.id === focusLotId)) {
       setSelectedLotId(focusLotId);
       setSelectedNodeId(null);
+      setFocusPathOnly(false);
     }
   }, [focusLotId, lots]);
 
@@ -446,60 +452,92 @@ export default function LotLineageGraphTab({
     }, selectedLotId);
   }, [bottlingRuns, cellarOps, certificationRecords, grapeIntakes, lots, salesDispatches, salesOrders, selectedLotId, stockMovements, storageLocations, transfers]);
 
-  const positioned = useMemo(() => layoutLineageGraph(graph), [graph]);
+  const visibleNodeIds = useMemo(() => {
+    if (!focusPathOnly || !selectedNodeId) return null;
+    const ids = shortestPathNodeIds(graph, `lot:${selectedLotId}`, selectedNodeId);
+    return ids.size > 0 ? ids : null;
+  }, [focusPathOnly, graph, selectedLotId, selectedNodeId]);
+
+  const visibleGraph = useMemo(() => {
+    if (!visibleNodeIds) return graph;
+    return {
+      nodes: graph.nodes.filter(node => visibleNodeIds.has(node.id)),
+      edges: graph.edges.filter(edge => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)),
+    };
+  }, [graph, visibleNodeIds]);
+
+  const pathTargets = useMemo(
+    () => lineagePathTargets(graph, `lot:${selectedLotId}`),
+    [graph, selectedLotId],
+  );
+
+  const positioned = useMemo(() => layoutLineageGraph(visibleGraph), [visibleGraph]);
   const nodesById = useMemo(() => new Map(positioned.nodes.map(n => [n.id, n])), [positioned.nodes]);
   const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) || null : positioned.nodes.find(n => n.emphasis) || null;
   const selectedLot = lots.find(l => l.id === selectedLotId);
-
-  const visibleNodeIds = useMemo(() => {
-    if (!focusPathOnly || !selectedNode) return null;
-    const ids = new Set<string>([selectedNode.id]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      positioned.edges.forEach(edge => {
-        if (ids.has(edge.from) || ids.has(edge.to)) {
-          if (!ids.has(edge.from)) {
-            ids.add(edge.from);
-            changed = true;
-          }
-          if (!ids.has(edge.to)) {
-            ids.add(edge.to);
-            changed = true;
-          }
-        }
-      });
-    }
-    return ids;
-  }, [focusPathOnly, positioned.edges, selectedNode]);
-
-  const visibleNodes = useMemo(
-    () => visibleNodeIds ? positioned.nodes.filter(node => visibleNodeIds.has(node.id)) : positioned.nodes,
-    [positioned.nodes, visibleNodeIds],
-  );
-  const visibleEdges = useMemo(
-    () => visibleNodeIds ? positioned.edges.filter(edge => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)) : positioned.edges,
-    [positioned.edges, visibleNodeIds],
-  );
-  const counts = positioned.nodes.reduce<Record<LineageNodeType, number>>((acc, node) => {
+  const visibleNodes = positioned.nodes;
+  const visibleEdges = positioned.edges;
+  const counts = graph.nodes.reduce<Record<LineageNodeType, number>>((acc, node) => {
     acc[node.type] = (acc[node.type] || 0) + 1;
     return acc;
   }, {} as Record<LineageNodeType, number>);
-  const scaledWidth = Math.max(positioned.width * zoom, 720);
-  const scaledHeight = Math.max(positioned.height * zoom, 360);
+
+  useEffect(() => {
+    const element = canvasViewportRef.current;
+    if (!element) return;
+    const measure = () => setViewportSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [positioned.nodes.length]);
+
+  const fitView = useCallback(() => {
+    if (!positioned.nodes.length || !viewportSize.width || !viewportSize.height) return;
+    setZoom(fitLineageZoom(positioned.width, positioned.height, viewportSize.width, viewportSize.height));
+    canvasViewportRef.current?.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+  }, [positioned.height, positioned.nodes.length, positioned.width, viewportSize.height, viewportSize.width]);
+
+  useEffect(() => {
+    fitView();
+  }, [fitView, isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
+
+  const visibleGraphKey = visibleNodeIds ? Array.from(visibleNodeIds).sort().join('|') : 'all';
+  useEffect(() => {
+    if (!positioned.nodes.length || !viewportSize.width || !viewportSize.height) return;
+    const key = `${selectedLotId}:${visibleGraphKey}:${positioned.width}x${positioned.height}`;
+    if (lastAutoFitKeyRef.current === key) return;
+    lastAutoFitKeyRef.current = key;
+    setZoom(fitLineageZoom(positioned.width, positioned.height, viewportSize.width, viewportSize.height));
+  }, [positioned.height, positioned.nodes.length, positioned.width, selectedLotId, viewportSize.height, viewportSize.width, visibleGraphKey]);
+
+  const scaledWidth = Math.max(positioned.width * zoom, viewportSize.width || 1);
+  const scaledHeight = Math.max(positioned.height * zoom, viewportSize.height || 360);
 
   return (
     <div className="space-y-5 animate-fade-in">
       <PageHeader
         eyebrow={ka ? 'მიკვლევადობა' : 'Lineage'}
         title={ka ? 'ღვინის კოდის მიკვლევადობის ხე' : 'Wine Code Traceability Tree'}
-        description={ka
-          ? 'თითო ღვინის კოდის ვიზუალური გზა: ყურძნის მიღება, პარტიის შექმნა, კუპაჟები, ოპერაციები, ჩამოსხმა, საწყობი, ჯავშნები და რეალიზაცია.'
-          : 'A horizontal visual lineage for each wine code: grape intake, lot creation, blends, operations, bottling, storage, reservations, and dispatch.'}
         icon={GitMerge}
         actions={(
-          <div className="flex flex-col sm:flex-row gap-2 min-w-0">
-            <div className="relative min-w-[240px]">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <div className="relative w-full sm:w-[240px] sm:min-w-[240px]">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
               <input
                 value={query}
@@ -513,19 +551,37 @@ export default function LotLineageGraphTab({
               onChange={e => {
                 setSelectedLotId(e.target.value);
                 setSelectedNodeId(null);
+                setFocusPathOnly(false);
               }}
-              className="min-w-[260px] bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
+              className="w-full bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold sm:w-[260px] sm:min-w-[260px] dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
             >
               {lotOptions.map(lot => (
                 <option key={lot.id} value={lot.id}>{lot.id} · {lot.name}</option>
               ))}
             </select>
-            <div className="flex items-center gap-1 rounded-xl border border-stone-200 bg-stone-50 p-1 dark:border-stone-800 dark:bg-stone-950">
+            <select
+              value={focusPathOnly ? selectedNodeId || '' : ''}
+              onChange={event => {
+                const nodeId = event.target.value;
+                setSelectedNodeId(nodeId || null);
+                setFocusPathOnly(Boolean(nodeId));
+              }}
+              aria-label={ka ? 'მიკვლევადობის ბოლო წერტილი' : 'Trace endpoint'}
+              className="w-full bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl text-xs font-bold sm:w-[230px] sm:min-w-[230px] dark:bg-stone-950 dark:border-stone-800 dark:text-amber-50"
+            >
+              <option value="">{ka ? 'სრული გრაფი · აირჩიეთ გზა' : 'Full graph · choose a path'}</option>
+              {pathTargets.map(node => (
+                <option key={node.id} value={node.id}>
+                  {(ka ? typeMeta[node.type].labelKa : typeMeta[node.type].label)} · {node.label}
+                </option>
+              ))}
+            </select>
+            <div className="flex shrink-0 items-center gap-1 rounded-xl border border-stone-200 bg-stone-50 p-1 dark:border-stone-800 dark:bg-stone-950">
               <button
                 type="button"
-                onClick={() => setZoom(value => Math.max(0.7, Math.round((value - 0.1) * 10) / 10))}
+                onClick={() => setZoom(value => Math.max(0.02, Math.round((value - 0.1) * 10) / 10))}
                 className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
-                title="Zoom out"
+                title={ka ? 'დაშორება' : 'Zoom out'}
               >
                 <ZoomOut className="h-3.5 w-3.5" />
               </button>
@@ -533,15 +589,24 @@ export default function LotLineageGraphTab({
                 type="button"
                 onClick={() => setZoom(1)}
                 className="min-w-10 rounded-lg px-2 py-2 text-center text-[10px] font-mono font-black text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
-                title="Reset zoom"
+                title={ka ? 'გადიდების გადატვირთვა' : 'Reset zoom'}
               >
                 {Math.round(zoom * 100)}%
               </button>
               <button
                 type="button"
+                onClick={fitView}
+                className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
+                title={ka ? 'გრაფიკის მოთავსება' : 'Fit graph to view'}
+                aria-label={ka ? 'გრაფიკის მოთავსება' : 'Fit graph to view'}
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => setZoom(value => Math.min(1.4, Math.round((value + 0.1) * 10) / 10))}
                 className="rounded-lg p-2 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:hover:bg-stone-900 dark:hover:text-amber-200"
-                title="Zoom in"
+                title={ka ? 'გადიდება' : 'Zoom in'}
               >
                 <ZoomIn className="h-3.5 w-3.5" />
               </button>
@@ -549,11 +614,13 @@ export default function LotLineageGraphTab({
             <button
               type="button"
               onClick={() => setFocusPathOnly(value => !value)}
-              className={`rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wide transition-colors ${
+              disabled={!selectedNodeId}
+              className={`shrink-0 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wide transition-colors ${
                 focusPathOnly
                   ? 'border-[#4e0e15] bg-[#4e0e15] text-amber-50'
                   : 'border-stone-200 bg-stone-50 text-stone-500 hover:bg-white hover:text-[#4e0e15] dark:border-stone-800 dark:bg-stone-950 dark:text-stone-300'
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-45`}
+              title={!selectedNodeId ? (ka ? 'ჯერ აირჩიეთ კვანძი' : 'Select a node first') : undefined}
             >
               {ka ? 'არჩეული გზა' : 'Selected path'}
             </button>
@@ -565,7 +632,7 @@ export default function LotLineageGraphTab({
         <div className="flex flex-wrap gap-2 text-[10px] font-mono">
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.vintage}</span>
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.variety}</span>
-          <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.stage}</span>
+          <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{stageLabel(selectedLot.stage, lang)}</span>
           <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-950 dark:text-stone-300">{selectedLot.currentVolume.toLocaleString()} {ka ? 'ლ ამჟამად' : 'L current'}</span>
         </div>
       )}
@@ -586,17 +653,26 @@ export default function LotLineageGraphTab({
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-5">
-        <div className="bg-white border border-[#e8dfd5] rounded-2xl shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800">
+        <div className={`${isFullscreen ? 'fixed inset-2 z-50 flex flex-col rounded-xl sm:inset-4' : 'rounded-2xl'} bg-white border border-[#e8dfd5] shadow-sm overflow-hidden dark:bg-stone-900 dark:border-stone-800`}>
           <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-center justify-between dark:border-stone-800">
             <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
-              <Sparkles className="w-4 h-4" /> {ka ? 'მიკვლევადობის ტილო' : 'Horizontal lineage canvas'}
+              <Sparkles className="w-4 h-4" /> {ka ? 'მიკვლევადობის ხე' : 'Traceability tree'}
             </span>
             <div className="flex items-center gap-2">
               {focusPathOnly && <StatusBadge tone="brand">{ka ? 'ფოკუსი' : 'focused'}</StatusBadge>}
               <span className="text-[9px] font-mono text-stone-400">
-                {visibleNodes.length}/{positioned.nodes.length} {ka ? 'კვანძი' : 'nodes'} · {visibleEdges.length} {ka ? 'კავშირი' : 'links'}
+                {visibleNodes.length}/{graph.nodes.length} {ka ? 'კვანძი' : 'nodes'} · {visibleEdges.length} {ka ? 'კავშირი' : 'links'}
                 {positioned.hasCycle ? (ka ? ' · ციკლის გაფრთხილება' : ' · cycle warning') : ''}
               </span>
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(value => !value)}
+                className="rounded-lg border border-stone-200 p-1.5 text-stone-500 transition-colors hover:bg-stone-50 hover:text-[#4e0e15] dark:border-stone-800 dark:hover:bg-stone-950 dark:hover:text-amber-200"
+                title={isFullscreen ? (ka ? 'სრული ეკრანიდან გამოსვლა' : 'Exit full screen') : (ka ? 'სრულ ეკრანზე გახსნა' : 'Open full screen')}
+                aria-label={isFullscreen ? (ka ? 'სრული ეკრანიდან გამოსვლა' : 'Exit full screen') : (ka ? 'სრულ ეკრანზე გახსნა' : 'Open full screen')}
+              >
+                {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </button>
             </div>
           </div>
 
@@ -607,7 +683,7 @@ export default function LotLineageGraphTab({
               description={ka ? 'შექმენით პარტია ან მიიღეთ ყურძენი მიკვლევადობის დასაწყებად.' : 'Create a wine lot or receive grapes to begin traceability.'}
             />
           ) : (
-            <div className="overflow-auto bg-[#fbfaf7] dark:bg-stone-950/40">
+            <div ref={canvasViewportRef} className={`${isFullscreen ? 'min-h-0 flex-1' : 'h-[min(68vh,640px)] min-h-[360px]'} overflow-auto overscroll-contain bg-[#fbfaf7] touch-pan-x touch-pan-y dark:bg-stone-950/40`}>
               <div className="relative" style={{ width: scaledWidth, height: scaledHeight, minWidth: '100%' }}>
                 <div
                   className="absolute left-0 top-0 origin-top-left"
@@ -646,16 +722,6 @@ export default function LotLineageGraphTab({
 
         <div className="space-y-4">
           <DetailPanel node={selectedNode} edges={positioned.edges} ka={ka} />
-          <SectionCard title={ka ? 'როგორ იკითხება ხე' : 'Reading the tree'} icon={Info}>
-            <div className="space-y-2 text-[11px] leading-relaxed text-stone-500 dark:text-stone-400">
-              <p>{ka
-                ? 'ბარათები მარცხნიდან მარჯვნივ მიჰყვება ღვინის სასიცოცხლო ციკლს. კუპაჟის კვანძი აერთიანებს ორ ან მეტ საწყის ხაზს ერთ პარტიაში.'
-                : 'Cards move left-to-right through the wine lifecycle. Blend nodes merge two or more parent wine-code lines into one result lot.'}</p>
-              <p>{ka
-                ? 'როცა კუპაჟი ვიზუალურად იტვირთება, ჩართეთ „არჩეული გზა" — დარჩება მხოლოდ დაკავშირებული აუდიტის ხაზი.'
-                : 'Use selected-path mode when a blend becomes visually dense; it keeps the connected audit path visible and hides unrelated noise.'}</p>
-            </div>
-          </SectionCard>
           <MiniMap
             ka={ka}
             nodes={visibleNodes}
@@ -664,10 +730,17 @@ export default function LotLineageGraphTab({
             width={positioned.width}
             height={positioned.height}
             selectedNodeId={selectedNode?.id}
-            zoom={zoom}
           />
         </div>
       </div>
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(LotLineageGraphTab);

@@ -11,6 +11,8 @@ import {
   computeSupplierLedger, computeSeasonStats, computeCapacityPlan, seasonYears,
   type SupplierLedgerRow,
 } from '../lib/rtveli';
+import { isActiveHarvestIntake } from '../lib/harvestIntakeIntegrity';
+import DateInput from './ui/DateInput';
 
 interface Props {
   lang: Language;
@@ -78,7 +80,9 @@ export default function RtveliTab({
   /** Printable bilingual settlement statement for one supplier. */
   const printStatement = (row: SupplierLedgerRow) => {
     const supplierIntakes = intakes.filter(i =>
-      i.source === 'supplier' && (i.supplierName || '').trim() === row.supplierName && (i.date || '').startsWith(String(season)));
+      isActiveHarvestIntake(i) && i.source === 'supplier'
+      && (i.supplierName || '').trim() === row.supplierName
+      && (i.date || '').startsWith(String(season)));
     const supplierPays = payments.filter(p =>
       (p.supplierName || '').trim() === row.supplierName && (p.date || '').startsWith(String(season)));
     const wineryName = company.wineryName || company.companyName || 'VinOS';
@@ -119,12 +123,18 @@ export default function RtveliTab({
   <tr class="total"><td colspan="3">${ka ? 'სულ გადახდილი' : 'Total paid'}</td><td class="r">${fmtMoney(row.totalPaid)}</td></tr>
   <tr class="total"><td colspan="3">${ka ? 'დარჩენილი ბალანსი' : 'Outstanding balance'}</td><td class="r">${fmtMoney(row.balance)}</td></tr></table>
   <div class="sig"><div>${ka ? 'მარნის წარმომადგენელი' : 'Winery representative'}</div><div>${ka ? 'მომწოდებელი' : 'Supplier'}</div></div>
-  <script>window.print()</script></body></html>`;
+  </body></html>`;
 
     const w = window.open('', '_blank', 'width=800,height=900');
     if (!w) { setToastMessage?.(ka ? '⚠️ ბრაუზერმა დაბლოკა ფანჯარა' : '⚠️ Pop-up blocked by the browser'); return; }
     w.document.write(html);
     w.document.close();
+    // Printing is driven from here rather than an inline <script> in the written
+    // document: this window inherits the app's CSP, which allows no inline
+    // script. Waiting for load also means fonts and layout are settled, which
+    // the inline version could race.
+    if (w.document.readyState === 'complete') w.print();
+    else w.addEventListener('load', () => w.print(), { once: true });
   };
 
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
@@ -386,7 +396,7 @@ export default function RtveliTab({
               </div>
               <div>
                 <label className={labelCls}>{ka ? 'თარიღი' : 'Date'}</label>
-                <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={payDate} onValueChange={setPayDate} className={inputCls} required />
               </div>
             </div>
             <div>

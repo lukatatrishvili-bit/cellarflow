@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BadgeCheck,
   CalendarClock,
@@ -13,6 +13,7 @@ import type { Language } from '../lib/i18n';
 import type { VineyardPlantingProject, VineyardProjectStatus } from '../lib/wineryState';
 import { evaluateVineyardProjectReadiness } from '../lib/vineyardProjects';
 import { GEORGIAN_GRAPE_VARIETIES } from '../lib/georgianWineKnowledge';
+import DateInput from './ui/DateInput';
 import {
   ActionButton,
   EmptyState,
@@ -33,7 +34,10 @@ interface VineyardProjectsTabProps {
   setPrefilledTaskTitle?: (title: string) => void;
   setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
   setPrefilledTaskDesc?: (desc: string) => void;
-  setActiveModule?: (module: 'portal') => void;
+  onNavigate?: (target: { module: 'gvino'; tab: 'tasks' }) => void;
+  canCreateProject?: boolean;
+  canUpdateProject?: boolean;
+  canCreateTask?: boolean;
 }
 
 interface ProjectForm {
@@ -182,6 +186,56 @@ function expiryDetail(readiness: ReturnType<typeof evaluateVineyardProjectReadin
   return `${readiness.daysUntilApprovalExpiry} days left`;
 }
 
+const GEORGIAN_REQUIREMENT_LABELS: Record<string, string> = {
+  'Project name': 'პროექტის სახელი',
+  'Land ownership/use document': 'მიწის საკუთრების ან სარგებლობის დოკუმენტი',
+  'Cadastral map': 'საკადასტრო რუკა',
+  'Soil analysis document': 'ნიადაგის ანალიზის დოკუმენტი',
+  'Agrotechnical questionnaire': 'აგროტექნიკური კითხვარი',
+  'Planned varieties': 'დაგეგმილი ჯიშები',
+  Rootstock: 'საძირე',
+  Spacing: 'დარგვის სქემა',
+  'Row direction': 'რიგების მიმართულება',
+  'Irrigation plan': 'სარწყავი გეგმა',
+  'Nursery invoice/intent document': 'სანერგის ინვოისი ან განზრახვის დოკუმენტი',
+  'Soil depth': 'ნიადაგის სიღრმე',
+  'Soil pH': 'ნიადაგის pH',
+  'Organic matter': 'ორგანული ნივთიერება',
+  CaCO3: 'CaCO3',
+  Texture: 'მექანიკური შემადგენლობა',
+  EC: 'EC',
+  'Exchangeable Ca': 'გაცვლითი Ca',
+  'Exchangeable Mg': 'გაცვლითი Mg',
+  'Exchangeable Na': 'გაცვლითი Na',
+  'Hygroscopic water': 'ჰიგროსკოპიული წყალი',
+};
+
+export function buildVineyardProjectTaskDraft(
+  lang: Language,
+  projectName: string,
+  readiness: ReturnType<typeof evaluateVineyardProjectReadiness>,
+) {
+  const ka = lang === 'ka';
+  const normalizedProjectName = projectName.trim() || (ka ? 'ახალი პროექტი' : 'new project');
+  const missing = readiness.missing
+    .slice(0, 5)
+    .map(label => ka ? (GEORGIAN_REQUIREMENT_LABELS[label] || label) : label)
+    .join(', ');
+
+  return {
+    title: ka
+      ? `ვენახის თანხმობის ფაილის დასრულება: ${normalizedProjectName}`
+      : `Complete vineyard consent file: ${normalizedProjectName}`,
+    priority: readiness.status === 'missing_critical' ? 'high' as const : 'medium' as const,
+    description: missing
+      ? (ka ? `აკლია თანხმობის დოკუმენტები: ${missing}.` : `Missing consent evidence: ${missing}.`)
+      : (ka
+        ? 'გადაამოწმეთ და წარადგინეთ ვენახის გაშენების თანხმობის ფაილი.'
+        : 'Review and submit the vineyard planting consent file.'),
+    target: { module: 'gvino' as const, tab: 'tasks' as const },
+  };
+}
+
 export default function VineyardProjectsTab({
   lang,
   projects,
@@ -190,7 +244,10 @@ export default function VineyardProjectsTab({
   setPrefilledTaskTitle,
   setPrefilledTaskPriority,
   setPrefilledTaskDesc,
-  setActiveModule,
+  onNavigate,
+  canCreateProject = true,
+  canUpdateProject = true,
+  canCreateTask = true,
 }: VineyardProjectsTabProps) {
   const ka = lang === 'ka';
   const [selectedProjectId, setSelectedProjectId] = useState(projects[0]?.id || 'new');
@@ -198,6 +255,7 @@ export default function VineyardProjectsTab({
   const [form, setForm] = useState<ProjectForm>(() => toForm(selectedProject));
   const draftProject: VineyardPlantingProject = { ...fromForm(form), id: selectedProject?.id || 'draft' };
   const readiness = evaluateVineyardProjectReadiness(selectedProject || draftProject);
+  const canEditSelectedProject = selectedProject ? canUpdateProject : canCreateProject;
 
   useEffect(() => {
     if (selectedProjectId !== 'new' && !projects.some(project => project.id === selectedProjectId)) {
@@ -206,19 +264,27 @@ export default function VineyardProjectsTab({
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
+    if (!canCreateProject && selectedProjectId === 'new' && projects[0]) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [canCreateProject, projects, selectedProjectId]);
+
+  useEffect(() => {
     setForm(toForm(selectedProject));
-  }, [selectedProject?.id]);
+  }, [selectedProject]);
 
   const updateForm = <K extends keyof ProjectForm>(key: K, value: ProjectForm[K]) => {
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
   const startNew = () => {
+    if (!canCreateProject) return;
     setSelectedProjectId('new');
     setForm(blankForm);
   };
 
   const saveProject = () => {
+    if (!canEditSelectedProject) return;
     const payload = fromForm(form);
     if (!payload.projectName.trim()) return;
     if (selectedProject) {
@@ -231,11 +297,12 @@ export default function VineyardProjectsTab({
   };
 
   const createTaskDraft = () => {
-    const missing = readiness.missing.slice(0, 5).join(', ');
-    setPrefilledTaskTitle?.(`Complete vineyard consent file: ${form.projectName || 'new project'}`);
-    setPrefilledTaskPriority?.(readiness.status === 'missing_critical' ? 'high' : 'medium');
-    setPrefilledTaskDesc?.(missing ? `Missing consent evidence: ${missing}.` : 'Review and submit the vineyard planting consent file.');
-    setActiveModule?.('portal');
+    if (!canCreateTask) return;
+    const draft = buildVineyardProjectTaskDraft(lang, form.projectName, readiness);
+    setPrefilledTaskTitle?.(draft.title);
+    setPrefilledTaskPriority?.(draft.priority);
+    setPrefilledTaskDesc?.(draft.description);
+    onNavigate?.(draft.target);
   };
 
   return (
@@ -276,7 +343,19 @@ export default function VineyardProjectsTab({
         />
       </div>
 
-      {readiness.missing.length > 0 && (
+      {(!canCreateProject || !canUpdateProject) && (
+        <InlineNotice tone="warning">
+          {!canCreateProject && !canUpdateProject
+            ? (ka
+              ? 'პროექტებზე მხოლოდ ნახვის წვდომა გაქვთ. შეგიძლიათ შეამოწმოთ თანხმობის ფაილები და მზადყოფნა, მაგრამ ცვლილებებს ვერ შეინახავთ.'
+              : 'You have read-only project access. You can review consent files and readiness, but cannot save changes.')
+            : (ka
+              ? 'პროექტის მოქმედებები შეზღუდულია თქვენი როლის მიხედვით; ხელმისაწვდომი მართვის ელემენტები ავტომატურად არის მორგებული.'
+              : 'Project actions are limited by your role; the available controls are adjusted automatically.')}
+        </InlineNotice>
+      )}
+
+      {readiness.missing.length > 0 && (selectedProject !== null || canCreateProject) && (
         <InlineNotice tone={readiness.status === 'missing_critical' ? 'danger' : 'warning'}>
           {ka ? 'აკლია: ' : 'Missing: '}
           {readiness.missing.slice(0, 8).join(', ')}
@@ -288,7 +367,7 @@ export default function VineyardProjectsTab({
         <SectionCard
           title={ka ? 'ახალი ვენახის პროექტები' : 'New vineyard projects'}
           icon={Sprout}
-          actions={<ActionButton tone="secondary" onClick={startNew}><Plus className="mr-2 h-4 w-4" />New</ActionButton>}
+          actions={canCreateProject ? <ActionButton tone="secondary" onClick={startNew}><Plus className="mr-2 h-4 w-4" />New</ActionButton> : undefined}
         >
           <div className="space-y-2">
             {projects.map(project => {
@@ -325,7 +404,9 @@ export default function VineyardProjectsTab({
               <EmptyState
                 icon={MapPinned}
                 title={ka ? 'პროექტი ჯერ არ არის' : 'No vineyard projects yet'}
-                description={ka ? 'შეავსეთ ახალი დარგვის ან აღდგენის განაცხადის ფაილი.' : 'Start a planting or restoration consent file.'}
+                description={canCreateProject
+                  ? (ka ? 'შეავსეთ ახალი დარგვის ან აღდგენის განაცხადის ფაილი.' : 'Start a planting or restoration consent file.')
+                  : (ka ? 'არსებული პროექტები აქ გამოჩნდება, როცა უფლებამოსილი თანამშრომელი შექმნის.' : 'Existing projects will appear here after an authorized teammate creates one.')}
               />
             )}
           </div>
@@ -335,13 +416,14 @@ export default function VineyardProjectsTab({
           <SectionCard
             title={selectedProject ? selectedProject.projectName : (ka ? 'ახალი პროექტი' : 'New project')}
             icon={FileText}
-            actions={(
+            actions={(canCreateTask || canEditSelectedProject) ? (
               <div className="flex flex-wrap gap-2">
-                <ActionButton tone="secondary" onClick={createTaskDraft}>Task draft</ActionButton>
-                <ActionButton onClick={saveProject}><Save className="mr-2 h-4 w-4" />Save</ActionButton>
+                {canCreateTask && <ActionButton tone="secondary" onClick={createTaskDraft}>{ka ? 'დავალების მონახაზი' : 'Task draft'}</ActionButton>}
+                {canEditSelectedProject && <ActionButton onClick={saveProject}><Save className="mr-2 h-4 w-4" />Save</ActionButton>}
               </div>
-            )}
+            ) : undefined}
           >
+            <fieldset disabled={!canEditSelectedProject} className="contents">
             <div className="grid gap-3 md:grid-cols-2">
               <div>
                 <FieldLabel required>{ka ? 'პროექტის სახელი' : 'Project name'}</FieldLabel>
@@ -368,20 +450,22 @@ export default function VineyardProjectsTab({
               <TextField label="Row direction" value={form.rowDirection} onChange={value => updateForm('rowDirection', value)} />
               <div>
                 <FieldLabel>{ka ? 'დამტკიცების თარიღი' : 'Approval date'}</FieldLabel>
-                <input type="date" value={form.approvalDate} onChange={event => updateForm('approvalDate', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.approvalDate} onValueChange={value => updateForm('approvalDate', value)} className={inputCls} />
               </div>
               <div>
                 <FieldLabel>{ka ? 'დამტკიცების ვადა' : 'Approval valid until'}</FieldLabel>
-                <input type="date" value={form.approvalValidUntil} onChange={event => updateForm('approvalValidUntil', event.target.value)} className={inputCls} />
+                <DateInput lang={lang} value={form.approvalValidUntil} onValueChange={value => updateForm('approvalValidUntil', value)} className={inputCls} />
               </div>
               <div className="md:col-span-2">
                 <FieldLabel>{ka ? 'სარწყავი გეგმა' : 'Irrigation plan'}</FieldLabel>
                 <textarea value={form.irrigationPlan} onChange={event => updateForm('irrigationPlan', event.target.value)} className={textareaCls} />
               </div>
             </div>
+            </fieldset>
           </SectionCard>
 
           <SectionCard title={ka ? 'ნიადაგის მონაცემები' : 'Soil fields'} icon={MapPinned}>
+            <fieldset disabled={!canEditSelectedProject} className="contents">
             <div className="grid gap-3 md:grid-cols-3">
               <NumberField label="Soil depth cm" value={form.soilDepth} onChange={value => updateForm('soilDepth', value)} />
               <NumberField label="pH" value={form.pH} onChange={value => updateForm('pH', value)} step="0.1" />
@@ -394,6 +478,7 @@ export default function VineyardProjectsTab({
               <NumberField label="Exchangeable Na" value={form.exchangeableNa} onChange={value => updateForm('exchangeableNa', value)} step="0.1" />
               <NumberField label="Hygroscopic water %" value={form.hygroscopicWater} onChange={value => updateForm('hygroscopicWater', value)} step="0.1" />
             </div>
+            </fieldset>
           </SectionCard>
         </div>
       </div>

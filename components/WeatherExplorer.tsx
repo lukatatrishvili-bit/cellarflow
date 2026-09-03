@@ -9,6 +9,7 @@ import {
   fetchDayWeather, describeWeatherCode, localISODate, maxForecastDate, DayWeather
 } from '../lib/weatherApi';
 import LocationPicker, { PickedLocation } from './LocationPicker';
+import DateInput from './ui/DateInput';
 
 interface Props {
   lang: Language;
@@ -65,7 +66,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
     const maxTemp = data.daily.tempMax;
     const precipSum = data.daily.precipSum;
     const windMax = data.daily.windMax;
-    
+
     let probability = 0;
     if (code === 96 || code === 99) {
       probability = code === 99 ? 95 : 80;
@@ -80,10 +81,10 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
     } else if (precipSum > 0 && maxTemp > 15) {
       probability = 5;
     }
-    
+
     let level: 'None' | 'Low' | 'Moderate' | 'High' | 'Critical' = 'None';
     let color = 'text-stone-750';
-    
+
     if (probability >= 80) {
       level = 'Critical';
       color = 'text-red-700 font-extrabold';
@@ -97,7 +98,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
       level = 'Low';
       color = 'text-emerald-700 font-bold';
     }
-    
+
     return { probability, level, color };
   }, [data]);
 
@@ -175,6 +176,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
               </select>
             ) : (
               <LocationPicker
+                lang={lang}
                 latitude={custom.latitude}
                 longitude={custom.longitude}
                 onChange={(loc) => setCustom(prev => ({ ...prev, ...loc, label: loc.label ?? prev.label }))}
@@ -188,12 +190,12 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
             <label className="text-[9px] uppercase font-mono block mb-1.5 font-bold text-stone-400">
               {ka ? 'თარიღი' : 'Date'}
             </label>
-            <input
-              type="date"
+            <DateInput
+              lang={lang}
               value={date}
               min="1940-01-01"
               max={maxForecastDate()}
-              onChange={(e) => e.target.value && setDate(e.target.value)}
+              onValueChange={value => value && setDate(value)}
               className="bg-stone-50 border border-stone-200 px-3 py-2 rounded-lg text-xs font-bold text-stone-700 outline-none cursor-pointer"
             />
             <div className="mt-1.5 flex gap-1">
@@ -276,7 +278,7 @@ export default function WeatherExplorer({ lang, blocks }: Props) {
                     {ka ? 'Meteored კონვექციური გაფრთხილება: სეტყვის რისკი!' : 'Meteored Convective Alert: Hail Risk'}
                   </strong>
                   <span>
-                    {ka 
+                    {ka
                       ? `ატმოსფერული არასტაბილურობის მაჩვენებელი მიუთითებს სეტყვის ${hailRisk.probability}%-იან ალბათობაზე. რეკომენდებულია დამცავი ბადეების გააქტიურება ან ანტისეტყვის სისტემების მომზადება.`
                       : `Atmospheric instability indices report a ${hailRisk.probability}% probability of convective hail. Vine canopy damage risk is ${hailRisk.level.toUpperCase()}. Recommend checking anti-hail rockets (Shildi systems) or preparing protective netting.`
                     }

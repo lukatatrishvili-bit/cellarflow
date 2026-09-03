@@ -1,56 +1,99 @@
 {
-  "name": "maranios",
+  "name": "vinos",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "build:sites": "npm run build && node scripts/prepareSitesBuild.mjs",
     "start": "tsx server.ts",
-    "lint": "tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:postgres": "vitest run --config vitest.postgres.config.ts",
+    "test:e2e": "playwright test",
+    "test:watch": "vitest",
+    "test:production-smoke": "tsx scripts/productionBootSmoke.ts",
+    "billing:renewals": "tsx scripts/processBillingRenewals.ts",
+    "ai:monitor": "tsx scripts/runAiMonitoring.ts",
+    "ai:deliver": "tsx scripts/deliverAiNotifications.ts",
+    "demo:seed": "tsx scripts/seedDemoScenario.ts",
+    "db:check-drift": "tsx scripts/checkMigrationDrift.ts",
+    "db:migrate:deploy": "tsx scripts/deployMigrations.ts",
+    "db:projection-check": "tsx scripts/checkRelationalProjection.ts",
+    "db:state-checksums": "tsx scripts/organizationStateChecksums.ts"
   },
   "dependencies": {
-    "@google-cloud/firestore": "^7.11.6",
     "@google-cloud/storage": "^7.21.0",
     "@google/genai": "*",
     "@prisma/client": "^6.4.0",
-    "@types/express": "^5.0.6",
-    "@vis.gl/react-google-maps": "^1.8.3",
-    "@vitejs/plugin-react": "^6.0.2",
     "clsx": "^2.1.1",
     "d3": "^7.9.0",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
     "motion": "^11.11.17",
     "nodemailer": "^9.0.1",
+    "prisma": "^6.4.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-leaflet": "^5.0.0",
     "react-markdown": "^9.0.1",
     "recharts": "^2.15.0",
     "rxdb": "^17.3.0",
     "rxjs": "^7.8.2",
     "tailwind-merge": "^3.6.0",
+    "three": "^0.185.1",
     "tsx": "^4.22.3",
-    "vite": "^8.0.14"
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.62.0",
     "@tailwindcss/postcss": "^4.0.0-alpha.30",
     "@types/d3": "^7.4.3",
-    "@types/node": "^22.20.0",
+    "@types/express": "^5.0.6",
+    "@types/leaflet": "^1.9.21",
+    "@types/node": "^24.0.0",
     "@types/nodemailer": "^8.0.1",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
+    "@types/three": "^0.185.4",
+    "@types/web-push": "^3.6.4",
+    "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^9.39.4",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^17.7.0",
     "postcss": "^8.4.49",
-    "prisma": "^6.4.0",
     "tailwindcss": "^4.0.0-alpha.30",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.65.0",
+    "vite": "^8.0.14",
     "vitest": "^4.1.8"
+  },
+  "overrides": {
+    "exceljs": {
+      "archiver": "8.0.0",
+      "unzipper": "0.12.5",
+      "uuid": "11.1.1"
+    },
+    "gaxios": {
+      "uuid": "11.1.1"
+    },
+    "teeny-request": {
+      "uuid": "11.1.1"
+    }
   }
 }

@@ -1,9 +1,12 @@
 import type { Vessel, WineLot, DailyFermLog, LabAnalysis, InventoryItem, Task } from './wineryState';
+import { isPhysicalFermentationReading } from './fermentationIntegrity';
+import type { Language } from './i18n';
 
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 export type AlertCategory =
   | 'so2'
   | 'va'
+  | 'lab'
   | 'fermentation'
   | 'temperature'
   | 'cleaning'
@@ -16,6 +19,9 @@ export interface Alert {
   category: AlertCategory;
   title: string;
   message: string;
+  /** Stable identity used when this alert overlaps a richer AI finding. */
+  relatedEntityType?: 'lot' | 'vessel' | 'task' | 'inventory_item';
+  relatedEntityId?: string;
   relatedLotId?: string;
   relatedTankId?: string;
 }
@@ -29,6 +35,8 @@ export interface AlertInputs {
   tasks: Task[];
   /** ISO yyyy-mm-dd. Injected so the engine stays pure and testable. Defaults to today. */
   today?: string;
+  /** Alert text language; only 'ka' has translations, everything else renders English. */
+  lang?: Language;
 }
 
 const SEVERITY_RANK: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 };
@@ -52,6 +60,34 @@ function latestByLot<T extends { lotId: string; date: string }>(rows: T[]): Map<
   return map;
 }
 
+function isoDayNumber(value: string): number | null {
+  const parsed = Date.parse(`${value.slice(0, 10)}T12:00:00.000Z`);
+  return Number.isFinite(parsed) ? Math.floor(parsed / 86_400_000) : null;
+}
+
+export function labAnalysisMaxAgeDays(lot?: WineLot): number {
+  if (!lot) return 30;
+  if (['crushing', 'fermenting', 'maceration', 'pressing'].includes(lot.stage)) return 7;
+  if (['stabilization', 'filtration'].includes(lot.stage)) return 14;
+  if (lot.stage === 'bottled') return 90;
+  return 30;
+}
+
+export function labAnalysisAgeDays(lab: Pick<LabAnalysis, 'date'>, today: string): number {
+  const sampleDay = isoDayNumber(lab.date);
+  const currentDay = isoDayNumber(today);
+  if (sampleDay == null || currentDay == null) return Number.POSITIVE_INFINITY;
+  return Math.max(0, currentDay - sampleDay);
+}
+
+export function isLabAnalysisFresh(
+  lab: Pick<LabAnalysis, 'date'>,
+  lot: WineLot | undefined,
+  today: string,
+): boolean {
+  return labAnalysisAgeDays(lab, today) <= labAnalysisMaxAgeDays(lot);
+}
+
 /**
  * Derives the live cellar alert list from current state. Pure function: no
  * side effects, deterministic given `today`.
@@ -59,19 +95,48 @@ function latestByLot<T extends { lotId: string; date: string }>(rows: T[]): Map<
 export function computeAlerts(input: AlertInputs): Alert[] {
   const { vessels, lots, fermLogs, labLogs, inventory, tasks } = input;
   const today = input.today ?? new Date().toISOString().split('T')[0];
+  const ka = input.lang === 'ka';
   const alerts: Alert[] = [];
   const lotName = (id: string) => lots.find((l) => l.id === id)?.name ?? id;
 
   // SO₂ protection + volatile acidity — evaluated on the latest lab per lot.
   for (const lab of latestByLot(labLogs).values()) {
+    const lot = lots.find(candidate => candidate.id === lab.lotId);
+    if (lot?.voidedAt || lot?.stage === 'sold') continue;
+    const ageDays = labAnalysisAgeDays(lab, today);
+    const maxAgeDays = labAnalysisMaxAgeDays(lot);
+    if (ageDays > maxAgeDays) {
+      alerts.push({
+        id: `lab-stale-${lab.lotId}`,
+        severity: 'warning',
+        category: 'lab',
+        title: ka
+          ? `ლაბორატორიული შედეგი მოძველებულია — ${lotName(lab.lotId)}`
+          : `Lab result is stale — ${lotName(lab.lotId)}`,
+        message: ka
+          ? `ბოლო ნიმუში ${ageDays} დღის წინ არის აღებული (${lab.date}); ამ ეტაპისთვის მოქმედების ზღვარია ${maxAgeDays} დღე. მკურნალობის გადაწყვეტილებამდე გაიმეორეთ ანალიზი.`
+          : `The latest sample is ${ageDays} days old (${lab.date}); this stage uses a ${maxAgeDays}-day action window. Retest before making a treatment decision.`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lab.lotId,
+        relatedLotId: lab.lotId,
+        relatedTankId: lab.tankId,
+      });
+      continue;
+    }
     const mol = molecularSO2(lab.freeSo2, lab.ph);
     if (mol < 0.5) {
       alerts.push({
         id: `so2-${lab.lotId}`,
         severity: mol < 0.35 ? 'critical' : 'warning',
         category: 'so2',
-        title: `Low molecular SO₂ — ${lotName(lab.lotId)}`,
-        message: `${mol.toFixed(2)} mg/L molecular (free ${lab.freeSo2} mg/L @ pH ${lab.ph}). Target ≥ 0.5 mg/L; oxidation / microbial risk.`,
+        title: ka
+          ? `დაბალი მოლეკულური SO₂ — ${lotName(lab.lotId)}`
+          : `Low molecular SO₂ — ${lotName(lab.lotId)}`,
+        message: ka
+          ? `${mol.toFixed(2)} მგ/ლ მოლეკულური (თავისუფალი ${lab.freeSo2} მგ/ლ, pH ${lab.ph}). სამიზნე ≥ 0.5 მგ/ლ; ჟანგვის / მიკრობული რისკი.`
+          : `${mol.toFixed(2)} mg/L molecular (free ${lab.freeSo2} mg/L @ pH ${lab.ph}). Target ≥ 0.5 mg/L; oxidation / microbial risk.`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lab.lotId,
         relatedLotId: lab.lotId,
         relatedTankId: lab.tankId,
       });
@@ -81,8 +146,14 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         id: `va-${lab.lotId}`,
         severity: lab.volatileAcid > 1.2 ? 'critical' : 'warning',
         category: 'va',
-        title: `High volatile acidity — ${lotName(lab.lotId)}`,
-        message: `VA ${lab.volatileAcid.toFixed(2)} g/L exceeds the 0.8 g/L threshold. Investigate acetic spoilage.`,
+        title: ka
+          ? `მაღალი აქროლადი მჟავიანობა — ${lotName(lab.lotId)}`
+          : `High volatile acidity — ${lotName(lab.lotId)}`,
+        message: ka
+          ? `VA ${lab.volatileAcid.toFixed(2)} გ/ლ აღემატება 0.8 გ/ლ ზღვარს. შეამოწმეთ ძმარმჟავა გაფუჭებაზე.`
+          : `VA ${lab.volatileAcid.toFixed(2)} g/L exceeds the 0.8 g/L threshold. Investigate acetic spoilage.`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lab.lotId,
         relatedLotId: lab.lotId,
         relatedTankId: lab.tankId,
       });
@@ -93,7 +164,7 @@ export function computeAlerts(input: AlertInputs): Alert[] {
   for (const lot of lots) {
     if (lot.stage !== 'fermenting') continue;
     const logs = fermLogs
-      .filter((f) => f.lotId === lot.id)
+      .filter((f) => f.lotId === lot.id && isPhysicalFermentationReading(f))
       .sort((a, b) => b.date.localeCompare(a.date));
     if (logs.length < 2) continue;
     const [latest, prev] = logs;
@@ -103,8 +174,14 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         id: `ferm-${lot.id}`,
         severity: latest.density > 1.02 ? 'critical' : 'warning',
         category: 'fermentation',
-        title: `Sluggish fermentation — ${lot.name}`,
-        message: `Density holding at ${latest.density.toFixed(3)} (Δ ${drop.toFixed(3)} since ${prev.date}); ${latest.sugar} g/L sugar remaining. Check temperature & nutrient (YAN).`,
+        title: ka
+          ? `ნელი დუღილი — ${lot.name}`
+          : `Sluggish fermentation — ${lot.name}`,
+        message: ka
+          ? `სიმკვრივე გაჩერდა ${latest.density.toFixed(3)}-ზე (Δ ${drop.toFixed(3)} ${prev.date}-დან); დარჩენილია ${latest.sugar} გ/ლ შაქარი. შეამოწმეთ ტემპერატურა და საკვები ნივთიერებები (YAN).`
+          : `Density holding at ${latest.density.toFixed(3)} (Δ ${drop.toFixed(3)} since ${prev.date}); ${latest.sugar} g/L sugar remaining. Check temperature & nutrient (YAN).`,
+        relatedEntityType: 'lot',
+        relatedEntityId: lot.id,
         relatedLotId: lot.id,
         relatedTankId: latest.tankId,
       });
@@ -118,8 +195,14 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         id: `temp-${v.id}`,
         severity: v.temperature > v.targetTemperature + 8 ? 'critical' : 'warning',
         category: 'temperature',
-        title: `${v.id} above target temperature`,
-        message: `${v.temperature.toFixed(1)}°C vs target ${v.targetTemperature.toFixed(1)}°C${v.coolingJacketActive ? '' : ' — cooling jacket is off'}.`,
+        title: ka
+          ? `${v.id} სამიზნე ტემპერატურაზე მაღლაა`
+          : `${v.id} above target temperature`,
+        message: ka
+          ? `${v.temperature.toFixed(1)}°C სამიზნე ${v.targetTemperature.toFixed(1)}°C-ის ნაცვლად${v.coolingJacketActive ? '' : ' — გამაგრილებელი პერანგი გამორთულია'}.`
+          : `${v.temperature.toFixed(1)}°C vs target ${v.targetTemperature.toFixed(1)}°C${v.coolingJacketActive ? '' : ' — cooling jacket is off'}.`,
+        relatedEntityType: 'vessel',
+        relatedEntityId: v.id,
         relatedTankId: v.id,
       });
     }
@@ -132,11 +215,15 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         id: `cip-${v.id}`,
         severity: 'warning',
         category: 'cleaning',
-        title: `${v.id} needs sanitation`,
+        title: ka
+          ? `${v.id} საჭიროებს სანიტარულ დამუშავებას`
+          : `${v.id} needs sanitation`,
         message:
           v.cleaningStatus === 'cleaning_needed'
-            ? `Flagged for CIP protocol. Last cleaned ${v.lastCleaned}.`
-            : `Marked dirty. Last cleaned ${v.lastCleaned}.`,
+            ? (ka ? `მონიშნულია CIP პროტოკოლისთვის. ბოლო წმენდა: ${v.lastCleaned}.` : `Flagged for CIP protocol. Last cleaned ${v.lastCleaned}.`)
+            : (ka ? `მონიშნულია ჭუჭყიანად. ბოლო წმენდა: ${v.lastCleaned}.` : `Marked dirty. Last cleaned ${v.lastCleaned}.`),
+        relatedEntityType: 'vessel',
+        relatedEntityId: v.id,
         relatedTankId: v.id,
       });
     }
@@ -150,16 +237,22 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         id: `task-${tk.id}`,
         severity: 'critical',
         category: 'task',
-        title: `Overdue: ${tk.title}`,
-        message: `Was due ${tk.dueDate} (assigned to ${tk.assignedTo}).`,
+        title: ka ? `ვადაგადაცილებული: ${tk.title}` : `Overdue: ${tk.title}`,
+        message: ka
+          ? `ვადა იყო ${tk.dueDate} (შემსრულებელი: ${tk.assignedTo}).`
+          : `Was due ${tk.dueDate} (assigned to ${tk.assignedTo}).`,
+        relatedEntityType: 'task',
+        relatedEntityId: tk.id,
       });
     } else if (tk.dueDate === today) {
       alerts.push({
         id: `task-${tk.id}`,
         severity: 'warning',
         category: 'task',
-        title: `Due today: ${tk.title}`,
-        message: `Assigned to ${tk.assignedTo}.`,
+        title: ka ? `დღეს ვადა: ${tk.title}` : `Due today: ${tk.title}`,
+        message: ka ? `შემსრულებელი: ${tk.assignedTo}.` : `Assigned to ${tk.assignedTo}.`,
+        relatedEntityType: 'task',
+        relatedEntityId: tk.id,
       });
     }
   }
@@ -171,16 +264,24 @@ export function computeAlerts(input: AlertInputs): Alert[] {
         id: `inv-${item.id}`,
         severity: 'critical',
         category: 'inventory',
-        title: `Out of stock: ${item.name}`,
-        message: `0 ${item.unit} on hand (min ${item.minThreshold}). Reorder from ${item.supplierName}.`,
+        title: ka ? `მარაგი ამოიწურა: ${item.name}` : `Out of stock: ${item.name}`,
+        message: ka
+          ? `დარჩენილია 0 ${item.unit} (მინ. ${item.minThreshold}). შეუკვეთეთ: ${item.supplierName}.`
+          : `0 ${item.unit} on hand (min ${item.minThreshold}). Reorder from ${item.supplierName}.`,
+        relatedEntityType: 'inventory_item',
+        relatedEntityId: item.id,
       });
     } else if (item.stock <= item.minThreshold) {
       alerts.push({
         id: `inv-${item.id}`,
         severity: 'warning',
         category: 'inventory',
-        title: `Low stock: ${item.name}`,
-        message: `${item.stock} ${item.unit} left (min ${item.minThreshold}). Reorder from ${item.supplierName}.`,
+        title: ka ? `დაბალი მარაგი: ${item.name}` : `Low stock: ${item.name}`,
+        message: ka
+          ? `დარჩენილია ${item.stock} ${item.unit} (მინ. ${item.minThreshold}). შეუკვეთეთ: ${item.supplierName}.`
+          : `${item.stock} ${item.unit} left (min ${item.minThreshold}). Reorder from ${item.supplierName}.`,
+        relatedEntityType: 'inventory_item',
+        relatedEntityId: item.id,
       });
     }
   }

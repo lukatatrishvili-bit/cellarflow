@@ -1,0 +1,27 @@
+# VinOS — https://vinos.ge
+#
+# The marketing pages are the only part worth crawling. Everything behind them
+# is an authenticated single-page app: crawlers cannot sign in, so requesting
+# those paths only produces the login screen under a hundred different URLs.
+#
+# Requests arriving on a host other than the canonical one (for example the
+# generated *.run.app URL) are additionally served `X-Robots-Tag: noindex` by
+# the server, so the same content is not indexed twice under two origins.
+
+User-agent: *
+
+# API surface — never useful to a crawler, and some paths are rate-limited.
+Disallow: /api/
+
+# Authenticated application routes. Each renders the login screen to a crawler.
+Disallow: /login
+Disallow: /accept-invite
+Disallow: /admin
+
+# Token-bearing links from email. These should never be retained or shared.
+Disallow: /*?token=
+Disallow: /*?reset_token=
+
+Allow: /
+
+Sitemap: https://vinos.ge/sitemap.xml

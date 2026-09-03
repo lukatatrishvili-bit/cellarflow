@@ -39,6 +39,9 @@ export type PermissionModule =
   | 'costs'
   | 'storage'
   | 'sales'
+  | 'recall'
+  | 'procurement'
+  | 'planning'
   | 'reports'
   | 'tasks'
   | 'notes'
@@ -63,7 +66,7 @@ const readWriteDelete: PermissionAction[] = ['view', 'create', 'update', 'delete
 const ALL_MODULES: PermissionModule[] = [
   'company_profile', 'lots', 'grape_intake', 'vessels', 'operations', 'transfers', 'fermentation', 'lab', 'bottling',
   'official_docs', 'certification', 'vineyard', 'vineyard_projects', 'inventory', 'costs',
-  'storage', 'sales', 'reports', 'tasks', 'notes', 'audit',
+  'storage', 'sales', 'recall', 'procurement', 'planning', 'reports', 'tasks', 'notes', 'audit',
 ];
 
 const ownerPermissions: Record<PermissionModule, PermissionAction[]> =
@@ -83,6 +86,9 @@ const ROLE_MODULE_PERMISSIONS: Record<Role, Partial<Record<PermissionModule, Per
     official_docs: readExport,
     certification: readWrite,
     inventory: readWrite,
+    recall: readWrite,
+    procurement: readWrite,
+    planning: readWrite,
     tasks: readWriteDelete,
     notes: readWriteDelete,
     audit: ['view', 'create'],
@@ -94,6 +100,7 @@ const ROLE_MODULE_PERMISSIONS: Record<Role, Partial<Record<PermissionModule, Per
     official_docs: ['view'],
     tasks: readWrite,
     notes: readWrite,
+    planning: ['view'],
     audit: ['view', 'create'],
   },
   'Cellar Worker': {
@@ -105,6 +112,7 @@ const ROLE_MODULE_PERMISSIONS: Record<Role, Partial<Record<PermissionModule, Per
     inventory: ['view'],
     tasks: readWrite,
     notes: readWrite,
+    planning: ['view'],
     audit: ['view', 'create'],
   },
   'Viticulturist': {
@@ -116,6 +124,7 @@ const ROLE_MODULE_PERMISSIONS: Record<Role, Partial<Record<PermissionModule, Per
     official_docs: ['view'],
     lots: ['view'],
     certification: ['view'],
+    planning: ['view'],
     audit: ['view', 'create'],
   },
   'Read-Only': Object.fromEntries(ALL_MODULES.map(module => [module, readExport])) as Record<PermissionModule, PermissionAction[]>,
@@ -156,6 +165,8 @@ const SYNC_COLLECTION_MODULES: Record<string, PermissionModule> = {
   fermlogs: 'fermentation',
   lablogs: 'lab',
   inventory: 'inventory',
+  invoiceReceipts: 'costs',
+  inventoryMovements: 'costs',
   tasks: 'tasks',
   notes: 'notes',
   blocks: 'vineyard',
@@ -183,6 +194,13 @@ const SYNC_COLLECTION_MODULES: Record<string, PermissionModule> = {
   attachments: 'certification',
   crmLeads: 'sales',
   aiDrafts: 'tasks',
+  qualitySops: 'tasks',
+  purchaseOrders: 'procurement',
+  productionPlans: 'planning',
+  recallCases: 'recall',
+  workOrders: 'planning',
+  workOrderTemplates: 'planning',
+  blendTrials: 'lots',
 };
 
 export function moduleForSyncCollection(collection: string): PermissionModule | null {

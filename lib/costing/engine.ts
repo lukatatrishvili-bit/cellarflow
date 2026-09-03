@@ -81,8 +81,10 @@ export function computeBlendTransfers(input: {
   currency: string;
   components: BlendComponent[];
   createdBy?: string;
+  /** Stable transfer reference makes command retries produce the same ledger ids. */
+  sourceRef?: string;
 }): CostEntry[] {
-  const { destLotId, date, currency, components, createdBy } = input;
+  const { destLotId, date, currency, components, createdBy, sourceRef } = input;
   const entries: CostEntry[] = [];
   let received = 0;
 
@@ -93,20 +95,24 @@ export function computeBlendTransfers(input: {
     if (pulled === 0) continue;
     received = round2(received + pulled);
     entries.push({
-      id: `blend-out-${date}-${c.lotId}-${++blendSeq}`,
+      id: sourceRef
+        ? `cost-blend-out-${sourceRef}-${c.lotId}`
+        : `blend-out-${date}-${c.lotId}-${++blendSeq}`,
       date, lotId: c.lotId, category: 'blend_out',
       description: `Blended into ${destLotId}`,
       amount: -pulled, currency, quantity: moved, createdBy,
-      sourceRef: destLotId,
+      sourceRef: sourceRef || destLotId,
     });
   }
 
   if (received > 0) {
     entries.push({
-      id: `blend-in-${date}-${destLotId}-${++blendSeq}`,
+      id: sourceRef
+        ? `cost-blend-in-${sourceRef}-${destLotId}`
+        : `blend-in-${date}-${destLotId}-${++blendSeq}`,
       date, lotId: destLotId, category: 'blend_in',
       description: `Cost received from ${components.filter(c => c.lotId !== destLotId).length} component(s)`,
-      amount: received, currency, createdBy,
+      amount: received, currency, createdBy, sourceRef,
     });
   }
   return entries;

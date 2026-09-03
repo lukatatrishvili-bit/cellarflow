@@ -6,6 +6,8 @@ import {
   describeWeatherCode,
   fetchDayWeather,
   buildAgroForecastUrl,
+  searchLocations,
+  transliterateGeorgianLocation,
 } from '../lib/weatherApi';
 
 afterEach(() => {
@@ -26,6 +28,32 @@ describe('date helpers', () => {
 
   it('caps forecasts at 15 days ahead', () => {
     expect(maxForecastDate()).toBe(addDays(localISODate(), 15));
+  });
+});
+
+describe('location search', () => {
+  it('transliterates Georgian place names for geocoders with sparse Georgian aliases', () => {
+    expect(transliterateGeorgianLocation('თელავი, კახეთი')).toBe('telavi, kakheti');
+  });
+
+  it('retries an empty Georgian-script search with its Latin transliteration', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        results: [{
+          name: 'Telavi',
+          latitude: 41.9198,
+          longitude: 45.4732,
+          country: 'Georgia',
+          admin1: 'Kakheti',
+        }],
+      }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(searchLocations('თელავი')).resolves.toEqual([
+      expect.objectContaining({ name: 'Telavi', country: 'Georgia' }),
+    ]);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('name=telavi');
   });
 });
 

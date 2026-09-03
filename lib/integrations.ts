@@ -1,9 +1,11 @@
+import { parseCsvRows } from './csv';
+
 export const ONE_C_CONNECTOR_ID = 'one_c_accounting';
 
 export type IntegrationConnectorKind = '1c_accounting';
 export type IntegrationConnectorStatus = 'available' | 'configured' | 'disabled' | 'error';
 export type IntegrationAuthMode = 'none' | 'basic' | 'api_key' | 'bearer' | 'oauth_placeholder';
-export type IntegrationExchangeMode = 'manual_json_csv' | 'api_placeholder';
+export type IntegrationExchangeMode = 'manual_json_csv' | 'api_placeholder' | 'live_odata';
 export type IntegrationSyncDirection = 'export' | 'import';
 export type IntegrationSyncFormat = 'json' | 'csv';
 export type IntegrationSyncJobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'needs_review';
@@ -59,6 +61,9 @@ export interface IntegrationConnectorConfig {
   exchangeMode: IntegrationExchangeMode;
   defaultExportFormat: IntegrationSyncFormat;
   secretConfigured: boolean;
+  /** Server-only AES-256-GCM sealed credential. Stripped by redactConnector —
+   * must never reach the client or logs. */
+  sealedSecret?: string;
   authSecretUpdatedAt?: string;
   lastSyncAt?: string;
   lastSuccessfulSyncAt?: string;
@@ -253,7 +258,7 @@ export const INTEGRATION_DOMAINS: IntegrationDomainDefinition[] = [
   {
     id: 'stock_movements',
     label: 'Stock movements',
-    description: 'Bottle movements in CellarFlow storage. Official valuation remains in 1C.',
+    description: 'Bottle movements in VinOS storage. Official valuation remains in 1C.',
     localCollectionKeys: ['stockMovements'],
   },
   {
@@ -269,7 +274,7 @@ export const SOURCE_OF_TRUTH_RULES: Record<IntegrationSyncDomain, SourceOfTruthR
     domain: 'products',
     cellarFlowOwns: ['wine lot identity', 'variety', 'vintage', 'cellar stage', 'inventory material usage'],
     externalOwns: ['official nomenclature code', 'accounting category', 'tax class'],
-    notes: 'CellarFlow exports operational products. 1C may return official nomenclature IDs and tax/accounting attributes.',
+    notes: 'VinOS exports operational products. 1C may return official nomenclature IDs and tax/accounting attributes.',
   },
   customers: {
     domain: 'customers',
@@ -293,7 +298,7 @@ export const SOURCE_OF_TRUTH_RULES: Record<IntegrationSyncDomain, SourceOfTruthR
     domain: 'sales_orders',
     cellarFlowOwns: ['reservation', 'fulfillment link', 'lot', 'location', 'requested dispatch date'],
     externalOwns: ['official order number', 'accounting status', 'tax fields'],
-    notes: 'CellarFlow remains the operational order source; 1C returns accounting identifiers.',
+    notes: 'VinOS remains the operational order source; 1C returns accounting identifiers.',
   },
   supplier_payments: {
     domain: 'supplier_payments',
@@ -322,11 +327,11 @@ export const CONNECTOR_CATALOG: IntegrationConnectorDefinition[] = [
     displayName: '1C Connector',
     description: 'Safe placeholder for future 1C accounting/ERP synchronization via manual JSON/CSV exchange first.',
     requiredSettings: ['Endpoint URL or exchange folder reference', 'Authentication mode'],
-    optionalSettings: ['Username', '1C database name', 'Secret reference managed outside CellarFlow'],
+    optionalSettings: ['Username', '1C database name', 'Secret reference managed outside VinOS'],
     supportedDomains: INTEGRATION_DOMAINS.map((domain) => domain.id),
     supportedDirections: ['export', 'import'],
     supportedFormats: ['json', 'csv'],
-    sourceOfTruthSummary: 'CellarFlow owns production and traceability; 1C owns accounting documents, payments, official IDs, valuation, VAT/tax, and posting state.',
+    sourceOfTruthSummary: 'VinOS owns production and traceability; 1C owns accounting documents, payments, official IDs, valuation, VAT/tax, and posting state.',
   },
 ];
 
@@ -406,8 +411,9 @@ export function redactConnector(connector: IntegrationConnectorConfig): Integrat
   const redacted = connector.lastError
     ? redactSensitiveValue({ lastError: connector.lastError }) as { lastError?: string }
     : {};
+  const { sealedSecret: _sealedSecret, ...publicFields } = connector;
   return {
-    ...connector,
+    ...publicFields,
     lastError: redacted.lastError || connector.lastError,
   };
 }
@@ -431,7 +437,7 @@ export function validateConnectorConfigInput(input: unknown): ConnectorConfigInp
   if (body.username !== undefined) next.username = String(body.username || '').trim().slice(0, 200);
   if (body.databaseName !== undefined) next.databaseName = String(body.databaseName || '').trim().slice(0, 200);
   if (body.exchangeMode !== undefined) {
-    if (body.exchangeMode !== 'manual_json_csv' && body.exchangeMode !== 'api_placeholder') {
+    if (body.exchangeMode !== 'manual_json_csv' && body.exchangeMode !== 'api_placeholder' && body.exchangeMode !== 'live_odata') {
       throw new Error('Unsupported exchange mode.');
     }
     next.exchangeMode = body.exchangeMode;
@@ -937,7 +943,7 @@ function processExportJob(
   job.exportArtifact = {
     format: job.format,
     generatedAt: now,
-    filename: `cellarflow_${job.domain}_${now.replace(/[:.]/g, '-')}.${job.format}`,
+    filename: `vinos_${job.domain}_${now.replace(/[:.]/g, '-')}.${job.format}`,
     content,
   };
   job.resultSummary = {
@@ -989,7 +995,7 @@ function processImportJob(
     const localRecord = localId ? findLocalRecord(domain, localId, orgData) : null;
     if (!localId || !localRecord) {
       conflictCount += createConflict(hub, job, domain, {
-        reason: 'Imported external record could not be matched to a CellarFlow record.',
+        reason: 'Imported external record could not be matched to a VinOS record.',
         localId: localId || undefined,
         externalId,
         externalValue: record,
@@ -1000,7 +1006,7 @@ function processImportJob(
     const protectedConflict = findProtectedFieldConflict(domain, localRecord, record);
     if (protectedConflict) {
       conflictCount += createConflict(hub, job, domain, {
-        reason: 'External payload attempted to change a CellarFlow-owned operational field.',
+        reason: 'External payload attempted to change a VinOS-owned operational field.',
         localId,
         externalId,
         fieldPath: protectedConflict.field,
@@ -1170,43 +1176,6 @@ function csvToRecords(csv: string): CollectionRecord[] {
     });
     return record;
   });
-}
-
-function parseCsvRows(csv: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let inQuotes = false;
-  for (let i = 0; i < csv.length; i += 1) {
-    const char = csv[i];
-    const next = csv[i + 1];
-    if (char === '"' && inQuotes && next === '"') {
-      cell += '"';
-      i += 1;
-      continue;
-    }
-    if (char === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (char === ',' && !inQuotes) {
-      row.push(cell);
-      cell = '';
-      continue;
-    }
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && next === '\n') i += 1;
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = '';
-      continue;
-    }
-    cell += char;
-  }
-  row.push(cell);
-  rows.push(row);
-  return rows;
 }
 
 function csvEscape(value: unknown): string {

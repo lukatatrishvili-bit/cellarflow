@@ -18,21 +18,46 @@ export const CELLAR_OPERATIONS: CellarOperationMeta[] = [
   { key: 'pressing', en: 'Pressing', ka: 'დაწურვა', affectsVolume: true },
   { key: 'ferment_start', en: 'Fermentation start', ka: 'დუღილის დაწყება' },
   { key: 'measurement', en: 'Temp / Brix check', ka: 'ტემპ. / შაქრის გაზომვა' },
-  { key: 'pumpover', en: 'Pump-over (remontage)', ka: 'რემონტაჟი (გადატუმბვა)' },
-  { key: 'punchdown', en: 'Punch-down', ka: 'ქუდის ჩაწნეხა' },
-  { key: 'racking', en: 'Transfer / racking', ka: 'გადაღება', affectsVolume: true, needsVesselTo: true },
+  { key: 'pumpover', en: 'Pump-over (remontage)', ka: 'რემონტაჟი' },
+  { key: 'punchdown', en: 'Punch-down', ka: 'დარევა' },
+  { key: 'racking', en: 'Transfer / racking', ka: 'გადატანა', affectsVolume: true, needsVesselTo: true },
   { key: 'blending', en: 'Blending', ka: 'კუპაჟი', affectsVolume: true, needsVesselTo: true },
   { key: 'sulfitation', en: 'Sulfitation (SO₂)', ka: 'სულფიტაცია', needsMaterial: true },
   { key: 'additive', en: 'Additive addition', ka: 'დანამატის დამატება', needsMaterial: true },
-  { key: 'fining', en: 'Fining', ka: 'დადარაჯება (გაწმენდა)', needsMaterial: true },
+  { key: 'fining', en: 'Fining', ka: 'დაწმენდა', needsMaterial: true },
   { key: 'filtration', en: 'Filtration', ka: 'ფილტრაცია', affectsVolume: true },
   { key: 'stabilization', en: 'Stabilization', ka: 'სტაბილიზაცია', needsMaterial: true },
   { key: 'vessel_filling', en: 'Barrel / qvevri filling', ka: 'ჭურჭლის შევსება', needsVesselTo: true },
   { key: 'bottling', en: 'Bottling', ka: 'ჩამოსხმა', affectsVolume: true },
   { key: 'cleaning', en: 'Cleaning / sanitation', ka: 'წმენდა / სანიტარია' },
   { key: 'correction', en: 'Correction', ka: 'კორექცია' },
+  // Not the same as vessel filling: that fills an empty container through a
+  // dedicated workflow. Topping is the weekly job of replacing what a working
+  // barrel has lost, drawn from a topping vessel.
+  { key: 'topping', en: 'Topping', ka: 'დოლივა (შევსება)', affectsVolume: true, needsSourceVessel: true },
   { key: 'custom', en: 'Custom operation', ka: 'სხვა ოპერაცია' },
 ];
+
+/**
+ * Operations that are safe to capture as one-lot quick facts. Physical moves,
+ * bottling and sanitation use dedicated workflows so balances and evidence
+ * cannot diverge behind a generic log entry.
+ */
+export const DEDICATED_CELLAR_OPERATION_TYPES = new Set<CellarOperationMeta['key']>([
+  'racking',
+  'blending',
+  'vessel_filling',
+  'bottling',
+  'cleaning',
+]);
+
+export const QUICK_CELLAR_OPERATIONS = CELLAR_OPERATIONS.filter(
+  operation => !DEDICATED_CELLAR_OPERATION_TYPES.has(operation.key),
+);
+
+export function isQuickCellarOperation(type: CellarOperationMeta['key']): boolean {
+  return !DEDICATED_CELLAR_OPERATION_TYPES.has(type);
+}
 
 /** Deduct an amount from a stock level, clamped at zero and rounded to 3 dp. */
 export function deductStock(currentStock: number, amount: number): number {

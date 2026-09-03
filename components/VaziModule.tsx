@@ -1,78 +1,170 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import type { 
-  VineyardBlock, 
-  PhenologyRecord, 
-  SprayRecord, 
-  ScoutingRecord, 
-  IrrigationRecord, 
-  FertilizationRecord, 
-  SoilAnalysisRecord, 
+import React, { lazy, Suspense, useState, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import type {
+  VineyardBlock,
+  PhenologyRecord,
+  SprayRecord,
+  ScoutingRecord,
+  IrrigationRecord,
+  FertilizationRecord,
+  SoilAnalysisRecord,
   VineyardPlantingProject,
-  GrapeSamplingRecord, 
+  GrapeSamplingRecord,
   HarvestRecord,
   UserProfile
 } from '../lib/wineryState';
 import type { Language } from '../lib/i18n';
+import type { VaziTab } from '../lib/vaziNavigation';
 import WeatherTab from './WeatherTab';
 import LocationPicker from './LocationPicker';
+import DateInput from './ui/DateInput';
 import IpmPhenoscheme from './IpmPhenoscheme';
 import VineyardProjectsTab from './VineyardProjectsTab';
+import DashboardLayout, { type DashboardWidgetSpec } from './DashboardLayout';
 import { useFocusTrap } from './useFocusTrap';
-import { calculateCadastreCompleteness } from '../lib/cadastre';
+import { calculateCadastreCompleteness, cadastreBadgeLabel } from '../lib/cadastre';
 import { calculateVaziRisk, vaziRiskColor } from '../lib/vaziRisk';
+import type { VaziRiskSummary, VaziWeatherRiskInput } from '../lib/vaziRisk';
 import { GEORGIAN_GRAPE_VARIETIES, GEORGIAN_WINE_REGIONS } from '../lib/georgianWineKnowledge';
-import { APIProvider, Map, useMap, Marker } from '@vis.gl/react-google-maps';
-
-interface MapPolygonProps {
-  paths: { lat: number; lng: number }[];
-  fillColor?: string;
-  strokeColor?: string;
-  onClick?: () => void;
-}
-
-function MapPolygon({ paths, fillColor, strokeColor, onClick }: MapPolygonProps) {
-  const map = useMap();
-  const polygonRef = useRef<google.maps.Polygon | null>(null);
-
-  useEffect(() => {
-    if (!map) return;
-
-    const polygon = new google.maps.Polygon({
-      paths,
-      fillColor: fillColor || '#10b981',
-      fillOpacity: 0.45,
-      strokeColor: strokeColor || '#047857',
-      strokeOpacity: 0.8,
-      strokeWeight: 2,
-    });
-
-    polygon.setMap(map);
-    polygonRef.current = polygon;
-
-    let clickListener: google.maps.MapsEventListener | null = null;
-    if (onClick) {
-      clickListener = polygon.addListener('click', onClick);
-    }
-
-    return () => {
-      if (clickListener) {
-        google.maps.event.removeListener(clickListener);
-      }
-      polygon.setMap(null);
-    };
-  }, [map, paths, fillColor, strokeColor, onClick]);
-
-  return null;
-}
-import { DayWeather, fetchDayWeather, localISODate } from '../lib/weatherApi';
-import { 
-  Mountain, Wind, Droplet, Sun, Layers, Plus, 
-  AlertTriangle, Check, Calendar, Thermometer, 
-  Compass, FlaskConical, BarChart3, TrendingUp, 
-  MapPin, HelpCircle, ArrowRight, User, Trash2,
+import {
+  appendBoundaryPoint,
+  hasUsableBoundary,
+  removeBoundaryPoint,
+  validateVineyardBoundary,
+  vineyardBlockBoundary,
+  vineyardBlockGeoJsonFeature,
+  vineyardPolygonAreaHectares,
+  type VineyardBoundaryValidation,
+} from '../lib/vineyardMap';
+import { fetchDayWeather, localISODate } from '../lib/weatherApi';
+import type { DayWeather } from '../lib/weatherApi';
+import {
+  Mountain, Wind, Sun, Layers, Plus,
+  AlertTriangle, Check, Calendar,
+  FlaskConical, BarChart3, TrendingUp,
+  MapPin, ArrowRight,
   Sprout, FileText, CheckSquare, Info, ShieldAlert
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid } from 'recharts';
+
+const VineyardMap = lazy(() => import('./VineyardMap'));
+
+function VineyardMapLoading({ lang }: { lang: Language }) {
+  return (
+    <div className="flex h-full min-h-[160px] items-center justify-center rounded-lg bg-stone-100 text-[10px] font-semibold text-stone-500">
+      {lang === 'ka' ? 'რუკა იტვირთება…' : 'Loading map…'}
+    </div>
+  );
+}
+
+type LiveBlockWeather = VaziWeatherRiskInput & {
+  temp: number;
+  rainMm: number;
+  wind: number;
+  humidity: number;
+  tempMax: number;
+  tempMin: number;
+  frostRisk: string;
+  heatStress: string;
+  sprayConditions: string;
+  diseasePressure: string;
+};
+
+function toLiveBlockWeather(weather: DayWeather): LiveBlockWeather {
+  const temp = weather.current?.temp
+    ?? (weather.daily.tempMax + weather.daily.tempMin) / 2;
+  const wind = weather.current?.wind ?? weather.daily.windMax;
+  const humidity = weather.current?.humidity ?? 0;
+  const rainMm = weather.daily.precipSum;
+
+  return {
+    temp: Math.round(temp),
+    rainMm,
+    wind: Math.round(wind),
+    humidity,
+    tempMax: weather.daily.tempMax,
+    tempMin: weather.daily.tempMin,
+    frostRisk: weather.daily.tempMin < 2 ? 'High' : weather.daily.tempMin < 5 ? 'Medium' : 'None',
+    heatStress: weather.daily.tempMax > 35 ? 'Severe' : weather.daily.tempMax > 30 ? 'Moderate' : 'Optimum',
+    sprayConditions: wind > 14 ? 'Unsafe (High Wind)' : rainMm > 0 ? 'Unsafe (Rain)' : 'Suitable',
+    diseasePressure: humidity > 75 && temp > 18 && rainMm > 0 ? 'High (Downy Mildew Risk)' : 'Low',
+  };
+}
+
+function boundaryValidationMessage(
+  validation: VineyardBoundaryValidation,
+  lang: Language,
+): string {
+  if (validation.valid) {
+    return lang === 'ka'
+      ? `გაზომილი ფართობი: ${validation.areaHectares.toFixed(2)} ჰა`
+      : `Measured area: ${validation.areaHectares.toFixed(2)} ha`;
+  }
+  if (validation.reason === 'self-intersection') {
+    return lang === 'ka'
+      ? 'საზღვარი იკვეთება — წაშალეთ ან გადაალაგეთ გადამკვეთი წერტილი.'
+      : 'Boundary lines cross — remove or redraw the crossing vertex.';
+  }
+  if (validation.reason === 'zero-area') {
+    return lang === 'ka'
+      ? 'წერტილები გამოსადეგ ფართობს არ ქმნის.'
+      : 'The points do not form a measurable area.';
+  }
+  return lang === 'ka'
+    ? `დაამატეთ მინიმუმ 3 წერტილი · ${validation.areaHectares.toFixed(2)} ჰა`
+    : `Add at least 3 points · ${validation.areaHectares.toFixed(2)} ha`;
+}
+
+function downloadBlockGeoJson(block: VineyardBlock): void {
+  const feature = vineyardBlockGeoJsonFeature(block);
+  const blob = new Blob([JSON.stringify(feature, null, 2)], { type: 'application/geo+json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${block.name.trim().replace(/[^a-z0-9_-]+/gi, '-') || block.id}.geojson`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function latestVaziRecord<T extends { blockId: string; date: string }>(
+  records: readonly T[],
+  blockId: string,
+): T | null {
+  return records.reduce<T | null>((latest, record) => {
+    if (record.blockId !== blockId) return latest;
+    return !latest || record.date.localeCompare(latest.date) > 0 ? record : latest;
+  }, null);
+}
+
+function latestHarvestRecord(records: readonly HarvestRecord[], blockId: string): HarvestRecord | null {
+  return records.reduce<HarvestRecord | null>((latest, record) => {
+    if (record.blockId !== blockId) return latest;
+    const recordDate = record.actualHarvestDate || record.estimatedHarvestDate;
+    const latestDate = latest ? latest.actualHarvestDate || latest.estimatedHarvestDate : '';
+    return !latest || recordDate.localeCompare(latestDate) > 0 ? record : latest;
+  }, null);
+}
+
+function riskLevelLabel(level: string, lang: Language): string {
+  if (lang !== 'ka') return level;
+  return ({ low: 'დაბალი', moderate: 'საშუალო', high: 'მაღალი', critical: 'კრიტიკული' } as Record<string, string>)[level]
+    || level;
+}
+
+/** Risk categories reach the UI with English labels from the risk engine, so
+ *  Georgian needs the local agronomic term; every other language keeps the
+ *  engine label. */
+function riskCategoryLabel(item: { category: string; label: string }, lang: Language): string {
+  if (lang !== 'ka') return item.label;
+  return ({
+    downyMildew: 'ჭრაქი',
+    powderyMildew: 'ოიდიუმი',
+    botrytis: 'ბოტრიტისი',
+    waterStress: 'წყლის სტრესი',
+    harvestReadiness: 'რთველის მზადყოფნა',
+    phiConflict: 'PHI კონფლიქტი',
+  } as Record<string, string>)[item.category] || item.label;
+}
 
 type NavigationTarget = {
   module: 'portal' | 'vazi' | 'gvino' | 'integrations' | 'settings' | 'audit' | 'docs' | 'costs' | 'storage' | 'sales' | 'analytics';
@@ -80,6 +172,9 @@ type NavigationTarget = {
 };
 
 interface VaziModuleProps {
+  /** Active screen, owned by the app shell so its sidebar can drive it. */
+  activeTab: VaziTab;
+  onTabChange: (tab: VaziTab) => void;
   lang: Language;
   currentUser: UserProfile;
   blocks: VineyardBlock[];
@@ -92,7 +187,7 @@ interface VaziModuleProps {
   harvests: HarvestRecord[];
   irrigationLogs: IrrigationRecord[];
   fertilizerLogs: FertilizationRecord[];
-  
+
   onAddBlock: (block: Omit<VineyardBlock, 'id'>) => void;
   onUpdateBlock: (id: string, updated: Partial<VineyardBlock>) => void;
   onAddVineyardProject: (project: Omit<VineyardPlantingProject, 'id'>) => void;
@@ -104,6 +199,8 @@ interface VaziModuleProps {
   onAddHarvestRecord: (rec: Omit<HarvestRecord, 'id'>) => void;
   onUpdateHarvestRecord: (id: string, updated: Partial<HarvestRecord>) => void;
   onSendHarvestToGvino: (blockId: string, harvestedKg: number, variety: string, vintage: number, harvestedDate: string) => string; // Returns Gvino Lot ID
+  /** Canonical handoff: open the full intake form with this harvest prefilled. */
+  onPrepareHarvestIntake?: (harvestId: string) => void;
   onAddIrrigation: (rec: Omit<IrrigationRecord, 'id'>) => void;
   onAddFertilizer: (rec: Omit<FertilizationRecord, 'id'>) => void;
   setActiveModule?: (mod: NavigationTarget['module']) => void;
@@ -112,6 +209,302 @@ interface VaziModuleProps {
   setPrefilledTaskTitle?: (title: string) => void;
   setPrefilledTaskPriority?: (priority: 'high' | 'medium' | 'low') => void;
   setPrefilledTaskDesc?: (desc: string) => void;
+  canCreateVineyardRecord?: boolean;
+  canUpdateVineyardRecord?: boolean;
+  canDeleteVineyardRecord?: boolean;
+  canCreateVineyardProject?: boolean;
+  canUpdateVineyardProject?: boolean;
+  canDispatchHarvestToGvino?: boolean;
+  canCreateTask?: boolean;
+}
+
+export function runVaziMutationIfAllowed<T>(
+  allowed: boolean,
+  mutation: () => T,
+): T | undefined {
+  if (!allowed) return undefined;
+  return mutation();
+}
+
+export type HarvestDispatchParseResult =
+  | {
+      ok: true;
+      harvestedKg: number;
+      actualHarvestDate: string;
+      vintage: number;
+    }
+  | {
+      ok: false;
+      reason: 'weight_required' | 'weight_invalid' | 'date_invalid';
+    };
+
+type HarvestDispatchErrorReason = Extract<HarvestDispatchParseResult, { ok: false }>['reason'];
+
+export type HarvestPlanParseResult =
+  | {
+      ok: true;
+      estimatedHarvestDate: string;
+      estimatedTons: number;
+    }
+  | {
+      ok: false;
+      errors: {
+        estimatedHarvestDate?: 'date_required' | 'date_invalid';
+        estimatedTons?: 'tons_required' | 'tons_invalid';
+      };
+    };
+
+const isValidISODate = (value: string) => {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!dateMatch) return false;
+
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return Number.isInteger(year)
+    && date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+};
+
+/** Validates the two quantitative fields required before a harvest plan can be saved. */
+export function parseHarvestPlanInput(
+  rawTargetDate: string,
+  rawEstimatedTons: string,
+): HarvestPlanParseResult {
+  const targetDate = rawTargetDate.trim();
+  const rawTons = rawEstimatedTons.trim();
+  const errors: Extract<HarvestPlanParseResult, { ok: false }>['errors'] = {};
+
+  if (!targetDate) errors.estimatedHarvestDate = 'date_required';
+  else if (!isValidISODate(targetDate)) errors.estimatedHarvestDate = 'date_invalid';
+
+  if (!rawTons) errors.estimatedTons = 'tons_required';
+  else {
+    const estimatedTons = Number(rawTons);
+    if (!Number.isFinite(estimatedTons) || estimatedTons <= 0) {
+      errors.estimatedTons = 'tons_invalid';
+    }
+  }
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    estimatedHarvestDate: targetDate,
+    estimatedTons: Number(rawTons),
+  };
+}
+
+interface HarvestPlanFormProps {
+  lang: Language;
+  block: VineyardBlock;
+  onCreate: (record: Omit<HarvestRecord, 'id'>) => void;
+  onCancel: () => void;
+}
+
+/** Inline harvest-plan editor kept separate so its labels and validation contract remain testable. */
+export function HarvestPlanForm({ lang, block, onCreate, onCancel }: HarvestPlanFormProps) {
+  const initialTargetDate = isValidISODate(block.estimatedHarvestDate)
+    ? block.estimatedHarvestDate
+    : '';
+  const [targetDate, setTargetDate] = useState(initialTargetDate);
+  const [estimatedTons, setEstimatedTons] = useState('');
+  const [pickingMethod, setPickingMethod] = useState<HarvestRecord['pickingMethod']>('hand');
+  const [grapeCondition, setGrapeCondition] = useState<HarvestRecord['grapeCondition']>('good');
+  const [notes, setNotes] = useState('');
+  const [errors, setErrors] = useState<Extract<HarvestPlanParseResult, { ok: false }>['errors']>({});
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
+  const fieldIdPrefix = `harvest-plan-${block.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+
+  useEffect(() => {
+    dateInputRef.current?.focus();
+  }, []);
+
+  const resetFields = () => {
+    setTargetDate(initialTargetDate);
+    setEstimatedTons('');
+    setPickingMethod('hand');
+    setGrapeCondition('good');
+    setNotes('');
+    setErrors({});
+  };
+
+  return (
+    <form
+      aria-labelledby={`${fieldIdPrefix}-title`}
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        const parsed = parseHarvestPlanInput(targetDate, estimatedTons);
+        if (!parsed.ok) {
+          setErrors(parsed.errors);
+          return;
+        }
+
+        onCreate({
+          blockId: block.id,
+          variety: block.grapeVariety,
+          estimatedHarvestDate: parsed.estimatedHarvestDate,
+          estimatedTons: parsed.estimatedTons,
+          pickingMethod,
+          grapeCondition,
+          sentToGvino: false,
+          notes: notes.trim(),
+        });
+      }}
+      className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4"
+    >
+      <div className="mb-4">
+        <h5 id={`${fieldIdPrefix}-title`} className="font-serif text-sm font-black text-emerald-950">
+          {lang === 'ka' ? 'რთველის ახალი გეგმა' : 'New harvest plan'}
+        </h5>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-date`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'სამიზნე თარიღი' : 'Target harvest date'}
+          </label>
+          <DateInput
+            ref={dateInputRef}
+            id={`${fieldIdPrefix}-date`}
+            lang={lang}
+            value={targetDate}
+            required
+            aria-invalid={Boolean(errors.estimatedHarvestDate)}
+            aria-describedby={errors.estimatedHarvestDate ? `${fieldIdPrefix}-date-error` : undefined}
+            onValueChange={(value) => {
+              setTargetDate(value);
+              setErrors(current => ({ ...current, estimatedHarvestDate: undefined }));
+            }}
+            className={`h-10 w-full rounded-lg border bg-white px-3 text-xs font-mono text-stone-900 outline-none focus:ring-2 focus:ring-emerald-200 ${errors.estimatedHarvestDate ? 'border-red-500' : 'border-emerald-200 focus:border-emerald-700'}`}
+          />
+          {errors.estimatedHarvestDate && (
+            <p id={`${fieldIdPrefix}-date-error`} role="alert" className="mt-1 text-[10px] font-semibold text-red-700">
+              {errors.estimatedHarvestDate === 'date_required'
+                ? (lang === 'ka' ? 'აირჩიეთ რთველის სამიზნე თარიღი.' : 'Choose a target harvest date.')
+                : (lang === 'ka' ? 'შეიყვანეთ სწორი კალენდარული თარიღი.' : 'Enter a valid calendar date.')}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-tons`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'სავარაუდო მოსავალი (ტონა)' : 'Estimated yield (tons)'}
+          </label>
+          <input
+            id={`${fieldIdPrefix}-tons`}
+            type="number"
+            inputMode="decimal"
+            min="0.001"
+            step="any"
+            value={estimatedTons}
+            required
+            placeholder={lang === 'ka' ? 'მაგ. 8.5' : 'e.g. 8.5'}
+            aria-invalid={Boolean(errors.estimatedTons)}
+            aria-describedby={errors.estimatedTons ? `${fieldIdPrefix}-tons-error` : undefined}
+            onChange={(event) => {
+              setEstimatedTons(event.target.value);
+              setErrors(current => ({ ...current, estimatedTons: undefined }));
+            }}
+            className={`h-10 w-full rounded-lg border bg-white px-3 text-xs font-mono text-stone-900 outline-none focus:ring-2 focus:ring-emerald-200 ${errors.estimatedTons ? 'border-red-500' : 'border-emerald-200 focus:border-emerald-700'}`}
+          />
+          {errors.estimatedTons && (
+            <p id={`${fieldIdPrefix}-tons-error`} role="alert" className="mt-1 text-[10px] font-semibold text-red-700">
+              {errors.estimatedTons === 'tons_required'
+                ? (lang === 'ka' ? 'შეიყვანეთ სავარაუდო მოსავალი.' : 'Enter the estimated yield.')
+                : (lang === 'ka' ? 'მოსავალი უნდა იყოს 0 ტონაზე მეტი.' : 'Estimated yield must be greater than 0 tons.')}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-method`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'კრეფის მეთოდი' : 'Picking method'}
+          </label>
+          <select
+            id={`${fieldIdPrefix}-method`}
+            value={pickingMethod}
+            onChange={(event) => setPickingMethod(event.target.value as HarvestRecord['pickingMethod'])}
+            className="h-10 w-full rounded-lg border border-emerald-200 bg-white px-3 text-xs text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-200"
+          >
+            <option value="hand">{lang === 'ka' ? 'ხელით' : 'Hand-picked'}</option>
+            <option value="machine">{lang === 'ka' ? 'მექანიკურად' : 'Machine-picked'}</option>
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor={`${fieldIdPrefix}-condition`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+            {lang === 'ka' ? 'ყურძნის მოსალოდნელი მდგომარეობა' : 'Expected grape condition'}
+          </label>
+          <select
+            id={`${fieldIdPrefix}-condition`}
+            value={grapeCondition}
+            onChange={(event) => setGrapeCondition(event.target.value as HarvestRecord['grapeCondition'])}
+            className="h-10 w-full rounded-lg border border-emerald-200 bg-white px-3 text-xs text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-200"
+          >
+            <option value="excellent">{lang === 'ka' ? 'შესანიშნავი' : 'Excellent'}</option>
+            <option value="good">{lang === 'ka' ? 'კარგი' : 'Good'}</option>
+            <option value=" fair">{lang === 'ka' ? 'დამაკმაყოფილებელი' : 'Fair'}</option>
+            <option value="damaged">{lang === 'ka' ? 'დაზიანებული' : 'Damaged'}</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <label htmlFor={`${fieldIdPrefix}-notes`} className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-emerald-950">
+          {lang === 'ka' ? 'ინსტრუქციები და შენიშვნები' : 'Picking instructions and notes'}
+        </label>
+        <textarea
+          id={`${fieldIdPrefix}-notes`}
+          value={notes}
+          rows={3}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder={lang === 'ka' ? 'მაგ. კრეფა დილით, მცირე ყუთებში' : 'e.g. Pick in the morning and use small crates'}
+          className="w-full resize-y rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-200"
+        />
+      </div>
+
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            resetFields();
+            onCancel();
+          }}
+          className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-950 hover:bg-emerald-100"
+        >
+          {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
+        </button>
+        <button
+          type="submit"
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-800 px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white hover:bg-emerald-950"
+        >
+          <Check className="h-3.5 w-3.5" /> {lang === 'ka' ? 'გეგმის შენახვა' : 'Save harvest plan'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Converts the explicit handoff fields into the values shared by Vazi and Gvino. */
+export function parseHarvestDispatchInput(
+  rawWeight: string,
+  actualHarvestDate: string,
+): HarvestDispatchParseResult {
+  const trimmedWeight = rawWeight.trim();
+  if (!trimmedWeight) return { ok: false, reason: 'weight_required' };
+
+  const harvestedKg = Number(trimmedWeight);
+  if (!Number.isFinite(harvestedKg) || harvestedKg <= 0) {
+    return { ok: false, reason: 'weight_invalid' };
+  }
+
+  if (!isValidISODate(actualHarvestDate)) return { ok: false, reason: 'date_invalid' };
+  const vintage = Number(actualHarvestDate.slice(0, 4));
+
+  return { ok: true, harvestedKg, actualHarvestDate, vintage };
 }
 
 const optionalText = (value: string) => {
@@ -124,21 +517,53 @@ const cadastreBadgeClass = (score: number, missingCriticalCount: number) => {
   if (score >= 85) return 'bg-emerald-50 text-emerald-800 border-emerald-200';
   return 'bg-stone-100 text-stone-700 border-stone-200';
 };
+
+// Phenology stages are stored as English values (state/data); localize display only.
+const PHENOLOGY_STAGES = [
+  'Dormancy / before bud swelling',
+  'Budburst',
+  'Budburst / early shoot growth',
+  '4-6 leaves / inflorescences visible',
+  'Pre-flowering',
+  'Flowering',
+  'Fruit set',
+  'Post-flowering / fruit set',
+  'Pea-size berry / berry growth',
+  'Bunch closure',
+  'Veraison',
+  'Ripening',
+  'Pre-harvest / ripening',
+] as const;
+const PHENOLOGY_KA: Record<string, string> = {
+  'Dormancy / before bud swelling': 'მოსვენება / კვირტის დაბერვამდე',
+  'Budburst': 'კვირტის გაშლა',
+  'Budburst / early shoot growth': 'კვირტის გაშლა / ყლორტის ადრეული ზრდა',
+  '4-6 leaves / inflorescences visible': '4-6 ფოთოლი / ყვავილედები ჩანს',
+  'Pre-flowering': 'ყვავილობამდე',
+  'Flowering': 'ყვავილობა',
+  'Fruit set': 'ნაყოფის გამონასკვა',
+  'Post-flowering / fruit set': 'ყვავილობის შემდეგ / გამონასკვა',
+  'Pea-size berry / berry growth': 'ბარდისებრი მარცვალი / მარცვლის ზრდა',
+  'Bunch closure': 'მტევნის შეკვრა',
+  'Veraison': 'შეთვალება',
+  'Ripening': 'მწიფობა',
+  'Pre-harvest / ripening': 'რთველამდე / მწიფობა',
+};
+const phenologyLabel = (stage: string, lang: string) =>
+  (lang === 'ka' && PHENOLOGY_KA[stage]) ? PHENOLOGY_KA[stage] : stage;
 const GEORGIAN_MICROZONE_OPTIONS = Array.from(new Set(GEORGIAN_WINE_REGIONS.flatMap(region => region.mainMicrozones))).sort();
 
-export default function VaziModule({
+export function VaziModule({
   lang,
   currentUser,
   blocks,
   phenologyLogs,
   sprays,
   scoutings,
-  soilRecords,
   vineyardProjects,
   samplings,
   harvests,
   irrigationLogs,
-  fertilizerLogs,
   onAddBlock,
   onUpdateBlock,
   onAddVineyardProject,
@@ -150,50 +575,42 @@ export default function VaziModule({
   onAddHarvestRecord,
   onUpdateHarvestRecord,
   onSendHarvestToGvino,
-  onAddIrrigation,
-  onAddFertilizer,
+  onPrepareHarvestIntake,
   setActiveModule,
   setActiveTab,
   onNavigate,
   setPrefilledTaskTitle,
   setPrefilledTaskPriority,
-  setPrefilledTaskDesc
+  setPrefilledTaskDesc,
+  canCreateVineyardRecord = true,
+  canUpdateVineyardRecord = true,
+  canDeleteVineyardRecord = true,
+  canCreateVineyardProject = true,
+  canUpdateVineyardProject = true,
+  canDispatchHarvestToGvino = true,
+  canCreateTask = true,
+  activeTab,
+  onTabChange,
 }: VaziModuleProps) {
-  const [vaziTab, setVaziTab] = useState<'dashboard' | 'blocks' | 'projects' | 'tasks' | 'spraying' | 'scouting' | 'sampling' | 'yield' | 'weather' | 'ipm_pheno'>('dashboard');
+  const vaziTab = activeTab;
+  const setVaziTab = onTabChange;
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
-  
+  const [harvestDispatchWeights, setHarvestDispatchWeights] = useState<Record<string, string>>({});
+  const [harvestDispatchDates, setHarvestDispatchDates] = useState<Record<string, string>>({});
+  const [harvestDispatchErrors, setHarvestDispatchErrors] = useState<Record<string, HarvestDispatchErrorReason>>({});
+  const [showHarvestPlanForm, setShowHarvestPlanForm] = useState(false);
+  const [harvestPlanStatus, setHarvestPlanStatus] = useState<{
+    blockName: string;
+    targetDate: string;
+  } | null>(null);
+  const [harvestDispatchStatus, setHarvestDispatchStatus] = useState<{
+    harvestedKg: number;
+    variety: string;
+    lotId: string;
+  } | null>(null);
+  const dispatchNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [mapOverlay, setMapOverlay] = useState<'mildew' | 'moisture' | 'phenology'>('mildew');
-  const [mapHoveredBlock, setMapHoveredBlock] = useState<string | null>(null);
-
-  const getBlockColor = (blockId: string) => {
-    const b = blocks.find(x => x.id === blockId);
-    if (!b) return '#e2e8f0';
-    const risk = calculateVaziRisk({
-      block: b,
-      weather: b.id === selectedBlockId ? blockWeather : null,
-      sprays,
-      scoutings,
-      samplings,
-      harvests,
-      irrigationLogs,
-    });
-
-    if (mapOverlay === 'mildew') {
-      const mildewLevel = [risk.items.downyMildew, risk.items.powderyMildew, risk.items.botrytis]
-        .sort((a, b) => b.score - a.score)[0].level;
-      return vaziRiskColor(mildewLevel);
-    }
-    if (mapOverlay === 'moisture') {
-      return vaziRiskColor(risk.items.waterStress.level);
-    }
-    if (mapOverlay === 'phenology') {
-      if (b.currentPhenology.toLowerCase().includes('veraison')) return '#8b5cf6'; // Veraison (Purple)
-      if (b.currentPhenology.toLowerCase().includes('ripening')) return '#f43f5e'; // Ripening (Rose)
-      if (b.currentPhenology.toLowerCase().includes('fruit set')) return '#10b981'; // Fruit Set (Green)
-      return '#6ee7b7'; // Default / Flowering
-    }
-    return '#cbd5e1';
-  };
 
   // Adding state
   const [showAddBlockModal, setShowAddBlockModal] = useState(false);
@@ -206,8 +623,31 @@ export default function VaziModule({
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   // Real-map polygon (add-block form): geographic boundary saved to the block.
   const [drawnPoints, setDrawnPoints] = useState<{ lat: number; lng: number }[]>([]);
-  // Legacy block-detail "satellite simulation": pixel-space sketch only (visual).
-  const [drawnPixels, setDrawnPixels] = useState<{ x: number; y: number }[]>([]);
+  const [isEditingBlockBoundary, setIsEditingBlockBoundary] = useState(false);
+  const [editingBoundaryPoints, setEditingBoundaryPoints] = useState<{ lat: number; lng: number }[]>([]);
+  const [editingPointLat, setEditingPointLat] = useState(41.9056);
+  const [editingPointLng, setEditingPointLng] = useState(45.474);
+
+  useEffect(() => {
+    if (blocks.length === 0) {
+      if (selectedBlockId !== null) setSelectedBlockId(null);
+      return;
+    }
+    if (!selectedBlockId || !blocks.some(block => block.id === selectedBlockId)) {
+      setSelectedBlockId(blocks[0].id);
+    }
+  }, [blocks, selectedBlockId]);
+
+  useEffect(() => {
+    if (!canCreateVineyardRecord) {
+      setShowAddBlockModal(false);
+      setShowHarvestPlanForm(false);
+    }
+  }, [canCreateVineyardRecord]);
+
+  useEffect(() => () => {
+    if (dispatchNavigationTimerRef.current) clearTimeout(dispatchNavigationTimerRef.current);
+  }, []);
 
   const defaultCenter = useMemo(() => {
     if (blocks && blocks.length > 0) {
@@ -221,25 +661,11 @@ export default function VaziModule({
     return { lat: 41.9056, lng: 45.474 };
   }, [blocks]);
 
-  const getBlockPaths = (b: VineyardBlock) => {
-    if (b.boundary && b.boundary.length > 2) {
-      return b.boundary;
-    }
-    const latOffset = 0.0003;
-    const lngOffset = 0.0004;
-    return [
-      { lat: b.latitude - latOffset, lng: b.longitude - lngOffset },
-      { lat: b.latitude + latOffset, lng: b.longitude - lngOffset },
-      { lat: b.latitude + latOffset, lng: b.longitude + lngOffset },
-      { lat: b.latitude - latOffset, lng: b.longitude + lngOffset },
-    ];
-  };
-
   // Multilingual translations lookups
   const label = {
     title: {
       en: 'Vazi — Vineyard Management',
-      ka: 'ვაზი — ვენახების მართვა',
+      ka: 'ვენახების მართვა',
       it: 'Vazi — Gestione del Vigneto',
       fr: 'Vazi — Viticulture & Vignoble',
       de: 'Vazi — Weinberg-Management'
@@ -355,6 +781,21 @@ export default function VaziModule({
   const selectedBlock = useMemo(() => {
     return blocks.find(b => b.id === selectedBlockId) || null;
   }, [blocks, selectedBlockId]);
+  const selectedBlockKey = selectedBlock?.id;
+  const selectedBlockLatitude = selectedBlock?.latitude;
+  const selectedBlockLongitude = selectedBlock?.longitude;
+
+  useEffect(() => {
+    setShowHarvestPlanForm(false);
+    setHarvestPlanStatus(null);
+    setHarvestDispatchStatus(null);
+    setIsEditingBlockBoundary(false);
+    setEditingBoundaryPoints([]);
+    if (selectedBlockLatitude !== undefined && selectedBlockLongitude !== undefined) {
+      setEditingPointLat(selectedBlockLatitude);
+      setEditingPointLng(selectedBlockLongitude);
+    }
+  }, [selectedBlockKey, selectedBlockLatitude, selectedBlockLongitude]);
   const selectedCadastre = useMemo(() => {
     return selectedBlock ? calculateCadastreCompleteness(selectedBlock) : null;
   }, [selectedBlock]);
@@ -368,7 +809,7 @@ export default function VaziModule({
     if (target.tab) setActiveTab?.(target.tab);
   };
 
-  const openVaziTab = (tab: typeof vaziTab, blockId = selectedBlockId || blocks[0]?.id) => {
+  const openVaziTab = (tab: VaziTab, blockId = selectedBlockId || blocks[0]?.id) => {
     if (blockId) setSelectedBlockId(blockId);
     setVaziTab(tab);
   };
@@ -444,8 +885,8 @@ export default function VaziModule({
 
   const handleSaveBlock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedBlock) return;
-    onUpdateBlock(selectedBlock.id, {
+    if (!selectedBlock || !canUpdateVineyardRecord) return;
+    runVaziMutationIfAllowed(canUpdateVineyardRecord, () => onUpdateBlock(selectedBlock.id, {
       name: editBlockName,
       vineyardName: editVineyardName,
       locationName: editLocationName,
@@ -476,63 +917,75 @@ export default function VaziModule({
       rootstock: optionalText(editRootstock),
       clone: optionalText(editClone),
       vineyardCondition: optionalText(editVineyardCondition)
-    });
+    }));
     setIsEditingBlock(false);
   };
 
+  useEffect(() => {
+    if (!canUpdateVineyardRecord) setIsEditingBlock(false);
+  }, [canUpdateVineyardRecord]);
+
   // Compute stats
-  const totalArea = useMemo(() => blocks.reduce((acc, b) => acc + b.area, 0), [blocks]);
-  const totalVines = useMemo(() => blocks.reduce((acc, b) => acc + b.vinesCount, 0), [blocks]);
-  
-  const [blockWeatherData, setBlockWeatherData] = useState<DayWeather | null>(null);
-  const [blockWeatherError, setBlockWeatherError] = useState('');
+
+  const weatherTargets = useMemo(() => (
+    blocks.map(block => ({
+      id: block.id,
+      latitude: block.latitude,
+      longitude: block.longitude,
+    }))
+  ), [blocks]);
+  const [blockWeatherDataById, setBlockWeatherDataById] = useState<Record<string, DayWeather>>({});
+  const [blockWeatherErrorsById, setBlockWeatherErrorsById] = useState<Record<string, string>>({});
+  const [blockWeatherLoading, setBlockWeatherLoading] = useState(false);
 
   useEffect(() => {
-    if (!selectedBlock) {
-      setBlockWeatherData(null);
-      setBlockWeatherError('');
+    if (weatherTargets.length === 0) {
+      setBlockWeatherDataById({});
+      setBlockWeatherErrorsById({});
+      setBlockWeatherLoading(false);
       return;
     }
 
     let active = true;
-    setBlockWeatherError('');
-    fetchDayWeather(selectedBlock.latitude, selectedBlock.longitude, localISODate())
-      .then((result) => {
-        if (active) setBlockWeatherData(result);
-      })
-      .catch((error) => {
-        if (active) {
-          setBlockWeatherData(null);
-          setBlockWeatherError(error instanceof Error ? error.message : 'Live weather is unavailable.');
+    setBlockWeatherLoading(true);
+    const date = localISODate();
+    Promise.allSettled(weatherTargets.map(async target => ({
+      id: target.id,
+      weather: await fetchDayWeather(target.latitude, target.longitude, date),
+    }))).then((results) => {
+      if (!active) return;
+      const weatherData: Record<string, DayWeather> = {};
+      const weatherErrors: Record<string, string> = {};
+      results.forEach((result, index) => {
+        const blockId = weatherTargets[index].id;
+        if (result.status === 'fulfilled') {
+          weatherData[blockId] = result.value.weather;
+        } else {
+          weatherErrors[blockId] = result.reason instanceof Error
+            ? result.reason.message
+            : 'Live weather is unavailable.';
         }
       });
+      setBlockWeatherDataById(weatherData);
+      setBlockWeatherErrorsById(weatherErrors);
+      setBlockWeatherLoading(false);
+    });
 
     return () => {
       active = false;
     };
-  }, [selectedBlock?.id, selectedBlock?.latitude, selectedBlock?.longitude]);
+  }, [weatherTargets]);
 
-  const blockWeather = useMemo(() => {
-    if (!blockWeatherData) return null;
-    const temp = blockWeatherData.current?.temp
-      ?? (blockWeatherData.daily.tempMax + blockWeatherData.daily.tempMin) / 2;
-    const wind = blockWeatherData.current?.wind ?? blockWeatherData.daily.windMax;
-    const humidity = blockWeatherData.current?.humidity ?? 0;
-    const rainMm = blockWeatherData.daily.precipSum;
-
-    return {
-      temp: Math.round(temp),
-      rainMm,
-      wind: Math.round(wind),
-      humidity,
-      tempMax: blockWeatherData.daily.tempMax,
-      tempMin: blockWeatherData.daily.tempMin,
-      frostRisk: blockWeatherData.daily.tempMin < 2 ? 'High' : blockWeatherData.daily.tempMin < 5 ? 'Medium' : 'None',
-      heatStress: blockWeatherData.daily.tempMax > 35 ? 'Severe' : blockWeatherData.daily.tempMax > 30 ? 'Moderate' : 'Optimum',
-      sprayConditions: wind > 14 ? 'Unsafe (High Wind)' : rainMm > 0 ? 'Unsafe (Rain)' : 'Suitable',
-      diseasePressure: humidity > 75 && temp > 18 && rainMm > 0 ? 'High (Downy Mildew Risk)' : 'Low'
-    };
-  }, [blockWeatherData]);
+  const blockWeatherById = useMemo<Record<string, LiveBlockWeather>>(() => (
+    Object.fromEntries(
+      Object.entries(blockWeatherDataById).map(([blockId, weather]) => (
+        [blockId, toLiveBlockWeather(weather)]
+      )),
+    )
+  ), [blockWeatherDataById]);
+  const mapSelectedBlockId = selectedBlockId || blocks[0]?.id || null;
+  const blockWeather = mapSelectedBlockId ? blockWeatherById[mapSelectedBlockId] || null : null;
+  const blockWeatherError = mapSelectedBlockId ? blockWeatherErrorsById[mapSelectedBlockId] || '' : '';
 
   // GDD is a recorded agronomic value, not a synthetic estimate.
   const computedGDD = useMemo(() => {
@@ -543,19 +996,119 @@ export default function VaziModule({
     return latest?.gdd ?? 0;
   }, [selectedBlock, phenologyLogs]);
 
-  const selectedRisk = useMemo(() => {
-    if (!selectedBlock) return null;
-    return calculateVaziRisk({
-      block: selectedBlock,
-      weather: blockWeather,
-      sprays,
-      scoutings,
-      samplings,
-      harvests,
-      irrigationLogs,
-    });
-  }, [selectedBlock, blockWeather, sprays, scoutings, samplings, harvests, irrigationLogs]);
+  const blockRiskById = useMemo<Record<string, VaziRiskSummary>>(() => (
+    Object.fromEntries(blocks.map(block => [
+      block.id,
+      calculateVaziRisk({
+        block,
+        weather: blockWeatherById[block.id] || null,
+        sprays,
+        scoutings,
+        samplings,
+        harvests,
+        irrigationLogs,
+      }),
+    ]))
+  ), [blocks, blockWeatherById, sprays, scoutings, samplings, harvests, irrigationLogs]);
 
+  const selectedRisk = selectedBlock ? blockRiskById[selectedBlock.id] || null : null;
+  const mapSelectedRisk = mapSelectedBlockId ? blockRiskById[mapSelectedBlockId] || null : null;
+  const selectedPrimaryRisk = selectedRisk
+    ? Object.values(selectedRisk.items).reduce((highest, item) => (
+        item.score > highest.score ? item : highest
+      ))
+    : null;
+  const selectedActivity = useMemo(() => {
+    if (!selectedBlock) return null;
+    return {
+      scouting: latestVaziRecord(scoutings, selectedBlock.id),
+      spray: latestVaziRecord(sprays, selectedBlock.id),
+      sampling: latestVaziRecord(samplings, selectedBlock.id),
+      harvest: latestHarvestRecord(harvests, selectedBlock.id),
+    };
+  }, [harvests, samplings, scoutings, selectedBlock, sprays]);
+
+  const getBlockColor = (blockId: string) => {
+    const block = blocks.find(item => item.id === blockId);
+    const risk = blockRiskById[blockId];
+    if (!block || !risk) return '#e2e8f0';
+    if (mapOverlay === 'mildew') {
+      const mildewLevel = [
+        risk.items.downyMildew,
+        risk.items.powderyMildew,
+        risk.items.botrytis,
+      ].sort((a, b) => b.score - a.score)[0].level;
+      return vaziRiskColor(mildewLevel);
+    }
+    if (mapOverlay === 'moisture') return vaziRiskColor(risk.items.waterStress.level);
+    if (block.currentPhenology.toLowerCase().includes('veraison')) return '#8b5cf6';
+    if (block.currentPhenology.toLowerCase().includes('ripening')) return '#f43f5e';
+    if (block.currentPhenology.toLowerCase().includes('fruit set')) return '#10b981';
+    return '#6ee7b7';
+  };
+
+  const getBlockTooltipLines = (blockId: string): string[] => {
+    const block = blocks.find(item => item.id === blockId);
+    const risk = blockRiskById[blockId];
+    if (!block || !risk) return [];
+    let layerLine: string;
+    if (mapOverlay === 'mildew') {
+      const item = [
+        risk.items.downyMildew,
+        risk.items.powderyMildew,
+        risk.items.botrytis,
+      ].sort((a, b) => b.score - a.score)[0];
+      layerLine = `${riskCategoryLabel(item, lang)}: ${riskLevelLabel(item.level, lang)} · ${item.score}/100`;
+    } else if (mapOverlay === 'moisture') {
+      const item = risk.items.waterStress;
+      layerLine = `${riskCategoryLabel(item, lang)}: ${riskLevelLabel(item.level, lang)} · ${item.score}/100`;
+    } else {
+      layerLine = lang === 'ka'
+        ? `ფენოლოგია: ${phenologyLabel(block.currentPhenology, lang)}`
+        : `Phenology: ${phenologyLabel(block.currentPhenology, lang)}`;
+    }
+    const weather = blockWeatherById[blockId];
+    const weatherLine = weather
+      ? `${weather.temp}°C · ${weather.rainMm} mm · ${weather.humidity}% RH`
+      : blockWeatherLoading
+        ? (lang === 'ka' ? 'ცოცხალი ამინდი იტვირთება…' : 'Loading live weather…')
+        : (lang === 'ka' ? 'ცოცხალი ამინდი მიუწვდომელია' : 'Live weather unavailable');
+    return [layerLine, weatherLine];
+  };
+
+  const editingBoundaryValidation = useMemo(
+    () => validateVineyardBoundary(editingBoundaryPoints),
+    [editingBoundaryPoints],
+  );
+  const drawnBoundaryValidation = useMemo(
+    () => validateVineyardBoundary(drawnPoints),
+    [drawnPoints],
+  );
+  const selectedMappedArea = selectedBlock
+    ? vineyardPolygonAreaHectares(vineyardBlockBoundary(selectedBlock))
+    : 0;
+  const selectedHasRecordedBoundary = selectedBlock
+    ? hasUsableBoundary(selectedBlock.boundary) || hasUsableBoundary(selectedBlock.gpsPolygon)
+    : false;
+  const selectedAreaDifferencePercent = selectedBlock?.area
+    ? ((selectedMappedArea - selectedBlock.area) / selectedBlock.area) * 100
+    : 0;
+
+  // "Add block" is the one action the whole module offers from the top of the
+  // page. The dashboard hosts it inside its own toolbar row instead of stacking
+  // a second, near-empty strip above the cards.
+  const addBlockButton = canCreateVineyardRecord ? (
+    <button
+      type="button"
+      onClick={() => setShowAddBlockModal(true)}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold text-white transition-colors hover:bg-emerald-900"
+    >
+      <Plus className="h-3.5 w-3.5" />
+      <span className="hidden sm:inline">{lang === 'ka' ? 'ახალი ნაკვეთი' : 'Add block'}</span>
+    </button>
+  ) : null;
+  const showActiveBlockContext = Boolean(selectedBlock) && !['dashboard', 'blocks', 'projects'].includes(vaziTab);
+  const showVaziContextBar = showActiveBlockContext || (canCreateVineyardRecord && vaziTab !== 'dashboard');
   return (
     <div id="vazi-sandbox" className="space-y-6 text-stone-800 animate-fade-in font-sans">
       <datalist id="vazi-georgian-variety-options">
@@ -568,167 +1121,89 @@ export default function VaziModule({
           <option key={name} value={name} />
         ))}
       </datalist>
-      
-      {/* Module Title bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between bg-emerald-950/95 text-white p-5 rounded-2xl border border-emerald-900 shadow-md gap-4">
-        <div>
-          <span className="text-[10px] uppercase font-mono tracking-widest bg-emerald-800 text-emerald-100 px-2.5 py-1 rounded-full font-bold">VINEA VAZI MODULE</span>
-          <h2 className="text-2xl font-serif font-black flex items-center gap-2 mt-2">
-            <Sprout className="h-6 w-6 text-emerald-400 animate-pulse" />
-            {label.title}
-          </h2>
-          <p className="text-xs text-emerald-250/90 mt-1 font-medium">{label.tagline}</p>
-        </div>
-        
-        {/* Unit & Area Stats Badge */}
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="px-3.5 py-2 bg-emerald-900/50 rounded-xl border border-emerald-850 text-center">
-            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">Total Vineyard Area</span>
-            <span className="text-lg font-serif font-black text-amber-300 block mt-0.5">{totalArea.toFixed(1)} ha</span>
-          </div>
-          <div className="px-3.5 py-2 bg-emerald-900/50 rounded-xl border border-emerald-850 text-center">
-            <span className="text-[9px] uppercase font-mono text-emerald-300 font-bold block">Active Vines</span>
-            <span className="text-lg font-serif font-bold text-emerald-200 block mt-0.5">{totalVines.toLocaleString()} vines</span>
-          </div>
-        </div>
-      </div>
 
-      {/* Mini Vazi Sub-Navigation bar */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-[#e8dfd5] pb-2 text-xs">
-        {[
-          {
-            id: 'dashboard',
-            label: {
-              en: 'Viticulture Dashboard',
-              ka: 'პორტალი',
-              it: 'Dashboard Viticoltura',
-              fr: 'Tableau de Viticulture',
-              de: 'Weinbau-Übersicht'
-            }[lang] || 'Viticulture Dashboard',
-            icon: BarChart3
-          },
-          {
-            id: 'blocks',
-            label: {
-              en: 'Vineyard Blocks',
-              ka: 'ნაკვეთები',
-              it: 'Parcelle Vigneto',
-              fr: 'Parcelles',
-              de: 'Weinbergsparzellen'
-            }[lang] || 'Vineyard Blocks',
-            icon: Layers
-          },
-          {
-            id: 'projects',
-            label: {
-              en: 'New Vineyard Projects',
-              ka: 'ახალი ვენახის პროექტები',
-              it: 'Nuovi Progetti Vigneto',
-              fr: 'Nouveaux Projets Vigne',
-              de: 'Neue Weinbergprojekte'
-            }[lang] || 'New Vineyard Projects',
-            icon: FileText
-          },
-          {
-            id: 'spraying',
-            label: {
-              en: 'Spraying Logs',
-              ka: 'წამლობა',
-              it: 'Registro Trattamenti',
-              fr: 'Traitements',
-              de: 'Spritztagebuch'
-            }[lang] || 'Spraying Logs',
-            icon: Wind
-          },
-          {
-            id: 'scouting',
-            label: {
-              en: 'Disease Scouting',
-              ka: 'მავნებლები',
-              it: 'Monitoraggio Patologie',
-              fr: 'Suivi Maladies',
-              de: 'Schädlingsbeobachtung'
-            }[lang] || 'Disease Scouting',
-            icon: ShieldAlert
-          },
-          {
-            id: 'ipm_pheno',
-            label: {
-              en: 'IPM Phenoscheme',
-              ka: 'ინტეგრირებული დაცვა',
-              it: 'IPM Phenoscheme',
-              fr: 'IPM Phenoscheme',
-              de: 'IPM Phenoscheme'
-            }[lang] || 'IPM Phenoscheme',
-            icon: Sprout
-          },
-          {
-            id: 'sampling',
-            label: {
-              en: 'Fruit Sampling Check',
-              ka: 'ნიმუშები',
-              it: 'Campionamento Uva',
-              fr: 'Échantillonnage',
-              de: 'Traubenreife-Kontrolle'
-            }[lang] || 'Fruit Sampling Check',
-            icon: FlaskConical
-          },
-          {
-            id: 'yield',
-            label: {
-              en: 'Yield & Harvest Planner',
-              ka: 'კალკულატორი',
-              it: 'Pianificazione Resa',
-              fr: 'Rendement & Récolte',
-              de: 'Ernteplaner'
-            }[lang] || 'Yield & Harvest Planner',
-            icon: TrendingUp
-          },
-          {
-            id: 'weather',
-            label: {
-              en: 'Agro-Weather Station',
-              ka: 'მეტეო სადგური',
-              it: 'Stazione Meteo',
-              fr: 'Station Météo',
-              de: 'Agrar-Wetter'
-            }[lang] || 'Agro-Weather Station',
-            icon: Sun
-          }
-        ].map(tb => {
-          const Icon = tb.icon;
-          const isActive = vaziTab === tb.id;
-          return (
-            <button
-              key={tb.id}
-              onClick={() => {
-                setVaziTab(tb.id as any);
-                if (tb.id !== 'blocks' && tb.id !== 'dashboard' && tb.id !== 'projects') {
-                  // auto select first block if none selected
-                  if (!selectedBlockId && blocks.length > 0) {
-                    setSelectedBlockId(blocks[0].id);
-                  }
-                }
-              }}
-              className={`px-3.5 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all duration-150 text-xs ${
-                isActive 
-                  ? 'bg-[#1e2f23] text-stone-100 shadow-xs border border-[#1e2f23]' 
-                  : 'text-[#615c57] hover:text-[#1b1715] hover:bg-stone-100 border border-transparent'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {tb.label}
-            </button>
-          );
-        })}
-      </div>
+      {(!canCreateVineyardRecord || !canUpdateVineyardRecord || !canDeleteVineyardRecord
+        || !canCreateVineyardProject || !canUpdateVineyardProject || !canDispatchHarvestToGvino || !canCreateTask) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+          <strong className="block font-black">
+            {!canCreateVineyardRecord && !canUpdateVineyardRecord && !canCreateVineyardProject && !canUpdateVineyardProject
+              ? (lang === 'ka' ? 'ვენახზე მხოლოდ ნახვის წვდომა' : 'Read-only vineyard access')
+              : (lang === 'ka' ? 'ვენახის შეზღუდული მოქმედებები' : 'Limited vineyard actions')}
+          </strong>
+          <span className="mt-0.5 block leading-relaxed">
+            {!canCreateVineyardRecord && !canUpdateVineyardRecord && !canCreateVineyardProject && !canUpdateVineyardProject
+              ? (lang === 'ka'
+                ? 'შეგიძლიათ დაათვალიეროთ ნაკვეთები, რუკები, რისკები, პროექტები და საველე ისტორია; ცვლილებები თქვენი როლისთვის მიუწვდომელია.'
+                : 'You can review blocks, maps, risks, projects, and field history; changes are unavailable for your role.')
+              : (lang === 'ka'
+                ? 'ხელმისაწვდომია მხოლოდ თქვენი როლისთვის ნებადართული ვენახის მოქმედებები. დამალული მართვის ელემენტები დამატებით უფლებებს მოითხოვს.'
+                : 'Only vineyard actions allowed for your role are available. Hidden controls require additional permissions.')}
+          </span>
+          {!canDispatchHarvestToGvino && (
+            <span className="mt-1 block text-[11px] text-amber-800 dark:text-amber-200">
+              {lang === 'ka'
+                ? 'მოსავლის მარანში გადაცემა საჭიროებს მოსავლის, ღვინის პარტიისა და დუღილის ჩანაწერების ერთობლივ უფლებებს.'
+                : 'Dispatching harvest to the winery requires combined harvest, wine-lot, and fermentation permissions.'}
+            </span>
+          )}
+          {!canCreateTask && (
+            <span className="mt-1 block text-[11px] text-amber-800 dark:text-amber-200">
+              {lang === 'ka'
+                ? 'საველე ჩანაწერებიდან დავალების მონახაზის შექმნა თქვენი როლისთვის მიუწვდომელია.'
+                : 'Creating task drafts from field records is unavailable for your role.'}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Persistent working context. Navigation itself lives in the app shell's
+          sidebar, shared with every other workspace. */}
+      {showVaziContextBar && (
+        <div className="sticky top-0 z-30 rounded-2xl border border-[#e8dfd5] bg-white/95 p-2 shadow-sm backdrop-blur-md">
+          {vaziTab !== 'dashboard' && addBlockButton && (
+            <div className="flex items-start justify-end gap-2">
+              {addBlockButton}
+            </div>
+          )}
+
+          {showActiveBlockContext && selectedBlock && (
+            <div className={`flex flex-wrap items-center gap-2 px-1 ${
+              vaziTab !== 'dashboard' && addBlockButton ? 'mt-2 border-t border-stone-150 pt-2' : ''
+            }`}>
+              <label htmlFor="vazi-active-block" className="text-[9px] font-extrabold uppercase tracking-wider text-stone-500">
+                {lang === 'ka' ? 'აქტიური ნაკვეთი' : 'Active block'}
+              </label>
+              <select
+                id="vazi-active-block"
+                value={selectedBlock.id}
+                onChange={event => setSelectedBlockId(event.target.value)}
+                className="min-w-[12rem] rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-[11px] font-bold text-stone-800 outline-none"
+              >
+                {blocks.map(block => (
+                  <option key={block.id} value={block.id}>{block.name} · {block.grapeVariety}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-stone-500">
+                {selectedBlock.area.toLocaleString()} ha · {phenologyLabel(selectedBlock.currentPhenology, lang)}
+              </span>
+              <button
+                type="button"
+                onClick={() => openVaziTab('blocks', selectedBlock.id)}
+                className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-bold text-emerald-800 hover:bg-emerald-50"
+              >
+                {lang === 'ka' ? 'ნაკვეთის პროფილი' : 'Block profile'} <ArrowRight className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {(['spraying', 'scouting', 'sampling', 'yield'] as const).includes(vaziTab as any) && !selectedBlock && (
         <div className="rounded-2xl border border-dashed border-[#e8dfd5] bg-white p-10 text-center shadow-sm">
           <Layers className="w-12 h-12 text-stone-300 mx-auto mb-3" />
-          <h3 className="text-sm font-serif font-black text-[#4e0e15]">Select a vineyard block first</h3>
+          <h3 className="text-sm font-serif font-black text-[#4e0e15]">{lang === 'ka' ? 'ჯერ აირჩიეთ ვენახის ნაკვეთი' : 'Select a vineyard block first'}</h3>
           <p className="mt-1 text-xs text-stone-500 max-w-md mx-auto">
-            Spraying, scouting, sampling, and harvest planning are recorded against a specific block.
+            {lang === 'ka' ? 'წამლობა, დაკვირვება, ნიმუშები და რთველის დაგეგმვა კონკრეტულ ნაკვეთზე იწერება.' : 'Spraying, scouting, sampling, and harvest planning are recorded against a specific block.'}
           </p>
           <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
             <button
@@ -738,13 +1213,15 @@ export default function VaziModule({
             >
               <ArrowRight className="w-3.5 h-3.5" /> Open blocks
             </button>
-            <button
-              type="button"
-              onClick={() => setShowAddBlockModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
-            >
-              <Plus className="w-3.5 h-3.5" /> Add block
-            </button>
+            {canCreateVineyardRecord && (
+              <button
+                type="button"
+                onClick={() => setShowAddBlockModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add block
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -755,10 +1232,13 @@ export default function VaziModule({
           projects={vineyardProjects}
           onAddProject={onAddVineyardProject}
           onUpdateProject={onUpdateVineyardProject}
+          canCreateProject={canCreateVineyardProject}
+          canUpdateProject={canUpdateVineyardProject}
+          canCreateTask={canCreateTask}
           setPrefilledTaskTitle={setPrefilledTaskTitle}
           setPrefilledTaskPriority={setPrefilledTaskPriority}
           setPrefilledTaskDesc={setPrefilledTaskDesc}
-          setActiveModule={setActiveModule}
+          onNavigate={navigateTo}
         />
       )}
 
@@ -766,12 +1246,17 @@ export default function VaziModule({
           TAB 1: PORTAL DASHBOARD
           ========================================== */}
       {vaziTab === 'dashboard' && (
-        <div className="space-y-6">
-          {/* Quick Info Alerts */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* Quick Summary list of Blocks */}
-            <div className="lg:col-span-1 bg-white border border-[#e8dfd5] rounded-xl p-5 space-y-4 shadow-sm">
+        <DashboardLayout
+          dashboardId={`vazi:${currentUser.username}`}
+          lang={lang}
+          toolbar={addBlockButton}
+          items={[
+            {
+              id: 'canopy-radar',
+              label: lang === 'ka' ? 'კანოპის მონიტორინგი' : 'Canopy status',
+              defaultSpan: 4,
+              content: (
+                <div className="h-full bg-white border border-[#e8dfd5] rounded-xl p-5 space-y-4 shadow-sm">
               <h3 className="font-serif font-bold text-sm text-emerald-950 border-b border-stone-100 pb-2">
                 {{
                   en: 'Canopy Status Radar',
@@ -782,41 +1267,79 @@ export default function VaziModule({
                 }[lang] || 'Canopy Status Radar'}
               </h3>
               <div className="space-y-3.5">
-                {blocks.map(b => (
-                  <button
-                    key={b.id}
-                    onClick={() => {
-                      setSelectedBlockId(b.id);
-                      setVaziTab('blocks');
-                    }}
-                    className="w-full text-left p-3 hover:bg-emerald-50/40 rounded-xl border border-stone-100 hover:border-emerald-200 transition-all flex justify-between items-center group cursor-pointer"
-                  >
-                    <div>
-                      <strong className="text-xs font-serif font-bold text-[#4e0e15] group-hover:text-emerald-900 duration-100">{b.name}</strong>
-                      <span className="block text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">{b.area} ha • {b.grapeVariety}</span>
-                    </div>
-                    <span className="text-[10px] font-bold bg-amber-50 text-amber-700 font-mono px-2 py-0.5 rounded border border-amber-100 font-semibold">{b.currentPhenology}</span>
-                  </button>
-                ))}
+                {blocks.map(b => {
+                  const weather = blockWeatherById[b.id];
+                  const risk = blockRiskById[b.id];
+                  const primaryRisk = risk
+                    ? Object.values(risk.items).reduce((highest, item) => item.score > highest.score ? item : highest)
+                    : null;
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => openVaziTab('blocks', b.id)}
+                      className="group w-full rounded-xl border border-stone-100 p-3 text-left transition-all hover:border-emerald-200 hover:bg-emerald-50/40"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <strong className="block truncate font-serif text-xs font-bold text-[#4e0e15] duration-100 group-hover:text-emerald-900">{b.name}</strong>
+                          <span className="mt-0.5 block truncate font-mono text-[10px] text-slate-500 dark:text-slate-400">{b.locationName}</span>
+                        </div>
+                        <span className="shrink-0 rounded border border-amber-100 bg-amber-50 px-2 py-0.5 font-mono text-[9px] font-bold text-amber-700">{phenologyLabel(b.currentPhenology, lang)}</span>
+                      </div>
+                      <span className="mt-1.5 block truncate font-mono text-[9px] text-stone-600">
+                        {b.area} ha · {b.grapeVariety}
+                      </span>
+                      <div className="mt-2 grid grid-cols-2 gap-1.5 text-[9px]">
+                        <span className="flex items-baseline justify-between gap-2 rounded-md bg-sky-50 px-2 py-1 text-sky-800">
+                          <span className="truncate">{lang === 'ka' ? 'ამინდი' : 'Weather'}</span>
+                          <strong className="shrink-0 whitespace-nowrap">{weather ? `${weather.temp}°C` : '—'}</strong>
+                        </span>
+                        <span className="flex items-baseline justify-between gap-2 rounded-md bg-rose-50 px-2 py-1 text-rose-800">
+                          <span className="truncate">{lang === 'ka' ? 'მთავარი რისკი' : 'Top risk'}</span>
+                          <strong className="shrink-0 whitespace-nowrap capitalize" style={primaryRisk ? { color: vaziRiskColor(primaryRisk.level) } : undefined}>
+                            {primaryRisk ? riskLevelLabel(primaryRisk.level, lang) : '—'}
+                          </strong>
+                        </span>
+                      </div>
+                      <span className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-emerald-800">
+                        {lang === 'ka' ? 'სრული პროფილის გახსნა' : 'Open full profile'} <ArrowRight className="h-3 w-3" />
+                      </span>
+                    </button>
+                  );
+                })}
                 {blocks.length === 0 && (
                   <div className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 p-5 text-center">
                     <Layers className="w-9 h-9 text-emerald-700/40 mx-auto mb-2" />
-                    <p className="text-xs font-bold text-emerald-950">No vineyard blocks yet</p>
-                    <p className="mt-1 text-[11px] text-stone-500">Create the first block before scouting, sampling, sprays, or harvest planning.</p>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddBlockModal(true)}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-900"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add block
-                    </button>
+                    <p className="text-xs font-bold text-emerald-950">{lang === 'ka' ? 'ვენახის ნაკვეთები ჯერ არ არის' : 'No vineyard blocks yet'}</p>
+                    <p className="mt-1 text-[11px] text-stone-500">
+                      {canCreateVineyardRecord
+                        ? (lang === 'ka' ? 'შექმენით პირველი ნაკვეთი მონიტორინგის, ნიმუშების აღების, წამლობის ან რთველის დაგეგმვამდე.' : 'Create the first block before scouting, sampling, sprays, or harvest planning.')
+                        : (lang === 'ka' ? 'არსებული ვენახის ნაკვეთები აქ გამოჩნდება, როცა უფლებამოსილი თანამშრომელი დაამატებს.' : 'Existing vineyard blocks will appear here after an authorized teammate adds one.')}
+                    </p>
+                    {canCreateVineyardRecord && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddBlockModal(true)}
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-900"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
-            </div>
+                </div>
+              ),
+            },
 
-            {/* GIS block map & Weather Station Forecast */}
-            <div className="lg:col-span-2 bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
+            /* GIS block map & Weather Station Forecast */
+            {
+              id: 'estate-map',
+              label: lang === 'ka' ? 'ვენახის რუკა და მიკროკლიმატი' : 'Estate map & microclimate',
+              defaultSpan: 8,
+              content: (
+                <div className="h-full bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-stone-150 pb-2.5 gap-2">
                 <div>
                   <h3 className="text-sm font-serif font-black text-emerald-950 flex items-center gap-1.5">
@@ -824,7 +1347,9 @@ export default function VaziModule({
                     {lang === 'ka' ? 'ვენახის ინტერაქტიული რუკა და მიკროკლიმატი' : 'Interactive Estate Block Map & Microclimate'}
                   </h3>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    {lang === 'ka' ? 'აგრონომიული რუკის ფენები და კავშირი საველე მეტეო სადგურებთან' : 'Interactive block layers & real-time field weather parameters'}
+                    {lang === 'ka'
+                      ? 'ყველა ნაკვეთის რისკის ფენები ცოცხალი მიკროკლიმატით'
+                      : 'Estate-wide condition layers using each block’s live microclimate'}
                   </p>
                 </div>
 
@@ -832,7 +1357,7 @@ export default function VaziModule({
                 <div className="flex gap-1 bg-stone-50 border border-stone-200 p-0.5 rounded-lg text-[10px]">
                   {[
                     { id: 'mildew', label: lang === 'ka' ? 'ჭრაქი (IPM)' : 'Mildew Risk' },
-                    { id: 'moisture', label: lang === 'ka' ? 'ტენიანობა' : 'Soil Moisture' },
+                    { id: 'moisture', label: lang === 'ka' ? 'წყლის სტრესი' : 'Water Stress' },
                     { id: 'phenology', label: lang === 'ka' ? 'ფენოლოგია' : 'Phenology' }
                   ].map(layer => (
                     <button
@@ -840,8 +1365,8 @@ export default function VaziModule({
                       type="button"
                       onClick={() => setMapOverlay(layer.id as any)}
                       className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
-                        mapOverlay === layer.id 
-                          ? 'bg-[#1e2f23] text-stone-100 shadow-2xs' 
+                        mapOverlay === layer.id
+                          ? 'bg-[#1e2f23] text-stone-100 shadow-2xs'
                           : 'text-stone-650 hover:bg-stone-200/50'
                       }`}
                     >
@@ -851,141 +1376,164 @@ export default function VaziModule({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
-                {/* Google Map Column */}
-                <div className="md:col-span-5 bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col justify-between relative overflow-hidden h-60">
-                  <div className="text-[9px] font-mono font-bold text-emerald-800 uppercase tracking-widest flex items-center gap-1">
-                    🛰️ {lang === 'ka' ? 'ვენახის სატელიტური რუკა' : 'Estate GIS Map'}
+              <div className="grid grid-cols-1 2xl:grid-cols-12 gap-5 items-stretch">
+                {/* Interactive vineyard map */}
+                <div className="2xl:col-span-7 min-h-[430px] bg-stone-50 border border-[#e8dfd5] rounded-xl p-3 flex flex-col relative overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 text-[9px] font-mono font-bold uppercase tracking-widest text-emerald-800">
+                    <span>🗺️ {lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate Block Map'}</span>
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 normal-case tracking-normal text-emerald-900">
+                      {blockWeatherLoading
+                        ? (lang === 'ka' ? 'ამინდი ახლდება…' : 'Weather updating…')
+                        : `${Object.keys(blockWeatherById).length}/${blocks.length} ${lang === 'ka' ? 'ცოცხალი' : 'live'}`}
+                    </span>
                   </div>
 
-                  <div className="w-full h-40 mt-2 rounded-lg overflow-hidden border border-stone-200 relative z-0">
-                    <APIProvider apiKey={process.env.GOOGLE_MAPS_PLATFORM_KEY || ''}>
-                      <Map
-                        defaultCenter={defaultCenter}
-                        defaultZoom={14}
-                        mapTypeId="hybrid"
-                        gestureHandling="greedy"
-                        disableDefaultUI={true}
-                      >
-                        {blocks.map((b) => {
-                          const paths = getBlockPaths(b);
-                          const isActive = b.id === selectedBlockId;
-                          const fillColor = getBlockColor(b.id);
-                          return (
-                            <MapPolygon
-                              key={b.id}
-                              paths={paths}
-                              fillColor={fillColor}
-                              strokeColor={isActive ? '#4e0e15' : '#78716c'}
-                              onClick={() => setSelectedBlockId(b.id)}
-                            />
-                          );
-                        })}
-                      </Map>
-                    </APIProvider>
+                  <div className="mt-2 h-[320px] w-full flex-1 rounded-lg overflow-hidden border border-stone-200 relative z-0 sm:h-[380px] 2xl:h-[350px]">
+                    <Suspense fallback={<VineyardMapLoading lang={lang} />}>
+                      <VineyardMap
+                        lang={lang}
+                        center={defaultCenter}
+                        blocks={blocks}
+                        selectedBlockId={mapSelectedBlockId}
+                        onSelectBlock={setSelectedBlockId}
+                        getBlockColor={getBlockColor}
+                        getBlockTooltipLines={getBlockTooltipLines}
+                        heightClassName="h-full min-h-[300px]"
+                        ariaLabel={lang === 'ka' ? 'ვენახის ბლოკების რუკა' : 'Estate vineyard block map'}
+                      />
+                    </Suspense>
                   </div>
 
                   {/* Micro legend */}
-                  <div className="flex items-center gap-3 text-[9px] font-mono text-stone-500 border-t border-stone-200/60 pt-1.5 mt-1 shrink-0">
+                  <div className="flex flex-wrap items-center gap-3 text-[9px] font-mono text-stone-500 border-t border-stone-200/60 pt-1.5 mt-2 shrink-0">
                     <span className="font-bold uppercase tracking-wider">{lang === 'ka' ? 'ლეგენდა:' : 'Legend:'}</span>
                     {mapOverlay === 'mildew' && (
                       <div className="flex gap-2">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Low</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" />Mod</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />High</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'დაბალი' : 'Low'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" />{lang === 'ka' ? 'საშ.' : 'Mod'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{lang === 'ka' ? 'მაღალი' : 'High'}</span>
                       </div>
                     )}
                     {mapOverlay === 'moisture' && (
                       <div className="flex gap-2">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />Dry</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Opt</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />Wet</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'დაბალი' : 'Low'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500" />{lang === 'ka' ? 'საშ.' : 'Mod'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{lang === 'ka' ? 'მაღალი' : 'High'}</span>
                       </div>
                     )}
                     {mapOverlay === 'phenology' && (
                       <div className="flex gap-2">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" />Ver</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" />Rip</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Set</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" />{lang === 'ka' ? 'შეთვ.' : 'Ver'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" />{lang === 'ka' ? 'მწიფ.' : 'Rip'}</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{lang === 'ka' ? 'გამონ.' : 'Set'}</span>
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* Weather Station Forecast Column */}
-                <div className="md:col-span-7 bg-stone-50/70 border border-[#e8dfd5] rounded-xl p-4 shadow-inner flex flex-col justify-between h-60">
+                {/* Live microclimate rail. The column is narrow, so every
+                    reading is a full-width row: labels truncate, values stay on
+                    one line, and the panel grows downward instead of squeezing
+                    four tiles into a strip too tight for their own captions. */}
+                <div className="2xl:col-span-5 min-h-[330px] bg-stone-50/70 border border-[#e8dfd5] rounded-xl p-4 shadow-inner flex flex-col 2xl:min-h-[430px]">
                   {(() => {
-                    const block = blocks.find(x => x.id === selectedBlockId) || blocks[0];
+                    const block = blocks.find(x => x.id === mapSelectedBlockId) || blocks[0];
                     if (!block) return null;
 
                     if (!blockWeather) {
                       return (
                         <div className="h-full flex flex-col items-center justify-center text-center gap-2 text-stone-500">
                           <AlertTriangle className="w-6 h-6 text-amber-600" />
-                          <strong className="text-xs text-stone-800">Live weather unavailable</strong>
+                          <strong className="text-xs text-stone-800">
+                            {blockWeatherLoading
+                              ? (lang === 'ka' ? 'ცოცხალი ამინდი იტვირთება…' : 'Loading live weather…')
+                              : (lang === 'ka' ? 'ცოცხალი ამინდი მიუწვდომელია' : 'Live weather unavailable')}
+                          </strong>
                           <span className="text-[10px] max-w-sm">
-                            {blockWeatherError || 'No simulated readings are shown. Check the connection and block coordinates.'}
+                            {blockWeatherLoading
+                              ? (lang === 'ka' ? 'ნაკვეთის მიკროკლიმატის მონაცემები ახლდება.' : 'Updating this block’s microclimate data.')
+                              : blockWeatherError || (lang === 'ka' ? 'მონაცემები არ არის. შეამოწმეთ კავშირი და ნაკვეთის კოორდინატები.' : 'No simulated readings are shown. Check the connection and block coordinates.')}
                           </span>
                         </div>
                       );
                     }
 
                     const { temp, rainMm, wind, humidity } = blockWeather;
-                    const topRisk = selectedRisk
-                      ? [selectedRisk.items.downyMildew, selectedRisk.items.powderyMildew, selectedRisk.items.botrytis, selectedRisk.items.waterStress, selectedRisk.items.phiConflict]
+                    // One risk summary drives the whole rail, so the readings,
+                    // the index rows, and the alert always describe the block
+                    // the map has selected.
+                    const riskRows = mapSelectedRisk
+                      ? [mapSelectedRisk.items.downyMildew, mapSelectedRisk.items.botrytis, mapSelectedRisk.items.waterStress]
+                      : [];
+                    const topRisk = mapSelectedRisk
+                      ? [mapSelectedRisk.items.downyMildew, mapSelectedRisk.items.powderyMildew, mapSelectedRisk.items.botrytis, mapSelectedRisk.items.waterStress, mapSelectedRisk.items.phiConflict]
                         .sort((a, b) => b.score - a.score)[0]
                       : null;
+                    const readings = [
+                      { key: 'temp', label: lang === 'ka' ? 'ტემპერატურა' : 'Temperature', value: `${temp} °C` },
+                      { key: 'rain', label: lang === 'ka' ? 'წვიმა დღეს' : 'Rain today', value: `${rainMm} mm` },
+                      { key: 'wind', label: lang === 'ka' ? 'ქარის მაქს.' : 'Wind max', value: `${wind} km/h` },
+                      { key: 'humidity', label: lang === 'ka' ? 'ტენიანობა' : 'Humidity', value: `${humidity} %` },
+                    ];
 
                     return (
-                      <div className="flex flex-col justify-between h-full space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <strong className="text-xs font-serif font-black text-emerald-950 block">{block.name} Forecast</strong>
-                            <span className="text-[9px] text-stone-500 font-mono">GPS: {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)} • Recorded GDD: {computedGDD}</span>
+                      <div className="flex h-full flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2 border-b border-stone-200/70 pb-2.5">
+                          <div className="min-w-0">
+                            <strong className="block font-serif text-xs font-black leading-snug text-emerald-950">{block.name}</strong>
+                            <span className="mt-0.5 block text-[9px] font-bold uppercase tracking-wider text-stone-500">
+                              {lang === 'ka' ? 'პროგნოზი' : 'Forecast'}
+                            </span>
                           </div>
-                          <span className="text-[9px] font-mono font-bold bg-sky-50 text-sky-800 px-2 py-0.5 rounded border border-sky-200">
+                          <span className="shrink-0 whitespace-nowrap rounded border border-sky-200 bg-sky-50 px-2 py-0.5 font-mono text-[9px] font-bold text-sky-800">
                             {lang === 'ka' ? 'ცოცხალი ამინდი' : 'OPEN-METEO LIVE'}
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-stone-850">
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Temperature</span>
-                            <strong className="text-sm font-black mt-0.5 block">{temp}°C</strong>
-                          </div>
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Rain Today</span>
-                            <strong className="text-sm font-black mt-0.5 block">{rainMm} mm</strong>
-                          </div>
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Wind Max</span>
-                            <strong className="text-sm font-black mt-0.5 block">{wind} km/h</strong>
-                          </div>
-                          <div className="p-2 bg-white border border-stone-200 rounded-lg text-center shadow-2xs">
-                            <span className="text-[8px] font-mono text-slate-500 dark:text-slate-400 block uppercase">Humidity</span>
-                            <strong className="text-sm font-black mt-0.5 block">{humidity}%</strong>
-                          </div>
+                        <div className="flex flex-col gap-0.5 font-mono text-[9px] text-stone-500">
+                          <span className="truncate">GPS {block.latitude.toFixed(3)}, {block.longitude.toFixed(3)}</span>
+                          <span className="truncate">{lang === 'ka' ? 'დაფიქსირებული GDD' : 'Recorded GDD'} {computedGDD}</span>
                         </div>
 
-                        {selectedRisk && (
-                          <div className="grid grid-cols-3 gap-2 text-[10px]">
-                            {[
-                              selectedRisk.items.downyMildew,
-                              selectedRisk.items.botrytis,
-                              selectedRisk.items.waterStress,
-                            ].map(item => (
-                              <div key={item.category} className="rounded-lg border border-stone-200 bg-white p-2">
-                                <span className="block font-mono text-[8px] uppercase tracking-wide text-stone-500">{item.label}</span>
-                                <strong className="mt-1 block text-xs font-black capitalize" style={{ color: vaziRiskColor(item.level) }}>{item.level}</strong>
-                              </div>
-                            ))}
+                        <dl className="divide-y divide-stone-150 overflow-hidden rounded-lg border border-stone-200 bg-white">
+                          {readings.map(reading => (
+                            <div key={reading.key} className="flex items-center justify-between gap-3 px-3 py-2">
+                              <dt className="truncate font-mono text-[9px] uppercase tracking-wide text-slate-500 dark:text-slate-400">{reading.label}</dt>
+                              <dd className="shrink-0 whitespace-nowrap text-sm font-black text-stone-850">{reading.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+
+                        {riskRows.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="block font-mono text-[9px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              {lang === 'ka' ? 'რისკის ინდექსი' : 'Risk index'}
+                            </span>
+                            <dl className="divide-y divide-stone-150 overflow-hidden rounded-lg border border-stone-200 bg-white">
+                              {riskRows.map(item => (
+                                <div key={item.category} className="px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <dt className="truncate text-[10px] font-bold text-stone-700">{riskCategoryLabel(item, lang)}</dt>
+                                    <dd className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[10px] font-black capitalize" style={{ color: vaziRiskColor(item.level) }}>
+                                      {riskLevelLabel(item.level, lang)}
+                                      <span className="font-mono text-[9px] font-bold text-stone-400">{item.score}</span>
+                                    </dd>
+                                  </div>
+                                  <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-stone-100">
+                                    <div className="h-full rounded-full" style={{ width: `${item.score}%`, backgroundColor: vaziRiskColor(item.level) }} />
+                                  </div>
+                                </div>
+                              ))}
+                            </dl>
                           </div>
                         )}
 
-                        <div className="p-2.5 bg-amber-50/75 border border-amber-200 text-amber-900 rounded-lg flex items-start gap-2 text-[10px] leading-snug">
+                        <div className="mt-auto flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/75 p-2.5 text-[10px] leading-snug text-amber-900">
                           <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                          <div>
-                            <span className="font-bold block text-[10px] leading-none mb-0.5">Agro-alert: {topRisk ? `${topRisk.label} ${topRisk.level}` : `${block.grapeVariety} block`}</span>
+                          <div className="min-w-0">
+                            <span className="mb-0.5 block text-[10px] font-bold leading-none">
+                              {lang === 'ka' ? 'აგრო-შეტყობინება' : 'Agro-alert'}: {topRisk ? `${riskCategoryLabel(topRisk, lang)} — ${riskLevelLabel(topRisk.level, lang)}` : `${block.grapeVariety} block`}
+                            </span>
                             {topRisk
                               ? `${topRisk.reasons.slice(0, 2).join('; ')}. ${topRisk.nextAction}`
                               : `Temperature ${temp} C, humidity ${humidity}%, rainfall ${rainMm} mm, wind ${wind} km/h.`
@@ -997,12 +1545,17 @@ export default function VaziModule({
                   })()}
                 </div>
               </div>
-            </div>
+                </div>
+              ),
+            },
 
-          </div>
-
-          {/* Vineyard Activities Card log */}
-          <div className="bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-xs space-y-4">
+            /* Vineyard Activities Card log */
+            {
+              id: 'field-logs',
+              label: lang === 'ka' ? 'საველე სამუშაოების ლოგები' : 'Field management logs',
+              defaultSpan: 12,
+              content: (
+                <div className="bg-white border border-[#e8dfd5] rounded-2xl p-5 shadow-xs space-y-4">
             <h3 className="font-serif font-bold text-sm text-emerald-950">
               {{
                 en: 'Latest Field Management Logs',
@@ -1053,8 +1606,11 @@ export default function VaziModule({
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
+                </div>
+              ),
+            },
+          ] satisfies DashboardWidgetSpec[]}
+        />
       )}
 
       {/* ==========================================
@@ -1062,18 +1618,20 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'blocks' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-          
+
           {/* Left Block Selection list */}
           <div className="lg:col-span-1 space-y-4">
             <div className="flex items-center justify-between border-b border-[#e8dfd5] pb-2">
               <h3 className="font-serif font-black text-sm text-emerald-950">{label.allBlocks}</h3>
-              <button
-                onClick={() => setShowAddBlockModal(true)}
-                className="bg-emerald-800 hover:bg-emerald-900 text-white px-2.5 py-1 text-[10px] uppercase font-mono tracking-wider font-extrabold rounded-md cursor-pointer flex items-center gap-1 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                New Block
-              </button>
+              {canCreateVineyardRecord && (
+                <button
+                  onClick={() => setShowAddBlockModal(true)}
+                  className="bg-emerald-800 hover:bg-emerald-900 text-white px-2.5 py-1 text-[10px] uppercase font-mono tracking-wider font-extrabold rounded-md cursor-pointer flex items-center gap-1 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {lang === 'ka' ? 'ახალი ნაკვეთი' : 'New Block'}
+                </button>
+              )}
             </div>
 
             <div className="space-y-3.5">
@@ -1085,8 +1643,8 @@ export default function VaziModule({
                     key={b.id}
                     onClick={() => setSelectedBlockId(b.id)}
                     className={`p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden ${
-                      isActive 
-                        ? 'bg-neutral-50/80 border-[#4e0e15] shadow-xs' 
+                      isActive
+                        ? 'bg-neutral-50/80 border-[#4e0e15] shadow-xs'
                         : 'bg-white border-[#e8dfd5] hover:bg-stone-50/50'
                     }`}
                   >
@@ -1099,10 +1657,10 @@ export default function VaziModule({
                     </div>
                     <div className="flex justify-between items-center mt-2 font-mono text-[9px] text-stone-500">
                       <span>{b.grapeVariety}</span>
-                      <span className="text-emerald-700 font-extrabold">{b.currentPhenology}</span>
+                      <span className="text-emerald-700 font-extrabold">{phenologyLabel(b.currentPhenology, lang)}</span>
                     </div>
                     <div className="mt-2 flex items-center justify-between gap-2">
-                      <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400">Cadastre mirror</span>
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400">{lang === 'ka' ? 'საკადასტრო' : 'Cadastre mirror'}</span>
                       <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${cadastreBadgeClass(cadastre.score, cadastre.missingCritical.length)}`}>
                         {cadastre.score}%
                       </span>
@@ -1110,6 +1668,13 @@ export default function VaziModule({
                   </div>
                 );
               })}
+              {blocks.length === 0 && (
+                <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4 text-center text-[11px] text-stone-500">
+                  {canCreateVineyardRecord
+                    ? (lang === 'ka' ? 'დაამატეთ პირველი ნაკვეთი ვენახის რეესტრის დასაწყებად.' : 'Add the first block to start the vineyard registry.')
+                    : (lang === 'ka' ? 'ნაკვეთის ჩანაწერები ჯერ არ არის. მათი შექმნა მხოლოდ უფლებამოსილ როლს შეუძლია.' : 'No block records are available yet. Only an authorized role can create them.')}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1117,38 +1682,40 @@ export default function VaziModule({
           <div className="lg:col-span-2 xl:col-span-3 space-y-6">
             {selectedBlock ? (
               <div className="bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-8 lg:p-10 rounded-3xl shadow-sm space-y-8">
-                
+
                 {/* Title and Base Stats */}
                 <div className="flex flex-col sm:flex-row justify-between sm:items-start border-b border-[#e8dfd5] pb-4 gap-3">
                   <div>
                     <span className="text-[10px] uppercase font-mono text-slate-450 tracking-widest">{selectedBlock.vineyardName} • {selectedBlock.locationName}</span>
                     <div className="flex items-center gap-2 mt-1">
                       <h3 className="text-xl font-serif font-black text-[#4e0e15]">{selectedBlock.name}</h3>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingBlock(!isEditingBlock)}
-                        className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
-                        title="Edit Block Properties"
-                      >
-                        ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
-                      </button>
+                      {canUpdateVineyardRecord && (
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingBlock(!isEditingBlock)}
+                          className="text-stone-500 hover:text-[#4e0e15] text-[10px] font-mono font-bold transition-colors cursor-pointer select-none border border-stone-250 px-1.5 rounded"
+                          title={lang === 'ka' ? 'ბლოკის თვისებების რედაქტირება' : 'Edit Block Properties'}
+                        >
+                          ✏️ {lang === 'ka' ? 'შეცვლა' : 'Edit'}
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-stone-500 font-medium font-sans leading-relaxed mt-1">{selectedBlock.notes}</p>
                   </div>
-                  
+
                   {/* Local Quick actions */}
                   <div className="bg-neutral-50 border border-stone-200/55 p-3 rounded-xl flex items-center gap-3 w-fit text-[10px] font-mono shrink-0">
                     <div className="text-center shrink-0 pr-3 border-r border-stone-150">
-                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Variety Status</span>
+                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">{lang === 'ka' ? 'ჯიში' : 'Variety Status'}</span>
                       <strong className="text-xs block text-[#4e0e15] font-bold font-serif">{selectedBlock.grapeVariety}</strong>
                     </div>
                     <div>
-                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Farming</span>
+                      <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">{lang === 'ka' ? 'მართვა' : 'Farming'}</span>
                       <strong className="text-xs uppercase block text-emerald-750 font-bold">{selectedBlock.farmingStatus}</strong>
                     </div>
                     {selectedCadastre && (
                       <div className="pl-3 border-l border-stone-150">
-                        <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">Cadastre</span>
+                        <span className="text-[9px] uppercase font-normal text-slate-500 dark:text-slate-400 block">{lang === 'ka' ? 'კადასტრი' : 'Cadastre'}</span>
                         <strong className="text-xs uppercase block text-amber-700 font-bold">{selectedCadastre.score}%</strong>
                       </div>
                     )}
@@ -1163,24 +1730,24 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Block Name</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის სახელი' : 'Block Name'}</label>
+                        <input
                           type="text" required
                           value={editBlockName} onChange={(e) => setEditBlockName(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vineyard Name</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვენახის სახელი' : 'Vineyard Name'}</label>
+                        <input
                           type="text" required
                           value={editVineyardName} onChange={(e) => setEditVineyardName(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Location Name</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მდებარეობის სახელი' : 'Location Name'}</label>
+                        <input
                           type="text" required
                           value={editLocationName} onChange={(e) => setEditLocationName(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1191,11 +1758,11 @@ export default function VaziModule({
                     <div className="rounded-lg border border-amber-200 bg-amber-50/35 p-3 space-y-3">
                       <h4 className="text-[10px] uppercase font-mono tracking-widest text-amber-900 font-black flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5" />
-                        Government Cadastre Mirror
+                        {lang === 'ka' ? 'სახელმწიფო საკადასტრო მონაცემები' : 'Government Cadastre Mirror'}
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Cadastral Code</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'საკადასტრო კოდი' : 'Cadastral Code'}</label>
                           <input
                             type="text"
                             value={editCadastralCode}
@@ -1204,17 +1771,17 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Cadastre Document</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'საკადასტრო დოკუმენტი' : 'Cadastre Document'}</label>
                           <input
                             type="text"
                             value={editOfficialCadastreDocumentName}
                             onChange={(e) => setEditOfficialCadastreDocumentName(e.target.value)}
-                            placeholder="file name or registry ref"
+                            placeholder={lang === 'ka' ? 'ფაილის სახელი ან რეესტრის ნომერი' : 'file name or registry ref'}
                             className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Parcel Name</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის დასახელება' : 'Parcel Name'}</label>
                           <input
                             type="text"
                             value={editParcelName}
@@ -1225,7 +1792,7 @@ export default function VaziModule({
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Municipality</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
                           <input
                             type="text"
                             value={editMunicipality}
@@ -1234,7 +1801,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Community</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'თემი' : 'Community'}</label>
                           <input
                             type="text"
                             value={editCommunity}
@@ -1243,7 +1810,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Village</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სოფელი' : 'Village'}</label>
                           <input
                             type="text"
                             value={editVillage}
@@ -1252,7 +1819,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Microzone / PDO</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მიკროზონა / PDO' : 'Microzone / PDO'}</label>
                           <input
                             type="text"
                             value={editMicrozone}
@@ -1264,7 +1831,7 @@ export default function VaziModule({
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Parcel Area (ha)</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის ფართობი (ჰა)' : 'Parcel Area (ha)'}</label>
                           <input
                             type="number"
                             min="0"
@@ -1276,7 +1843,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Land Owner</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მიწის მესაკუთრე' : 'Land Owner'}</label>
                           <input
                             type="text"
                             value={editLandOwner}
@@ -1285,7 +1852,7 @@ export default function VaziModule({
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Grower</label>
+                          <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მევენახე' : 'Grower'}</label>
                           <input
                             type="text"
                             value={editGrower}
@@ -1298,32 +1865,32 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Area (ha)</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ფართობი (ჰა)' : 'Area (ha)'}</label>
+                        <input
                           type="number" step="0.01" required
                           value={editArea} onChange={(e) => setEditArea(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Elevation (m)</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'სიმაღლე (მ)' : 'Elevation (m)'}</label>
+                        <input
                           type="number" required
                           value={editElevation} onChange={(e) => setEditElevation(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Slope</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დაქანება' : 'Slope'}</label>
+                        <input
                           type="text" required
                           value={editSlope} onChange={(e) => setEditSlope(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Aspect</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ექსპოზიცია' : 'Aspect'}</label>
+                        <input
                           type="text" required
                           value={editAspect} onChange={(e) => setEditAspect(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1333,8 +1900,8 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Grape Variety</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ყურძნის ჯიში' : 'Grape Variety'}</label>
+                        <input
                           type="text" required
                           value={editGrapeVariety} onChange={(e) => setEditGrapeVariety(e.target.value)}
                           list="vazi-georgian-variety-options"
@@ -1342,16 +1909,16 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Planting Year</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დარგვის წელი' : 'Planting Year'}</label>
+                        <input
                           type="number" required
                           value={editPlantingYear} onChange={(e) => setEditPlantingYear(Number(e.target.value) || 2018)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Training System</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ფორმირების სისტემა' : 'Training System'}</label>
+                        <input
                           type="text" required
                           value={editTrainingSystem} onChange={(e) => setEditTrainingSystem(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1361,7 +1928,7 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Rootstock</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'საძირე' : 'Rootstock'}</label>
                         <input
                           type="text"
                           value={editRootstock}
@@ -1370,7 +1937,7 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Clone</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'კლონი' : 'Clone'}</label>
                         <input
                           type="text"
                           value={editClone}
@@ -1379,12 +1946,12 @@ export default function VaziModule({
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vineyard Condition</label>
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვენახის მდგომარეობა' : 'Vineyard Condition'}</label>
                         <input
                           type="text"
                           value={editVineyardCondition}
                           onChange={(e) => setEditVineyardCondition(e.target.value)}
-                          placeholder="productive, replanted, young vines"
+                          placeholder={lang === 'ka' ? 'პროდუქტიული, ხელახლა დარგული, ახალგაზრდა ვაზები' : 'productive, replanted, young vines'}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
@@ -1392,32 +1959,32 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Spacing</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'დარგვის სქემა' : 'Spacing'}</label>
+                        <input
                           type="text" required
                           value={editSpacing} onChange={(e) => setEditSpacing(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Rows Count</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'რიგების რაოდენობა' : 'Rows Count'}</label>
+                        <input
                           type="number" required
                           value={editRowsCount} onChange={(e) => setEditRowsCount(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Vines Count</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ვაზების რაოდენობა' : 'Vines Count'}</label>
+                        <input
                           type="number" required
                           value={editVinesCount} onChange={(e) => setEditVinesCount(Number(e.target.value) || 0)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div>
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Farming Status</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'მართვის სტატუსი' : 'Farming Status'}</label>
+                        <input
                           type="text" required
                           value={editFarmingStatus} onChange={(e) => setEditFarmingStatus(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
@@ -1427,40 +1994,40 @@ export default function VaziModule({
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="sm:col-span-2">
-                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Soil Type</label>
-                        <input 
+                        <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნიადაგის ტიპი' : 'Soil Type'}</label>
+                        <input
                           type="text" required
                           value={editSoilType} onChange={(e) => setEditSoilType(e.target.value)}
                           className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none"
                         />
                       </div>
                       <div className="flex items-center gap-2 pt-4">
-                        <input 
+                        <input
                           type="checkbox" id="editIrrigationEnabled"
                           checked={editIrrigationEnabled} onChange={(e) => setEditIrrigationEnabled(e.target.checked)}
                           className="h-4 w-4 text-emerald-800 focus:ring-emerald-700 rounded accent-emerald-800"
                         />
-                        <label htmlFor="editIrrigationEnabled" className="font-bold text-[10px] text-stone-700 cursor-pointer">Irrigation Enabled</label>
+                        <label htmlFor="editIrrigationEnabled" className="font-bold text-[10px] text-stone-700 cursor-pointer">{lang === 'ka' ? 'მორწყვა ჩართულია' : 'Irrigation Enabled'}</label>
                       </div>
                     </div>
 
                     <div>
-                      <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">Block Notes / Description</label>
-                      <textarea 
+                      <label className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold mb-1">{lang === 'ka' ? 'ნაკვეთის შენიშვნები / აღწერა' : 'Block Notes / Description'}</label>
+                      <textarea
                         value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
                         className="w-full bg-white border border-[#e8dfd5] p-2 rounded text-stone-900 outline-none h-16"
                       />
                     </div>
 
                     <div className="flex gap-2 pt-2">
-                      <button 
+                      <button
                         type="button"
                         onClick={() => setIsEditingBlock(false)}
                         className="flex-1 bg-stone-200 hover:bg-stone-300 text-stone-700 font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer transition-colors"
                       >
                         {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
                       </button>
-                      <button 
+                      <button
                         type="submit"
                         className="flex-1 bg-emerald-800 hover:bg-emerald-900 text-white font-mono font-bold uppercase py-2.5 rounded-lg text-[10px] cursor-pointer transition-colors"
                       >
@@ -1471,47 +2038,202 @@ export default function VaziModule({
                 ) : (
                   <>
 
+                {/* Operational snapshot shown first when arriving from the dashboard. */}
+                <section
+                  aria-label={lang === 'ka' ? 'ნაკვეთის მოკლე მიმოხილვა' : 'Block at a glance'}
+                  className="space-y-4 rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/70 via-white to-amber-50/40 p-4 sm:p-5"
+                >
+                  <div className="flex flex-col gap-3 border-b border-emerald-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <span className="text-[9px] font-extrabold uppercase tracking-[0.16em] text-emerald-700">
+                        {lang === 'ka' ? 'სამუშაო სურათი' : 'Operational snapshot'}
+                      </span>
+                      <h4 className="mt-0.5 font-serif text-sm font-black text-emerald-950">
+                        {lang === 'ka' ? 'ყველაზე მნიშვნელოვანი ინფორმაცია ერთ ხედში' : 'What matters now, in one view'}
+                      </h4>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button type="button" onClick={() => openVaziTab('scouting', selectedBlock.id)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-emerald-900 hover:bg-emerald-50">
+                        <ShieldAlert className="h-3 w-3" /> {lang === 'ka' ? 'დათვალიერება' : 'Scouting'}
+                      </button>
+                      <button type="button" onClick={() => openVaziTab('spraying', selectedBlock.id)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-emerald-900 hover:bg-emerald-50">
+                        <Wind className="h-3 w-3" /> {lang === 'ka' ? 'წამლობა' : 'Spraying'}
+                      </button>
+                      <button type="button" onClick={() => openVaziTab('sampling', selectedBlock.id)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[9px] font-bold text-emerald-900 hover:bg-emerald-50">
+                        <FlaskConical className="h-3 w-3" /> {lang === 'ka' ? 'ნიმუში' : 'Sampling'}
+                      </button>
+                      <button type="button" onClick={() => openVaziTab('yield', selectedBlock.id)} className="inline-flex items-center gap-1 rounded-lg bg-[#4e0e15] px-2.5 py-1.5 text-[9px] font-bold text-white hover:bg-[#801323]">
+                        <TrendingUp className="h-3 w-3" /> {lang === 'ka' ? 'რთველი' : 'Harvest'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                    {[
+                      {
+                        label: lang === 'ka' ? 'ფართობი და ვაზები' : 'Area & vines',
+                        value: `${selectedBlock.area.toLocaleString()} ha`,
+                        detail: `${selectedBlock.vinesCount.toLocaleString()} ${lang === 'ka' ? 'ვაზი' : 'vines'} · ${selectedBlock.rowsCount.toLocaleString()} ${lang === 'ka' ? 'რიგი' : 'rows'}`,
+                      },
+                      {
+                        label: lang === 'ka' ? 'დარგვა' : 'Planting',
+                        value: String(selectedBlock.plantingYear),
+                        detail: `${Math.max(0, new Date().getFullYear() - selectedBlock.plantingYear)} ${lang === 'ka' ? 'წელი' : 'years'} · ${selectedBlock.trainingSystem}`,
+                      },
+                      {
+                        label: lang === 'ka' ? 'რელიეფი' : 'Terrain',
+                        value: `${selectedBlock.elevation.toLocaleString()} m`,
+                        detail: `${selectedBlock.slope} · ${selectedBlock.aspect}`,
+                      },
+                      {
+                        label: lang === 'ka' ? 'რთველის სამიზნე' : 'Harvest target',
+                        value: selectedBlock.estimatedHarvestDate || '—',
+                        detail: `${selectedBlock.grapeVariety} · ${selectedBlock.irrigationEnabled ? (lang === 'ka' ? 'სარწყავი' : 'irrigated') : (lang === 'ka' ? 'ურწყავი' : 'dry farmed')}`,
+                      },
+                    ].map(item => (
+                      <div key={item.label} className="min-w-0 rounded-xl border border-white bg-white/85 p-3 shadow-xs">
+                        <span className="block text-[8px] font-extrabold uppercase tracking-wider text-stone-400">{item.label}</span>
+                        <strong className="mt-1 block truncate font-serif text-sm text-[#4e0e15]">{item.value}</strong>
+                        <span className="mt-0.5 block truncate text-[9px] text-stone-500" title={item.detail}>{item.detail}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid gap-3 xl:grid-cols-12">
+                    <div className="rounded-xl border border-sky-100 bg-white/90 p-4 xl:col-span-5">
+                      <div className="flex items-center justify-between gap-2">
+                        <h5 className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-900">
+                          <Sun className="h-3.5 w-3.5" /> {lang === 'ka' ? 'ცოცხალი პირობები' : 'Live conditions'}
+                        </h5>
+                        {blockWeatherLoading && <span className="text-[8px] font-bold text-stone-400">{lang === 'ka' ? 'ახლდება…' : 'Updating…'}</span>}
+                      </div>
+                      {blockWeather ? (
+                        <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+                          {[
+                            [lang === 'ka' ? 'ტემპ.' : 'Temp', `${blockWeather.temp}°C`],
+                            [lang === 'ka' ? 'ტენიანობა' : 'Humidity', `${blockWeather.humidity}%`],
+                            [lang === 'ka' ? 'წვიმა' : 'Rain', `${blockWeather.rainMm} mm`],
+                            [lang === 'ka' ? 'ქარი' : 'Wind', `${blockWeather.wind} km/h`],
+                          ].map(([field, value]) => (
+                            <div key={field} className="rounded-lg bg-sky-50 px-1.5 py-2">
+                              <strong className="block text-xs text-sky-950">{value}</strong>
+                              <span className="text-[8px] text-sky-700">{field}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-3 rounded-lg bg-stone-50 px-3 py-2 text-[10px] text-stone-500">
+                          {blockWeatherError || (lang === 'ka' ? 'ცოცხალი ამინდი ჯერ არ არის ხელმისაწვდომი.' : 'Live weather is not available yet.')}
+                        </p>
+                      )}
+                      {selectedPrimaryRisk && (
+                        <div className="mt-3 rounded-lg border border-stone-100 bg-stone-50 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[9px] font-bold text-stone-500">{lang === 'ka' ? 'ყველაზე მაღალი მიმდინარე რისკი' : 'Highest current risk'}</span>
+                            <strong className="text-[10px] capitalize" style={{ color: vaziRiskColor(selectedPrimaryRisk.level) }}>
+                              {riskLevelLabel(selectedPrimaryRisk.level, lang)} · {selectedPrimaryRisk.score}/100
+                            </strong>
+                          </div>
+                          <strong className="mt-1 block text-[11px] text-stone-800">{selectedPrimaryRisk.label}</strong>
+                          <p className="mt-1 text-[9px] leading-relaxed text-stone-500">{selectedPrimaryRisk.nextAction}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-stone-100 bg-white/90 p-4 xl:col-span-7">
+                      <h5 className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-stone-700">
+                        <Calendar className="h-3.5 w-3.5" /> {lang === 'ka' ? 'ბოლო საველე ჩანაწერები' : 'Latest field records'}
+                      </h5>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {[
+                          {
+                            label: lang === 'ka' ? 'დათვალიერება' : 'Scouting',
+                            date: selectedActivity?.scouting?.date,
+                            value: selectedActivity?.scouting
+                              ? `${selectedActivity.scouting.problemType} · ${riskLevelLabel(selectedActivity.scouting.severity, lang)}`
+                              : null,
+                          },
+                          {
+                            label: lang === 'ka' ? 'წამლობა' : 'Spraying',
+                            date: selectedActivity?.spray?.date,
+                            value: selectedActivity?.spray
+                              ? `${selectedActivity.spray.productName} · ${selectedActivity.spray.targetProblem}`
+                              : null,
+                          },
+                          {
+                            label: lang === 'ka' ? 'ყურძნის ნიმუში' : 'Grape sample',
+                            date: selectedActivity?.sampling?.date,
+                            value: selectedActivity?.sampling
+                              ? `${selectedActivity.sampling.brix}° Brix · pH ${selectedActivity.sampling.pH}`
+                              : null,
+                          },
+                          {
+                            label: lang === 'ka' ? 'რთველის გეგმა' : 'Harvest plan',
+                            date: selectedActivity?.harvest?.actualHarvestDate || selectedActivity?.harvest?.estimatedHarvestDate,
+                            value: selectedActivity?.harvest
+                              ? (selectedActivity.harvest.actualHarvestedKg
+                                  ? `${selectedActivity.harvest.actualHarvestedKg.toLocaleString()} kg ${lang === 'ka' ? 'მოკრეფილია' : 'harvested'}`
+                                  : `${selectedActivity.harvest.estimatedTons.toLocaleString()} t ${lang === 'ka' ? 'დაგეგმილი' : 'planned'}`)
+                              : null,
+                          },
+                        ].map(record => (
+                          <div key={record.label} className="rounded-lg border border-stone-100 bg-stone-50/70 p-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[8px] font-extrabold uppercase tracking-wider text-stone-400">{record.label}</span>
+                              <span className="font-mono text-[8px] text-stone-400">{record.date || '—'}</span>
+                            </div>
+                            <strong className="mt-1 block truncate text-[10px] text-stone-750" title={record.value || undefined}>
+                              {record.value || (lang === 'ka' ? 'ჩანაწერი არ არის' : 'No record yet')}
+                            </strong>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
                 {/* Sub-Tabs of Block detail */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-stone-700">
-                  
+                <div className="grid grid-cols-1 gap-5 text-stone-700 xl:grid-cols-12">
+
                   {selectedCadastre && (
-                    <div className="space-y-3 p-4 bg-amber-50/45 rounded-xl border border-amber-100 md:col-span-2">
+                    <div className="space-y-3 rounded-xl border border-amber-100 bg-amber-50/45 p-4 xl:col-span-12">
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between gap-2 border-b border-dashed border-amber-200 pb-1.5">
                         <span className="flex items-center gap-1.5">
                           <FileText className="w-3.5 h-3.5" />
-                          Government Cadastre Mirror
+                          {lang === 'ka' ? 'სახელმწიფო საკადასტრო მონაცემები' : 'Government Cadastre Mirror'}
                         </span>
                         <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border ${cadastreBadgeClass(selectedCadastre.score, selectedCadastre.missingCritical.length)}`}>
-                          {selectedCadastre.score}% {selectedCadastre.badge}
+                          {selectedCadastre.score}% {cadastreBadgeLabel(selectedCadastre.badge, lang)}
                         </span>
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[11px]">
                         {([
-                          ['Cadastral code', selectedBlock.cadastralCode],
-                          ['Municipality', selectedBlock.municipality],
-                          ['Village', selectedBlock.village],
-                          ['Microzone', selectedBlock.microzone],
-                          ['Parcel', selectedBlock.parcelName],
-                          ['Parcel area', `${selectedBlock.parcelArea ?? selectedBlock.area} ha`],
-                          ['Owner / grower', selectedBlock.landOwner || selectedBlock.grower],
-                          ['Document', selectedBlock.officialCadastreDocumentName],
+                          [lang === 'ka' ? 'საკადასტრო კოდი' : 'Cadastral code', selectedBlock.cadastralCode],
+                          [lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality', selectedBlock.municipality],
+                          [lang === 'ka' ? 'თემი' : 'Community', selectedBlock.community],
+                          [lang === 'ka' ? 'სოფელი' : 'Village', selectedBlock.village],
+                          [lang === 'ka' ? 'მიკროზონა' : 'Microzone', selectedBlock.microzone],
+                          [lang === 'ka' ? 'ნაკვეთი' : 'Parcel', selectedBlock.parcelName],
+                          [lang === 'ka' ? 'ნაკვეთის ფართობი' : 'Parcel area', `${selectedBlock.parcelArea ?? selectedBlock.area} ha`],
+                          [lang === 'ka' ? 'მესაკუთრე / მევენახე' : 'Owner / grower', selectedBlock.landOwner || selectedBlock.grower],
+                          [lang === 'ka' ? 'დოკუმენტი' : 'Document', selectedBlock.officialCadastreDocumentName],
                         ] as Array<[string, string | number | undefined]>).map(([field, value]) => (
                           <div key={field} className="border border-amber-100 bg-white/70 rounded-lg p-2">
                             <span className="block text-[9px] uppercase font-mono text-slate-500 dark:text-slate-400 font-bold">{field}</span>
-                            <strong className="mt-0.5 block text-stone-800 font-serif">{value || 'Missing'}</strong>
+                            <strong className="mt-0.5 block text-stone-800 font-serif">{value || (lang === 'ka' ? 'არ არის' : 'Missing')}</strong>
                           </div>
                         ))}
                       </div>
                       {selectedCadastre.missing.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 text-[9px] font-mono">
-                          {selectedCadastre.missing.slice(0, 7).map(item => (
-                            <span key={item} className="rounded-full border border-amber-200 bg-amber-100/70 px-2 py-0.5 text-amber-900">
-                              Missing: {item}
+                          {selectedCadastre.requirements.filter(r => !r.met).slice(0, 7).map(item => (
+                            <span key={item.id} className="rounded-full border border-amber-200 bg-amber-100/70 px-2 py-0.5 text-amber-900">
+                              {lang === 'ka' ? 'აკლია' : 'Missing'}: {lang === 'ka' ? item.labelKa : item.labelEn}
                             </span>
                           ))}
                           {selectedCadastre.missing.length > 7 && (
                             <span className="rounded-full border border-stone-200 bg-stone-100 px-2 py-0.5 text-stone-600">
-                              +{selectedCadastre.missing.length - 7} more
+                              +{selectedCadastre.missing.length - 7} {lang === 'ka' ? 'სხვა' : 'more'}
                             </span>
                           )}
                         </div>
@@ -1520,110 +2242,211 @@ export default function VaziModule({
                   )}
 
                   {/* Block Terrain & Soil */}
-                  <div className="space-y-3 p-4 bg-stone-50 rounded-xl border border-stone-100">
+                  <div className="space-y-3 rounded-xl border border-stone-100 bg-stone-50 p-4 xl:col-span-4">
                     <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center gap-1.5 border-b border-dashed border-stone-200 pb-1.5">
                       <Mountain className="w-3.5 h-3.5" />
-                      Block Terrain & Vineyard Soil Specs
+                      {lang === 'ka' ? 'ნაკვეთის რელიეფი და ნიადაგი' : 'Block Terrain & Vineyard Soil Specs'}
                     </h4>
                     <ul className="text-xs space-y-2 font-medium">
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Altitude / Elevation:</span>
-                        <span className="font-mono text-stone-800">{selectedBlock.elevation} Meters</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სიმაღლე ზ. დ.:' : 'Altitude / Elevation:'}</span>
+                        <span className="font-mono text-stone-800">{selectedBlock.elevation} {lang === 'ka' ? 'მ' : 'Meters'}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Slope Profile:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დაქანება:' : 'Slope Profile:'}</span>
                         <span className="font-mono text-stone-800">{selectedBlock.slope}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Aspect Exposure:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ექსპოზიცია:' : 'Aspect Exposure:'}</span>
                         <span className="font-mono text-stone-800">{selectedBlock.aspect}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Planting Spacing:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დარგვის სქემა:' : 'Planting Spacing:'}</span>
                         <span className="font-mono text-stone-800">{selectedBlock.spacing}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Soil Geological Profile:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნიადაგის პროფილი:' : 'Soil Geological Profile:'}</span>
                         <span className="font-serif text-[11px] text-[#4e0e15] text-right font-bold inline-block max-w-40">{selectedBlock.soilType}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Rootstock / Clone:</span>
-                        <span className="font-mono text-stone-800 text-right">{selectedBlock.rootstock || 'Missing'} / {selectedBlock.clone || 'Missing'}</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საძირე / კლონი:' : 'Rootstock / Clone:'}</span>
+                        <span className="font-mono text-stone-800 text-right">{selectedBlock.rootstock || (lang === 'ka' ? 'არ არის' : 'Missing')} / {selectedBlock.clone || (lang === 'ka' ? 'არ არის' : 'Missing')}</span>
                       </li>
                       <li className="flex justify-between">
-                        <span className="text-slate-500 dark:text-slate-400">Vineyard Condition:</span>
-                        <span className="font-mono text-stone-800 text-right">{selectedBlock.vineyardCondition || 'Missing'}</span>
+                        <span className="text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ვენახის მდგომარეობა:' : 'Vineyard Condition:'}</span>
+                        <span className="font-mono text-stone-800 text-right">{selectedBlock.vineyardCondition || (lang === 'ka' ? 'არ არის' : 'Missing')}</span>
                       </li>
                     </ul>
                   </div>
 
                   {/* Coordinates & Custom Area Mapping Draw widget */}
-                  <div className="space-y-3 p-4 bg-stone-50 rounded-xl border border-stone-100 flex flex-col justify-between">
+                  <div className="flex min-w-0 flex-col justify-between space-y-3 rounded-xl border border-stone-100 bg-stone-50 p-4 xl:col-span-8">
                     <div>
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#4e0e15] flex items-center justify-between border-b border-dashed border-stone-200 pb-1.5 w-full">
                         <span className="flex items-center gap-1.5">
                           <MapPin className="w-3.5 h-3.5" />
-                          Interactive Digital Block Polygon Map
+                          {lang === 'ka' ? 'ნაკვეთის ინტერაქტიული პოლიგონის რუკა' : 'Interactive Digital Block Polygon Map'}
                         </span>
                       </h4>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1">
                         GPS: Lat {selectedBlock.latitude.toFixed(4)}, Lng {selectedBlock.longitude.toFixed(4)}
                       </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono text-stone-600">
+                        <span>
+                          {lang === 'ka' ? 'რეგისტრირებული' : 'Registered'}: {selectedBlock.area.toFixed(2)} ha
+                        </span>
+                        <span>
+                          {selectedHasRecordedBoundary
+                            ? (lang === 'ka' ? 'რუკით გაზომილი' : 'Mapped')
+                            : (lang === 'ka' ? 'მიახლოებითი' : 'Approximate')}: {selectedMappedArea.toFixed(2)} ha
+                        </span>
+                        {selectedHasRecordedBoundary && (
+                          <span className={Math.abs(selectedAreaDifferencePercent) > 10 ? 'font-bold text-amber-700' : 'text-emerald-700'}>
+                            {selectedAreaDifferencePercent >= 0 ? '+' : ''}{selectedAreaDifferencePercent.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Virtual Interactive coordinate mapping area */}
-                    <div className="h-32 bg-stone-100/80 rounded-lg border border-stone-200 relative overflow-hidden flex flex-col items-center justify-center">
-                      <div className="absolute top-2 right-2 flex gap-1.5 shrink-0 z-10">
-                        <button 
-                          onClick={() => {
-                            setIsDrawingPolygon(!isDrawingPolygon);
-                            setDrawnPixels([]);
-                          }}
-                          className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded cursor-pointer ${
-                            isDrawingPolygon ? 'bg-red-600 text-white' : 'bg-emerald-800 text-white hover:bg-emerald-900'
-                          }`}
-                        >
-                          {isDrawingPolygon ? 'Cancel Map' : 'Draw Polygon'}
-                        </button>
+                    <div className="space-y-2">
+                      <div className="relative h-[320px] overflow-hidden rounded-lg border border-stone-200 bg-stone-100/80 sm:h-[380px] xl:h-[430px]">
+                        <Suspense fallback={<VineyardMapLoading lang={lang} />}>
+                          <VineyardMap
+                            lang={lang}
+                            center={{ lat: selectedBlock.latitude, lng: selectedBlock.longitude }}
+                            blocks={isEditingBlockBoundary ? [] : [selectedBlock]}
+                            selectedBlockId={selectedBlock.id}
+                            drawing={isEditingBlockBoundary}
+                            drawingPoints={editingBoundaryPoints}
+                            onMapClick={isEditingBlockBoundary
+                              ? point => {
+                                  setEditingPointLat(parseFloat(point.lat.toFixed(6)));
+                                  setEditingPointLng(parseFloat(point.lng.toFixed(6)));
+                                  setEditingBoundaryPoints(previous => appendBoundaryPoint(previous, point));
+                                }
+                              : undefined}
+                            onRemoveDrawingPoint={isEditingBlockBoundary
+                              ? index => setEditingBoundaryPoints(previous => removeBoundaryPoint(previous, index))
+                              : undefined}
+                            heightClassName="h-full min-h-[300px]"
+                            ariaLabel={lang === 'ka' ? `${selectedBlock.name} საზღვრის რუკა` : `${selectedBlock.name} boundary map`}
+                            showEmptyState={false}
+                          />
+                        </Suspense>
                       </div>
 
-                      {/* Map backdrop and custom canvas outline helper */}
-                      <div className="absolute inset-0 bg-stone-200 opacity-30 flex items-center justify-center select-none">
-                        <span className="text-[8px] font-mono text-stone-400 uppercase tracking-widest">[Satellite View Simulation]</span>
-                      </div>
-                      
-                      {isDrawingPolygon ? (
-                        <div 
-                          className="absolute inset-0 z-0 cursor-crosshair pb-2 flex flex-col items-center justify-end" 
-                          onClick={(e) => {
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            const x = e.clientX - rect.left;
-                            const y = e.clientY - rect.top;
-                            setDrawnPixels([...drawnPixels, { x, y }]);
-                          }}
-                        >
-                          {/* Saperavi drawing points SVG overlay */}
-                          <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                            {drawnPixels.length > 1 && (
-                              <polygon
-                                points={drawnPixels.map(p => `${p.x},${p.y}`).join(' ')}
-                                fill="rgba(16, 185, 129, 0.2)"
-                                stroke="#10b981"
-                                strokeWidth="1.5"
-                              />
+                      {isEditingBlockBoundary ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className={`text-[9px] font-mono ${
+                            editingBoundaryValidation.valid ? 'text-emerald-700' : 'text-amber-700'
+                          }`}>
+                            {boundaryValidationMessage(editingBoundaryValidation, lang)}
+                            {' · '}
+                            {editingBoundaryPoints.length} {lang === 'ka' ? 'წერტილი' : 'vertices'}
+                            {editingBoundaryValidation.valid && selectedBlock.area > 0 && (
+                              <>
+                                {' · '}
+                                {lang === 'ka' ? 'რეგისტრირებულთან სხვაობა' : 'vs registered'}{' '}
+                                {(((editingBoundaryValidation.areaHectares - selectedBlock.area) / selectedBlock.area) * 100).toFixed(1)}%
+                              </>
                             )}
-                            {drawnPixels.map((p, i) => (
-                              <circle key={i} cx={p.x} cy={p.y} r="3" fill="#10b981" />
-                            ))}
-                          </svg>
-                          <span className="text-[8px] font-bold font-mono tracking-wider bg-[#4e0e15] text-white px-2 py-0.5 rounded shadow-sm relative z-15">
-                            Click {4 - drawnPixels.length > 0 ? `${4 - drawnPixels.length} more` : 'Completed'} times to snap block boundary
                           </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <label className="sr-only" htmlFor="boundary-point-lat">
+                              {lang === 'ka' ? 'საზღვრის წერტილის განედი' : 'Boundary point latitude'}
+                            </label>
+                            <input
+                              id="boundary-point-lat"
+                              type="number"
+                              step="0.000001"
+                              value={editingPointLat}
+                              onChange={event => setEditingPointLat(Number(event.target.value))}
+                              className="w-24 rounded border border-stone-200 bg-white px-2 py-1 text-[9px] font-mono text-stone-800 outline-none focus:border-emerald-700"
+                            />
+                            <label className="sr-only" htmlFor="boundary-point-lng">
+                              {lang === 'ka' ? 'საზღვრის წერტილის გრძედი' : 'Boundary point longitude'}
+                            </label>
+                            <input
+                              id="boundary-point-lng"
+                              type="number"
+                              step="0.000001"
+                              value={editingPointLng}
+                              onChange={event => setEditingPointLng(Number(event.target.value))}
+                              className="w-24 rounded border border-stone-200 bg-white px-2 py-1 text-[9px] font-mono text-stone-800 outline-none focus:border-emerald-700"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEditingBoundaryPoints(previous => appendBoundaryPoint(previous, {
+                                lat: editingPointLat,
+                                lng: editingPointLng,
+                              }))}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-emerald-100 text-emerald-900 hover:bg-emerald-200 cursor-pointer"
+                            >
+                              + {lang === 'ka' ? 'კოორდინატი' : 'Coordinate'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={editingBoundaryPoints.length === 0}
+                              onClick={() => setEditingBoundaryPoints(previous => previous.slice(0, -1))}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-stone-200 text-stone-700 hover:bg-stone-300 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                            >
+                              ↶ {lang === 'ka' ? 'გაუქმება' : 'Undo'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsEditingBlockBoundary(false);
+                                setEditingBoundaryPoints([]);
+                              }}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-rose-100 text-rose-800 hover:bg-rose-200 cursor-pointer"
+                            >
+                              {lang === 'ka' ? 'გაუქმება' : 'Cancel'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!editingBoundaryValidation.valid}
+                              onClick={() => {
+                                if (!canUpdateVineyardRecord || !editingBoundaryValidation.valid) return;
+                                runVaziMutationIfAllowed(canUpdateVineyardRecord, () => (
+                                  onUpdateBlock(selectedBlock.id, { boundary: editingBoundaryPoints })
+                                ));
+                                setIsEditingBlockBoundary(false);
+                                setEditingBoundaryPoints([]);
+                              }}
+                              className="px-2 py-1 text-[9px] font-mono font-bold rounded bg-emerald-800 text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                            >
+                              {lang === 'ka' ? 'საზღვრის შენახვა' : 'Save Boundary'}
+                            </button>
+                          </div>
                         </div>
                       ) : (
-                        <div className="text-center p-3 relative z-10 font-mono">
-                          <Compass className="w-8 h-8 text-emerald-800 mx-auto opacity-70 animate-spin" style={{ animationDuration: '8s' }} />
-                          <span className="text-[8px] uppercase tracking-wider block mt-2 text-stone-500 font-bold">Polygon Bound Calibrations Ready</span>
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => downloadBlockGeoJson(selectedBlock)}
+                            className="px-2.5 py-1 text-[9px] font-mono font-bold rounded border border-stone-200 bg-white text-stone-700 hover:bg-stone-100 cursor-pointer"
+                          >
+                            {lang === 'ka' ? 'GeoJSON-ის ჩამოტვირთვა' : 'Export GeoJSON'}
+                          </button>
+                          {canUpdateVineyardRecord && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const recordedBoundary = selectedBlock.boundary && selectedBlock.boundary.length >= 3
+                                ? selectedBlock.boundary
+                                : selectedBlock.gpsPolygon && selectedBlock.gpsPolygon.length >= 3
+                                  ? selectedBlock.gpsPolygon
+                                  : [];
+                              setEditingBoundaryPoints(recordedBoundary);
+                              setEditingPointLat(selectedBlock.latitude);
+                              setEditingPointLng(selectedBlock.longitude);
+                              setIsEditingBlockBoundary(true);
+                            }}
+                            className="px-2.5 py-1 text-[9px] font-mono font-bold rounded bg-emerald-800 text-white hover:bg-emerald-900 cursor-pointer"
+                          >
+                            {lang === 'ka' ? 'საზღვრის რედაქტირება' : 'Edit Boundary'}
+                          </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1637,72 +2460,74 @@ export default function VaziModule({
                     <div>
                       <h4 className="text-xs uppercase font-mono tracking-wider font-extrabold text-emerald-900 flex items-center gap-1.5">
                         <Sprout className="w-3.5 h-3.5" />
-                        Growing Degree Days Phenological Predictor
+                        {lang === 'ka' ? 'ფენოლოგიის პროგნოზი (GDD)' : 'Growing Degree Days Phenological Predictor'}
                       </h4>
-                      <p className="text-[9px] text-slate-500 dark:text-slate-400 mt-0.5">Automated heat sum index algorithms mapping current vegetative progression</p>
+                      <p className="text-[9px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'სითბოს ჯამის ავტომატური ინდექსი ვეგეტაციის მიმდინარე ეტაპის შესაფასებლად' : 'Automated heat sum index algorithms mapping current vegetative progression'}</p>
                     </div>
-                    <span className="text-[9px] font-mono bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded font-extrabold">Active Prediction Model</span>
+                    <span className="text-[9px] font-mono bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded font-extrabold">{lang === 'ka' ? 'აქტიური პროგნოზის მოდელი' : 'Active Prediction Model'}</span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
-                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Accumulated GDD Heat</span>
-                      <strong className="text-base text-emerald-950 block mt-0.5">{computedGDD} °C-Days</strong>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'დაგროვილი GDD სითბო' : 'Accumulated GDD Heat'}</span>
+                      <strong className="text-base text-emerald-950 block mt-0.5">{computedGDD} {lang === 'ka' ? '°C-დღე' : '°C-Days'}</strong>
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono flex flex-col justify-between items-center">
-                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Estimated Canopy Stage</span>
-                      <select
-                        value={selectedBlock.currentPhenology}
-                        onChange={(e) => onUpdateBlock(selectedBlock.id, { currentPhenology: e.target.value })}
-                        className="text-xs font-serif font-bold text-amber-700 text-center bg-transparent border border-amber-200/50 rounded-lg px-2.5 py-1 outline-none cursor-pointer mt-1.5 hover:text-amber-950 hover:border-amber-400 transition-all font-semibold max-w-full"
-                      >
-                        {[
-                          'Dormancy / before bud swelling',
-                          'Budburst',
-                          'Budburst / early shoot growth',
-                          '4-6 leaves / inflorescences visible',
-                          'Pre-flowering',
-                          'Flowering',
-                          'Fruit set',
-                          'Post-flowering / fruit set',
-                          'Pea-size berry / berry growth',
-                          'Bunch closure',
-                          'Veraison',
-                          'Ripening',
-                          'Pre-harvest / ripening'
-                        ].map((stage) => (
-                          <option key={stage} value={stage} className="text-stone-800 bg-white">
-                            {stage}
-                          </option>
-                        ))}
-                      </select>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო ფენოლოგიური ფაზა' : 'Estimated Canopy Stage'}</span>
+                      {canUpdateVineyardRecord ? (
+                        <select
+                          aria-label={lang === 'ka' ? 'ფენოლოგიური ფაზის განახლება' : 'Update phenology stage'}
+                          value={selectedBlock.currentPhenology}
+                          onChange={(e) => runVaziMutationIfAllowed(canUpdateVineyardRecord, () => (
+                            onUpdateBlock(selectedBlock.id, { currentPhenology: e.target.value })
+                          ))}
+                          className="text-xs font-serif font-bold text-amber-700 text-center bg-transparent border border-amber-200/50 rounded-lg px-2.5 py-1 outline-none cursor-pointer mt-1.5 hover:text-amber-950 hover:border-amber-400 transition-all font-semibold max-w-full"
+                        >
+                          {PHENOLOGY_STAGES.map((stage) => (
+                            <option key={stage} value={stage} className="text-stone-800 bg-white">
+                              {phenologyLabel(stage, lang)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <strong className="mt-1.5 block text-xs font-serif text-amber-700">
+                          {phenologyLabel(selectedBlock.currentPhenology, lang)}
+                        </strong>
+                      )}
                     </div>
                     <div className="p-3 bg-white border border-stone-100 rounded-lg text-center font-mono">
-                      <span className="text-[9px] text-slate-450 uppercase block font-sans">Confidence Index</span>
-                      <strong className="text-base text-emerald-700 block mt-0.5">92% Reliable</strong>
+                      <span className="text-[9px] text-slate-450 uppercase block font-sans">{lang === 'ka' ? 'სანდოობის ინდექსი' : 'Confidence Index'}</span>
+                      <strong className="text-base text-emerald-700 block mt-0.5">{lang === 'ka' ? '92% სანდო' : '92% Reliable'}</strong>
                     </div>
                   </div>
 
+                  {canCreateVineyardRecord && (
                   <div className="flex gap-2 text-[10px] font-mono justify-end pt-1">
-                    <button 
+                    <button
                       onClick={() => {
-                        onAddPhenologyLog({
+                        if (!canCreateVineyardRecord) return;
+                        runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddPhenologyLog({
                           blockId: selectedBlock.id,
                           stage: selectedBlock.currentPhenology,
                           date: new Date().toISOString().split('T')[0],
                           gdd: computedGDD,
                           confidence: 92,
                           status: 'confirmed',
-                          notes: `Confirmed physiological status on late spring checkup. GDD tracking matches stage expectation.`,
+                          notes: lang === 'ka'
+                            ? `ფენოლოგიური სტატუსი დადასტურდა. GDD მონიტორინგი შეესაბამება ფაზის მოლოდინს.`
+                            : `Confirmed physiological status on late spring checkup. GDD tracking matches stage expectation.`,
                           observer: currentUser.fullName
-                        });
-                        alert(`Broadcasting canopy confirmation: Block ${selectedBlock.name} successfully registered at ${selectedBlock.currentPhenology}!`);
+                        }));
+                        alert(lang === 'ka'
+                          ? `ფენოლოგიის დადასტურება: ნაკვეთი ${selectedBlock.name} რეგისტრირდა ფაზაზე „${phenologyLabel(selectedBlock.currentPhenology, lang)}“!`
+                          : `Broadcasting canopy confirmation: Block ${selectedBlock.name} successfully registered at ${selectedBlock.currentPhenology}!`);
                       }}
                       className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold rounded-md cursor-pointer flex items-center gap-1 transition-all"
                     >
-                      <Check className="w-3 h-3" /> Confirm Viticulturist Status
+                      <Check className="w-3 h-3" /> {lang === 'ka' ? 'სტატუსის დადასტურება' : 'Confirm Viticulturist Status'}
                     </button>
                   </div>
+                  )}
                 </div>
 
               </>
@@ -1711,7 +2536,7 @@ export default function VaziModule({
             ) : (
               <div className="bg-stone-50 border border-dashed border-[#e8dfd5] text-center p-12 rounded-xl italic font-serif text-sm text-[#4e0e15]/60 flex flex-col items-center justify-center">
                 <Layers className="w-12 h-12 text-stone-300 mb-3" />
-                <span>Select a vineyard block from the sidebar registry to deploy the viticulture control station.</span>
+                <span>{lang === 'ka' ? 'აირჩიეთ ვენახის ნაკვეთი გვერდით რეესტრიდან მევენახეობის სამართავი პანელის გასახსნელად.' : 'Select a vineyard block from the sidebar registry to deploy the viticulture control station.'}</span>
                 <div className="mt-4 flex flex-col sm:flex-row gap-2 not-italic font-sans">
                   {blocks.length > 0 && (
                     <button
@@ -1719,16 +2544,18 @@ export default function VaziModule({
                       onClick={() => openVaziTab('blocks', blocks[0].id)}
                       className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
                     >
-                      <ArrowRight className="w-3.5 h-3.5" /> Select first block
+                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'პირველი ნაკვეთის არჩევა' : 'Select first block'}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setShowAddBlockModal(true)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-50"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Add block
-                  </button>
+                  {canCreateVineyardRecord && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAddBlockModal(true)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-50"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნაკვეთის დამატება' : 'Add block'}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1742,12 +2569,15 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'spraying' && selectedBlock && (
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
-          
+
           {/* Add Spray Record Form */}
+          {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
-            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">Record Chemical Application</h4>
+            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">{lang === 'ka' ? 'ქიმიური დამუშავების ჩაწერა' : 'Record Chemical Application'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
+              if (drawnPoints.length > 0 && !drawnBoundaryValidation.valid) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               const targetProblem = fd.get('targetProblem') as string;
@@ -1761,7 +2591,7 @@ export default function VaziModule({
               const rei = parseInt(fd.get('rei') as string) || 24;
 
               if (targetProblem && productName) {
-                onAddSprayRecord({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddSprayRecord({
                   blockId: selectedBlock.id,
                   date: new Date().toISOString().split('T')[0],
                   targetProblem,
@@ -1778,114 +2608,121 @@ export default function VaziModule({
                   humidity: blockWeather?.humidity ?? 0,
                   preHarvestIntervalDays: phi,
                   reEntryIntervalHours: rei,
-                  notes: `Authorized chemical pesticide spraying campaign for ${targetProblem} prevention on Saperavi rows.`
-                });
+                  notes: lang === 'ka'
+                    ? `ავტორიზებული ქიმიური წამლობის კამპანია ${targetProblem}-ის პრევენციისთვის.`
+                    : `Authorized chemical pesticide spraying campaign for ${targetProblem} prevention on Saperavi rows.`
+                }));
                 form.reset();
               }
             }} className="space-y-3">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Target Problem / Disease *</label>
-                <input 
-                  type="text" 
-                  name="targetProblem" 
-                  placeholder="e.g., Downy Mildew prevention" 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სამიზნე პრობლემა / დაავადება *' : 'Target Problem / Disease *'}</label>
+                <input
+                  type="text"
+                  name="targetProblem"
+                  placeholder={lang === 'ka' ? 'მაგ., ჭრაქის პრევენცია' : 'e.g., Downy Mildew prevention'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium text-stone-800"
-                  required 
+                  required
                 />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Chemical Product / Compound *</label>
-                <input 
-                  type="text" 
-                  name="productName" 
-                  placeholder="e.g., Valiant Cu-7 Copp" 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ქიმიური პროდუქტი / ნაერთი *' : 'Chemical Product / Compound *'}</label>
+                <input
+                  type="text"
+                  name="productName"
+                  placeholder={lang === 'ka' ? 'მაგ., Valiant Cu-7 Copp' : 'e.g., Valiant Cu-7 Copp'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium"
-                  required 
+                  required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Active Ingredient</label>
-                  <input type="text" name="activeIngredient" placeholder="Copper hydroxide" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'აქტიური ნივთიერება' : 'Active Ingredient'}</label>
+                  <input type="text" name="activeIngredient" placeholder={lang === 'ka' ? 'სპილენძის ჰიდროქსიდი' : 'Copper hydroxide'} className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Operator</label>
-                  <input type="text" name="operator" placeholder="Nugzar Jincharadze" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ოპერატორი' : 'Operator'}</label>
+                  <input type="text" name="operator" placeholder={lang === 'ka' ? 'ნუგზარ ჯინჭარაძე' : 'Nugzar Jincharadze'} className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Dose/ha (kg/L)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დოზა/ჰა (კგ/ლ)' : 'Dose/ha (kg/L)'}</label>
                   <input type="number" step="0.1" name="dosePerHa" defaultValue="2.0" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Water volume/ha (L)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'წყლის მოცულობა/ჰა (ლ)' : 'Water volume/ha (L)'}</label>
                   <input type="number" step="10" name="waterVolumePerHa" defaultValue="400" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">PHI (Pre-Harvest Days)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'PHI (რთველამდე დღეები)' : 'PHI (Pre-Harvest Days)'}</label>
                   <input type="number" name="phi" defaultValue="21" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">REI (Re-Entry Hours)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'REI (ხელახლა შესვლის საათები)' : 'REI (Re-Entry Hours)'}</label>
                   <input type="number" name="rei" defaultValue="24" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1 outline-none" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Tractor & Sprayer Unit</label>
-                <input type="text" name="machineryUsed" placeholder="Fendt 207V with Hardi Sprayer" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ტრაქტორი და შესხურებელი' : 'Tractor & Sprayer Unit'}</label>
+                <input type="text" name="machineryUsed" placeholder={lang === 'ka' ? 'Fendt 207V, Hardi შესხურებელით' : 'Fendt 207V with Hardi Sprayer'} className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none" />
               </div>
 
               {/* Instant Safety Warnings block */}
               {blockWeather && blockWeather.wind > 12 && (
                 <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg font-mono text-[10px] space-y-1 block">
-                  <span className="font-extrabold uppercase text-[9px] block">⚠️ HIGH WIND HAZARD</span>
-                  Local wind speed is currently {blockWeather.wind} km/h. High drift risks. Delay application sequence to early morning!
+                  <span className="font-extrabold uppercase text-[9px] block">{lang === 'ka' ? '⚠️ ძლიერი ქარის საფრთხე' : '⚠️ HIGH WIND HAZARD'}</span>
+                  {lang === 'ka'
+                    ? `ქარის ამჟამინდელი სიჩქარეა ${blockWeather.wind} კმ/სთ. მაღალი გადატანის რისკი. გადადეთ დამუშავება დილის ადრეულ საათებზე!`
+                    : `Local wind speed is currently ${blockWeather.wind} km/h. High drift risks. Delay application sequence to early morning!`}
                 </div>
               )}
 
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors"
               >
-                Launch Field Spray Campaign
+                {lang === 'ka' ? 'წამლობის კამპანიის დაწყება' : 'Launch Field Spray Campaign'}
               </button>
             </form>
           </div>
+          )}
 
           {/* Spraying History list */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4">
-            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">Pesticide and Spraying Logbook — {selectedBlock.name}</h4>
+          <div className={`${canCreateVineyardRecord ? 'lg:col-span-2 xl:col-span-3' : 'lg:col-span-3 xl:col-span-4'} bg-white rounded-xl border border-[#e8dfd5] p-5 shadow-sm space-y-4`}>
+            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">{lang === 'ka' ? 'წამლობის ჟურნალი' : 'Pesticide and Spraying Logbook'} — {selectedBlock.name}</h4>
             <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1" tabIndex={0}>
               {sprays.filter(s => s.blockId === selectedBlock.id).map(spray => (
                 <div key={spray.id} className="p-4 border border-stone-100 rounded-xl hover:bg-stone-50/50 transition-all font-sans space-y-2 relative">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[9px] bg-red-100 text-red-800 border border-red-200 px-2 py-0.5 rounded font-mono font-bold">
-                      🛡️ PHI: {spray.preHarvestIntervalDays} Days Safety
+                      🛡️ PHI: {spray.preHarvestIntervalDays} {lang === 'ka' ? 'დღე' : 'Days Safety'}
                     </span>
                     <span className="text-[9px] bg-sky-100 text-sky-850 px-2 py-0.5 rounded font-mono font-bold">
-                      REI: {spray.reEntryIntervalHours} hours
+                      REI: {spray.reEntryIntervalHours} {lang === 'ka' ? 'საათი' : 'hours'}
                     </span>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{spray.date} • Operator {spray.operator}</span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{spray.date} • {lang === 'ka' ? 'ოპერატორი' : 'Operator'} {spray.operator}</span>
                   </div>
-                  
-                  <h5 className="font-bold text-stone-900 text-sm leading-tight">Applied: {spray.productName} ({spray.activeIngredient})</h5>
+
+                  <h5 className="font-bold text-stone-900 text-sm leading-tight">{lang === 'ka' ? 'გამოყენებული' : 'Applied'}: {spray.productName} ({spray.activeIngredient})</h5>
                   <p className="text-xs text-stone-500 leading-relaxed bg-[#fbf9f6]/60 p-2 rounded border border-dashed border-[#e8dfd5]/60">
-                    <strong>Target:</strong> {spray.targetProblem} <br />
-                    <strong>Machinery Dosage:</strong> {spray.dosePerHa} kg/ha in {spray.waterVolumePerHa}L/ha water. Total quantity: <strong>{spray.totalProductUsed} kg</strong> pesticide in <strong>{spray.totalWaterUsed}L</strong> water.
+                    <strong>{lang === 'ka' ? 'სამიზნე:' : 'Target:'}</strong> {spray.targetProblem} <br />
+                    <strong>{lang === 'ka' ? 'დოზირება:' : 'Machinery Dosage:'}</strong> {lang === 'ka'
+                      ? <>{spray.dosePerHa} კგ/ჰა, {spray.waterVolumePerHa}ლ/ჰა წყალში. სულ: <strong>{spray.totalProductUsed} კგ</strong> პესტიციდი <strong>{spray.totalWaterUsed}ლ</strong> წყალში.</>
+                      : <>{spray.dosePerHa} kg/ha in {spray.waterVolumePerHa}L/ha water. Total quantity: <strong>{spray.totalProductUsed} kg</strong> pesticide in <strong>{spray.totalWaterUsed}L</strong> water.</>}
                   </p>
-                  
+
                   <div className="grid grid-cols-3 gap-2 text-[10px] font-mono text-stone-550 pt-1">
-                    <div>🌡️ Temp: {spray.temperature}°C</div>
-                    <div>🍃 Wind: {spray.windSpeed} km/h</div>
-                    <div>💧 Humidity: {spray.humidity}%</div>
+                    <div>🌡️ {lang === 'ka' ? 'ტემპ.' : 'Temp'}: {spray.temperature}°C</div>
+                    <div>🍃 {lang === 'ka' ? 'ქარი' : 'Wind'}: {spray.windSpeed} km/h</div>
+                    <div>💧 {lang === 'ka' ? 'ტენიანობა' : 'Humidity'}: {spray.humidity}%</div>
                   </div>
                 </div>
               ))}
@@ -1893,27 +2730,32 @@ export default function VaziModule({
               {sprays.filter(s => s.blockId === selectedBlock.id).length === 0 && (
                 <div className="text-center py-12 text-stone-400 italic font-mono text-xs">
                   <Wind className="w-10 h-10 text-stone-200 mx-auto mb-2" />
-                  No chemical treatments recorded for this block.
+                  {lang === 'ka' ? 'ამ ნაკვეთზე ქიმიური დამუშავება არ არის ჩაწერილი.' : 'No chemical treatments recorded for this block.'}
                   <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2 not-italic font-sans">
                     <button
                       type="button"
                       onClick={() => openVaziTab('scouting', selectedBlock.id)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
                     >
-                      <CheckSquare className="w-3.5 h-3.5" /> Scout first
+                      <CheckSquare className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ჯერ დაათვალიერეთ' : 'Scout first'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPrefilledTaskTitle?.(`Plan spray campaign for ${selectedBlock.name}`);
-                        setPrefilledTaskPriority?.('medium');
-                        setPrefilledTaskDesc?.(`Review canopy conditions for ${selectedBlock.name} and schedule treatment if disease pressure warrants it.`);
-                        navigateTo({ module: 'gvino', tab: 'tasks' });
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" /> Create task
-                    </button>
+                    {canCreateTask && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canCreateTask) return;
+                          setPrefilledTaskTitle?.(lang === 'ka' ? `წამლობის კამპანიის დაგეგმვა — ${selectedBlock.name}` : `Plan spray campaign for ${selectedBlock.name}`);
+                          setPrefilledTaskPriority?.('medium');
+                          setPrefilledTaskDesc?.(lang === 'ka'
+                            ? `გადახედეთ ${selectedBlock.name}-ის მდგომარეობას და საჭიროების შემთხვევაში დაგეგმეთ დამუშავება.`
+                            : `Review canopy conditions for ${selectedBlock.name} and schedule treatment if disease pressure warrants it.`);
+                          navigateTo({ module: 'gvino', tab: 'tasks' });
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -1928,12 +2770,14 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'scouting' && selectedBlock && (
         <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-8 font-sans">
-          
+
           {/* Add Scouting Record form */}
+          {canCreateVineyardRecord && (
           <div className="lg:col-span-1 bg-white dark:bg-stone-900 border border-[#e8dfd5] dark:border-stone-800 p-6 lg:p-7 rounded-2xl h-fit shadow-xs space-y-4 text-xs text-stone-600">
-            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">Log Pathogen Scouting</h4>
+            <h4 className="font-serif font-black text-sm text-emerald-950 border-b border-stone-100 dark:border-stone-800 pb-2">{lang === 'ka' ? 'პათოგენზე დაკვირვების ჩაწერა' : 'Log Pathogen Scouting'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               const path = fd.get('problemType') as any;
@@ -1943,7 +2787,7 @@ export default function VaziModule({
               const note = fd.get('notes') as string;
 
               if (path && loc) {
-                onAddScoutingRecord({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddScoutingRecord({
                   blockId: selectedBlock.id,
                   date: new Date().toISOString().split('T')[0],
                   locationDetails: loc,
@@ -1952,86 +2796,87 @@ export default function VaziModule({
                   notes: note,
                   recommendedAction: rec,
                   followUpTaskId: `scout-task-${Date.now()}`
-                });
+                }));
                 form.reset();
               }
             }} className="space-y-3">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Pathogen / Problem Type *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'პათოგენი / პრობლემის ტიპი *' : 'Pathogen / Problem Type *'}</label>
                 <select name="problemType" className="w-full bg-white border border-[#e8dfd5] rounded-p px-2 py-1.5 outline-none font-bold text-stone-800">
-                  <option value="Downy mildew">🌾 Downy Mildew</option>
-                  <option value="Powdery mildew">🌫️ Powdery Mildew</option>
-                  <option value="Botrytis">🍇 Botrytis Bunch Rot</option>
-                  <option value="Black rot">⚫ Black Rot</option>
-                  <option value="Esca">🪵 Esca Trunk Disease</option>
-                  <option value="Mites">🕷️ Red Spider Mites</option>
-                  <option value="Grape moth">🦋 European Grape Moth</option>
-                  <option value="Nutrient deficiency">🍂 Chlorosis / Nutrient Defic</option>
-                  <option value="Water stress">🏜️ Severe Water Stress</option>
-                  <option value="Hail damage">⛈️ Hail Injury</option>
-                  <option value="Sunburn">☀️ Cluster Sunburn</option>
+                  <option value="Downy mildew">🌾 {lang === 'ka' ? 'ჭრაქი' : 'Downy Mildew'}</option>
+                  <option value="Powdery mildew">🌫️ {lang === 'ka' ? 'ნაცარი (ოიდიუმი)' : 'Powdery Mildew'}</option>
+                  <option value="Botrytis">🍇 {lang === 'ka' ? 'ნაცრისფერი ლპობა (ბოტრიტისი)' : 'Botrytis Bunch Rot'}</option>
+                  <option value="Black rot">⚫ {lang === 'ka' ? 'შავი სიდამპლე' : 'Black Rot'}</option>
+                  <option value="Esca">🪵 {lang === 'ka' ? 'ესკა (ღეროს დაავადება)' : 'Esca Trunk Disease'}</option>
+                  <option value="Mites">🕷️ {lang === 'ka' ? 'წითელი ტკიპა' : 'Red Spider Mites'}</option>
+                  <option value="Grape moth">🦋 {lang === 'ka' ? 'ვაზის ჩრჩილი' : 'European Grape Moth'}</option>
+                  <option value="Nutrient deficiency">🍂 {lang === 'ka' ? 'ქლოროზი / ნიადაგის დეფიციტი' : 'Chlorosis / Nutrient Defic'}</option>
+                  <option value="Water stress">🏜️ {lang === 'ka' ? 'წყლის მწვავე დეფიციტი' : 'Severe Water Stress'}</option>
+                  <option value="Hail damage">⛈️ {lang === 'ka' ? 'სეტყვის დაზიანება' : 'Hail Injury'}</option>
+                  <option value="Sunburn">☀️ {lang === 'ka' ? 'მზის დამწვრობა' : 'Cluster Sunburn'}</option>
                 </select>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Field Row / Location detail *</label>
-                <input 
-                  type="text" 
-                  name="locationDetails" 
-                  placeholder="e.g. Rows 24 to 36, southern depression" 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'რიგი / ადგილმდებარეობა *' : 'Field Row / Location detail *'}</label>
+                <input
+                  type="text"
+                  name="locationDetails"
+                  placeholder={lang === 'ka' ? 'მაგ. 24-დან 36 რიგამდე, სამხრეთი დაქანება' : 'e.g. Rows 24 to 36, southern depression'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-p px-2.5 py-1.5 outline-none font-medium"
-                  required 
+                  required
                 />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Observed Severity</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დაფიქსირებული სიმძიმე' : 'Observed Severity'}</label>
                 <div className="flex gap-2">
-                  {['low', 'medium', 'high'].map(s => (
+                  {(['low', 'medium', 'high'] as const).map(s => (
                     <label key={s} className="flex-1 text-center py-1.5 border border-stone-200 rounded-lg cursor-pointer hover:bg-stone-50 font-mono text-[10px] font-bold block uppercase">
-                      <input 
-                        type="radio" 
-                        name="severity" 
-                        value={s} 
+                      <input
+                        type="radio"
+                        name="severity"
+                        value={s}
                         defaultChecked={s === 'low'}
                         className="mr-1 accent-emerald-800"
                       />
-                      {s}
+                      {lang === 'ka' ? (s === 'low' ? 'დაბალი' : s === 'medium' ? 'საშუალო' : 'მაღალი') : s}
                     </label>
                   ))}
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Recommended Action Plan</label>
-                <textarea 
-                  name="recommendedAction" 
-                  placeholder="e.g. Schedule systemic protective spraying immediately..." 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'რეკომენდებული სამოქმედო გეგმა' : 'Recommended Action Plan'}</label>
+                <textarea
+                  name="recommendedAction"
+                  placeholder={lang === 'ka' ? 'მაგ. დაუყოვნებლივ დაგეგმეთ სისტემური დამცავი წამლობა...' : 'e.g. Schedule systemic protective spraying immediately...'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-16 outline-none text-xs"
                 />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Scouting Observations / Count</label>
-                <textarea 
-                  name="notes" 
-                  placeholder="e.g. Faint oil spots on lower leaf surface detected..." 
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დაკვირვების შენიშვნები / რაოდენობა' : 'Scouting Observations / Count'}</label>
+                <textarea
+                  name="notes"
+                  placeholder={lang === 'ka' ? 'მაგ. ფოთლის ქვედა ზედაპირზე შესამჩნევია ზეთისებრი ლაქები...' : 'e.g. Faint oil spots on lower leaf surface detected...'}
                   className="w-full bg-white border border-[#e8dfd5] rounded-lg p-2.5 h-16 outline-none text-xs"
                 />
               </div>
 
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white font-extrabold font-mono uppercase tracking-wider py-2 rounded-lg cursor-pointer transition-colors hover-lift"
               >
-                Save Scouting Record
+                {lang === 'ka' ? 'დაკვირვების ჩანაწერის შენახვა' : 'Save Scouting Record'}
               </button>
             </form>
           </div>
+          )}
 
           {/* Scouting List */}
-          <div className="lg:col-span-2 xl:col-span-3 bg-white dark:bg-stone-900 rounded-3xl border border-[#e8dfd5] dark:border-stone-800 p-8 shadow-sm space-y-5">
-            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">Continuous Field Pathology Records</h4>
+          <div className={`${canCreateVineyardRecord ? 'lg:col-span-2 xl:col-span-3' : 'lg:col-span-3 xl:col-span-4'} bg-white dark:bg-stone-900 rounded-3xl border border-[#e8dfd5] dark:border-stone-800 p-8 shadow-sm space-y-5`}>
+            <h4 className="font-serif font-bold text-sm text-[#4e0e15]">{lang === 'ka' ? 'ველის პათოლოგიის უწყვეტი ჩანაწერები' : 'Continuous Field Pathology Records'}</h4>
             <div className="space-y-4">
               {scoutings.filter(sc => sc.blockId === selectedBlock.id).map(scout => (
                 <div key={scout.id} className="p-4 border border-stone-100 rounded-xl hover:bg-stone-50/50 transition-all font-sans relative flex justify-between gap-4">
@@ -2041,21 +2886,23 @@ export default function VaziModule({
                         scout.severity === 'high' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
                         scout.severity === 'medium' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
                       }`}>
-                        {scout.severity === 'high' ? '🔴 Severity: High' : scout.severity === 'medium' ? '🟡 Severity: Medium' : '⚪ Severity: Low'}
+                        {lang === 'ka'
+                          ? (scout.severity === 'high' ? '🔴 სიმძიმე: მაღალი' : scout.severity === 'medium' ? '🟡 სიმძიმე: საშუალო' : '⚪ სიმძიმე: დაბალი')
+                          : (scout.severity === 'high' ? '🔴 Severity: High' : scout.severity === 'medium' ? '🟡 Severity: Medium' : '⚪ Severity: Low')}
                       </span>
                       <span className="text-[10px] bg-slate-100 text-stone-600 font-mono px-1.5 py-0.2 rounded font-semibold">
-                        Location: {scout.locationDetails}
+                        {lang === 'ka' ? 'ადგილი' : 'Location'}: {scout.locationDetails}
                       </span>
                       <span className="text-[9px] text-slate-500 dark:text-slate-400 font-mono ml-auto">{scout.date}</span>
                     </div>
 
-                    <h5 className="font-black text-stone-900 text-sm leading-tight">Detected Problem: <span className="text-[#801323]">{scout.problemType}</span></h5>
-                    <p className="text-xs text-stone-600 leading-relaxed"><strong className="text-slate-500">Observation Notes:</strong> {scout.notes}</p>
+                    <h5 className="font-black text-stone-900 text-sm leading-tight">{lang === 'ka' ? 'გამოვლენილი პრობლემა' : 'Detected Problem'}: <span className="text-[#801323]">{scout.problemType}</span></h5>
+                    <p className="text-xs text-stone-600 leading-relaxed"><strong className="text-slate-500">{lang === 'ka' ? 'დაკვირვების შენიშვნები:' : 'Observation Notes:'}</strong> {scout.notes}</p>
                     {scout.recommendedAction && (
                       <div className="text-xs text-emerald-800 bg-emerald-50/70 p-2.5 rounded border border-emerald-100 flex items-start gap-1.5">
                         <Info className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
                         <div>
-                          <strong>Farming Action Plan:</strong> {scout.recommendedAction}
+                          <strong>{lang === 'ka' ? 'სამოქმედო გეგმა:' : 'Farming Action Plan:'}</strong> {scout.recommendedAction}
                         </div>
                       </div>
                     )}
@@ -2066,27 +2913,32 @@ export default function VaziModule({
               {scoutings.filter(sc => sc.blockId === selectedBlock.id).length === 0 && (
                 <div className="text-center py-12 text-stone-400 italic font-mono text-xs">
                   <CheckSquare className="w-10 h-10 text-stone-200 mx-auto mb-2" />
-                  Your canopy scouting reports are perfectly clean. No pathogens spotted!
+                  {lang === 'ka' ? 'დაკვირვების ჩანაწერები სუფთაა — პათოგენები არ დაფიქსირებულა!' : 'Your canopy scouting reports are perfectly clean. No pathogens spotted!'}
                   <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2 not-italic font-sans">
                     <button
                       type="button"
                       onClick={() => openVaziTab('spraying', selectedBlock.id)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-emerald-900 transition-colors hover:bg-emerald-100"
                     >
-                      <Wind className="w-3.5 h-3.5" /> Open sprays
+                      <Wind className="w-3.5 h-3.5" /> {lang === 'ka' ? 'წამლობების გახსნა' : 'Open sprays'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPrefilledTaskTitle?.(`Scout ${selectedBlock.name}`);
-                        setPrefilledTaskPriority?.('low');
-                        setPrefilledTaskDesc?.(`Walk ${selectedBlock.name}, record disease pressure, and update the Vazi scouting log.`);
-                        navigateTo({ module: 'gvino', tab: 'tasks' });
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" /> Create task
-                    </button>
+                    {canCreateTask && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canCreateTask) return;
+                          setPrefilledTaskTitle?.(lang === 'ka' ? `${selectedBlock.name}-ის დათვალიერება` : `Scout ${selectedBlock.name}`);
+                          setPrefilledTaskPriority?.('low');
+                          setPrefilledTaskDesc?.(lang === 'ka'
+                            ? `შემოიარეთ ${selectedBlock.name}, ჩაიწერეთ დაავადებების წნეხი და განაახლეთ ვაზის დაკვირვების ჟურნალი.`
+                            : `Walk ${selectedBlock.name}, record disease pressure, and update the Vazi scouting log.`);
+                          navigateTo({ module: 'gvino', tab: 'tasks' });
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'დავალების შექმნა' : 'Create task'}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -2101,12 +2953,14 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'sampling' && selectedBlock && (
         <div className="space-y-6 font-sans">
-          
+
           {/* Top Form to Record new Analytical Grape Sample */}
+          {canCreateVineyardRecord && (
           <div className="bg-white border border-[#e8dfd5] p-5 rounded-2xl shadow-sm space-y-4">
-            <h4 className="font-serif font-black text-sm text-[#4e0e15] border-b border-stone-100 pb-2">Record Pre-Harvest Grape Mature Sampling</h4>
+            <h4 className="font-serif font-black text-sm text-[#4e0e15] border-b border-stone-100 pb-2">{lang === 'ka' ? 'რთველისწინა სიმწიფის ნიმუშის ჩაწერა' : 'Record Pre-Harvest Grape Mature Sampling'}</h4>
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
               const brix = parseFloat(fd.get('brix') as string);
@@ -2117,7 +2971,7 @@ export default function VaziModule({
               const seed = fd.get('seed') as any;
 
               if (brix && ph) {
-                onAddSamplings({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddSamplings({
                   blockId: selectedBlock.id,
                   date: new Date().toISOString().split('T')[0],
                   brix,
@@ -2129,58 +2983,59 @@ export default function VaziModule({
                   tasteNotes: taste,
                   diseaseCondition: 'Healthy grapes',
                   estimatedHarvestDate: selectedBlock.estimatedHarvestDate,
-                  notes: `Manual grape cluster sampling recorded for vintage checkup.`
-                });
+                  notes: lang === 'ka' ? `ყურძნის მტევნის ხელით აღებული ნიმუში.` : `Manual grape cluster sampling recorded for vintage checkup.`
+                }));
                 form.reset();
-                alert('Sugar accumulation sample logs saved successfully!');
+                alert(lang === 'ka' ? 'შაქრის დაგროვების ნიმუშის ჩანაწერი შენახულია!' : 'Sugar accumulation sample logs saved successfully!');
               }
             }} className="grid grid-cols-2 md:grid-cols-6 gap-4 text-xs">
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Sugar Density (°Brix) *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'შაქრიანობა (°Brix) *' : 'Sugar Density (°Brix) *'}</label>
                 <input type="number" step="0.1" name="brix" defaultValue="19.5" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
               </div>
-              
+
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Active pH *</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'აქტიური pH *' : 'Active pH *'}</label>
                 <input type="number" step="0.01" name="ph" defaultValue="3.15" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" required />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Total Acidity (g/L Tartaric)</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საერთო მჟავიანობა (გ/ლ ღვინის მჟავა)' : 'Total Acidity (g/L Tartaric)'}</label>
                 <input type="number" step="0.1" name="ta" defaultValue="7.4" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Average Berry Wt (grams)</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მარცვლის საშ. წონა (გ)' : 'Average Berry Wt (grams)'}</label>
                 <input type="number" step="0.01" name="weight" defaultValue="1.20" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none" />
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Seed Lignified Status</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'წიპწის სიმწიფე' : 'Seed Lignified Status'}</label>
                 <select name="seed" className="w-full bg-stone-50 border border-slate-250 rounded px-2 py-1.5 text-stone-900 outline-none">
-                  <option value="Green">🟢 Hydrated Green</option>
-                  <option value="Yellow-brown">🟡 Semi-Brown</option>
-                  <option value="Dark brown">🟤 Lignified Dark Brown</option>
+                  <option value="Green">🟢 {lang === 'ka' ? 'მწვანე' : 'Hydrated Green'}</option>
+                  <option value="Yellow-brown">🟡 {lang === 'ka' ? 'ნახევრად ყავისფერი' : 'Semi-Brown'}</option>
+                  <option value="Dark brown">🟤 {lang === 'ka' ? 'მუქი ყავისფერი' : 'Lignified Dark Brown'}</option>
                 </select>
               </div>
 
               <div className="flex items-end">
-                <button 
+                <button
                   type="submit"
                   className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 font-mono font-bold uppercase rounded cursor-pointer leading-tight"
                 >
-                  Save Sample
+                  {lang === 'ka' ? 'ნიმუშის შენახვა' : 'Save Sample'}
                 </button>
               </div>
             </form>
           </div>
+          )}
 
           {/* Interactive Recharts Graphics showing maturity curves */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
+
             {/* Recharts 1: Brix vs Berry Weight */}
             <div className="bg-white border border-[#e8dfd5] p-5 rounded-xl shadow-sm space-y-2">
-              <h5 className="font-serif font-bold text-stone-900 text-xs">Sugar Accumulation Rate (°Brix Trend)</h5>
+              <h5 className="font-serif font-bold text-stone-900 text-xs">{lang === 'ka' ? 'შაქრის დაგროვების ტემპი (°Brix ტრენდი)' : 'Sugar Accumulation Rate (°Brix Trend)'}</h5>
               <div className="h-64 mt-2">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={samplings.filter(s => s.blockId === selectedBlock.id).sort((a,b) => a.date.localeCompare(b.date))}>
@@ -2189,8 +3044,8 @@ export default function VaziModule({
                     <YAxis stroke="#888" domain={[10, 26]} fontSize={9} />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 10 }} />
-                    <Line type="monotone" dataKey="brix" name="Brix level" stroke="#801323" strokeWidth={2.5} activeDot={{ r: 6 }} />
-                    <Line type="monotone" dataKey="berryWeightG" name="Berry Weight (g)" stroke="#0ea5e9" strokeWidth={1.5} />
+                    <Line type="monotone" dataKey="brix" name={lang === 'ka' ? 'Brix დონე' : 'Brix level'} stroke="#801323" strokeWidth={2.5} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="berryWeightG" name={lang === 'ka' ? 'მარცვლის წონა (გ)' : 'Berry Weight (g)'} stroke="#0ea5e9" strokeWidth={1.5} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -2198,7 +3053,7 @@ export default function VaziModule({
 
             {/* Recharts 2: pH vs Acidity */}
             <div className="bg-white border border-[#e8dfd5] p-5 rounded-xl shadow-sm space-y-2">
-              <h5 className="font-serif font-bold text-stone-900 text-xs">pH Rise vs. Total Tartaric Acidity Decline</h5>
+              <h5 className="font-serif font-bold text-stone-900 text-xs">{lang === 'ka' ? 'pH-ის ზრდა vs. ღვინის მჟავის კლება' : 'pH Rise vs. Total Tartaric Acidity Decline'}</h5>
               <div className="h-64 mt-2">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={samplings.filter(s => s.blockId === selectedBlock.id).sort((a,b) => a.date.localeCompare(b.date))}>
@@ -2208,8 +3063,8 @@ export default function VaziModule({
                     <YAxis yAxisId="right" orientation="right" stroke="#888" domain={[4, 12]} fontSize={9} name="TA g/L" />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 10 }} />
-                    <Line yAxisId="left" type="monotone" dataKey="pH" name="pH level" stroke="#eab308" strokeWidth={2} />
-                    <Line yAxisId="right" type="monotone" dataKey="totalAcidityGL" name="Tartaric Acid (g/L)" stroke="#b45309" strokeWidth={2} />
+                    <Line yAxisId="left" type="monotone" dataKey="pH" name={lang === 'ka' ? 'pH დონე' : 'pH level'} stroke="#eab308" strokeWidth={2} />
+                    <Line yAxisId="right" type="monotone" dataKey="totalAcidityGL" name={lang === 'ka' ? 'ღვინის მჟავა (გ/ლ)' : 'Tartaric Acid (g/L)'} stroke="#b45309" strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -2225,49 +3080,49 @@ export default function VaziModule({
           ========================================== */}
       {vaziTab === 'yield' && selectedBlock && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 font-sans">
-          
+
           {/* Yield Calculator */}
           <div className="bg-white border border-[#e8dfd5] p-6 rounded-2xl shadow-sm space-y-5">
             <div>
               <h4 className="font-serif font-black text-sm text-[#4e0e15] flex items-center gap-1.5">
                 <BarChart3 className="w-4 h-4 text-[#801323]" />
-                Micro-Yield Calculator Estimates
+                {lang === 'ka' ? 'მოსავლიანობის კალკულატორი' : 'Micro-Yield Calculator Estimates'}
               </h4>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Predicted grape crop kilograms, tons per acre, and anticipated total juice volumes</p>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'ყურძნის სავარაუდო კილოგრამები, ტონა ჰექტარზე და მოსალოდნელი ტკბილის მოცულობა' : 'Predicted grape crop kilograms, tons per acre, and anticipated total juice volumes'}</p>
             </div>
 
             {/* Interactive sliders for robust yield estimation */}
             <div className="space-y-4 text-xs font-semibold text-stone-700">
               <div>
-                <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Total Vine Count on Block</label>
+                <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">{lang === 'ka' ? 'ვაზების საერთო რაოდენობა ნაკვეთზე' : 'Total Vine Count on Block'}</label>
                 <div className="bg-stone-50 border border-stone-200 p-2 text-[#4e0e15] text-sm font-black rounded font-mono">
-                  {selectedBlock.vinesCount.toLocaleString()} Vines
+                  {selectedBlock.vinesCount.toLocaleString()} {lang === 'ka' ? 'ვაზი' : 'Vines'}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Avg Grape Clusters per Vine</label>
+                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">{lang === 'ka' ? 'მტევნების საშ. რაოდენობა ვაზზე' : 'Avg Grape Clusters per Vine'}</label>
                   <input type="number" defaultValue="15" className="w-full bg-stone-50 border border-stone-200 px-2 py-1.5 font-mono" id="cluster-count" />
                 </div>
                 <div>
-                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">Avg Bunch Weight (gr)</label>
+                  <label className="text-[10px] tracking-wider uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1">{lang === 'ka' ? 'მტევნის საშ. წონა (გ)' : 'Avg Bunch Weight (gr)'}</label>
                   <input type="number" defaultValue="125" className="w-full bg-stone-50 border border-stone-200 px-2 py-1.5 font-mono" id="bunch-weight" />
                 </div>
               </div>
 
-              <button 
+              <button
                 type="button"
                 onClick={() => {
                   const bCount = parseFloat((document.getElementById('cluster-count') as HTMLInputElement).value) || 15;
                   const bWeight = parseFloat((document.getElementById('bunch-weight') as HTMLInputElement).value) || 125;
-                  
+
                   // Computations
                   const totalKg = Math.round(selectedBlock.vinesCount * bCount * (bWeight / 1000));
                   const totalTons = Math.round((totalKg / 1000) * 10) / 10;
                   const tonsPerHa = Math.round((totalTons / selectedBlock.area) * 10) / 10;
                   const expectedJuiceLiters = Math.round(totalKg * 0.70); // 70% average extraction recovery
-                  
+
                   // Show inside target outputs
                   (document.getElementById('pred-kg') as HTMLSpanElement).innerText = totalKg.toLocaleString() + " Kg";
                   (document.getElementById('pred-tons') as HTMLSpanElement).innerText = totalTons + " Tons";
@@ -2276,7 +3131,7 @@ export default function VaziModule({
                 }}
                 className="w-full bg-[#4e0e15] hover:bg-[#801323] text-white py-2 font-mono uppercase tracking-wider text-xs cursor-pointer font-extrabold rounded"
               >
-                Compute Crop Volume Projections
+                {lang === 'ka' ? 'მოსავლის მოცულობის გამოთვლა' : 'Compute Crop Volume Projections'}
               </button>
 
               <hr className="border-stone-100" />
@@ -2284,19 +3139,19 @@ export default function VaziModule({
               {/* Outputs grid */}
               <div className="grid grid-cols-2 gap-4 font-mono">
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Predicted Kg</span>
-                  <strong className="text-base text-stone-800 block mt-1" id="pred-kg">{(selectedBlock.vinesCount * 15 * 0.125).toLocaleString()} Kg</strong>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო კგ' : 'Predicted Kg'}</span>
+                  <strong className="text-base text-stone-800 block mt-1" id="pred-kg">{(selectedBlock.vinesCount * 15 * 0.125).toLocaleString()} {lang === 'ka' ? 'კგ' : 'Kg'}</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Predicted Tons</span>
-                  <strong className="text-base text-stone-800 block mt-1" id="pred-tons">{Math.round(((selectedBlock.vinesCount * 15 * 0.125) / 1000) * 10) / 10} Tons</strong>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო ტონა' : 'Predicted Tons'}</span>
+                  <strong className="text-base text-stone-800 block mt-1" id="pred-tons">{Math.round(((selectedBlock.vinesCount * 15 * 0.125) / 1000) * 10) / 10} {lang === 'ka' ? 'ტონა' : 'Tons'}</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Yield per Hectare</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'მოსავალი ჰექტარზე' : 'Yield per Hectare'}</span>
                   <strong className="text-base text-amber-700 block mt-1" id="pred-ha">{Math.round(((((selectedBlock.vinesCount * 15 * 0.125) / 1000)) / selectedBlock.area) * 10) / 10} t/ha</strong>
                 </div>
                 <div className="p-3 bg-[#FAF8F5]/80 rounded border border-[#e8dfd5]/60 text-center">
-                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">Est. Wine Juice Recovery</span>
+                  <span className="text-[8px] text-slate-500 dark:text-slate-400 uppercase block font-sans">{lang === 'ka' ? 'სავარაუდო ტკბილი' : 'Est. Wine Juice Recovery'}</span>
                   <strong className="text-base text-emerald-800 block mt-1" id="pred-juice">{Math.round(selectedBlock.vinesCount * 15 * 0.125 * 0.70).toLocaleString()} L</strong>
                 </div>
               </div>
@@ -2305,79 +3160,236 @@ export default function VaziModule({
 
           {/* Harvest Planning Page with Winery Direct Connection */}
           <div className="bg-white border border-[#e8dfd5] p-6 rounded-2xl shadow-sm space-y-4">
-            <div>
-              <h4 className="font-serif font-black text-sm text-[#4e0e15] flex items-center gap-1.5">
-                <Calendar className="w-4 h-4 text-emerald-800" />
-                Active Crop Harvest & Traceability Links
-              </h4>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing</p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h4 className="font-serif font-black text-sm text-[#4e0e15] flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-emerald-800" />
+                  {lang === 'ka' ? 'რთველი და მიკვლევადობის ბმულები' : 'Active Crop Harvest & Traceability Links'}
+                </h4>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lang === 'ka' ? 'დაგეგმეთ რთველი და მოსავალი პირდაპირ გადაამისამართეთ ღვინის მარნის დამუშავებაში' : 'Schedule harvest campaigns and dispatch crops directly to Gvino cellar processing'}</p>
+              </div>
+              {canCreateVineyardRecord && (
+                <button
+                  type="button"
+                  aria-expanded={showHarvestPlanForm}
+                  aria-controls="harvest-plan-editor"
+                  onClick={() => {
+                    setHarvestPlanStatus(null);
+                    setShowHarvestPlanForm(current => !current);
+                  }}
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-emerald-950"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {showHarvestPlanForm
+                    ? (lang === 'ka' ? 'ფორმის დახურვა' : 'Close form')
+                    : (lang === 'ka' ? 'რთველის გეგმის შექმნა' : 'Create harvest plan')}
+                </button>
+              )}
             </div>
+
+            {harvestPlanStatus && (
+              <div role="status" aria-live="polite" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] font-semibold text-emerald-900">
+                <Check className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
+                {lang === 'ka'
+                  ? `${harvestPlanStatus.blockName}-ის რთველის გეგმა შენახულია ${harvestPlanStatus.targetDate}-ისთვის.`
+                  : `Harvest plan for ${harvestPlanStatus.blockName} was saved for ${harvestPlanStatus.targetDate}.`}
+              </div>
+            )}
+
+            {harvestDispatchStatus && (
+              <div role="status" aria-live="assertive" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] font-semibold leading-relaxed text-emerald-900">
+                <Check className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
+                {lang === 'ka'
+                  ? `${harvestDispatchStatus.harvestedKg} კგ ${harvestDispatchStatus.variety} გადაცემულია მარნის პარტიად ${harvestDispatchStatus.lotId}. იხსნება Gvino…`
+                  : `${harvestDispatchStatus.harvestedKg} kg of ${harvestDispatchStatus.variety} was dispatched as Gvino lot ${harvestDispatchStatus.lotId}. Opening Gvino…`}
+              </div>
+            )}
+
+            {showHarvestPlanForm && canCreateVineyardRecord && (
+              <div id="harvest-plan-editor">
+                <HarvestPlanForm
+                  key={selectedBlock.id}
+                  lang={lang}
+                  block={selectedBlock}
+                  onCancel={() => setShowHarvestPlanForm(false)}
+                  onCreate={(record) => {
+                    const created = runVaziMutationIfAllowed(canCreateVineyardRecord, () => {
+                      onAddHarvestRecord(record);
+                      return true;
+                    });
+                    if (!created) return;
+                    setHarvestPlanStatus({
+                      blockName: selectedBlock.name,
+                      targetDate: record.estimatedHarvestDate,
+                    });
+                    setShowHarvestPlanForm(false);
+                  }}
+                />
+              </div>
+            )}
 
             <div className="space-y-4">
               {harvests.filter(h => h.blockId === selectedBlock.id).map(harvest => (
                 <div key={harvest.id} className="p-4 border border-[#e8dfd5]/65 bg-[#FAF8F5]/50 rounded-xl space-y-3">
                   <div className="flex justify-between items-center flex-wrap gap-2">
                     <span className="text-[9px] bg-amber-100 text-amber-800 font-mono font-bold px-2 py-0.5 rounded">
-                      Planned Target Date: {harvest.estimatedHarvestDate}
+                      {lang === 'ka' ? 'დაგეგმილი თარიღი' : 'Planned Target Date'}: {harvest.estimatedHarvestDate}
                     </span>
                     <span className={`text-[9px] font-mono px-2 py-0.5 rounded font-extrabold ${harvest.sentToGvino ? 'bg-emerald-100 text-emerald-800' : 'bg-red-50 text-red-700 border border-red-200 animate-pulse'}`}>
-                      {harvest.sentToGvino ? '✅ Received in Gvino' : '⚠️ Pending Harvest Draft'}
+                      {harvest.sentToGvino
+                        ? (lang === 'ka' ? '✅ მიღებულია მარანში' : '✅ Received in Gvino')
+                        : (lang === 'ka' ? '⚠️ რთველი მოლოდინში' : '⚠️ Pending Harvest Draft')}
                     </span>
                   </div>
 
                   <div className="text-xs space-y-2">
                     <div>
-                      <strong>Variety Name:</strong> {harvest.variety} <br />
-                      <strong>Estimated Yield Weight:</strong> {harvest.estimatedTons} Tons anticipated <br />
-                      <strong>Special Harvesting Instructions:</strong> {harvest.notes}
+                      <strong>{lang === 'ka' ? 'ჯიშის სახელი:' : 'Variety Name:'}</strong> {harvest.variety} <br />
+                      <strong>{lang === 'ka' ? 'მოსავლის სავარაუდო წონა:' : 'Estimated Yield Weight:'}</strong> {harvest.estimatedTons} {lang === 'ka' ? 'ტონა (მოსალოდნელი)' : 'Tons anticipated'} <br />
+                      <strong>{lang === 'ka' ? 'რთველის სპეც. ინსტრუქციები:' : 'Special Harvesting Instructions:'}</strong> {harvest.notes}
                     </div>
 
                     {harvest.sentToGvino ? (
                       <div className="p-2.5 bg-emerald-50 border border-emerald-100 text-emerald-900 text-[11px] rounded font-mono space-y-1 block">
-                        <strong>Traceability Secured:</strong> Crop dispatch completed. <br />
-                        Corresponding Winery Lot ID: <strong className="text-stone-800 font-black">{harvest.associatedLotId}</strong>
+                        <strong>{lang === 'ka' ? 'მიკვლევადობა უზრუნველყოფილია:' : 'Traceability Secured:'}</strong> {lang === 'ka' ? 'მოსავლის გადაცემა დასრულდა.' : 'Crop dispatch completed.'} <br />
+                        {lang === 'ka' ? 'შესაბამისი მარნის პარტიის ID:' : 'Corresponding Winery Lot ID:'} <strong className="text-stone-800 font-black">{harvest.associatedLotId}</strong>
                       </div>
-                    ) : (
+                    ) : canDispatchHarvestToGvino ? (
                       <div className="pt-2">
-                        <label className="text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold">Input Actual Crop Harvest Weight (Kg)</label>
-                        <div className="flex gap-2">
-                          <input 
-                            type="number" 
+                        <label
+                          htmlFor={`qty-${harvest.id}`}
+                          className={onPrepareHarvestIntake ? 'sr-only' : 'text-[9px] uppercase font-mono block text-slate-500 dark:text-slate-400 mb-1 font-bold'}
+                        >
+                          {lang === 'ka' ? 'მოსავლის ფაქტობრივი წონა (კგ)' : 'Actual harvested weight (kg)'}
+                        </label>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                          <input
+                            type="number"
                             id={`qty-${harvest.id}`}
-                            placeholder="e.g. 12500" 
-                            defaultValue="12000"
-                            className="bg-white border border-stone-250 px-2 py-1 text-xs outline-none rounded font-mono w-28 text-stone-900"
+                            placeholder={lang === 'ka' ? 'მაგ. 12500' : 'e.g. 12500'}
+                            value={harvestDispatchWeights[harvest.id] || ''}
+                            min="0.001"
+                            step="any"
+                            required
+                            inputMode="decimal"
+                            aria-invalid={Boolean(harvestDispatchErrors[harvest.id])}
+                            aria-describedby={harvestDispatchErrors[harvest.id] ? `qty-error-${harvest.id}` : undefined}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setHarvestDispatchWeights(current => ({ ...current, [harvest.id]: value }));
+                              setHarvestDispatchErrors(current => {
+                                if (!current[harvest.id]) return current;
+                                const next = { ...current };
+                                delete next[harvest.id];
+                                return next;
+                              });
+                            }}
+                            className={onPrepareHarvestIntake
+                              ? 'hidden'
+                              : `h-9 bg-white border px-2 py-1 text-xs outline-none rounded font-mono w-full sm:w-28 text-stone-900 ${harvestDispatchErrors[harvest.id] ? 'border-red-500 focus:ring-2 focus:ring-red-200' : 'border-stone-250 focus:border-emerald-700'}`}
                           />
+                          <div className={onPrepareHarvestIntake ? 'hidden' : 'min-w-0 sm:w-36'}>
+                            <label
+                              htmlFor={`harvest-date-${harvest.id}`}
+                              className="mb-1 block text-[9px] font-bold uppercase text-slate-500"
+                            >
+                              {lang === 'ka' ? 'ფაქტობრივი თარიღი' : 'Actual harvest date'}
+                            </label>
+                            <DateInput
+                              id={`harvest-date-${harvest.id}`}
+                              lang={lang}
+                              value={harvestDispatchDates[harvest.id] || localISODate()}
+                              onValueChange={(value) => setHarvestDispatchDates(current => ({
+                                ...current,
+                                [harvest.id]: value,
+                              }))}
+                              className="h-9 w-full rounded border border-stone-250 bg-white px-2 text-xs font-mono text-stone-900 outline-none focus:border-emerald-700"
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={() => {
-                              const input = document.getElementById(`qty-${harvest.id}`) as HTMLInputElement;
-                              const harvestedQty = parseFloat(input.value) || 12000;
-                              
-                              // Send to Gvino callback
-                              const grapeLotId = onSendHarvestToGvino(
-                                selectedBlock.id, 
-                                harvestedQty, 
-                                selectedBlock.grapeVariety, 
-                                2026, 
-                                new Date().toISOString().split('T')[0]
+                              if (!canDispatchHarvestToGvino) return;
+                              if (onPrepareHarvestIntake) {
+                                onPrepareHarvestIntake(harvest.id);
+                                navigateTo({ module: 'gvino', tab: 'intake' });
+                                return;
+                              }
+                              const dispatch = parseHarvestDispatchInput(
+                                harvestDispatchWeights[harvest.id] || '',
+                                harvestDispatchDates[harvest.id] || localISODate(),
                               );
-                              
-                              // Update local harvest state
-                              onUpdateHarvestRecord(harvest.id, {
-                                sentToGvino: true,
-                                actualHarvestedKg: harvestedQty,
-                                actualHarvestDate: new Date().toISOString().split('T')[0],
-                                associatedLotId: grapeLotId
+                              if (!dispatch.ok) {
+                                setHarvestDispatchStatus(null);
+                                setHarvestDispatchErrors(current => ({ ...current, [harvest.id]: dispatch.reason }));
+                                return;
+                              }
+
+                              const { harvestedKg, actualHarvestDate, vintage } = dispatch;
+                              const grapeLotId = runVaziMutationIfAllowed(canDispatchHarvestToGvino, () => {
+                                const lotId = onSendHarvestToGvino(
+                                  selectedBlock.id,
+                                  harvestedKg,
+                                  harvest.variety,
+                                  vintage,
+                                  actualHarvestDate,
+                                );
+                                if (!lotId) return undefined;
+
+                                onUpdateHarvestRecord(harvest.id, {
+                                  sentToGvino: true,
+                                  actualHarvestedKg: harvestedKg,
+                                  actualHarvestDate,
+                                  associatedLotId: lotId
+                                });
+                                return lotId;
                               });
-                              alert(`Traceability secured! Harvest of ${harvestedQty} Kg Ripe ${selectedBlock.grapeVariety} dispatched as Gvino Lot: ${grapeLotId}. Open Gvino to view the fermentation lot!`);
-                              navigateTo({ module: 'gvino', tab: 'lots' });
+                              if (!grapeLotId) return;
+                              setHarvestDispatchErrors(current => {
+                                if (!current[harvest.id]) return current;
+                                const next = { ...current };
+                                delete next[harvest.id];
+                                return next;
+                              });
+                              setHarvestDispatchStatus({
+                                harvestedKg,
+                                variety: harvest.variety,
+                                lotId: grapeLotId,
+                              });
+                              if (dispatchNavigationTimerRef.current) {
+                                clearTimeout(dispatchNavigationTimerRef.current);
+                              }
+                              dispatchNavigationTimerRef.current = setTimeout(() => {
+                                navigateTo({ module: 'gvino', tab: 'lots' });
+                                dispatchNavigationTimerRef.current = null;
+                              }, 900);
                             }}
                             className="flex-1 bg-emerald-800 hover:bg-emerald-950 text-white font-extrabold text-[10px] uppercase font-mono px-3.5 py-1.5 rounded cursor-pointer duration-100 flex items-center justify-center gap-1.5"
                           >
-                            <ArrowRight className="w-3.5 h-3.5" /> Dispatch Crop to Gvino Winery
+                            <ArrowRight className="w-3.5 h-3.5" /> {onPrepareHarvestIntake
+                              ? (lang === 'ka' ? 'მიღების ფორმის გახსნა' : 'Continue in Grape Intake')
+                              : (lang === 'ka' ? 'მოსავლის გადაცემა მარანში' : 'Dispatch Crop to Gvino Winery')}
                           </button>
                         </div>
+                        {harvestDispatchErrors[harvest.id] && (
+                          <p
+                            id={`qty-error-${harvest.id}`}
+                            role="alert"
+                            className="mt-1.5 text-[10px] font-semibold text-red-700"
+                          >
+                            {harvestDispatchErrors[harvest.id] === 'weight_required'
+                              ? (lang === 'ka' ? 'შეიყვანეთ მოსავლის ფაქტობრივი წონა.' : 'Enter the actual harvested weight.')
+                              : harvestDispatchErrors[harvest.id] === 'weight_invalid'
+                                ? (lang === 'ka' ? 'წონა უნდა იყოს 0 კგ-ზე მეტი.' : 'Weight must be greater than 0 kg.')
+                                : (lang === 'ka' ? 'რთველის თარიღი არასწორია. განაახლეთ გვერდი და სცადეთ ხელახლა.' : 'The harvest date is invalid. Refresh and try again.')}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+                        {lang === 'ka'
+                          ? 'ამ მოსავლის ისტორიის ნახვა შეგიძლიათ, თუმცა მარანში გადაცემა თქვენი როლისთვის მიუწვდომელია.'
+                          : 'You can review this harvest, but dispatching it to the winery is unavailable for your role.'}
                       </div>
                     )}
                   </div>
@@ -2386,22 +3398,22 @@ export default function VaziModule({
               {harvests.filter(h => h.blockId === selectedBlock.id).length === 0 && (
                 <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/50 p-8 text-center">
                   <Calendar className="w-10 h-10 text-amber-500/60 mx-auto mb-2" />
-                  <p className="text-xs font-bold text-amber-950">No harvest plans for this block yet</p>
-                  <p className="mt-1 text-[11px] text-amber-900/70">Use sampling to judge readiness, then send picked fruit to Gvino intake when harvest starts.</p>
+                  <p className="text-xs font-bold text-amber-950">{lang === 'ka' ? 'ამ ნაკვეთისთვის რთველის გეგმა ჯერ არ არის' : 'No harvest plans for this block yet'}</p>
+                  <p className="mt-1 text-[11px] text-amber-900/70">{lang === 'ka' ? 'გამოიყენეთ ნიმუშები მზადყოფნის შესაფასებლად, შემდეგ რთველის დაწყებისას გადაამისამართეთ ყურძენი მარნის მიღებაში.' : 'Use sampling to judge readiness, then send picked fruit to Gvino intake when harvest starts.'}</p>
                   <div className="mt-4 flex flex-col sm:flex-row justify-center gap-2">
                     <button
                       type="button"
                       onClick={() => openVaziTab('sampling', selectedBlock.id)}
                       className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-amber-900 transition-colors hover:bg-amber-100"
                     >
-                      <FlaskConical className="w-3.5 h-3.5" /> Open sampling
+                      <FlaskConical className="w-3.5 h-3.5" /> {lang === 'ka' ? 'ნიმუშების გახსნა' : 'Open sampling'}
                     </button>
                     <button
                       type="button"
                       onClick={() => navigateTo({ module: 'gvino', tab: 'intake' })}
                       className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#4e0e15] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-white transition-colors hover:bg-[#801323]"
                     >
-                      <ArrowRight className="w-3.5 h-3.5" /> Open Gvino intake
+                      <ArrowRight className="w-3.5 h-3.5" /> {lang === 'ka' ? 'მარნის მიღების გახსნა' : 'Open Gvino intake'}
                     </button>
                   </div>
                 </div>
@@ -2416,11 +3428,13 @@ export default function VaziModule({
           TAB: IPM PHENOSCHEME
           ========================================== */}
       {vaziTab === 'ipm_pheno' && (
-        <IpmPhenoscheme 
+        <IpmPhenoscheme
           lang={lang}
           selectedBlock={selectedBlock}
           sprays={sprays}
           onAddSprayRecord={onAddSprayRecord}
+          canCreateVineyardRecord={canCreateVineyardRecord}
+          canDeleteVineyardRecord={canDeleteVineyardRecord}
           currentUser={currentUser}
           blockWeather={blockWeather}
         />
@@ -2430,22 +3444,23 @@ export default function VaziModule({
           TAB 7: AGRO-WEATHER STATION
           ========================================== */}
       {vaziTab === 'weather' && (
-        <WeatherTab 
-          lang={lang} 
-          blocks={blocks} 
+        <WeatherTab
+          lang={lang}
+          blocks={blocks}
           setActiveModule={setActiveModule}
           setActiveTab={setActiveTab}
           setPrefilledTaskTitle={setPrefilledTaskTitle}
           setPrefilledTaskPriority={setPrefilledTaskPriority}
           setPrefilledTaskDesc={setPrefilledTaskDesc}
+          canCreateTask={canCreateTask}
         />
       )}
 
       {/* ==========================================
           ADD BLOCK MODAL
           ========================================== */}
-      {showAddBlockModal && (
-        <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-55 animate-fade-in font-sans">
+      {showAddBlockModal && canCreateVineyardRecord && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-stone-900/40 p-4 font-sans backdrop-blur-xs animate-fade-in">
           <div
             ref={addBlockDialogRef}
             role="dialog"
@@ -2461,9 +3476,10 @@ export default function VaziModule({
 
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (!canCreateVineyardRecord) return;
               const form = e.currentTarget;
               const fd = new FormData(form);
-              
+
               const name = fd.get('name') as string;
               const vineyard = fd.get('vineyardName') as string;
               const area = parseFloat(fd.get('area') as string) || 2.5;
@@ -2487,7 +3503,7 @@ export default function VaziModule({
               const vineyardCondition = optionalText(String(fd.get('vineyardCondition') || ''));
 
               if (name && variety) {
-                onAddBlock({
+                runVaziMutationIfAllowed(canCreateVineyardRecord, () => onAddBlock({
                   name,
                   vineyardName: vineyard,
                   locationName: addBlockLocName,
@@ -2523,8 +3539,8 @@ export default function VaziModule({
                   estimatedHarvestDate: new Date(2026, 8, 15).toISOString().split('T')[0],
                   notes: note,
                   vineyardCondition,
-                  boundary: drawnPoints.length > 2 ? drawnPoints : undefined
-                });
+                  boundary: drawnBoundaryValidation.valid ? drawnPoints : undefined
+                }));
                 form.reset();
                 setDrawnPoints([]);
                 setIsDrawingPolygon(false);
@@ -2533,22 +3549,25 @@ export default function VaziModule({
             }} className="p-5 space-y-3 max-h-[80vh] overflow-y-auto pr-2">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Block Name*</label>
-                  <input type="text" name="name" placeholder="e.g. Mukuzani Sector A" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded text-stone-900" required />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნაკვეთის სახელი*' : 'Block Name*'}</label>
+                  <input type="text" name="name" placeholder={lang === 'ka' ? 'მაგ. მუკუზანი, სექტორი A' : 'e.g. Mukuzani Sector A'} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded text-stone-900" required />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Estate/Vineyard Name*</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მამულის/ვენახის სახელი*' : 'Estate/Vineyard Name*'}</label>
                   <input type="text" name="vineyardName" defaultValue="Anaklia Hills" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5 outline-none rounded" required />
                 </div>
               </div>
 
               {/* Location — search a real place (Open-Meteo geocoder) or fine-tune coordinates below */}
               <div className="bg-emerald-50/50 border border-emerald-200/70 p-3 rounded-lg space-y-2">
-                <span className="font-bold block text-emerald-900 font-mono text-[9px] uppercase tracking-wider">📍 Block Location</span>
+                <span className="font-bold block text-emerald-900 font-mono text-[9px] uppercase tracking-wider">📍 {lang === 'ka' ? 'ნაკვეთის მდებარეობა' : 'Block Location'}</span>
                 <p className="text-[10px] text-emerald-900/70 leading-relaxed">
-                  Search any place to set the block's coordinates — they drive the real-time weather station, satellite views, and disease-risk models. Fine-tune latitude/longitude manually below.
+                  {lang === 'ka'
+                    ? 'მოძებნეთ ნებისმიერი ადგილი კოორდინატების დასაყენებლად — მათზეა დამოკიდებული ამინდი, რუკის ხედები და დაავადების რისკის მოდელები. ქვემოთ ხელით დააზუსტეთ განედი/გრძედი.'
+                    : "Search any place to set the block's coordinates — they drive weather, map views, and disease-risk models. Fine-tune latitude/longitude manually below."}
                 </p>
                 <LocationPicker
+                  lang={lang}
                   latitude={addBlockLat}
                   longitude={addBlockLng}
                   showManual={false}
@@ -2559,152 +3578,185 @@ export default function VaziModule({
                     if (typeof loc.elevation === 'number' && loc.elevation > 0) setAddBlockElev(Math.round(loc.elevation));
                   }}
                 />
-                
+
                 <div className="w-full h-40 rounded-lg overflow-hidden border border-stone-200 mt-2 relative z-0">
-                  <APIProvider apiKey={process.env.GOOGLE_MAPS_PLATFORM_KEY || ''}>
-                    <Map
-                      defaultCenter={defaultCenter}
+                  <Suspense fallback={<VineyardMapLoading lang={lang} />}>
+                    <VineyardMap
+                      lang={lang}
                       center={{ lat: addBlockLat, lng: addBlockLng }}
-                      defaultZoom={15}
-                      mapTypeId="hybrid"
-                      gestureHandling="greedy"
-                      disableDefaultUI={true}
-                      onClick={(e) => {
-                        if (e.detail.latLng) {
-                          const lat = e.detail.latLng.lat;
-                          const lng = e.detail.latLng.lng;
-                          if (isDrawingPolygon) {
-                            setDrawnPoints(prev => [...prev, { lat, lng }]);
-                          } else {
-                            setAddBlockLat(parseFloat(lat.toFixed(4)));
-                            setAddBlockLng(parseFloat(lng.toFixed(4)));
-                          }
+                      drawing={isDrawingPolygon}
+                      drawingPoints={drawnPoints}
+                      onMapClick={(point) => {
+                        if (isDrawingPolygon) {
+                          setDrawnPoints(previous => appendBoundaryPoint(previous, point));
+                        } else {
+                          setAddBlockLat(parseFloat(point.lat.toFixed(4)));
+                          setAddBlockLng(parseFloat(point.lng.toFixed(4)));
                         }
                       }}
-                    >
-                      {!isDrawingPolygon && (
-                        <Marker position={{ lat: addBlockLat, lng: addBlockLng }} />
-                      )}
-                      {isDrawingPolygon && drawnPoints.map((pt, idx) => (
-                        <Marker key={idx} position={pt} label={String(idx + 1)} />
-                      ))}
-                      {drawnPoints.length > 1 && (
-                        <MapPolygon paths={drawnPoints} fillColor="#10b981" strokeColor="#047857" />
-                      )}
-                    </Map>
-                  </APIProvider>
+                      onRemoveDrawingPoint={isDrawingPolygon
+                        ? index => setDrawnPoints(previous => removeBoundaryPoint(previous, index))
+                        : undefined}
+                      heightClassName="h-full min-h-[160px]"
+                      ariaLabel={lang === 'ka' ? 'ახალი ნაკვეთის საზღვრის რუკა' : 'New block boundary map'}
+                      showEmptyState={false}
+                    />
+                  </Suspense>
                 </div>
 
-                <div className="flex items-center justify-between mt-1">
+                <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
                   <button
                     type="button"
+                    disabled={isDrawingPolygon && !drawnBoundaryValidation.valid}
                     onClick={() => {
-                      setIsDrawingPolygon(!isDrawingPolygon);
-                      if (!isDrawingPolygon) setDrawnPoints([]);
+                      if (isDrawingPolygon) {
+                        setIsDrawingPolygon(false);
+                      } else {
+                        setDrawnPoints([]);
+                        setIsDrawingPolygon(true);
+                      }
                     }}
-                    className={`px-2.5 py-1 text-[9px] font-mono font-bold uppercase rounded transition-colors cursor-pointer ${
-                      isDrawingPolygon ? 'bg-emerald-800 text-white hover:bg-emerald-900' : 'bg-stone-200 text-stone-700 hover:bg-stone-300'
+                    className={`px-2.5 py-1 text-[9px] font-mono font-bold uppercase rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      isDrawingPolygon ? 'bg-emerald-800 text-white hover:bg-emerald-900 cursor-pointer' : 'bg-stone-200 text-stone-700 hover:bg-stone-300 cursor-pointer'
                     }`}
                   >
-                    {isDrawingPolygon ? '🛑 Stop Drawing' : '✏️ Draw Block Boundary'}
+                    {isDrawingPolygon
+                      ? (!drawnBoundaryValidation.valid
+                        ? (drawnBoundaryValidation.reason === 'minimum-points'
+                          ? (lang === 'ka' ? `კიდევ ${3 - drawnPoints.length} წერტილი` : `Add ${3 - drawnPoints.length} more point${3 - drawnPoints.length === 1 ? '' : 's'}`)
+                          : (lang === 'ka' ? 'გაასწორეთ საზღვარი' : 'Fix Boundary'))
+                        : (lang === 'ka' ? '✓ საზღვრის დასრულება' : '✓ Finish Boundary'))
+                      : (lang === 'ka' ? '✏️ ნაკვეთის საზღვრის დახაზვა' : '✏️ Draw Block Boundary')}
                   </button>
-                  {isDrawingPolygon && drawnPoints.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setDrawnPoints([])}
-                      className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-rose-100 hover:bg-rose-200 text-rose-800 rounded transition-colors cursor-pointer"
-                    >
-                      🗑️ Clear Points ({drawnPoints.length})
-                    </button>
-                  )}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {isDrawingPolygon && (
+                      <button
+                        type="button"
+                        onClick={() => setDrawnPoints(previous => appendBoundaryPoint(previous, { lat: addBlockLat, lng: addBlockLng }))}
+                        className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded transition-colors cursor-pointer"
+                      >
+                        + {lang === 'ka' ? 'კოორდინატის დამატება' : 'Add Coordinate'}
+                      </button>
+                    )}
+                    {drawnPoints.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setDrawnPoints(previous => previous.slice(0, -1))}
+                          className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-stone-100 hover:bg-stone-200 text-stone-700 rounded transition-colors cursor-pointer"
+                        >
+                          ↶ {lang === 'ka' ? 'ბოლო წერტილის გაუქმება' : 'Undo Point'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDrawnPoints([])}
+                          className="px-2.5 py-1 text-[9px] font-mono font-bold uppercase bg-rose-100 hover:bg-rose-200 text-rose-800 rounded transition-colors cursor-pointer"
+                        >
+                          🗑️ {lang === 'ka' ? 'წერტილების წაშლა' : 'Clear Points'} ({drawnPoints.length})
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
+                {drawnPoints.length > 0 && (
+                  <div
+                    role={drawnBoundaryValidation.valid ? 'status' : 'alert'}
+                    className={`rounded-md border px-2.5 py-1.5 text-[9px] font-mono ${
+                      drawnBoundaryValidation.valid
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-amber-200 bg-amber-50 text-amber-800'
+                    }`}
+                  >
+                    {boundaryValidationMessage(drawnBoundaryValidation, lang)}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Latitude</label>
-                  <input 
-                    type="number" 
-                    step="0.0001" 
-                    name="lat" 
-                    value={addBlockLat} 
-                    onChange={(e) => setAddBlockLat(parseFloat(e.target.value) || 41.9)} 
-                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono" 
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'განედი' : 'Latitude'}</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    name="lat"
+                    value={addBlockLat}
+                    onChange={(e) => setAddBlockLat(parseFloat(e.target.value) || 41.9)}
+                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono"
                   />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Longitude</label>
-                  <input 
-                    type="number" 
-                    step="0.0001" 
-                    name="lng" 
-                    value={addBlockLng} 
-                    onChange={(e) => setAddBlockLng(parseFloat(e.target.value) || 45.4)} 
-                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono" 
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'გრძედი' : 'Longitude'}</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    name="lng"
+                    value={addBlockLng}
+                    onChange={(e) => setAddBlockLng(parseFloat(e.target.value) || 45.4)}
+                    className="w-full bg-stone-50 border border-slate-200 px-2 py-1 text-stone-900 font-semibold font-mono"
                   />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Area (ha)*</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ფართობი (ჰა)*' : 'Area (ha)*'}</label>
                   <input type="number" step="0.1" name="area" defaultValue="2.5" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" required />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Elevation (Meters)</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სიმაღლე (მ)' : 'Elevation (Meters)'}</label>
                   <input type="number" name="elevation" value={addBlockElev} onChange={(e) => setAddBlockElev(parseInt(e.target.value) || 0)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Location Name</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მდებარეობის სახელი' : 'Location Name'}</label>
                   <input type="text" name="locationName" value={addBlockLocName} onChange={(e) => setAddBlockLocName(e.target.value)} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
               </div>
 
               <div className="bg-amber-50/60 border border-amber-200/70 p-3 rounded-lg space-y-3">
-                <span className="font-bold block text-amber-900 font-mono text-[9px] uppercase tracking-wider">Government Cadastre Mirror</span>
+                <span className="font-bold block text-amber-900 font-mono text-[9px] uppercase tracking-wider">{lang === 'ka' ? 'სახელმწიფო საკადასტრო მონაცემები' : 'Government Cadastre Mirror'}</span>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Cadastral Code</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საკადასტრო კოდი' : 'Cadastral Code'}</label>
                     <input type="text" name="cadastralCode" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Cadastre Document</label>
-                    <input type="text" name="officialCadastreDocumentName" placeholder="file or registry ref" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საკადასტრო დოკუმენტი' : 'Cadastre Document'}</label>
+                    <input type="text" name="officialCadastreDocumentName" placeholder={lang === 'ka' ? 'ფაილი ან რეესტრის ნომერი' : 'file or registry ref'} className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Parcel Name</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნაკვეთის დასახელება' : 'Parcel Name'}</label>
                     <input type="text" name="parcelName" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Municipality</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მუნიციპალიტეტი' : 'Municipality'}</label>
                     <input type="text" name="municipality" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Community</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'თემი' : 'Community'}</label>
                     <input type="text" name="community" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Village</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'სოფელი' : 'Village'}</label>
                     <input type="text" name="village" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Microzone / PDO</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მიკროზონა / PDO' : 'Microzone / PDO'}</label>
                     <input type="text" name="microzone" list="vazi-georgian-microzone-options" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Parcel Area (ha)</label>
-                    <input type="number" min="0" step="0.01" name="parcelArea" placeholder="defaults to area" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ნაკვეთის ფართობი (ჰა)' : 'Parcel Area (ha)'}</label>
+                    <input type="number" min="0" step="0.01" name="parcelArea" placeholder={lang === 'ka' ? 'ავტომატურად ფართობიდან' : 'defaults to area'} className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Land Owner</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მიწის მესაკუთრე' : 'Land Owner'}</label>
                     <input type="text" name="landOwner" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Grower</label>
+                    <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'მევენახე' : 'Grower'}</label>
                     <input type="text" name="grower" className="w-full bg-white border border-amber-100 px-2 py-1.5 outline-none rounded text-stone-900" />
                   </div>
                 </div>
@@ -2712,55 +3764,64 @@ export default function VaziModule({
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Grape Variety *</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ყურძნის ჯიში *' : 'Grape Variety *'}</label>
                   <input type="text" name="variety" defaultValue="Saperavi" list="vazi-georgian-variety-options" className="w-full bg-stone-55 border border-slate-200 px-2 py-1 outline-none font-bold text-stone-800" required />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Year</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დარგვის წელი' : 'Planting Year'}</label>
                   <input type="number" name="plantYear" defaultValue="2008" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Rows count</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'რიგების რაოდენობა' : 'Rows count'}</label>
                   <input type="number" name="rows" defaultValue="60" className="w-full bg-stone-50 border border-slate-200 px-2 py-1" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Planting Spacing & Row density</label>
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'დარგვის სქემა და რიგების სიმჭიდროვე' : 'Planting Spacing & Row density'}</label>
                 <input type="text" name="spacing" defaultValue="2.5m x 1.0m" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Rootstock</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'საძირე' : 'Rootstock'}</label>
                   <input type="text" name="rootstock" placeholder="5C, SO4" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Clone</label>
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'კლონი' : 'Clone'}</label>
                   <input type="text" name="clone" placeholder="Saperavi 06" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
                 <div>
-                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Vineyard Condition</label>
-                  <input type="text" name="vineyardCondition" placeholder="productive" className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
+                  <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'ვენახის მდგომარეობა' : 'Vineyard Condition'}</label>
+                  <input type="text" name="vineyardCondition" placeholder={lang === 'ka' ? 'პროდუქტიული' : 'productive'} className="w-full bg-stone-50 border border-slate-200 px-2 py-1.5" />
                 </div>
               </div>
 
               <div>
-                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">Agronomist Remarks</label>
-                <textarea name="notes" placeholder="Old Saperavi clones on 5C rootstocks..." className="w-full bg-stone-50 border border-slate-200 p-2.5 h-16 outline-none" />
+                <label className="text-[9px] uppercase font-mono block mb-1 font-bold text-slate-500 dark:text-slate-400">{lang === 'ka' ? 'აგრონომის შენიშვნები' : 'Agronomist Remarks'}</label>
+                <textarea name="notes" placeholder={lang === 'ka' ? 'ძველი საფერავის კლონები 5C საძირეზე...' : 'Old Saperavi clones on 5C rootstocks...'} className="w-full bg-stone-50 border border-slate-200 p-2.5 h-16 outline-none" />
               </div>
 
-              <button 
+              <button
                 type="submit"
                 className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-mono font-bold uppercase tracking-wider py-2.5 rounded-lg cursor-pointer"
               >
-                Register Block Sector
+                {lang === 'ka' ? 'ნაკვეთის რეგისტრაცია' : 'Register Block Sector'}
               </button>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(VaziModule);

@@ -5,6 +5,7 @@ import { ambientMotionEnabled, prefersReducedMotion } from './motion';
 const WINE_COLORS: Record<string, { liquid: string; surface: string }> = {
   red: { liquid: '#5a1020', surface: '#7c1c30' },
   amber: { liquid: '#b06a16', surface: '#d18e2b' },
+  qvevri: { liquid: '#9a5b23', surface: '#c17a35' },
   white: { liquid: '#c2a448', surface: '#dabf6a' },
   rose: { liquid: '#c05a6e', surface: '#d8808f' },
   sparkling: { liquid: '#cdb06a', surface: '#e6d089' },
@@ -227,15 +228,15 @@ export default function QvevriCrossSection({
 
       {/* Top Banner Alert for Seal Status */}
       <div className={`mt-3 px-3 py-2 rounded-xl text-[11px] font-medium flex items-center justify-between border ${
-        needsReseal 
-          ? 'bg-rose-50 border-rose-200 text-rose-950 dark:bg-rose-950/20 dark:border-rose-900/60 dark:text-rose-300' 
+        needsReseal
+          ? 'bg-rose-50 border-rose-200 text-rose-950 dark:bg-rose-950/20 dark:border-rose-900/60 dark:text-rose-300'
           : 'bg-emerald-50 border-emerald-200 text-emerald-950 dark:bg-emerald-950/20 dark:border-emerald-900/60 dark:text-emerald-300'
       }`}>
         <span>
           {lang === 'ka' ? 'ლუქი: ' : 'Lid Seal: '}
           <strong>
-            {needsReseal 
-              ? (lang === 'ka' ? 'განახლება სავალდებულოა' : 'Reseal Required') 
+            {needsReseal
+              ? (lang === 'ka' ? 'განახლება სავალდებულოა' : 'Reseal Required')
               : (lang === 'ka' ? 'ჰერმეტული' : 'Airtight')}
           </strong>
         </span>

@@ -8,7 +8,9 @@ import type {
 } from '../wineryState';
 import type { CostCategory, CostEntry } from '../costing';
 import type { StockMovement } from '../storage';
-import { isActiveReservation } from '../sales';
+import { isActiveReservation, isActiveSalesDispatch } from '../sales';
+import { isActiveBottlingRun } from '../bottlingIntegrity';
+import { isActiveHarvestIntake } from '../harvestIntakeIntegrity';
 
 export type YearComparisonMode = 'vintage' | 'calendar';
 export type MetricKind = 'number' | 'money' | 'percent';
@@ -168,6 +170,7 @@ export function compareMetric(
 export function availableComparisonYears(input: YearComparisonInput): number[] {
   const years = new Set<number>();
   for (const lot of input.lots || []) {
+    if (lot.voidedAt) continue;
     if (Number.isFinite(lot.vintage)) years.add(lot.vintage);
     const created = dateYear(lot.createdAt);
     if (created) years.add(created);
@@ -177,11 +180,13 @@ export function availableComparisonYears(input: YearComparisonInput): number[] {
     if (y) years.add(y);
   }
   for (const i of input.grapeIntakes || []) {
+    if (!isActiveHarvestIntake(i)) continue;
     if (Number.isFinite(i.vintage)) years.add(i.vintage);
     const y = dateYear(i.date);
     if (y) years.add(y);
   }
   for (const r of input.bottlingRuns || []) {
+    if (!isActiveBottlingRun(r)) continue;
     const y = dateYear(r.date);
     if (y) years.add(y);
   }
@@ -190,6 +195,7 @@ export function availableComparisonYears(input: YearComparisonInput): number[] {
     if (y) years.add(y);
   }
   for (const d of input.salesDispatches || []) {
+    if (!isActiveSalesDispatch(d)) continue;
     const y = dateYear(d.date);
     if (y) years.add(y);
   }
@@ -202,9 +208,9 @@ export function availableComparisonYears(input: YearComparisonInput): number[] {
 
 function lotIdsFor(input: YearComparisonInput, year: number, mode: YearComparisonMode): Set<string> {
   if (mode === 'vintage') {
-    return new Set((input.lots || []).filter(l => l.vintage === year).map(l => l.id));
+    return new Set((input.lots || []).filter(l => !l.voidedAt && l.vintage === year).map(l => l.id));
   }
-  return new Set((input.lots || []).filter(l => dateYear(l.createdAt) === year).map(l => l.id));
+  return new Set((input.lots || []).filter(l => !l.voidedAt && dateYear(l.createdAt) === year).map(l => l.id));
 }
 
 function recordMatches(mode: YearComparisonMode, year: number, lotIds: Set<string>, lotId: string | undefined, date?: string): boolean {
@@ -227,7 +233,7 @@ function currentStockByLot(movements: StockMovement[]): Map<string, number> {
 function bottlesProducedByLot(runs: BottlingRunRecord[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const run of runs || []) {
-    if (!run.lotId) continue;
+    if (!run.lotId || !isActiveBottlingRun(run)) continue;
     map.set(run.lotId, (map.get(run.lotId) || 0) + positive(run.totalBottles) + positive(run.totalCeramic));
   }
   return map;
@@ -258,7 +264,8 @@ function buildWineSummaries(input: YearComparisonInput, year: number, mode: Year
   const bottled = bottlesProducedByLot((input.bottlingRuns || []).filter(r => recordMatches(mode, year, lotIds, r.lotId, r.date)));
   const reserved = reservedByLot(input.salesOrders, year, mode, lotIds, asOfDate);
   return lots.map(lot => {
-    const dispatches = (input.salesDispatches || []).filter(d => recordMatches(mode, year, lotIds, d.lotId, d.date) && d.lotId === lot.id);
+    const dispatches = (input.salesDispatches || []).filter(d => isActiveSalesDispatch(d)
+      && recordMatches(mode, year, lotIds, d.lotId, d.date) && d.lotId === lot.id);
     const revenue = sum(dispatches, d => safeNumber(d.revenue));
     const cogs = sum(dispatches, d => safeNumber(d.cogs));
     const grossProfit = sum(dispatches, d => safeNumber(d.grossProfit));
@@ -288,13 +295,16 @@ export function buildYearBucket(input: YearComparisonInput, year: number, mode: 
     return harvestYear(h) === year;
   });
   const grapeIntakes = (input.grapeIntakes || []).filter(i => (
-    mode === 'vintage'
+    isActiveHarvestIntake(i) && (mode === 'vintage'
       ? i.vintage === year
-      : dateYear(i.date) === year
+      : dateYear(i.date) === year)
   ));
-  const bottlingRuns = (input.bottlingRuns || []).filter(r => recordMatches(mode, year, lotIds, r.lotId, r.date));
+  const bottlingRuns = (input.bottlingRuns || []).filter(r => (
+    isActiveBottlingRun(r) && recordMatches(mode, year, lotIds, r.lotId, r.date)
+  ));
   const costEntries = (input.costEntries || []).filter(c => recordMatches(mode, year, lotIds, c.lotId, c.date));
-  const dispatches = (input.salesDispatches || []).filter(d => recordMatches(mode, year, lotIds, d.lotId, d.date));
+  const dispatches = (input.salesDispatches || []).filter(d => isActiveSalesDispatch(d)
+    && recordMatches(mode, year, lotIds, d.lotId, d.date));
   const activeOrders = (input.salesOrders || []).filter(o => (
     isActiveReservation(o, asOfDate) && recordMatches(mode, year, lotIds, o.lotId, o.orderDate || o.createdAt)
   ));

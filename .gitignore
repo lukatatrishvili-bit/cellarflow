@@ -1,10 +1,15 @@
 node_modules/
 dist/
 coverage/
+playwright-report/
+test-results/
 .DS_Store
 *.log
 .env*
 !.env.example
+
+# Temporary credential file emitted by google-github-actions/auth.
+gha-creds-*.json
 
 # Local runtime database (seeded on first run, contains password hashes)
 db.json
@@ -12,3 +17,9 @@ db.json
 db.json.tmp
 .db.json.*.tmp
 *.tmp
+
+# Ad hoc local audit scripts; keep them out of release commits/build contexts.
+tmp-*.mjs
+
+# Local attachment object store (dev fallback)
+attachments/

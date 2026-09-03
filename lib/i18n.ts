@@ -1,11 +1,18 @@
-// Vinea Language Dictionary (English, Georgian, Italian, French, German)
-export type Language = 'en' | 'ka' | 'it' | 'fr' | 'de';
+// English and Georgian are the supported runtime locales for this release.
+// Additional dictionary work stays dormant until it reaches full product parity.
+export {
+  SUPPORTED_LANGUAGES,
+  normalizeSupportedLanguage,
+  type Language,
+} from './language';
 
 export const translations = {
   en: {
     logo_title: 'VinOS',
     subtitle: 'Winery ERP & Cellar Control',
     dashboard: 'Dashboard',
+    today: 'Today',
+    overview: 'Overview',
     tanks: 'Tanks & Vessels',
     grape_intake: 'Grape Intake',
     rtveli: 'Rtveli (Harvest)',
@@ -110,7 +117,7 @@ export const translations = {
     white: 'White',
     red: 'Red',
     rose: 'Rosé',
-    amber: 'Amber / Qvevri (Kakhuri)',
+    amber: 'Amber',
     sparkling: 'Sparkling',
     fortified: 'Fortified',
     base_wine: 'Base Wine',
@@ -258,7 +265,7 @@ export const translations = {
     nav_audit: 'Audit Trail',
     nav_settings: 'Settings',
     nav_logout: 'Logout',
-    
+
     // Landing sign-in page
     signin_title: 'VinOS Unified Sign In',
     signin_subtitle: 'Unified Vineyard (Vazi) & Winery (Gvino) Cloud Management',
@@ -327,13 +334,15 @@ export const translations = {
     logo_title: 'VinOS',
     subtitle: 'ღვინის მარნის მართვის სისტემა',
     dashboard: 'მთავარი პანელი',
+    today: 'დღეს',
+    overview: 'მიმოხილვა',
     tanks: 'რეზერვუარები',
     grape_intake: 'ყურძნის მიღება',
     rtveli: 'რთველი',
     cellar_operations: 'ოპერაციები',
     lineage: 'გენეალოგია',
     wine_lots: 'ღვინის პარტიები',
-    transfers: 'გადაღება/გადატანა',
+    transfers: 'გადატანა',
     fermentation: 'დუღილი',
     lab_analysis: 'ლაბორატორია',
     additives: 'დანამატები',
@@ -387,7 +396,7 @@ export const translations = {
     low_inventory: 'დაბალი მარაგების ალერტი',
     attention_required: 'ყურადღებას მოითხოვს',
     quick_actions: 'სწრაფი მოქმედებები',
-    recent_transfers: 'ბოლო გადაღებები',
+    recent_transfers: 'ბოლო გადატანები',
     recent_labs: 'ბოლო ანალიზები',
     alert_no_tasks: 'ყველა დავალება შესრულებულია!',
     alert_no_inventory: 'ინვენტარის მარაგები ოპტიმალურ ზღვარზეა.',
@@ -431,7 +440,7 @@ export const translations = {
     white: 'თეთრი',
     red: 'წითელი',
     rose: 'ვარდისფერი (როზე)',
-    amber: 'ქარვისფერი / ქვევრის (კახური)',
+    amber: 'ქარვისფერი',
     sparkling: 'ცქრიალა',
     fortified: 'შეკრეპილი',
     base_wine: 'საბაზისო ღვინო',
@@ -451,9 +460,9 @@ export const translations = {
 
     // Transfers
     transfer_date: 'გადატანის დრო',
-    source_tank: 'წყარო ჭურჭელი',
-    dest_tank: 'მიმღები ჭურჭელი',
-    volume_to_transfer: 'გადასაღები მოცულობა (ლ)',
+    source_tank: 'საიდან',
+    dest_tank: 'სად',
+    volume_to_transfer: 'გადასატანი მოცულობა (ლ)',
     loss_volume: 'დანაკარგი მოცულობა (ლ)',
     transfer_reason: 'გადატანის მიზეზი',
     transfer_rack: 'ლექიდან მოცილება (დეკანტაცია)',
@@ -510,7 +519,7 @@ export const translations = {
     add_success: 'დანამატი წარმატებით დაემატა პარტიას.',
 
     // Inventory
-    inv_item: 'მასალის დასახელება',
+    inv_item: 'პროდუქტის დასახელება',
     inv_category: 'კატეგორია',
     inv_stock: 'მარაგშია',
     inv_min: 'მინიმალური მარაგი',
@@ -522,7 +531,7 @@ export const translations = {
     bottle_count: 'ჩამოსხმული რაოდენობა (ბოთლი)',
     closure_type: 'საცობის ტიპი',
     bottle_type: 'მინის ბოთლის ტიპი',
-    capsule_type: 'კაფსულა / კაფსულის ტიპი',
+    capsule_type: 'ჩაჩი / ჩაჩის ტიპი',
     label_version: 'ეტიკეტის ვერსია',
     box_size: 'ყუთის ზომა (ბოთლი ყუთში)',
     final_parameters: 'ჩამოსხმისწინა ლაბორატორიული შემოწმება',
@@ -579,7 +588,7 @@ export const translations = {
     nav_audit: 'აუდიტის ისტორია',
     nav_settings: 'პარამეტრები',
     nav_logout: 'გამოსვლა',
-    
+
     // Landing sign-in page
     signin_title: 'VinOS - ავტორიზაცია',
     signin_subtitle: 'ვენახების (ვაზი) და მარნის (ღვინო) ერთიანი მართვის სისტემა',
@@ -598,7 +607,7 @@ export const translations = {
     portal_appellation: 'აქტიური აპელაცია',
     portal_role: 'აქტიური როლი',
     portal_module_agri: 'სასოფლო-სამეურნეო მოდული',
-    portal_vazi_title: 'ვაზი — ვენახების მართვა',
+    portal_vazi_title: 'ვენახების მართვა',
     portal_vazi_desc: 'ვაზის ფენოლოგიური ფაზები, მზარდი აქტიური ტემპერატურების (GDD) პროგნოზები, მავნებლების წამლობა და ყურძნის სიმწიფის მრუდები.',
     portal_blocks_count: 'რეგისტრირებული ნაკვეთები',
     portal_total_area: 'მთლიანი ფართობი',
@@ -648,6 +657,8 @@ export const translations = {
     logo_title: 'VinOS',
     subtitle: 'ERP Cantina & Controllo Cantina',
     dashboard: 'Pannello di controllo',
+    today: 'Oggi',
+    overview: 'Panoramica',
     tanks: 'Serbatoi',
     grape_intake: 'Ricevimento uve',
     rtveli: 'Vendemmia',
@@ -752,7 +763,7 @@ export const translations = {
     white: 'Bianco',
     red: 'Rosso',
     rose: 'Rosato',
-    amber: 'Amber / Orange (Qvevri)',
+    amber: 'Ambra / Orange',
     sparkling: 'Spumante',
     fortified: 'Fortificato',
     base_wine: 'Vino base',
@@ -900,7 +911,7 @@ export const translations = {
     nav_audit: 'Registro Audit',
     nav_settings: 'Impostazioni',
     nav_logout: 'Disconnetti',
-    
+
     // Landing sign-in page
     signin_title: 'Accesso Unificato VinOS',
     signin_subtitle: 'Gestione Cloud integrata di Vigneti (Vazi) e Cantine (Gvino)',
@@ -969,6 +980,8 @@ export const translations = {
     logo_title: 'VinOS',
     subtitle: 'ERP de Chai & Gestion OEnologique',
     dashboard: 'Tableau de bord',
+    today: 'Aujourd’hui',
+    overview: 'Vue d’ensemble',
     tanks: 'Cuves & Contenants',
     grape_intake: 'Réception raisins',
     rtveli: 'Vendanges',
@@ -1073,7 +1086,7 @@ export const translations = {
     white: 'Blanc',
     red: 'Rouge',
     rose: 'Rosé',
-    amber: 'Vin Orange / Qvevri',
+    amber: 'Vin orange',
     sparkling: 'Effervescent',
     fortified: 'Muté / Fortifié',
     base_wine: 'Vin de base',
@@ -1221,7 +1234,7 @@ export const translations = {
     nav_audit: 'Journal d\'Audit',
     nav_settings: 'Configuration',
     nav_logout: 'Déconnexion',
-    
+
     // Landing sign-in page
     signin_title: 'Connexion Unifiée VinOS',
     signin_subtitle: 'Gestion Cloud unifiée des vignobles (Vazi) et des caves (Gvino)',
@@ -1290,6 +1303,8 @@ export const translations = {
     logo_title: 'VinOS',
     subtitle: 'Winery ERP & Kellerkontrolle',
     dashboard: 'Dashboard',
+    today: 'Heute',
+    overview: 'Übersicht',
     tanks: 'Tanks & Behälter',
     grape_intake: 'Traubenannahme',
     rtveli: 'Weinlese',
@@ -1394,7 +1409,7 @@ export const translations = {
     white: 'Weißwein',
     red: 'Rotwein',
     rose: 'Rosé',
-    amber: 'Quevri (Orange Wine)',
+    amber: 'Orangewein',
     sparkling: 'Schaumwein / Sekt',
     fortified: 'Likörwein',
     base_wine: 'Grundwein',
@@ -1542,7 +1557,7 @@ export const translations = {
     nav_audit: 'Audit-Trail',
     nav_settings: 'Einstellungen',
     nav_logout: 'Abmelden',
-    
+
     // Landing sign-in page
     signin_title: 'VinOS Zentrale Anmeldung',
     signin_subtitle: 'Integrierte Cloud-Verwaltung für Weinberge (Vazi) und Weinkeller (Gvino)',

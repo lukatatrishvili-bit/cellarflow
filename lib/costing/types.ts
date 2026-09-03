@@ -1,5 +1,5 @@
 /**
- * Cost-accounting model for MaraniOS.
+ * Cost-accounting model for VinOS.
  *
  * Everything is a CostEntry posted against a wine lot. Cost-per-lot is the sum
  * of its entries; cost-per-litre and cost-per-bottle are derived; blends move
@@ -22,6 +22,10 @@ export type CostCategory =
 
 export interface CostEntry {
   id: string;
+  commandId?: string;
+  /** Reversal entries compensate a prior posting and carry a negative amount. */
+  recordKind?: 'cost' | 'reversal';
+  lastModified?: string;
   date: string;            // yyyy-mm-dd
   lotId: string;           // the lot this cost is attributed to
   category: CostCategory;
@@ -32,6 +36,11 @@ export interface CostEntry {
   unitCost?: number;       // optional: cost per unit (for audit)
   sourceRef?: string;      // optional: inventoryItemId / harvestId / bottlingRunId / laborId
   createdBy?: string;
+  reversalOfCostEntryId?: string;
+  reversalOfCommandId?: string;
+  reversedByCommandId?: string;
+  reversedAt?: string;
+  reversalReason?: string;
 }
 
 export interface LotCostSummary {

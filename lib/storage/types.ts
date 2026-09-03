@@ -26,6 +26,10 @@ export interface StorageLocation {
 
 export interface StockMovement {
   id: string;
+  /** Idempotent server command that created this movement, when available. */
+  commandId?: string;
+  /** Sync timestamp for command-created records. */
+  lastModified?: string;
   date: string;            // yyyy-mm-dd
   lotId: string;
   locationId: string;
@@ -33,6 +37,11 @@ export interface StockMovement {
   bottles: number;         // always positive; direction sets the sign
   reason?: string;         // bottling | sale | transfer | adjustment | ...
   sourceRef?: string;      // optional linked document/run id, e.g. bottlingRunId
+  /** The other ledger leg for an atomic location-to-location relocation. */
+  relatedMovementId?: string;
+  /** Original outbound movement restored by a compensating inbound movement. */
+  reversalOfMovementId?: string;
+  reversalOfCommandId?: string;
   note?: string;
 }
 

@@ -103,7 +103,7 @@ function MiniBar({ current, previous }: { current: number; previous: number }) {
   );
 }
 
-export default function YearComparisonTab({
+export function YearComparisonTab({
   lang,
   lots,
   harvests,
@@ -182,9 +182,6 @@ export default function YearComparisonTab({
               <BarChart3 className="w-5 h-5 text-[#4e0e15]" />
               Year Comparison
             </h3>
-            <p className="text-xs text-stone-400 font-semibold mt-0.5 max-w-3xl">
-              Compare one vintage or business year against another using only your real harvest, cellar, storage, cost, reservation, and dispatch records.
-            </p>
           </div>
 
           <div className="flex flex-wrap items-end gap-2">
@@ -236,7 +233,7 @@ export default function YearComparisonTab({
       {!hasAnyData && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-900/60 dark:text-amber-100">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <p>No comparable production data yet. Add real harvest/intake, bottling, storage, cost, reservation, or dispatch records and this report will populate automatically.</p>
+            <p>{ka ? 'შესადარებელი წარმოების მონაცემები ჯერ არ არის. დაამატეთ რთველის/მიღების, ჩამოსხმის, საწყობის, ხარჯების, ჯავშნის ან გატანის ჩანაწერები და ეს ანგარიში ავტომატურად შეივსება.' : 'No comparable production data yet. Add real harvest/intake, bottling, storage, cost, reservation, or dispatch records and this report will populate automatically.'}</p>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -366,7 +363,7 @@ export default function YearComparisonTab({
             {costCategories.length === 0 ? (
               <div className="text-center py-8 text-stone-400 text-xs font-semibold">
                 <Scale className="w-9 h-9 mx-auto mb-2 opacity-40" />
-                <p>No cost entries for these years yet</p>
+                <p>{ka ? 'ამ წლების ხარჯების ჩანაწერები ჯერ არ არის' : 'No cost entries for these years yet'}</p>
                 <button
                   type="button"
                   onClick={() => onNavigate?.({ module: 'costs' })}
@@ -410,7 +407,7 @@ export default function YearComparisonTab({
         {comparison.current.wines.length === 0 ? (
           <div className="text-center py-12 text-stone-400 text-xs font-semibold">
             <Wine className="w-9 h-9 mx-auto mb-2 opacity-40" />
-            <p>No wine lots match this comparison year yet</p>
+            <p>{ka ? 'ამ საშედარებელ წელს ღვინის პარტიები ჯერ არ ემთხვევა' : 'No wine lots match this comparison year yet'}</p>
             <button
               type="button"
               onClick={() => onNavigate?.({ module: 'gvino', tab: 'lots' })}
@@ -463,3 +460,11 @@ export default function YearComparisonTab({
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(YearComparisonTab);

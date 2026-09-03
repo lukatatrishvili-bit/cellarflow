@@ -59,6 +59,9 @@ describe('server permissions (RBAC)', () => {
     expect(moduleForSyncCollection('attachments')).toBe('certification');
     expect(moduleForSyncCollection('crmLeads')).toBe('sales');
     expect(moduleForSyncCollection('aiDrafts')).toBe('tasks');
+    expect(moduleForSyncCollection('recallCases')).toBe('recall');
+    expect(moduleForSyncCollection('purchaseOrders')).toBe('procurement');
+    expect(moduleForSyncCollection('aiFindings')).toBeNull();
     expect(canSyncCollection('Viticulturist', 'vineyardProjects', 'create')).toBe(true);
     expect(canSyncCollection('Viticulturist', 'bottlingRuns', 'update')).toBe(false);
     expect(canSyncCollection('Lab Technician', 'lablogs', 'create')).toBe(true);
@@ -67,6 +70,10 @@ describe('server permissions (RBAC)', () => {
     expect(canSyncCollection('Winemaker', 'attachments', 'create')).toBe(true);
     expect(canSyncCollection('Owner/Admin', 'crmLeads', 'create')).toBe(true);
     expect(canSyncCollection('Winemaker', 'aiDrafts', 'create')).toBe(true);
+    expect(canSyncCollection('Winemaker', 'recallCases', 'update')).toBe(true);
+    expect(canSyncCollection('Winemaker', 'purchaseOrders', 'create')).toBe(true);
+    expect(canSyncCollection('Cellar Worker', 'recallCases', 'update')).toBe(false);
+    expect(canSyncCollection('Owner/Admin', 'aiFindings', 'create')).toBe(false);
     expect(canSyncCollection('Read-Only', 'notes', 'create')).toBe(false);
   });
 

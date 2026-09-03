@@ -60,6 +60,29 @@ describe('computeAlerts', () => {
     expect(alerts.filter((a) => a.category === 'va')).toEqual([]);
   });
 
+  it('requests a retest instead of presenting stale chemistry as a live critical condition', () => {
+    const alerts = computeAlerts({
+      ...baseInputs(),
+      lots: [{ id: 'L1', name: 'Aging Saperavi', stage: 'aging', currentVolume: 100 } as any],
+      labLogs: [lab({ date: '2026-04-01', freeSo2: 5, volatileAcid: 1.5 })],
+    });
+
+    expect(alerts).toEqual([
+      expect.objectContaining({ id: 'lab-stale-L1', category: 'lab', severity: 'warning' }),
+    ]);
+    expect(alerts.some(alert => alert.category === 'so2' || alert.category === 'va')).toBe(false);
+  });
+
+  it('uses tighter lab freshness windows during active production stages', () => {
+    const alerts = computeAlerts({
+      ...baseInputs(),
+      lots: [{ id: 'L1', name: 'Saperavi', stage: 'fermenting', currentVolume: 100 } as any],
+      labLogs: [lab({ date: '2026-06-03' })],
+    });
+
+    expect(alerts[0]).toMatchObject({ category: 'lab', severity: 'warning' });
+  });
+
   it('detects stuck fermentation when density stops dropping', () => {
     const alerts = computeAlerts({
       ...baseInputs(),
@@ -87,6 +110,23 @@ describe('computeAlerts', () => {
     ]);
   });
 
+  it('renders Georgian alert text when lang is ka, English otherwise', () => {
+    const inputs = {
+      ...baseInputs(),
+      tasks: [{ id: 't1', title: 'Rack T1', status: 'pending', dueDate: '2026-06-01', assignedTo: 'Nino' } as any],
+      inventory: [{ id: 'i1', name: 'Yeast', stock: 0, minThreshold: 3, unit: 'kg', supplierName: 'Lallemand' } as any],
+    };
+    const en = computeAlerts(inputs);
+    expect(en.find((a) => a.category === 'task')?.title).toBe('Overdue: Rack T1');
+    expect(en.find((a) => a.category === 'inventory')?.title).toBe('Out of stock: Yeast');
+
+    const ge = computeAlerts({ ...inputs, lang: 'ka' });
+    expect(ge.find((a) => a.category === 'task')?.title).toBe('ვადაგადაცილებული: Rack T1');
+    expect(ge.find((a) => a.category === 'inventory')?.title).toBe('მარაგი ამოიწურა: Yeast');
+    // Identity fields must not change with language.
+    expect(ge.map((a) => [a.id, a.severity, a.category])).toEqual(en.map((a) => [a.id, a.severity, a.category]));
+  });
+
   it('sorts results critical first', () => {
     const alerts = computeAlerts({
       ...baseInputs(),
@@ -96,7 +136,7 @@ describe('computeAlerts', () => {
       ],
     });
     const severities = alerts.map((a: Alert) => a.severity);
-    expect(severities).toEqual([...severities].sort((a, b) => (a === 'critical' ? -1 : 1)));
+    expect(severities).toEqual([...severities].sort((a, _b) => (a === 'critical' ? -1 : 1)));
     expect(severities[0]).toBe('critical');
   });
 });

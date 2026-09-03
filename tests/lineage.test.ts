@@ -4,8 +4,12 @@ import {
   buildLotLineageGraph,
   connectedLotIds,
   detectCycles,
+  fitLineageZoom,
   layoutLineageGraph,
+  lineagePathTargets,
+  shortestPathNodeIds,
 } from '../lib/lineage';
+import type { LineageGraph } from '../lib/lineage';
 import type {
   BottlingRunRecord,
   CellarOperation,
@@ -108,6 +112,172 @@ describe('wine lineage graph', () => {
     expect(graph.edges).toContainEqual(expect.objectContaining({ from: 'lot:BLEND-1', to: 'cert:cert-1', type: 'certified' }));
   });
 
+  it('does not render reversed intake evidence as physical lineage', () => {
+    const original = { ...input.grapeIntakes[0], commandId: 'cmd-intake', reversedByCommandId: 'cmd-reversal' };
+    const correction: GrapeIntakeRecord = {
+      ...input.grapeIntakes[0], id: 'intake-correction', commandId: 'cmd-reversal', recordKind: 'reversal',
+      reversalOfIntakeId: original.id, reversalOfCommandId: original.commandId,
+    };
+    const graph = buildAllLineageGraph({ ...input, grapeIntakes: [original, correction] });
+    expect(graph.nodes.some(node => node.id === 'intake:intake-a')).toBe(false);
+    expect(graph.nodes.some(node => node.id === 'intake:intake-correction')).toBe(false);
+  });
+
+  it('shows the historical dispatch once and omits the compensating return as new physical lineage', () => {
+    const original = input.salesDispatches[0];
+    const graph = buildLotLineageGraph({
+      ...input,
+      salesDispatches: [
+        {
+          ...original,
+          reversedByCommandId: 'cmd-sale-reversal',
+          reversedAt: '2027-03-02T10:00:00.000Z',
+          reversalReason: 'Returned shipment.',
+        },
+        {
+          ...original,
+          id: 'sale-1-reversal',
+          recordKind: 'reversal',
+          date: '2027-03-02',
+          stockMovementId: 'mov-return',
+          reversalOfDispatchId: original.id,
+          reversalOfCommandId: 'cmd-sale-original',
+        },
+      ] as SalesDispatchRecord[],
+    }, 'BLEND-1');
+
+    expect(graph.nodes).toContainEqual(expect.objectContaining({
+      id: 'dispatch:sale-1',
+      label: 'Restaurant (reversed)',
+      metadata: expect.objectContaining({ reversalReason: 'Returned shipment.' }),
+    }));
+    expect(graph.nodes.some(node => node.id === 'dispatch:sale-1-reversal')).toBe(false);
+  });
+
+  it('omits reversed cellar treatments and their compensation from physical lineage', () => {
+    const original = {
+      ...input.cellarOps[0],
+      commandId: 'cmd-operation-original',
+      recordKind: 'operation' as const,
+      reversedByCommandId: 'cmd-operation-reversal',
+    };
+    const correction: CellarOperation = {
+      ...input.cellarOps[0],
+      id: 'op-1-reversal',
+      commandId: 'cmd-operation-reversal',
+      recordKind: 'reversal',
+      type: 'correction',
+      reversalOfOperationId: original.id,
+      reversalOfCommandId: original.commandId,
+    };
+    const graph = buildAllLineageGraph({ ...input, cellarOps: [original, correction] });
+
+    expect(graph.nodes.some(node => node.id === 'op:op-1')).toBe(false);
+    expect(graph.nodes.some(node => node.id === 'op:op-1-reversal')).toBe(false);
+  });
+
+  it('prefers explicit transfer lineage facts over display-name inference', () => {
+    const explicitLots = [
+      lot({ id: 'PARENT-A', name: 'Parent alpha' }),
+      lot({ id: 'PARENT-B', name: 'Parent beta' }),
+      lot({ id: 'RESULT', name: 'Named independently', initialVolume: 950 }),
+    ];
+    const graph = buildLotLineageGraph({
+      ...input,
+      lots: explicitLots,
+      grapeIntakes: [],
+      cellarOps: [],
+      bottlingRuns: [],
+      storageLocations: [],
+      stockMovements: [],
+      salesOrders: [],
+      salesDispatches: [],
+      certificationRecords: [],
+      transfers: [{
+        id: 'explicit-blend',
+        commandId: 'cmd-explicit-blend',
+        lineageVersion: 1,
+        sourceLotId: 'PARENT-A',
+        destinationLotId: 'PARENT-B',
+        resultLotId: 'RESULT',
+        sourceContributionL: 450,
+        destinationContributionL: 500,
+        arrivalVolumeL: 445,
+        sourceId: 'T-1',
+        destId: 'T-2',
+        volume: 450,
+        loss: 5,
+        operator: 'Nino',
+        category: 'blend',
+        date: '2026-12-01',
+        pump: 'P-1',
+        details: 'Structured lineage record',
+      }],
+    }, 'RESULT');
+
+    expect(graph.edges).toContainEqual(expect.objectContaining({
+      from: 'lot:PARENT-A',
+      to: 'blend:explicit-blend',
+      type: 'blended',
+      volumeL: 450,
+    }));
+    expect(graph.edges).toContainEqual(expect.objectContaining({
+      from: 'lot:PARENT-B',
+      to: 'blend:explicit-blend',
+      volumeL: 500,
+    }));
+    expect(graph.nodes.some(node => node.id === 'transfer:explicit-blend')).toBe(false);
+  });
+
+  it('shows a reversed original once and does not invent physical lineage from its correction record', () => {
+    const original = {
+      id: 'xfer-reversed',
+      commandId: 'cmd-xfer-reversed',
+      recordKind: 'transfer' as const,
+      sourceLotId: 'LOT-A',
+      resultLotId: 'LOT-A',
+      sourceId: 'T-1',
+      destId: 'T-2',
+      volume: 100,
+      loss: 2,
+      operator: 'Nino',
+      category: 'racking',
+      date: '2026-12-02',
+      pump: 'P-1',
+      details: 'Structured transfer',
+      reversedByCommandId: 'cmd-xfer-reversal',
+      reversedAt: '2026-12-02T12:00:00.000Z',
+      reversalReason: 'Wrong destination.',
+    };
+    const graph = buildLotLineageGraph({
+      ...input,
+      transfers: [original, {
+        id: 'xfer-reversal',
+        commandId: 'cmd-xfer-reversal',
+        recordKind: 'reversal',
+        reversalOfTransferId: original.id,
+        reversalOfCommandId: original.commandId,
+        sourceLotId: 'LOT-A',
+        resultLotId: 'LOT-A',
+        sourceId: 'T-2',
+        destId: 'T-1',
+        volume: 100,
+        loss: 0,
+        operator: 'Owner',
+        category: 'reversal',
+        date: '2026-12-02',
+        pump: 'Accounting correction',
+        details: 'Reversed transfer.',
+      }],
+    }, 'LOT-A');
+
+    expect(graph.nodes).toContainEqual(expect.objectContaining({
+      id: 'transfer:xfer-reversed',
+      label: 'racking · reversed',
+    }));
+    expect(graph.nodes.some(node => node.id === 'transfer:xfer-reversal')).toBe(false);
+  });
+
   it('lays out the graph horizontally and detects cycles defensively', () => {
     const graph = buildLotLineageGraph(input, 'BLEND-1');
     const positioned = layoutLineageGraph(graph);
@@ -126,5 +296,74 @@ describe('wine lineage graph', () => {
         { id: 'b-a', from: 'b', to: 'a', type: 'created' },
       ],
     })).toBe(true);
+  });
+
+  it('wraps dense depth bands into readable columns instead of an unbounded vertical stack', () => {
+    const graph: LineageGraph = {
+      nodes: [
+        { id: 'root', type: 'wine_lot', label: 'Root' },
+        ...Array.from({ length: 20 }, (_, index) => ({
+          id: `operation-${index}`,
+          type: 'cellar_operation' as const,
+          label: `Operation ${index}`,
+        })),
+        { id: 'terminal', type: 'bottling', label: 'Bottling' },
+      ],
+      edges: [
+        ...Array.from({ length: 20 }, (_, index) => ({
+          id: `root-operation-${index}`,
+          from: 'root',
+          to: `operation-${index}`,
+          type: 'operated' as const,
+        })),
+        ...Array.from({ length: 20 }, (_, index) => ({
+          id: `operation-terminal-${index}`,
+          from: `operation-${index}`,
+          to: 'terminal',
+          type: 'bottled' as const,
+        })),
+      ],
+    };
+
+    const positioned = layoutLineageGraph(graph);
+    const operations = positioned.nodes.filter(node => node.type === 'cellar_operation');
+    const terminal = positioned.nodes.find(node => node.id === 'terminal')!;
+    const operationColumns = new Set(operations.map(node => node.x));
+
+    expect(operationColumns.size).toBe(3);
+    expect(positioned.height).toBeLessThan(1_100);
+    expect(terminal.x).toBeGreaterThan(Math.max(...operations.map(node => node.x)));
+  });
+
+  it('returns the smallest selected audit path instead of the full connected component', () => {
+    const graph = buildLotLineageGraph(input, 'BLEND-1');
+    const path = shortestPathNodeIds(graph, 'lot:BLEND-1', 'dispatch:sale-1');
+
+    expect(Array.from(path)).toEqual(expect.arrayContaining([
+      'lot:BLEND-1',
+      'bottling:bot-1',
+      'storage:loc-1:BLEND-1',
+      'dispatch:sale-1',
+    ]));
+    expect(path.has('op:op-1')).toBe(false);
+    expect(path.size).toBeLessThan(graph.nodes.length);
+  });
+
+  it('ranks downstream trace endpoints ahead of low-level operations', () => {
+    const graph = buildLotLineageGraph(input, 'BLEND-1');
+    const targets = lineagePathTargets(graph, 'lot:BLEND-1');
+
+    expect(targets[0].type).toBe('dispatch');
+    expect(targets.findIndex(node => node.type === 'certification')).toBeLessThan(
+      targets.findIndex(node => node.type === 'cellar_operation'),
+    );
+    expect(targets.some(node => node.id === 'lot:BLEND-1')).toBe(false);
+  });
+
+  it('computes a bounded fit zoom for narrow and invalid viewports', () => {
+    expect(fitLineageZoom(822, 360, 336, 378)).toBeCloseTo(0.33, 2);
+    expect(fitLineageZoom(12_000, 1_000, 336, 600)).toBe(0.02);
+    expect(fitLineageZoom(822, 360, 1400, 900)).toBe(1.4);
+    expect(fitLineageZoom(0, 360, 336, 378)).toBe(1);
   });
 });

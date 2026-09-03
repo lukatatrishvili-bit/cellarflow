@@ -22,8 +22,10 @@
     "lib/**/*.ts",
     "components/**/*.ts",
     "components/**/*.tsx",
+    "tests/postgres/**/*.ts",
     "server.ts",
-    "vite.config.ts"
+    "vite.config.ts",
+    "vitest.postgres.config.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

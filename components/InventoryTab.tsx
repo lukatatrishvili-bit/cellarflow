@@ -1,39 +1,61 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import type { InventoryItem } from '../lib/wineryState';
-import { 
-  Plus, 
-  Trash2, 
-  Tag, 
-  Package, 
-  FileText, 
-  TrendingDown, 
-  Scale, 
-  Filter, 
-  Building2, 
-  DollarSign, 
-  Edit3, 
-  Save, 
+import React, { useState, useEffect, useMemo } from 'react';
+import type { CellarOperation, InventoryItem } from '../lib/wineryState';
+import type { Language } from '../lib/i18n';
+import { inventoryCategoryLabel } from '../lib/enumLabels';
+import { CORE_INVENTORY_CATEGORIES } from '../lib/inventoryCategories';
+import InvoiceInventoryImporter from './InvoiceInventoryImporter';
+import type { InvoiceReceiptCommandResponse } from '../lib/commands/client';
+import {
+  Plus,
+  Trash2,
+  Package,
+  Building2,
+  Edit3,
+  Save,
   X,
   AlertTriangle,
   FolderPlus,
-  Compass,
   CheckCircle,
-  HelpCircle
+  HelpCircle,
+  Sparkles
 } from 'lucide-react';
 
 interface Props {
+  lang?: Language;
   inventory: InventoryItem[];
+  cellarOps?: CellarOperation[];
   onUpdateInventory: (newInv: InventoryItem[]) => void;
+  canCreateInventory?: boolean;
+  canUpdateInventory?: boolean;
+  canDeleteInventory?: boolean;
+  canPostInvoiceCosts?: boolean;
+  accountingCurrency?: string;
+  onApplyInvoiceReceiptCommandResponse?: (response: InvoiceReceiptCommandResponse) => void;
+  onOpenProcurement?: () => void;
 }
 
-export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
+export function InventoryTab({
+  lang = 'en',
+  inventory,
+  cellarOps = [],
+  onUpdateInventory,
+  canCreateInventory = true,
+  canUpdateInventory = true,
+  canDeleteInventory = true,
+  canPostInvoiceCosts = true,
+  accountingCurrency = 'GEL',
+  onApplyInvoiceReceiptCommandResponse,
+  onOpenProcurement,
+}: Props) {
+  const ka = lang === 'ka';
+  const catLabel = (cat: string) => inventoryCategoryLabel(cat, lang);
   // Load or initialize categories list
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('yeasts');
   const [newCategoryName, setNewCategoryName] = useState<string>('');
-  
+
   // New Item form states
   const [showItemForm, setShowItemForm] = useState(false);
   const [itemName, setItemName] = useState('');
@@ -42,12 +64,11 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
   const [itemCost, setItemCost] = useState(15.0);
   const [itemSupplier, setItemSupplier] = useState('');
   const [itemDetails, setItemDetails] = useState('');
-  const [itemInitialStock, setItemInitialStock] = useState(25);
+  const [showInvoiceImporter, setShowInvoiceImporter] = useState(false);
 
   // Editing item state
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [editStock, setEditStock] = useState(0);
   const [editMinThresh, setEditMinThresh] = useState(0);
   const [editUnit, setEditUnit] = useState('');
   const [editCost, setEditCost] = useState(0);
@@ -58,13 +79,15 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
   useEffect(() => {
     const savedCategories = localStorage.getItem('cf_inv_categories');
     if (savedCategories) {
-      const parsed = JSON.parse(savedCategories);
-      setCategories(parsed);
-      if (parsed.length > 0) {
-        setSelectedCategory(parsed.includes('yeasts') ? 'yeasts' : parsed[0]);
+      const parsed = JSON.parse(savedCategories) as string[];
+      const merged = Array.from(new Set([...CORE_INVENTORY_CATEGORIES, ...parsed]));
+      setCategories(merged);
+      localStorage.setItem('cf_inv_categories', JSON.stringify(merged));
+      if (merged.length > 0) {
+        setSelectedCategory(merged.includes('yeasts') ? 'yeasts' : merged[0]);
       }
     } else {
-      const defaultCats = ['yeasts', 'nutritions', 'additives', 'packaging', 'bottles', 'closures', 'labels', 'boxes', 'sanitation', 'cleaning'];
+      const defaultCats = [...CORE_INVENTORY_CATEGORIES];
       setCategories(defaultCats);
       setSelectedCategory('yeasts');
       localStorage.setItem('cf_inv_categories', JSON.stringify(defaultCats));
@@ -91,11 +114,12 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
   // Add a new material category
   const handleAddCategory = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateInventory) return;
     const cleanName = newCategoryName.trim().toLowerCase();
     if (!cleanName) return;
 
     if (categories.includes(cleanName)) {
-      alert('This category already exists.');
+      alert(ka ? 'ეს კატეგორია უკვე არსებობს.' : 'This category already exists.');
       return;
     }
 
@@ -107,8 +131,11 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Delete a material category
   const handleDeleteCategory = (cat: string) => {
+    if (!canUpdateInventory) return;
     const confirmDelete = window.confirm(
-      `Are you sure you want to remove the category "${cat.toUpperCase()}"? All materials inside will stay in the master database but their category association will be updated to "unassigned".`
+      ka
+        ? `დარწმუნებული ხართ, რომ გსურთ კატეგორიის „${cat.toUpperCase()}" წაშლა? მასში არსებული პროდუქტები დარჩება ბაზაში, მაგრამ მათი კატეგორია შეიცვლება „მიუკუთვნებელით".`
+        : `Are you sure you want to remove the category "${cat.toUpperCase()}"? All materials inside will stay in the master database but their category association will be updated to "unassigned".`
     );
     if (!confirmDelete) return;
 
@@ -133,13 +160,14 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
   // Add new material/item
   const handleAddItem = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreateInventory) return;
     if (!itemName.trim()) return;
 
     const newItem: InventoryItem = {
       id: `inv-${Date.now()}`,
       name: itemName,
       category: selectedCategory,
-      stock: itemInitialStock,
+      stock: 0,
       minThreshold: itemMinThresh,
       unit: itemUnit,
       costPerUnit: itemCost,
@@ -151,7 +179,6 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
     // Reset Form
     setItemName('');
-    setItemInitialStock(25);
     setItemMinThresh(10);
     setItemUnit('kg');
     setItemCost(15.0);
@@ -162,14 +189,14 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Save changes to edited item
   const handleSaveItemEdit = (id: string) => {
+    if (!canUpdateInventory) return;
     const updated = inventory.map(item => {
       if (item.id === id) {
         return {
           ...item,
           name: editName,
-          stock: editStock,
           minThreshold: editMinThresh,
-          unit: editUnit,
+          unit: item.stock > 0 ? item.unit : editUnit,
           costPerUnit: editCost,
           supplierName: editSupplier,
           details: editDetails
@@ -183,9 +210,9 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Populate editor states
   const startEditingItem = (item: InventoryItem) => {
+    if (!canUpdateInventory) return;
     setEditingItemId(item.id);
     setEditName(item.name);
-    setEditStock(item.stock);
     setEditMinThresh(item.minThreshold);
     setEditUnit(item.unit);
     setEditCost(item.costPerUnit);
@@ -195,63 +222,141 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
   // Delete an item
   const handleDeleteItem = (id: string, name: string) => {
-    const confirmDelete = window.confirm(`Are you sure you want to delete "${name}" from your stockpile inventory? This action is irreversible.`);
+    if (!canDeleteInventory) return;
+    const item = inventory.find(candidate => candidate.id === id);
+    const isReferenced = cellarOps.some(operation => (
+      operation.recordKind !== 'reversal'
+      && !operation.reversedByCommandId
+      && (operation.materialId === id || operation.materials?.some(material => material.materialId === id))
+    ));
+    if (!item || item.stock !== 0 || isReferenced) {
+      alert(ka
+        ? 'პროდუქტი ვერ წაიშლება, სანამ მას აქვს ნაშთი ან გამოყენების ისტორია. შეცვალეთ მხოლოდ სპეციფიკაცია ან გააუქმეთ გამოყენება შესაბამისი ოპერაციიდან.'
+        : 'This material cannot be deleted while it has stock or usage history. Edit its specifications or reverse the linked operation instead.');
+      return;
+    }
+    const confirmDelete = window.confirm(ka
+      ? `დარწმუნებული ხართ, რომ გსურთ „${name}" წაშლა ინვენტარიდან? ეს მოქმედება შეუქცევადია.`
+      : `Are you sure you want to delete "${name}" from your stockpile inventory? This action is irreversible.`);
     if (confirmDelete) {
       onUpdateInventory(inventory.filter(item => item.id !== id));
     }
   };
 
-  // Adjust stock inline (+ or -)
-  const adjustStockInline = (itemId: string, current: number, amount: number) => {
-    const updated = inventory.map(item => {
-      if (item.id === itemId) {
-        return {
-          ...item,
-          stock: parseFloat(Math.max(0, current + amount).toFixed(1))
-        };
-      }
-      return item;
-    });
-    onUpdateInventory(updated);
-  };
-
   // Filter items in the currently active category
   const filteredItems = inventory.filter(item => item.category === selectedCategory);
+  const usageByMaterial = useMemo(() => {
+    const result = new Map<string, Array<{
+      operationId: string;
+      date: string;
+      lotName: string;
+      operationType: string;
+      quantity: number;
+      unit: string;
+      purpose?: string;
+    }>>();
+    cellarOps
+      .filter(operation => operation.recordKind !== 'reversal' && !operation.reversedByCommandId)
+      .forEach(operation => {
+        const usages = operation.materials?.length
+          ? operation.materials
+          : operation.materialId && operation.dose
+            ? [{
+              materialId: operation.materialId,
+              quantity: operation.dose,
+              unit: operation.unit,
+            }]
+            : [];
+        usages.forEach(usage => {
+          const records = result.get(usage.materialId) || [];
+          records.push({
+            operationId: operation.id,
+            date: operation.date,
+            lotName: operation.lotName,
+            operationType: operation.customLabel || operation.type.replace(/_/g, ' '),
+            quantity: usage.quantity,
+            unit: usage.unit || '',
+            ...(usage.purpose ? { purpose: usage.purpose } : {}),
+          });
+          result.set(usage.materialId, records);
+        });
+      });
+    result.forEach(records => records.sort((a, b) => b.date.localeCompare(a.date)));
+    return result;
+  }, [cellarOps]);
 
   return (
     <div className="space-y-6 text-stone-800">
-      
+
       {/* Intro section */}
       <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-serif font-black text-[#4e0e15] flex items-center gap-2">
             <Package className="w-5 h-5 text-[#801323]" />
-            Winemaker Material & Stockpile Command Center
+            {ka ? 'პროდუქტებისა და მარაგების მართვის ცენტრი' : 'Winemaker Material & Stockpile Command Center'}
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            Track and log cellar additions, active strains, custom nutrients, glass bottle batches, and general packaging materials.
-          </p>
         </div>
+        {(canCreateInventory || canUpdateInventory) && (
         <div className="flex gap-2">
+          {onOpenProcurement && canUpdateInventory && (
+          <button
+            onClick={onOpenProcurement}
+            className="px-3.5 py-1.5 text-xs font-semibold text-[#4e0e15] bg-white hover:bg-stone-50 rounded-lg border border-[#d9cabb] transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <Building2 className="w-4 h-4" /> {ka ? 'შესყიდვის ორდერი' : 'Purchase Order'}
+          </button>
+          )}
+          {canPostInvoiceCosts && <button
+            onClick={() => setShowInvoiceImporter(current => !current)}
+            className="px-3.5 py-1.5 text-xs font-semibold text-[#4e0e15] bg-[#f4ece5] hover:bg-[#eadfd5] rounded-lg border border-[#d9cabb] transition-colors cursor-pointer flex items-center gap-1.5"
+          >
+            <Sparkles className="w-4 h-4" /> {ka ? 'AI ინვოისი' : 'Analyze Invoice'}
+          </button>}
+          {canCreateInventory && (
           <button
             onClick={() => setShowItemForm(!showItemForm)}
             className="px-3.5 py-1.5 text-xs font-semibold text-white bg-[#4e0e15] hover:bg-[#6b151e] rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
           >
-            <Plus className="w-4 h-4" /> Add New Material
+            <Plus className="w-4 h-4" /> {ka ? 'პროდუქტის დამატება' : 'Add New Material'}
           </button>
+          )}
         </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
+      {showInvoiceImporter && canPostInvoiceCosts && (canCreateInventory || canUpdateInventory) && (
+        <InvoiceInventoryImporter
+          lang={lang}
+          inventory={inventory}
+          canCreate={canCreateInventory}
+          canUpdate={canUpdateInventory}
+          canPostCosts={canPostInvoiceCosts}
+          accountingCurrency={accountingCurrency}
+          onApplyCommandResponse={onApplyInvoiceReceiptCommandResponse || ((response) => {
+            if (response.collections?.inventory) onUpdateInventory(response.collections.inventory);
+          })}
+          onClose={() => setShowInvoiceImporter(false)}
+        />
+      )}
+
+      {!canCreateInventory && !canUpdateInventory && !canDeleteInventory && (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+          {ka
+            ? 'თქვენი სამუშაო სივრცის როლისთვის ინვენტარი მხოლოდ სანახავია. შეგიძლიათ შეამოწმოთ მარაგები, მომწოდებლები, ზღვრები და სპეციფიკაციები ბალანსების შეცვლის გარეშე.'
+            : 'Inventory is read-only for your workspace role. You can review stock, suppliers, thresholds, and specifications without changing balances.'}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+
         {/* Left column: Categories Navigation and Creation */}
-        <div className="lg:col-span-3 space-y-4">
-          
+        <div className="xl:col-span-3 space-y-4">
+
           <div className="bg-white p-4 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
             <h3 className="text-xs font-mono font-bold uppercase text-slate-400 tracking-wider flex items-center justify-between border-b border-stone-100 pb-2">
-              <span>Cellar Categories</span>
+              <span>{ka ? 'კატეგორიები' : 'Cellar Categories'}</span>
               <span className="text-[10px] bg-slate-100 px-1.5 py-0.2 rounded font-normal text-slate-500 font-mono">
-                {categories.length} Total
+                {categories.length} {ka ? 'სულ' : 'Total'}
               </span>
             </h3>
 
@@ -261,18 +366,18 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 const count = inventory.filter(item => item.category === cat).length;
                 const isSelected = selectedCategory === cat;
                 return (
-                  <div 
-                    key={cat} 
+                  <div
+                    key={cat}
                     className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition-all group cursor-pointer ${
-                      isSelected 
-                        ? 'bg-[#4e0e15] text-white' 
+                      isSelected
+                        ? 'bg-[#4e0e15] text-white'
                         : 'bg-stone-50 hover:bg-stone-100 text-stone-650'
                     }`}
                     onClick={() => setSelectedCategory(cat)}
                   >
                     <span className="capitalize truncate pr-2 flex items-center gap-1.5">
                       <span className="opacity-75">📂</span>
-                      {cat.replace('_', ' ')}
+                      {catLabel(cat)}
                     </span>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <span className={`px-1.5 py-0.2 text-[9px] font-mono rounded-full font-bold ${
@@ -281,9 +386,9 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                         {count}
                       </span>
                       {/* Allow deleting categories except hardcoded ones to maintain stable fallback */}
-                      {!['yeasts', 'nutritions', 'bottles'].includes(cat) && (
+                      {canUpdateInventory && !CORE_INVENTORY_CATEGORIES.includes(cat as typeof CORE_INVENTORY_CATEGORIES[number]) && (
                         <button
-                          title="Delete Category"
+                          title={ka ? 'კატეგორიის წაშლა' : 'Delete Category'}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDeleteCategory(cat);
@@ -300,39 +405,41 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 );
               })}
               {categories.length === 0 && (
-                <p className="text-stone-400 italic text-[11px] p-2 text-center">No categories found. Create one lower down.</p>
+                <p className="text-stone-400 italic text-[11px] p-2 text-center">{ka ? 'კატეგორია არ მოიძებნა. შექმენით ქვემოთ.' : 'No categories found. Create one lower down.'}</p>
               )}
             </div>
 
             {/* Add custom category form */}
+            {canCreateInventory && (
             <form onSubmit={handleAddCategory} className="border-t border-dashed border-stone-250/75 pt-3 space-y-2">
               <label className="block text-[9px] font-mono font-bold uppercase text-slate-400">
-                Create Custom Material Category
+                {ka ? 'ახალი კატეგორიის შექმნა' : 'Create Custom Material Category'}
               </label>
               <div className="flex gap-1.5">
                 <input
                   type="text"
-                  placeholder="e.g. Oak Chips, Enzy"
+                  placeholder={ka ? 'მაგ. მუხის ჩიპსი, ფერმენტები' : 'e.g. Oak Chips, Enzy'}
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
                   className="flex-1 min-w-0 px-2 py-1 text-xs border border-stone-200 rounded-lg bg-stone-50 font-medium focus:bg-white focus:border-[#4e0e15] outline-none"
                 />
                 <button
                   type="submit"
-                  title="Add Category"
+                  title={ka ? 'კატეგორიის დამატება' : 'Add Category'}
                   className="p-1 px-2.5 bg-[#4e0e15] text-white text-xs font-bold rounded-lg hover:bg-[#6b151e] shadow-xs cursor-pointer flex items-center justify-center shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
               </div>
             </form>
+            )}
           </div>
 
           {/* Quick stock alert diagnostics info */}
           <div className="p-4 bg-amber-50 border border-amber-205 rounded-xl space-y-2">
             <h4 className="text-[10px] font-mono font-bold uppercase text-amber-950 flex items-center gap-1">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-              Depleted Stock Warnings
+              {ka ? 'დაბალი მარაგის გაფრთხილებები' : 'Depleted Stock Warnings'}
             </h4>
             <div className="space-y-1.5">
               {inventory.filter(item => item.stock < item.minThreshold).map(item => (
@@ -342,7 +449,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 </div>
               ))}
               {inventory.filter(item => item.stock < item.minThreshold).length === 0 && (
-                <p className="text-[10px] text-amber-900/60 italic font-medium">All item balances are safely above minimum thresholds.</p>
+                <p className="text-[10px] text-amber-900/60 italic font-medium">{ka ? 'ყველა პროდუქტის ბალანსი უსაფრთხოდ არის მინიმალურ ზღვარზე მაღლა.' : 'All item balances are safely above minimum thresholds.'}</p>
               )}
             </div>
           </div>
@@ -350,18 +457,18 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
         </div>
 
         {/* Right column: Items List, Form, & Item management */}
-        <div className="lg:col-span-9 space-y-4">
-          
+        <div className="xl:col-span-9 space-y-4">
+
           {/* Add Item form */}
-          {showItemForm && (
+          {canCreateInventory && showItemForm && (
             <form onSubmit={handleAddItem} className="bg-white p-5 border border-[#4e0e15] rounded-xl shadow-xs space-y-3">
               <div className="flex items-center justify-between border-b border-stone-100 pb-2">
                 <h3 className="text-xs font-mono font-bold uppercase text-[#4e0e15] flex items-center gap-1.5">
                   <FolderPlus className="w-4.5 h-4.5" />
-                  Adding Material under &ldquo;<span className="text-[#801323]">{selectedCategory.toUpperCase()}</span>&rdquo; Category
+                  {ka ? 'პროდუქტის დამატება კატეგორიაში' : 'Adding Material under'} &ldquo;<span className="text-[#801323]">{catLabel(selectedCategory).toUpperCase()}</span>&rdquo;{ka ? '' : ' Category'}
                 </h3>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setShowItemForm(false)}
                   className="text-stone-400 hover:text-stone-700 p-1 rounded-full cursor-pointer hover:bg-stone-100"
                 >
@@ -370,14 +477,14 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                <div className="md:col-span-6">
+                <div className="md:col-span-9">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Material / Product Name *
+                    {ka ? 'პროდუქტის სახელი *' : 'Material / Product Name *'}
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Optimum-Red Active Nutrient, Go-Ferm Sterol"
+                    placeholder={ka ? 'მაგ. Optimum-Red ნუტრიენტი, Go-Ferm Sterol' : 'e.g. Optimum-Red Active Nutrient, Go-Ferm Sterol'}
                     value={itemName}
                     onChange={(e) => setItemName(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] font-medium focus:bg-white outline-none"
@@ -385,39 +492,32 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 </div>
                 <div className="md:col-span-3">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Initial Stock Level
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    required
-                    value={itemInitialStock}
-                    onChange={(e) => setItemInitialStock(parseFloat(e.target.value) || 0)}
-                    className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] font-mono focus:bg-white outline-none"
-                  />
-                </div>
-                <div className="md:col-span-3">
-                  <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Item Unit
+                    {ka ? 'ერთეული' : 'Item Unit'}
                   </label>
                   <select
                     value={itemUnit}
                     onChange={(e) => setItemUnit(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] font-medium outline-none"
                   >
-                    <option value="kg">kg (Kilogram)</option>
-                    <option value="g">g (Grams)</option>
-                    <option value="units">units (Individual)</option>
-                    <option value="bags">bags (Bags)</option>
-                    <option value="liters">liters (Liters)</option>
+                    <option value="kg">{ka ? 'კგ (კილოგრამი)' : 'kg (Kilogram)'}</option>
+                    <option value="g">{ka ? 'გ (გრამი)' : 'g (Grams)'}</option>
+                    <option value="units">{ka ? 'ცალი' : 'units (Individual)'}</option>
+                    <option value="bags">{ka ? 'ტომარა' : 'bags (Bags)'}</option>
+                    <option value="liters">{ka ? 'ლიტრი' : 'liters (Liters)'}</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[10px] font-semibold text-sky-900">
+                {ka
+                  ? 'ახალი პროდუქტი შეიქმნება 0 ნაშთით. რეალური მიღება აღრიცხეთ ინვოისით ან შესყიდვის ორდერიდან.'
+                  : 'New materials start at zero. Receive real stock through an invoice or purchase order.'}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                 <div className="md:col-span-4">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Min Alert Threshold
+                    {ka ? 'მინ. გაფრთხილების ზღვარი' : 'Min Alert Threshold'}
                   </label>
                   <input
                     type="number"
@@ -428,7 +528,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 </div>
                 <div className="md:col-span-4">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Unit Cost (Est. $)
+                    {ka ? 'ერთე. ფასი (სავარაუდო)' : 'Unit Cost (Est. $)'}
                   </label>
                   <input
                     type="number"
@@ -440,7 +540,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 </div>
                 <div className="md:col-span-4">
                   <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1">
-                    Supplier Name
+                    {ka ? 'მომწოდებელი' : 'Supplier Name'}
                   </label>
                   <input
                     type="text"
@@ -453,11 +553,11 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
               <div>
                 <label className="block text-[10px] font-mono font-bold uppercase text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Chemical Specs / Product Details & Remarks</span>
-                  <span className="text-[9px] text-slate-400 font-normal">Highly recommended for yeast strains, yeast nutrients & cork lots</span>
+                  <span>{ka ? 'ქიმიური სპეც. / პროდუქტის დეტალები' : 'Chemical Specs / Product Details & Remarks'}</span>
+                  <span className="text-[9px] text-slate-400 font-normal">{ka ? 'რეკომენდებულია საფუარებისთვის, ნუტრიენტებისა და საცობებისთვის' : 'Highly recommended for yeast strains, yeast nutrients & cork lots'}</span>
                 </label>
                 <textarea
-                  placeholder="Record essential specifications. For yeasts: fermentation temp range, strain characteristics, nitrogen appetite. For packages: bottle glass thickness, box weights."
+                  placeholder={ka ? 'ჩაწერეთ ძირითადი სპეციფიკაციები. საფუარებისთვის: დუღილის ტემპ. დიაპაზონი, შტამის მახასიათებლები, აზოტის მოთხოვნა. შესაფუთისთვის: მინის სისქე, ყუთის წონები.' : 'Record essential specifications. For yeasts: fermentation temp range, strain characteristics, nitrogen appetite. For packages: bottle glass thickness, box weights.'}
                   value={itemDetails}
                   onChange={(e) => setItemDetails(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs border border-stone-200 rounded bg-[#FAF8F5] focus:bg-white outline-none h-20 leading-relaxed font-serif"
@@ -468,26 +568,26 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 type="submit"
                 className="w-full py-2 bg-[#4e0e15] hover:bg-[#6b151e] text-white text-xs font-semibold rounded-lg shadow-sm cursor-pointer transition-colors"
               >
-                Assemble & Commit to Inventory Stockpile
+                {ka ? 'ინვენტარში დამატება' : 'Assemble & Commit to Inventory Stockpile'}
               </button>
             </form>
           )}
 
           {/* Core materials header and card grid */}
           <div className="bg-white p-5 border border-[#e8dfd5] rounded-xl shadow-xs space-y-4">
-            
+
             <div className="flex items-center justify-between border-b border-stone-100 pb-3 flex-wrap gap-2">
               <div>
                 <span className="text-[10px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded uppercase">
-                  ACTIVE CATEGORY: {selectedCategory.replace('_', ' ')}
+                  {ka ? 'აქტიური კატეგორია' : 'ACTIVE CATEGORY'}: {catLabel(selectedCategory)}
                 </span>
                 <h3 className="text-sm font-serif font-bold text-stone-850 mt-1">
-                  Registered stockpile items
+                  {ka ? 'რეგისტრირებული პროდუქტები' : 'Registered stockpile items'}
                 </h3>
               </div>
-              
+
               <span className="text-xs text-slate-500 font-mono">
-                Matching items: {filteredItems.length}
+                {ka ? 'ნაპოვნია' : 'Matching items'}: {filteredItems.length}
               </span>
             </div>
 
@@ -496,12 +596,13 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
               {filteredItems.map(item => {
                 const lowStock = item.stock < item.minThreshold;
                 const isEditing = editingItemId === item.id;
+                const recentUsage = usageByMaterial.get(item.id)?.slice(0, 2) || [];
 
-                if (isEditing) {
+                if (isEditing && canUpdateInventory) {
                   return (
                     <div key={item.id} className="p-4 border border-[#4e0e15] bg-[#FCFAF8] rounded-xl text-stone-800 space-y-3 shadow-xs">
                       <div className="flex items-center justify-between border-b border-stone-200 pb-2">
-                        <span className="text-[10px] font-mono font-black uppercase text-[#801323]">Editing Product Specifications</span>
+                        <span className="text-[10px] font-mono font-black uppercase text-[#801323]">{ka ? 'პროდუქტის რედაქტირება' : 'Editing Product Specifications'}</span>
                         <button
                           type="button"
                           onClick={() => setEditingItemId(null)}
@@ -513,8 +614,8 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
                       <div className="space-y-2">
                         <div>
-                          <label className="block text-[8px] font-mono text-slate-400 uppercase">Product Name</label>
-                          <input 
+                          <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'სახელი' : 'Product Name'}</label>
+                          <input
                             type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
                             className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-bold"
                           />
@@ -522,32 +623,41 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Current Stock</label>
-                            <input 
-                              type="number" step="0.1" value={editStock} onChange={(e) => setEditStock(parseFloat(e.target.value) || 0)}
-                              className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-mono"
-                            />
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'მიმდინარე მარაგი' : 'Current Stock'}</label>
+                            <div className="w-full rounded border border-stone-200 bg-stone-100 px-2.5 py-1 text-xs font-mono text-stone-600">
+                              {item.stock} {item.unit}
+                            </div>
                           </div>
                           <div>
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Units</label>
-                            <input 
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'ერთეული' : 'Units'}</label>
+                            <input
                               type="text" value={editUnit} onChange={(e) => setEditUnit(e.target.value)}
+                              disabled={item.stock > 0}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded"
                             />
                           </div>
                         </div>
 
+                        <div>
+                          <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'ერთეულის მიმდინარე ფასი' : 'Current Unit Cost'}</label>
+                          <input
+                            type="number" min="0" step="0.01" value={editCost}
+                            onChange={(e) => setEditCost(parseFloat(e.target.value) || 0)}
+                            className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-mono"
+                          />
+                        </div>
+
                         <div className="grid grid-cols-3 gap-2">
                           <div>
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Min Threshold</label>
-                            <input 
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'მინ. ზღვარი' : 'Min Threshold'}</label>
+                            <input
                               type="number" value={editMinThresh} onChange={(e) => setEditMinThresh(parseFloat(e.target.value) || 0)}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded font-mono"
                             />
                           </div>
                           <div className="col-span-2">
-                            <label className="block text-[8px] font-mono text-slate-400 uppercase">Supplier</label>
-                            <input 
+                            <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'მომწოდებელი' : 'Supplier'}</label>
+                            <input
                               type="text" value={editSupplier} onChange={(e) => setEditSupplier(e.target.value)}
                               className="w-full px-2.5 py-1 text-xs bg-white border border-stone-200 rounded"
                             />
@@ -555,8 +665,8 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                         </div>
 
                         <div>
-                          <label className="block text-[8px] font-mono text-slate-400 uppercase">Custom Details / Winemaker Info</label>
-                          <textarea 
+                          <label className="block text-[8px] font-mono text-slate-400 uppercase">{ka ? 'დამატებითი დეტალები' : 'Custom Details / Winemaker Info'}</label>
+                          <textarea
                             value={editDetails} onChange={(e) => setEditDetails(e.target.value)}
                             className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-200 rounded h-16 leading-relaxed font-serif"
                           />
@@ -569,14 +679,14 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                           onClick={() => handleSaveItemEdit(item.id)}
                           className="flex-1 py-1 bg-emerald-700 text-white text-[11px] font-bold rounded-lg hover:bg-emerald-800 flex items-center justify-center gap-1 cursor-pointer"
                         >
-                          <Save className="w-3.5 h-3.5" /> Save Specs
+                          <Save className="w-3.5 h-3.5" /> {ka ? 'შენახვა' : 'Save Specs'}
                         </button>
                         <button
                           type="button"
                           onClick={() => setEditingItemId(null)}
                           className="px-2.5 py-1 bg-slate-100 text-slate-600 hover:bg-slate-200 text-[11px] font-bold rounded-lg cursor-pointer"
                         >
-                          Cancel
+                          {ka ? 'გაუქმება' : 'Cancel'}
                         </button>
                       </div>
                     </div>
@@ -584,11 +694,11 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                 }
 
                 return (
-                  <div 
-                    key={item.id} 
+                  <div
+                    key={item.id}
                     className={`p-4 border rounded-xl flex flex-col justify-between hover:shadow-xs transition-shadow ${
-                      lowStock 
-                        ? 'bg-red-50/15 border-red-200/95' 
+                      lowStock
+                        ? 'bg-red-50/15 border-red-200/95'
                         : 'bg-stone-50/50 border-[#e8dfd5]/85'
                     }`}
                   >
@@ -602,22 +712,28 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                             {item.supplierName}
                           </span>
                         </div>
+                        {(canUpdateInventory || canDeleteInventory) && (
                         <div className="flex gap-1">
+                          {canUpdateInventory && (
                           <button
-                            title="Edit Material"
+                            title={ka ? 'რედაქტირება' : 'Edit Material'}
                             onClick={() => startEditingItem(item)}
                             className="p-1 hover:bg-stone-200 rounded text-slate-500 hover:text-stone-800 transition-colors cursor-pointer shrink-0"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
+                          )}
+                          {canDeleteInventory && (
                           <button
-                            title="Delete Item"
+                            title={ka ? 'წაშლა' : 'Delete Item'}
                             onClick={() => handleDeleteItem(item.id, item.name)}
                             className="p-1 hover:bg-red-100 rounded text-slate-400 hover:text-red-700 transition-colors cursor-pointer shrink-0"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
+                          )}
                         </div>
+                        )}
                       </div>
 
                       {/* Stock Figures */}
@@ -626,7 +742,7 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                           {item.stock} {item.unit}
                         </strong>
                         <span className="text-[9px] text-slate-405 font-mono">
-                          Min Alert limit: {item.minThreshold} {item.unit}
+                          {ka ? 'მინ. ზღვარი' : 'Min Alert limit'}: {item.minThreshold} {item.unit}
                         </span>
                       </div>
 
@@ -639,40 +755,59 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
                         ) : (
                           <p className="text-[10px] text-slate-400 italic flex items-center gap-1">
                             <HelpCircle className="w-3.5 h-3.5 opacity-60" />
-                            No remarks or chemical strain specifications provided. Add details above.
+                            {ka ? 'შენიშვნა ან სპეციფიკაცია არ არის მითითებული. დაამატეთ დეტალები ზემოთ.' : 'No remarks or chemical strain specifications provided. Add details above.'}
                           </p>
                         )}
                       </div>
+
+                      {recentUsage.length > 0 && (
+                        <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-2">
+                          <p className="text-[8px] font-bold uppercase tracking-wider text-indigo-800">
+                            {ka ? 'ბოლო ავტომატური ხარჯვა' : 'Recent automatic usage'}
+                          </p>
+                          {recentUsage.map(usage => (
+                            <div key={`${usage.operationId}-${usage.quantity}`} className="mt-1 flex items-start justify-between gap-2 text-[9px] text-indigo-950">
+                              <span className="truncate">
+                                {usage.date} · {usage.lotName} · {usage.operationType}
+                                {usage.purpose ? ` (${usage.purpose})` : ''}
+                              </span>
+                              <strong className="shrink-0">−{usage.quantity} {usage.unit}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Stock Refill / Reduce micro adjustments bar */}
+                    {/* Stock changes are posted by traceable receipt/consumption workflows. */}
                     <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-dashed border-[#e8dfd5] pt-2 text-[10px] gap-2">
                       {lowStock ? (
                         <span className="text-red-650 font-bold uppercase animate-pulse flex items-center gap-0.5">
-                          ⚠️ LOW STOCK
+                          ⚠️ {ka ? 'დაბალი მარაგი' : 'LOW STOCK'}
                         </span>
                       ) : (
                         <span className="text-emerald-700 font-mono flex items-center gap-0.5 font-bold">
-                          <CheckCircle className="w-3 h-3" /> Safe Level
+                          <CheckCircle className="w-3 h-3" /> {ka ? 'ნორმა' : 'Safe Level'}
                         </span>
                       )}
 
+                      {canUpdateInventory && (canPostInvoiceCosts || onOpenProcurement) && (
                       <div className="flex w-full sm:w-auto items-center gap-1 shrink-0">
-                        <button
-                          title="Consume Item (-Qty)"
-                          onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? -50 : -2.5)}
+                        {canPostInvoiceCosts && <button
+                          title={ka ? 'მიღება ინვოისით' : 'Receive from invoice'}
+                          onClick={() => setShowInvoiceImporter(true)}
+                          className="flex-1 sm:flex-none px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer"
+                        >
+                          {ka ? 'ინვოისით მიღება' : 'Receive invoice'}
+                        </button>}
+                        {onOpenProcurement && <button
+                          title={ka ? 'შესყიდვის ორდერის შექმნა' : 'Create purchase order'}
+                          onClick={onOpenProcurement}
                           className="flex-1 sm:flex-none px-2 py-1 bg-stone-100 text-stone-700 text-[10px] font-bold rounded-lg hover:bg-stone-200 border border-stone-200 cursor-pointer"
                         >
-                          - Consume
-                        </button>
-                        <button
-                          title="Refill Stock (+Qty)"
-                          onClick={() => adjustStockInline(item.id, item.stock, item.unit === 'units' ? 100 : 5)}
-                          className="flex-1 sm:flex-none px-2 py-1 bg-[#4e0e15] text-white text-[10px] font-bold rounded-lg hover:bg-[#6b151e] shadow-2xs cursor-pointer flex items-center justify-center gap-0.5"
-                        >
-                          + Refill
-                        </button>
+                          {ka ? 'შესყიდვა' : 'Purchase'}
+                        </button>}
                       </div>
+                      )}
                     </div>
 
                   </div>
@@ -681,13 +816,15 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
 
               {filteredItems.length === 0 && (
                 <div className="md:col-span-2 py-12 text-center border-2 border-dashed border-[#e8dfd5] rounded-xl text-slate-400 italic font-serif">
-                  <p>No materials found in the &ldquo;{selectedCategory}&rdquo; category.</p>
-                  <button
-                    onClick={() => setShowItemForm(true)}
-                    className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#801323] hover:underline cursor-pointer"
-                  >
-                    + Register the first stockpile material here
-                  </button>
+                  <p>{ka ? `„${catLabel(selectedCategory)}" კატეგორიაში პროდუქტი არ მოიძებნა.` : `No materials found in the "${selectedCategory}" category.`}</p>
+                  {canCreateInventory && (
+                    <button
+                      onClick={() => setShowItemForm(true)}
+                      className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#801323] hover:underline cursor-pointer"
+                    >
+                      + {ka ? 'დაარეგისტრირეთ პირველი პროდუქტი აქ' : 'Register the first stockpile material here'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -701,3 +838,11 @@ export default function InventoryTab({ inventory, onUpdateInventory }: Props) {
     </div>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(InventoryTab);

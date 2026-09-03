@@ -1,0 +1,111 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency_audit:
+    name: Production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Block high and critical production advisories
+        run: npm audit --omit=dev --audit-level=high
+
+  verify:
+    name: Release gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cellarflow
+          POSTGRES_PASSWORD: cellarflow-test-password
+          POSTGRES_DB: cellarflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cellarflow -d cellarflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx --no-install prisma generate
+
+      - name: Apply committed PostgreSQL migrations
+        env:
+          DATABASE_URL: postgresql://cellarflow:cellarflow-test-password@127.0.0.1:5432/cellarflow_test?schema=public
+        run: npm run db:migrate:deploy
+
+      - name: Reject PostgreSQL schema drift
+        env:
+          DATABASE_URL: postgresql://cellarflow:cellarflow-test-password@127.0.0.1:5432/cellarflow_test?schema=public
+        run: >-
+          npx --no-install prisma migrate diff
+          --from-url "$DATABASE_URL"
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
+
+      - name: Prove PostgreSQL migration and tenant isolation contracts
+        env:
+          TEST_DATABASE_URL: postgresql://cellarflow:cellarflow-test-password@127.0.0.1:5432/cellarflow_test?schema=public
+        run: npm run test:postgres
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint source
+        run: npm run lint
+
+      - name: Run the pre-build test suite
+        run: npm test
+
+      - name: Build production assets
+        run: npm run build
+
+      - name: Enforce fresh bundle budgets
+        run: npm test -- tests/bundleBudget.test.ts
+
+      - name: Smoke-test production startup
+        run: npm run test:production-smoke
+
+      - name: Install Chromium for release journeys
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Run browser release journeys
+        run: npm run test:e2e

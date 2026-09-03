@@ -24,6 +24,10 @@ const escapeHtml = (s: string) =>
  * Self-contained print-ready HTML: an A4 grid of cut-out labels. Kept as plain
  * HTML (like the settlement statement) so it prints identically everywhere and
  * needs no PDF dependency.
+ *
+ * The markup carries no script. A document written into a window this app
+ * opened inherits the app's CSP, and `script-src` allows no inline script — so
+ * the caller triggers printing from the opener once the document is closed.
  */
 export function buildQrLabelSheetHtml(opts: {
   wineryName: string;
@@ -60,6 +64,5 @@ export function buildQrLabelSheetHtml(opts: {
   .brand { font-size: 8.5px; color: #b9a99a; margin-top: 1mm; }
 </style></head><body>
   <div class="sheet">${cells}</div>
-  <script>window.print()</script>
 </body></html>`;
 }

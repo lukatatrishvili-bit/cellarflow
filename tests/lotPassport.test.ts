@@ -189,6 +189,16 @@ describe('lot passport report', () => {
       blocks: [block],
       harvests: [harvest],
       grapeIntakes: [intake],
+      cellarOps: [{
+        id: 'OP-1', commandId: 'cmd-op', recordKind: 'operation', date: '2027-10-01',
+        type: 'fining', lotId: lot.id, lotName: lot.name, operator: 'Nino', notes: '',
+        reversedByCommandId: 'cmd-op-reversal', reversalReason: 'Wrong lot selected.',
+      }, {
+        id: 'OP-1-REV', commandId: 'cmd-op-reversal', recordKind: 'reversal', date: '2027-10-02',
+        type: 'correction', customLabel: 'Reversal of fining', lotId: lot.id, lotName: lot.name,
+        operator: 'Owner', notes: 'Wrong lot selected.', reversalOfOperationId: 'OP-1',
+        reversalOfCommandId: 'cmd-op', reversalReason: 'Wrong lot selected.',
+      }],
       bottlingRuns: [{ id: 'BOT-1', lotId: lot.id, lotName: lot.name, date: '2027-11-20', lotNumber: 'K-1', operator: 'Nino', formats: {}, totalBottles: 3000, totalCeramic: 0, volumeBottledL: 2250 }],
       stockMovements: [{ id: 'MOVE-1', date: '2027-11-20', lotId: lot.id, locationId: 'WH-1', direction: 'in', bottles: 3000, reason: 'bottling' }],
       storageLocations: [{ id: 'WH-1', name: 'Main Warehouse', type: 'warehouse' }],
@@ -208,5 +218,45 @@ describe('lot passport report', () => {
     expect(html).toContain('sha256:aaaaaaaaaaaa');
     expect(html).toContain('Restaurant');
     expect(html).toContain('Audit History');
+    expect(html).toContain('Cellar operation (reversed)');
+    expect(html).toContain('Cellar operation correction');
+    expect(html).toContain('Wrong lot selected.');
+    // Nothing warns about completeness when the history was retrieved.
+    expect(html).not.toContain('this section is incomplete');
+    expect(html).not.toContain('Audit history was unavailable');
+  });
+
+  it('states plainly when the audit history could not be retrieved', () => {
+    // The client holds only a recent window of the chain, so a lot older than
+    // the window would otherwise render an audit section that looks complete
+    // but silently omits rows. A compliance document must not do that.
+    const html = buildPassportHtml({
+      lot,
+      company,
+      generatedBy: 'Nino',
+      fermLogs: [],
+      labLogs: [lab],
+      auditLogs: [],
+      auditHistoryComplete: false,
+    });
+
+    expect(html).toContain('Audit History');
+    expect(html).toContain('this section is incomplete');
+    expect(html).toContain('Audit history was unavailable');
+    expect(html).toContain('Regenerate while connected');
+  });
+
+  it('does not warn when a lot genuinely has no audit entries', () => {
+    const html = buildPassportHtml({
+      lot,
+      company,
+      generatedBy: 'Nino',
+      fermLogs: [],
+      labLogs: [lab],
+      auditLogs: [],
+    });
+
+    expect(html).toContain('No audit entries were found for this lot.');
+    expect(html).not.toContain('Audit history was unavailable');
   });
 });

@@ -16,6 +16,7 @@ import {
   Wine,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
+import DateInput from './ui/DateInput';
 import type {
   BottlingRunRecord,
   CertificationApplicationStatus,
@@ -28,7 +29,9 @@ import type {
   WineLot,
   DocumentAttachment,
 } from '../lib/wineryState';
+import { isActiveHarvestIntake } from '../lib/harvestIntakeIntegrity';
 import { evaluateCertificationChecklist, requiredLabParameters } from '../lib/certification';
+import { isActiveBottlingRun } from '../lib/bottlingIntegrity';
 import { checkPdoEligibility, findPdoCandidates, getPdoRule, PDO_RULES } from '../lib/pdo';
 import {
   attachmentUploadPreflightError,
@@ -36,6 +39,7 @@ import {
   checksumAttachmentDataUrl,
   formatAttachmentSize,
   getAttachmentAccess,
+  SUPPORTED_ATTACHMENT_ACCEPT,
   type DocumentAttachmentInput,
 } from '../lib/attachments';
 import {
@@ -156,7 +160,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-export default function CertificationManagerTab({
+export function CertificationManagerTab({
   lang,
   lots,
   blocks,
@@ -196,8 +200,8 @@ export default function CertificationManagerTab({
 
   const linkedIntake = useMemo(() => {
     if (!selectedLot) return undefined;
-    return grapeIntakes.find(intake => intake.createdLotId === selectedLot.id)
-      || grapeIntakes.find(intake => intake.blockName === selectedLot.vineyardBlock);
+    return grapeIntakes.find(intake => isActiveHarvestIntake(intake) && intake.createdLotId === selectedLot.id)
+      || grapeIntakes.find(intake => isActiveHarvestIntake(intake) && intake.blockName === selectedLot.vineyardBlock);
   }, [grapeIntakes, selectedLot]);
 
   const linkedBlock = useMemo(() => {
@@ -254,7 +258,7 @@ export default function CertificationManagerTab({
   const relatedBottlingRuns = useMemo(() => {
     if (!selectedLot) return [];
     return bottlingRuns
-      .filter(run => run.lotId === selectedLot.id)
+      .filter(run => run.lotId === selectedLot.id && isActiveBottlingRun(run))
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [bottlingRuns, selectedLot]);
 
@@ -274,6 +278,7 @@ export default function CertificationManagerTab({
   );
 
   const updateForm = <K extends keyof CertificationRecord>(key: K, value: CertificationRecord[K]) => {
+    if (!canManageCertification) return;
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
@@ -289,6 +294,11 @@ export default function CertificationManagerTab({
     event: React.ChangeEvent<HTMLInputElement>,
     kind: 'lab_protocol' | 'certificate_file',
   ) => {
+    if (!canManageCertification) {
+      event.target.value = '';
+      setToastMessage?.('Your role can view certification evidence but cannot upload files.');
+      return;
+    }
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
@@ -365,6 +375,10 @@ export default function CertificationManagerTab({
 
   const applyPdoToLot = () => {
     if (!selectedLot || !pdoResult) return;
+    if (!canManageCertification) {
+      setToastMessage?.('Your role can review PDO eligibility but cannot update the wine lot.');
+      return;
+    }
     const originProofStatus: WineLot['originProofStatus'] = pdoResult.eligible ? 'verified' : 'partial';
     onUpdateLots(lots.map(lot => lot.id === selectedLot.id ? {
       ...lot,
@@ -399,29 +413,39 @@ export default function CertificationManagerTab({
   const tone = readiness ? readinessTone(readiness.score, readiness.missingCritical.length) : 'info';
   const pdoTone = pdoResult?.eligible ? 'success' : pdoResult ? 'warning' : 'neutral';
   const pdoIssueCount = (pdoResult?.warnings.length || 0) + (pdoResult?.missing.length || 0);
+  const editableControlClass = 'w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-500 disabled:opacity-80 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100 dark:disabled:bg-stone-900 dark:disabled:text-stone-500';
 
   return (
     <main className="flex-1 max-w-[1720px] w-full mx-auto p-4 lg:p-6 space-y-5">
       <PageHeader
         eyebrow={isKa ? 'Agency workflow' : 'Agency workflow'}
         title={isKa ? 'Certification Manager' : 'Certification Manager'}
-        description={isKa
-          ? 'Track sample preparation, lab protocol, organoleptic result, balance check, and issued certificate for each lot.'
-          : 'Track sample preparation, lab protocol, organoleptic result, balance check, and issued certificate for each lot.'}
         icon={BadgeCheck}
-        actions={
+        actions={canManageCertification ? (
           <ActionButton onClick={saveRecord} disabled={!canManageCertification}>
             <Save className="mr-2 h-4 w-4" />
             {isKa ? 'Save' : 'Save'}
           </ActionButton>
-        }
+        ) : undefined}
       />
+
+      {!canManageCertification && (
+        <InlineNotice tone="neutral">
+          <strong className="block text-stone-800 dark:text-stone-100">
+            {isKa ? 'სერტიფიკაციის მხოლოდ ნახვის რეჟიმი' : 'Read-only certification access'}
+          </strong>
+          <span className="mt-0.5 block">
+            {isKa
+              ? 'შეგიძლიათ ჩანაწერებისა და მტკიცებულებების ნახვა, მაგრამ თქვენი როლი ცვლილებებს ვერ შეიტანს.'
+              : 'You can review certification records, eligibility, and evidence, but your role cannot change them.'}
+          </span>
+        </InlineNotice>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)] gap-5">
         <div className="space-y-5 min-w-0">
           <SectionCard
             title={isKa ? 'Lot and certification file' : 'Lot and certification file'}
-            subtitle={selectedLot ? `${selectedLot.name} - ${selectedLot.id}` : undefined}
             icon={ClipboardList}
             actions={
               <StatusBadge tone={form.applicationStatus === 'approved' ? 'success' : form.applicationStatus === 'rejected' ? 'danger' : 'info'}>
@@ -437,7 +461,7 @@ export default function CertificationManagerTab({
                   onChange={event => setSelectedLotId(event.target.value)}
                   className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
                 >
-                  {lots.map(lot => (
+                  {lots.filter(lot => !lot.voidedAt).map(lot => (
                     <option key={lot.id} value={lot.id}>
                       {lot.name} ({lot.id})
                     </option>
@@ -450,7 +474,8 @@ export default function CertificationManagerTab({
                 <select aria-label="Product type"
                   value={form.productType}
                   onChange={event => updateForm('productType', event.target.value as CertificationProductType)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 >
                   {PRODUCT_OPTIONS.map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -463,7 +488,8 @@ export default function CertificationManagerTab({
                 <select aria-label="Application status"
                   value={form.applicationStatus}
                   onChange={event => updateForm('applicationStatus', event.target.value as CertificationApplicationStatus)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 >
                   {STATUS_OPTIONS.map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -476,7 +502,8 @@ export default function CertificationManagerTab({
                 <select aria-label="Market purpose"
                   value={form.purpose || 'local_market'}
                   onChange={event => updateForm('purpose', event.target.value as CertificationRecord['purpose'])}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 >
                   <option value="local_market">Local market</option>
                   <option value="export">Export</option>
@@ -487,7 +514,6 @@ export default function CertificationManagerTab({
 
           <SectionCard
             title={isKa ? 'PDO / Appellation checker' : 'PDO / Appellation checker'}
-            subtitle={selectedLot ? `${selectedLot.variety} - ${selectedLot.vintage}` : undefined}
             icon={Compass}
             actions={
               pdoResult ? (
@@ -513,10 +539,12 @@ export default function CertificationManagerTab({
                     ))}
                   </select>
                 </label>
-                <ActionButton onClick={applyPdoToLot} disabled={!pdoResult}>
-                  <BadgeCheck className="mr-2 h-4 w-4" />
-                  {isKa ? 'Apply PDO' : 'Apply PDO'}
-                </ActionButton>
+                {canManageCertification && (
+                  <ActionButton onClick={applyPdoToLot} disabled={!pdoResult}>
+                    <BadgeCheck className="mr-2 h-4 w-4" />
+                    {isKa ? 'Apply PDO' : 'Apply PDO'}
+                  </ActionButton>
+                )}
               </div>
 
               {pdoCandidates.length > 0 && (
@@ -553,6 +581,8 @@ export default function CertificationManagerTab({
                     {[
                       ['Lot appellation', selectedLot?.intendedAppellation],
                       ['Block microzone', linkedBlock?.microzone],
+                      ['Municipality', linkedIntake?.municipality || linkedBlock?.municipality],
+                      ['Community', linkedIntake?.community || linkedBlock?.community],
                       ['Village', linkedIntake?.village || linkedBlock?.village],
                       ['Cadastral code', linkedIntake?.cadastralCode || linkedBlock?.cadastralCode],
                       ['Grape sugar', linkedIntake?.brix ? `${linkedIntake.brix} Brix` : undefined],
@@ -608,7 +638,8 @@ export default function CertificationManagerTab({
                     type="checkbox"
                     checked={form.samplePrepared}
                     onChange={event => updateForm('samplePrepared', event.target.checked)}
-                    className="h-4 w-4 accent-[#4e0e15]"
+                    disabled={!canManageCertification}
+                    className="h-4 w-4 accent-[#4e0e15] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                   {isKa ? 'Sample prepared' : 'Sample prepared'}
                 </span>
@@ -616,11 +647,12 @@ export default function CertificationManagerTab({
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Sample date' : 'Sample date'}</FieldLabel>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={form.sampleDate || ''}
-                  onChange={event => updateForm('sampleDate', event.target.value || undefined)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  onValueChange={value => updateForm('sampleDate', value || undefined)}
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 />
               </label>
 
@@ -631,7 +663,8 @@ export default function CertificationManagerTab({
                   min="0"
                   value={form.sampleQuantity ?? ''}
                   onChange={event => updateForm('sampleQuantity', event.target.value === '' ? undefined : Number(event.target.value))}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                   placeholder="2"
                 />
               </label>
@@ -642,7 +675,8 @@ export default function CertificationManagerTab({
                     type="checkbox"
                     checked={form.labProtocolUploaded}
                     onChange={event => updateForm('labProtocolUploaded', event.target.checked)}
-                    className="h-4 w-4 accent-[#4e0e15]"
+                    disabled={!canManageCertification}
+                    className="h-4 w-4 accent-[#4e0e15] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                   {isKa ? 'Lab protocol uploaded' : 'Lab protocol uploaded'}
                 </span>
@@ -653,20 +687,22 @@ export default function CertificationManagerTab({
                 <input
                   value={form.labProtocolFileName || ''}
                   onChange={event => updateForm('labProtocolFileName', event.target.value || undefined)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                   placeholder="protocol.pdf"
                 />
-                <span className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-stone-300 bg-stone-50 px-3 py-2 text-[10px] font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950/40 dark:text-stone-300">
-                  <UploadCloud className="h-3.5 w-3.5 text-[#4e0e15]" />
-                  <span className="shrink-0">{isKa ? 'Upload' : 'Upload'}</span>
-                  <input
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv"
-                    disabled={!canManageCertification || !onAddAttachment}
-                    onChange={event => handleAttachmentUpload(event, 'lab_protocol')}
-                    className="min-w-0 flex-1 text-[10px] disabled:opacity-50"
-                  />
-                </span>
+                {canManageCertification && onAddAttachment && (
+                  <span className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-stone-300 bg-stone-50 px-3 py-2 text-[10px] font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950/40 dark:text-stone-300">
+                    <UploadCloud className="h-3.5 w-3.5 text-[#4e0e15]" />
+                    <span className="shrink-0">{isKa ? 'Upload' : 'Upload'}</span>
+                    <input
+                      type="file"
+                      accept={SUPPORTED_ATTACHMENT_ACCEPT}
+                      onChange={event => handleAttachmentUpload(event, 'lab_protocol')}
+                      className="min-w-0 flex-1 text-[10px]"
+                    />
+                  </span>
+                )}
               </label>
 
               <label className="rounded-xl border border-stone-200 bg-stone-50/70 p-3 dark:border-stone-800 dark:bg-stone-950/30">
@@ -675,7 +711,8 @@ export default function CertificationManagerTab({
                     type="checkbox"
                     checked={form.organolepticCheckRequired ?? true}
                     onChange={event => updateForm('organolepticCheckRequired', event.target.checked)}
-                    className="h-4 w-4 accent-[#4e0e15]"
+                    disabled={!canManageCertification}
+                    className="h-4 w-4 accent-[#4e0e15] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                   {isKa ? 'Organoleptic check' : 'Organoleptic check'}
                 </span>
@@ -686,7 +723,8 @@ export default function CertificationManagerTab({
                 <select aria-label="Organoleptic result"
                   value={form.organolepticResult || 'pending'}
                   onChange={event => updateForm('organolepticResult', event.target.value as CertificationRecord['organolepticResult'])}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 >
                   {ORGANOLEPTIC_OPTIONS.map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -699,7 +737,8 @@ export default function CertificationManagerTab({
                 <select aria-label="Balance check"
                   value={form.balanceCheckStatus || 'pending'}
                   onChange={event => updateForm('balanceCheckStatus', event.target.value as CertificationRecord['balanceCheckStatus'])}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 >
                   {BALANCE_OPTIONS.map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -716,7 +755,8 @@ export default function CertificationManagerTab({
                 <input
                   value={form.certificateNumber || ''}
                   onChange={event => updateForm('certificateNumber', event.target.value || undefined)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                   placeholder="NWA-2026-0001"
                 />
               </label>
@@ -726,39 +766,43 @@ export default function CertificationManagerTab({
                 <input
                   value={form.certificateFileName || ''}
                   onChange={event => updateForm('certificateFileName', event.target.value || undefined)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                   placeholder="certificate.pdf"
                 />
-                <span className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-stone-300 bg-stone-50 px-3 py-2 text-[10px] font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950/40 dark:text-stone-300">
-                  <UploadCloud className="h-3.5 w-3.5 text-[#4e0e15]" />
-                  <span className="shrink-0">{isKa ? 'Upload' : 'Upload'}</span>
-                  <input
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv"
-                    disabled={!canManageCertification || !onAddAttachment}
-                    onChange={event => handleAttachmentUpload(event, 'certificate_file')}
-                    className="min-w-0 flex-1 text-[10px] disabled:opacity-50"
-                  />
-                </span>
+                {canManageCertification && onAddAttachment && (
+                  <span className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-stone-300 bg-stone-50 px-3 py-2 text-[10px] font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950/40 dark:text-stone-300">
+                    <UploadCloud className="h-3.5 w-3.5 text-[#4e0e15]" />
+                    <span className="shrink-0">{isKa ? 'Upload' : 'Upload'}</span>
+                    <input
+                      type="file"
+                      accept={SUPPORTED_ATTACHMENT_ACCEPT}
+                      onChange={event => handleAttachmentUpload(event, 'certificate_file')}
+                      className="min-w-0 flex-1 text-[10px]"
+                    />
+                  </span>
+                )}
               </label>
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Issue date' : 'Issue date'}</FieldLabel>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={form.issueDate || ''}
-                  onChange={event => updateForm('issueDate', event.target.value || undefined)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  onValueChange={value => updateForm('issueDate', value || undefined)}
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 />
               </label>
 
               <label className="block">
                 <FieldLabel>{isKa ? 'Expiry date' : 'Expiry date'}</FieldLabel>
-                <input
-                  type="date"
+                <DateInput
+                  lang={lang}
                   value={form.expiryDate || ''}
-                  onChange={event => updateForm('expiryDate', event.target.value || undefined)}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  onValueChange={value => updateForm('expiryDate', value || undefined)}
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 />
               </label>
 
@@ -768,7 +812,8 @@ export default function CertificationManagerTab({
                   value={form.notes || ''}
                   onChange={event => updateForm('notes', event.target.value || undefined)}
                   rows={3}
-                  className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={editableControlClass}
                 />
               </label>
             </div>
@@ -840,9 +885,10 @@ export default function CertificationManagerTab({
                 <select aria-label="Bottling run"
                   value={form.bottlingRunId || ''}
                   onChange={event => updateForm('bottlingRunId', event.target.value || undefined)}
-                  className="mt-2 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#4e0e15]/20 dark:border-stone-800 dark:bg-stone-950 dark:text-stone-100"
+                  disabled={!canManageCertification}
+                  className={cx('mt-2', editableControlClass)}
                 >
-                  <option value="">No bottling run linked</option>
+                  <option value="">{isKa ? 'ჩამოსხმის პარტია არ არის მიბმული' : 'No bottling run linked'}</option>
                   {relatedBottlingRuns.map(run => (
                     <option key={run.id} value={run.id}>
                       {run.date} - {run.totalBottles + run.totalCeramic} bottles ({run.id})
@@ -861,6 +907,7 @@ export default function CertificationManagerTab({
                 <div className="rounded-xl border border-stone-200 bg-stone-50/70 p-3 text-[11px] font-semibold text-stone-600 dark:border-stone-800 dark:bg-stone-950/30 dark:text-stone-300">
                   <div className="flex justify-between gap-3"><span>Class</span><strong>{selectedLot.wineClass}</strong></div>
                   <div className="mt-1 flex justify-between gap-3"><span>Classification</span><strong>{selectedLot.classification || '-'}</strong></div>
+                  <div className="mt-1 flex justify-between gap-3"><span>Sugar category</span><strong>{selectedLot.sugarCategory || '-'}</strong></div>
                   <div className="mt-1 flex justify-between gap-3"><span>Appellation</span><strong>{selectedLot.intendedAppellation || '-'}</strong></div>
                   <div className="mt-1 flex justify-between gap-3"><span>Lot status</span><strong>{selectedLot.certificationStatus || 'not_started'}</strong></div>
                 </div>
@@ -920,3 +967,11 @@ export default function CertificationManagerTab({
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(CertificationManagerTab);

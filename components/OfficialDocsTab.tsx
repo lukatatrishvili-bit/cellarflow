@@ -6,11 +6,12 @@ import {
 import type { Language } from '../lib/i18n';
 import type {
   CompanyProfile, UserProfile, VineyardBlock, WineLot, Vessel, HarvestRecord,
-  GrapeSamplingRecord, InventoryItem, LabAnalysis, TransferEvent, GrapeIntakeRecord, CellarOperation,
+  GrapeSamplingRecord, InventoryItem, LabAnalysis, CellarTransferRecord, GrapeIntakeRecord, CellarOperation,
   BottlingRunRecord, SalesDispatchRecord, DocumentAttachment,
 } from '../lib/wineryState';
+import DateInput from './ui/DateInput';
 import {
-  listForms, buildDocument, buildFilename, type ExportContext, type FilterId, type FormTemplate,
+  listForms, buildDocument, buildFilename, type ExportContext, type FilterId,
 } from '../lib/georgianForms';
 import {
   evaluateAccountingYear,
@@ -22,14 +23,16 @@ import {
 import { buildAgencyDeadlineCalendar } from '../lib/agencyCalendar';
 import {
   attachmentsForRecord,
+  attachmentUploadPreflightError,
   checksumAttachmentDataUrl,
   formatAttachmentSize,
   getAttachmentAccess,
-  MAX_INLINE_ATTACHMENT_BYTES,
+  SUPPORTED_ATTACHMENT_ACCEPT,
   type DocumentAttachmentInput,
 } from '../lib/attachments';
 import { renderDocumentHtml } from '../lib/georgianForms/renderHtml';
 import { demoPools } from '../lib/georgianForms/demoData';
+import type { InventoryMovementRecord, InvoiceReceiptRecord } from '../lib/commands/invoiceReceipt';
 
 interface Props {
   lang: Language;
@@ -38,6 +41,7 @@ interface Props {
   blocks: VineyardBlock[];
   lots: WineLot[];
   vessels: Vessel[];
+  transfers: CellarTransferRecord[];
   harvests: HarvestRecord[];
   samplings: GrapeSamplingRecord[];
   inventory: InventoryItem[];
@@ -46,19 +50,12 @@ interface Props {
   cellarOps: CellarOperation[];
   bottlingRuns: BottlingRunRecord[];
   salesDispatches: SalesDispatchRecord[];
+  inventoryMovements: InventoryMovementRecord[];
+  invoiceReceipts: InvoiceReceiptRecord[];
   attachments?: DocumentAttachment[];
   onAddAttachment?: (attachment: DocumentAttachmentInput) => DocumentAttachment;
   onDeleteAttachment?: (attachmentId: string) => void;
   canManageOfficialDocs?: boolean;
-}
-
-function loadTransfers(): TransferEvent[] {
-  try {
-    const raw = localStorage.getItem('cf_transfers_history');
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
 }
 
 const yearStartISO = () => `${new Date().getFullYear()}-01-01`;
@@ -88,7 +85,7 @@ function missingPreview(readiness: ComplianceReadiness, lang: Language): string 
   return list.join(', ');
 }
 
-export default function OfficialDocsTab(props: Props) {
+export function OfficialDocsTab(props: Props) {
   const { lang, company, currentUser } = props;
   const ka = lang === 'ka';
   const forms = useMemo(() => listForms(), []);
@@ -109,7 +106,6 @@ export default function OfficialDocsTab(props: Props) {
   const [xlsxError, setXlsxError] = useState<string | null>(null);
   const [useDemo, setUseDemo] = useState(false);
 
-  const realTransfers = useMemo(loadTransfers, []);
   const template = useMemo(() => forms.find(f => f.id === formId)!, [forms, formId]);
   const documentAttachments = useMemo(
     () => attachmentsForRecord(props.attachments || [], 'officialDocument', formId),
@@ -117,12 +113,29 @@ export default function OfficialDocsTab(props: Props) {
   );
 
   // Data pools: the user's real (synced) data, or a self-contained demo set.
-  const pools = useDemo ? demoPools : {
+  const pools = useMemo(() => useDemo ? demoPools : ({
     blocks: props.blocks, lots: props.lots, vessels: props.vessels, harvests: props.harvests,
-    samplings: props.samplings, inventory: props.inventory, labLogs: props.labLogs, transfers: realTransfers,
+    samplings: props.samplings, inventory: props.inventory, labLogs: props.labLogs, transfers: props.transfers,
     grapeIntakes: props.grapeIntakes, cellarOps: props.cellarOps, bottlingRuns: props.bottlingRuns,
     salesDispatches: props.salesDispatches,
-  };
+    inventoryMovements: props.inventoryMovements, invoiceReceipts: props.invoiceReceipts,
+  }), [
+    props.blocks,
+    props.bottlingRuns,
+    props.cellarOps,
+    props.grapeIntakes,
+    props.harvests,
+    props.inventory,
+    props.inventoryMovements,
+    props.invoiceReceipts,
+    props.labLogs,
+    props.lots,
+    props.salesDispatches,
+    props.samplings,
+    props.transfers,
+    props.vessels,
+    useDemo,
+  ]);
 
   const ctx: ExportContext = useMemo(() => ({
     lang: ka ? 'ka' : 'en',
@@ -149,6 +162,8 @@ export default function OfficialDocsTab(props: Props) {
     cellarOps: pools.cellarOps,
     bottlingRuns: pools.bottlingRuns,
     salesDispatches: pools.salesDispatches,
+    inventoryMovements: pools.inventoryMovements,
+    invoiceReceipts: pools.invoiceReceipts,
   }), [ka, mode, blankRows, company, currentUser, from, to, accountingYear, blockId, lotId, tankId,
       productName, materialId, pools]);
 
@@ -246,8 +261,9 @@ export default function OfficialDocsTab(props: Props) {
     event.target.value = '';
     if (!file) return;
     if (!props.onAddAttachment) return;
-    if (file.size > MAX_INLINE_ATTACHMENT_BYTES) {
-      setXlsxError(`File is too large for local sync (${formatAttachmentSize(file.size)}).`);
+    const preflightError = attachmentUploadPreflightError(file, undefined, lang);
+    if (preflightError) {
+      setXlsxError(preflightError);
       return;
     }
     try {
@@ -264,8 +280,8 @@ export default function OfficialDocsTab(props: Props) {
         checksum: checksumAttachmentDataUrl(dataUrl),
       });
       setXlsxError(null);
-    } catch {
-      setXlsxError('Could not read the selected file.');
+    } catch (error) {
+      setXlsxError(error instanceof Error && error.message ? error.message : (ka ? 'შეცდომა ფაილის წაკითხვისას.' : 'Could not read the selected file.'));
     }
   };
 
@@ -286,11 +302,6 @@ export default function OfficialDocsTab(props: Props) {
           <ShieldCheck className="w-5 h-5 text-[#4e0e15]" />
           {ka ? 'ოფიციალური დოკუმენტები' : 'Official Documents'}
         </h3>
-        <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5">
-          {ka
-            ? 'მევენახეობა-მეღვინეობის ტექნოლოგიური პროცესების აღრიცხვა — დანართები №1–№20'
-            : 'Viticulture & winemaking traceability forms — Annexes №1–№20'}
-        </p>
       </div>
 
       <section className="grid grid-cols-1 xl:grid-cols-[1fr_1.2fr] gap-5">
@@ -333,7 +344,7 @@ export default function OfficialDocsTab(props: Props) {
             </span>
             <span className="text-[9px] font-mono text-stone-400 uppercase">{accountingYear}</span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-2">
             {agencyReminders.map(reminder => (
               <button
                 key={reminder.id}
@@ -357,7 +368,7 @@ export default function OfficialDocsTab(props: Props) {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">
         {/* ── Controls ─────────────────────────────────────────── */}
         <div className="space-y-4">
           {/* Form picker */}
@@ -380,15 +391,15 @@ export default function OfficialDocsTab(props: Props) {
           {/* Attachment evidence */}
           <div className="bg-white border border-[#e8dfd5] p-4 rounded-2xl shadow-sm space-y-3 dark:bg-stone-900 dark:border-stone-800">
             <div className="flex items-center justify-between gap-3">
-              <label className={labelCls}>{ka ? 'áƒ›áƒ¢áƒ™áƒ˜áƒªáƒ”áƒ‘áƒ£áƒšáƒ”áƒ‘áƒ”áƒ‘áƒ˜' : 'Document evidence'}</label>
+              <label className={labelCls}>{ka ? 'მტკიცებულებები' : 'Document evidence'}</label>
               <span className="text-[9px] font-mono text-stone-400 uppercase">{documentAttachments.length} files</span>
             </div>
             <label className="flex items-center gap-2 rounded-xl border border-dashed border-stone-300 bg-stone-50 px-3 py-2 text-[10px] font-bold text-stone-600 dark:border-stone-800 dark:bg-stone-950/40 dark:text-stone-300">
               <UploadCloud className="h-3.5 w-3.5 text-[#4e0e15]" />
-              <span className="shrink-0">{ka ? 'áƒáƒ¢áƒ•áƒ˜áƒ áƒ—áƒ•áƒ' : 'Upload'}</span>
+              <span className="shrink-0">{ka ? 'ატვირთვა' : 'Upload'}</span>
               <input
                 type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.csv"
+                accept={SUPPORTED_ATTACHMENT_ACCEPT}
                 disabled={!props.canManageOfficialDocs || !props.onAddAttachment}
                 onChange={handleDocumentAttachmentUpload}
                 className="min-w-0 flex-1 text-[10px] disabled:opacity-50"
@@ -397,7 +408,7 @@ export default function OfficialDocsTab(props: Props) {
             <div className="space-y-2">
               {documentAttachments.length === 0 ? (
                 <div className="rounded-xl border border-stone-200 bg-stone-50/70 px-3 py-2 text-[10px] text-stone-500 dark:border-stone-800 dark:bg-stone-950/30">
-                  {ka ? 'áƒáƒ› áƒ“áƒáƒœáƒáƒ áƒ—áƒ–áƒ” áƒ¤áƒáƒ˜áƒšáƒ˜ áƒ¯áƒ”áƒ  áƒáƒ  áƒáƒ áƒ˜áƒ¡ áƒ›áƒ˜áƒ‘áƒ›áƒ£áƒšáƒ˜.' : 'No files are linked to this annex yet.'}
+                  {ka ? 'ამ დანართზე ფაილი ჯერ არ არის მიბმული.' : 'No files are linked to this annex yet.'}
                 </div>
               ) : documentAttachments.map(attachment => {
                 const access = getAttachmentAccess(attachment);
@@ -429,8 +440,8 @@ export default function OfficialDocsTab(props: Props) {
                         type="button"
                         onClick={() => props.onDeleteAttachment?.(attachment.id)}
                         className="rounded-lg border border-stone-200 bg-white p-1 text-stone-500 transition-colors hover:border-rose-200 hover:text-rose-700 dark:border-stone-800 dark:bg-stone-900"
-                        title={ka ? 'Remove evidence' : 'Remove evidence'}
-                        aria-label={ka ? 'Remove evidence' : 'Remove evidence'}
+                        title={ka ? 'მტკიცებულების წაშლა' : 'Remove evidence'}
+                        aria-label={ka ? 'მტკიცებულების წაშლა' : 'Remove evidence'}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -483,11 +494,11 @@ export default function OfficialDocsTab(props: Props) {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className={labelCls}>{ka ? 'დან' : 'From'}</label>
-                  <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} aria-label={ka ? 'თარიღიდან' : 'From date'} />
+                  <DateInput lang={lang} value={from} onValueChange={setFrom} className={inputCls} aria-label={ka ? 'თარიღიდან' : 'From date'} />
                 </div>
                 <div>
                   <label className={labelCls}>{ka ? 'მდე' : 'To'}</label>
-                  <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} aria-label={ka ? 'თარიღამდე' : 'To date'} />
+                  <DateInput lang={lang} value={to} onValueChange={setTo} className={inputCls} aria-label={ka ? 'თარიღამდე' : 'To date'} />
                 </div>
               </div>
             )}
@@ -531,9 +542,9 @@ export default function OfficialDocsTab(props: Props) {
 
             {has('material') && (
               <div>
-                <label className={labelCls}>{ka ? 'მასალა' : 'Material'}</label>
+                <label className={labelCls}>{ka ? 'პროდუქტი' : 'Material'}</label>
                 <select value={materialId} onChange={e => setMaterialId(e.target.value)} className={inputCls}>
-                  <option value="">{ka ? 'ყველა მასალა' : 'All materials'}</option>
+                  <option value="">{ka ? 'ყველა პროდუქტი' : 'All materials'}</option>
                   {pools.inventory.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                 </select>
               </div>
@@ -608,3 +619,11 @@ export default function OfficialDocsTab(props: Props) {
     </main>
   );
 }
+
+/**
+ * Memoized: `useWineryState` hands out stable handler identities, so a state
+ * change elsewhere in the app (a toast, a sync timestamp, another module's
+ * records) leaves this component’s props referentially equal and React skips
+ * the re-render entirely.
+ */
+export default React.memo(OfficialDocsTab);

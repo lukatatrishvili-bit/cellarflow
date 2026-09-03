@@ -1,16 +1,30 @@
+import crypto from 'crypto';
 import express from 'express';
 import {
   parseCookies,
   sessionCookie,
   clearSessionCookie,
   checkWineryScope,
-} from '../middleware/auth';
+  liveSessionRole,
+
+  accountRecoveryLimiter,
+  invitationLimiter,
+  loginLimiter,
+  oauthCallbackLimiter,
+  registrationApprovalLimiter} from '../middleware/auth';
 import {
   verifySessionToken,
   createSessionToken,
   hashPassword,
   verifyPassword,
   passwordNeedsUpgrade,
+  passcodeValidationError,
+  sameNormalizedEmail,
+  uniqueUsernameForEmail,
+  sessionMatchesUserVersion,
+  sessionPayloadForUser,
+  sessionVersionForUser,
+  userAccountIsEnabled,
 } from '../auth';
 import {
   getDB,
@@ -19,9 +33,31 @@ import {
   getUserData,
   createEmptyUserData,
   refreshCoreMetadataFromPostgres,
+  acceptInvitationAtomically,
 } from '../db';
-import { generateVerificationToken, isVerificationTokenValid, isValidEmail } from '../emailVerification';
-import { sendMail, buildVerificationEmail, buildResetPasswordEmail, buildInvitationEmail } from '../mailer';
+import { generateVerificationToken, hashToken, isVerificationTokenValid, isValidEmail } from '../emailVerification';
+import {
+  sendMail,
+  buildVerificationEmail,
+  buildResetPasswordEmail,
+  buildInvitationEmail,
+  buildRegistrationApprovalRequestEmail,
+} from '../mailer';
+import {
+  applyApprovalDecision,
+  approvalNotificationRecipient,
+  approvalStatusForUser,
+  approvalTokenMatches,
+  describeApprovalRequest,
+  generateApprovalToken,
+  markAwaitingApproval,
+  registrationApprovalRequired,
+  renderApprovalResultPage,
+  renderApprovalReviewPage,
+  sendApprovalDecisionNotice,
+  type ApprovalToken,
+} from '../registrationApproval';
+import { startOrganizationTrial } from '../billing/service';
 import { createDemoUser } from '../demoAccount';
 import {
   cleanEnv,
@@ -29,11 +65,23 @@ import {
   updateEnvFile,
   appBaseUrl,
   clientIp,
+  COOKIE_SECURE,
   demoAccountConfig,
 } from '../config';
 import { isRuntimeOAuthConfigAllowed, oauthConfigBlockedMessage } from '../oauthConfigPolicy';
-import { loginLimiter } from '../middleware/auth';
 import { isKnownRole, type Role } from '../permissions';
+import { auditSecurityEvent } from '../securityAudit';
+import type { SharedLoginLimiter } from '../loginLimiter';
+import { normalizeInternationalPhone } from '../phone';
+import {
+  registrationApprovalBlockers,
+  validateRegistrationIdentity,
+  validateRegistrationPhone,
+} from '../registrationProfile';
+import {
+  getAiNotificationAccountStatus,
+  getAiNotificationPreference,
+} from '../aiNotificationPreferences';
 
 const authRouter = express.Router();
 const orgRouter = express.Router();
@@ -51,6 +99,80 @@ const WIDGET_MODULES: Record<string, 'vazi' | 'gvino' | null> = {
   tasks: null,
   audit: null,
 };
+const GOOGLE_OAUTH_STATE_COOKIE = 'vinos_google_oauth_state';
+const GOOGLE_REGISTRATION_COOKIE = 'vinos_google_registration';
+const GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS = 10 * 60;
+const GOOGLE_REGISTRATION_MAX_AGE_SECONDS = 30 * 60;
+
+function temporaryCookie(name: string, value: string, maxAgeSeconds: number): string {
+  const parts = [
+    `${name}=${value}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (COOKIE_SECURE) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function clearTemporaryCookie(name: string): string {
+  return temporaryCookie(name, '', 0);
+}
+
+function appendSetCookie(res: express.Response, cookie: string): void {
+  const current = res.getHeader('Set-Cookie');
+  if (!current) {
+    res.setHeader('Set-Cookie', cookie);
+  } else if (Array.isArray(current)) {
+    res.setHeader('Set-Cookie', [...current.map(String), cookie]);
+  } else {
+    res.setHeader('Set-Cookie', [String(current), cookie]);
+  }
+}
+
+function secureEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function googleRegistrationSession(req: express.Request): any | null {
+  const token = parseCookies(req.headers.cookie)[GOOGLE_REGISTRATION_COOKIE];
+  const session = verifySessionToken(token);
+  return session?.purpose === 'google_registration' ? session : null;
+}
+
+function rateLimitKey(scope: string, req: express.Request, subject = ''): string {
+  return `rate:${scope}:${hashToken(`${clientIp(req)}:${subject.trim().toLowerCase()}`)}`;
+}
+
+async function consumeRateLimit(
+  limiter: SharedLoginLimiter,
+  keys: string[],
+  res: express.Response,
+): Promise<boolean> {
+  const uniqueKeys = Array.from(new Set(keys));
+  for (const key of uniqueKeys) {
+    const remaining = await limiter.lockRemainingSeconds(key);
+    if (remaining > 0) {
+      res.setHeader('Retry-After', String(remaining));
+      res.status(429).json({ error: 'Too many requests. Try again later.' });
+      return false;
+    }
+  }
+  await Promise.all(uniqueKeys.map(key => limiter.recordFailure(key)));
+  return true;
+}
+
+function validSessionForUser(session: any, user: any): boolean {
+  return Boolean(
+    session
+    && userAccountIsEnabled(user)
+    && approvalStatusForUser(user) === 'approved'
+    && sessionMatchesUserVersion(session, user),
+  );
+}
 
 function cleanText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -120,11 +242,38 @@ function publicUser(user: any, extra: Record<string, unknown> = {}) {
     fullName: user.fullName,
     role: normalizeRole(user.role),
     language: normalizeLanguage(user.language),
+    phone: cleanText(user.phone),
     enabledModules: modules,
     enabledWidgets: selectedWidgets(user.enabledWidgets, modules),
     registrationComplete: user.registrationComplete ?? true,
+    isMasterAdmin: false,
     ...extra,
   };
+}
+
+function activeMembershipRole(db: any, user: any): Role {
+  const membership = user?.activeOrganizationId
+    ? db.memberships?.find((item: any) => item.userId === user.username && item.organizationId === user.activeOrganizationId)
+    : null;
+  return normalizeRole(membership?.role, normalizeRole(user?.role));
+}
+
+export function publicUserForActiveOrganization(
+  db: any,
+  user: any,
+  extra: Record<string, unknown> = {},
+) {
+  return publicUser(user, { ...extra, role: activeMembershipRole(db, user) });
+}
+
+export interface OrganizationSwitchSuccess {
+  ok: true;
+  activeOrganizationId: string;
+  role: Role;
+}
+
+export function buildOrganizationSwitchResponse(activeOrganizationId: string, role: Role): OrganizationSwitchSuccess {
+  return { ok: true, activeOrganizationId, role };
 }
 
 function ensureDbCollections(db: any): void {
@@ -157,38 +306,100 @@ const getRedirectUri = (req: any) => {
   return `${appBaseUrl(req)}/api/auth/google/callback`;
 };
 
+const APPROVAL_REVIEW_PATH = '/api/auth/registration-approval';
+
+function approvalReviewLink(req: express.Request, token: ApprovalToken): string {
+  return `${appBaseUrl(req)}${APPROVAL_REVIEW_PATH}?token=${token.token}`;
+}
+
+/**
+ * Tell the deployment operator that somebody is waiting for access. Delivery is
+ * best effort on purpose: the account is already locked, and every pending
+ * request is also listed in the master admin console, so a mail outage must not
+ * turn into a failed registration.
+ */
+async function notifyApprovalReviewer(
+  req: express.Request,
+  user: any,
+  companyProfile: any,
+  reviewLink: string,
+): Promise<boolean> {
+  const recipient = approvalNotificationRecipient();
+  if (!recipient) {
+    console.warn('[auth] No REGISTRATION_APPROVAL_EMAIL configured — approve new accounts from the master admin console.');
+    return false;
+  }
+  try {
+    await sendMail(buildRegistrationApprovalRequestEmail({
+      to: recipient,
+      applicant: describeApprovalRequest(user, companyProfile),
+      reviewLink,
+    }));
+    return true;
+  } catch {
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { purpose: 'registration_approval' },
+    });
+    return false;
+  }
+}
+
+/** Sign-in refusal for an account that no operator has cleared yet. */
+function approvalBlockResponse(res: express.Response, status: 'pending' | 'rejected') {
+  if (status === 'rejected') {
+    return res.status(403).json({
+      error: 'This account was not approved for access. Contact the workspace administrator if you think that is a mistake.',
+      code: 'approval_rejected',
+    });
+  }
+  return res.status(403).json({
+    error: 'Your account is waiting for administrator approval. You will get an email as soon as it is reviewed.',
+    code: 'approval_pending',
+  });
+}
+
 // ── Authentication Endpoints ──────────────────────────────────────────
 
 authRouter.post('/register', async (req, res) => {
-  const { username, email, fullName, role, language, passcode, companyProfile } = req.body;
+  const { username, email, firstName, lastName, fullName, language, passcode, companyProfile } = req.body;
 
-  if (!username || !passcode) {
-    return res.status(400).json({ error: 'Username and passcode are required' });
+  if (!passcode) {
+    return res.status(400).json({ error: 'A password is required' });
+  }
+  const passcodeError = passcodeValidationError(passcode);
+  if (passcodeError) {
+    return res.status(400).json({ error: passcodeError });
   }
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'A valid email address is required' });
   }
-  const cleanFullName = cleanText(fullName);
-  if (!cleanFullName) {
-    return res.status(400).json({ error: 'Full name is required' });
+  const identity = validateRegistrationIdentity({ firstName, lastName, fullName });
+  if (!identity.ok) {
+    return res.status(400).json(identity.issue);
   }
-  if (!isKnownRole(role)) {
-    return res.status(400).json({ error: 'A valid role is required' });
+  const phone = validateRegistrationPhone(companyProfile?.phone);
+  if (!phone.ok) {
+    return res.status(400).json(phone.issue);
   }
-
-  const enabledModules = selectedModules(req.body?.enabledModules);
-  if (enabledModules.length === 0) {
-    return res.status(400).json({ error: 'Select at least one workspace module' });
-  }
+  const enabledModules = selectedModules(req.body?.enabledModules, DEFAULT_MODULES);
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const cleanUsername = String(username).toLowerCase().replace(/\s+/g, '_');
   const cleanEmail = String(email).toLowerCase().trim();
+  const requestedUsername = cleanText(username).toLowerCase().replace(/\s+/g, '_');
+  const cleanUsername = requestedUsername || uniqueUsernameForEmail(
+    cleanEmail,
+    db.users.map(user => user.username),
+  );
   const normalizedCompanyProfile = normalizeCompanyProfile(companyProfile, cleanEmail);
   if (!normalizedCompanyProfile.companyName) {
-    return res.status(400).json({ error: 'Company or estate name is required' });
+    return res.status(400).json({ error: 'Company or estate name is required', code: 'company_name_required' });
   }
+  normalizedCompanyProfile.phone = phone.value;
   const enabledWidgets = selectedWidgets(req.body?.enabledWidgets, enabledModules);
 
   if (db.users.find(u => u.username === cleanUsername)) {
@@ -199,7 +410,9 @@ authRouter.post('/register', async (req, res) => {
   }
 
   const verification = generateVerificationToken();
-  
+  const approvalRequired = registrationApprovalRequired();
+  const approvalToken = generateApprovalToken();
+
   const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
   const org = { id: orgId, name: normalizedCompanyProfile.companyName };
   ensureDbCollections(db);
@@ -212,18 +425,25 @@ authRouter.post('/register', async (req, res) => {
   const user: any = {
     username: cleanUsername,
     email: cleanEmail,
-    fullName: cleanFullName,
-    role,
+    fullName: identity.value.fullName,
+    role: 'Owner/Admin',
     language: normalizeLanguage(language),
+    phone: phone.value,
     passwordHash: hashPassword(passcode || 'vinea2026'),
     enabledModules,
     enabledWidgets,
-    registrationComplete: true,
+    registrationComplete: false,
     emailVerified: false,
     verifyTokenHash: verification.tokenHash,
     verifyTokenExpires: verification.expiresAt,
     activeOrganizationId: orgId,
+    accountEnabled: true,
+    sessionVersion: 1,
+    approvalStatus: 'approved',
   };
+  if (approvalRequired) {
+    markAwaitingApproval(user, approvalToken);
+  }
   db.users.push(user);
 
   db.orgData[orgId] = createEmptyUserData();
@@ -234,18 +454,57 @@ authRouter.post('/register', async (req, res) => {
 
   await saveCoreMetadata('auth-register');
   await saveUserData(cleanUsername, db.orgData[orgId], { updatedBy: 'auth-register' });
+  await startOrganizationTrial(orgId, cleanUsername);
 
   const exposeVerifyLink = (transport: 'smtp' | 'console'): boolean => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
   };
+
+  // The operator notice goes out first: the account is already locked, so the
+  // request must reach a reviewer even if the applicant's own mail bounces.
+  const reviewLink = approvalReviewLink(req, approvalToken);
+  if (approvalRequired) {
+    await notifyApprovalReviewer(req, user, db.orgData[orgId].companyProfile, reviewLink);
+    await auditSecurityEvent({
+      eventType: 'account.approval_requested',
+      username: cleanUsername,
+      organizationId: orgId,
+      ip: clientIp(req),
+    });
+  }
+
   const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${verification.token}&u=${encodeURIComponent(cleanUsername)}`;
-  const mail = await sendMail(buildVerificationEmail({ to: cleanEmail, link, lang: user.language, wineryName: 'VinOS' }));
+  let mail;
+  try {
+    mail = await sendMail(buildVerificationEmail({ to: cleanEmail, link, lang: user.language, wineryName: 'VinOS' }));
+  } catch {
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: cleanUsername,
+      organizationId: orgId,
+      ip: clientIp(req),
+      metadata: { purpose: 'email_verification' },
+    });
+    return res.status(503).json({
+      error: 'Your account was created, but the verification email could not be delivered. Please try resending it later.',
+      code: 'email_delivery_failed',
+    });
+  }
+
+  await auditSecurityEvent({
+    eventType: 'account.registered',
+    username: cleanUsername,
+    organizationId: orgId,
+    ip: clientIp(req),
+  });
 
   res.json({
     requiresVerification: true,
+    requiresApproval: approvalRequired,
     username: cleanUsername,
     email: cleanEmail,
     ...(exposeVerifyLink(mail.transport) ? { devVerifyUrl: link } : {}),
+    ...(exposeVerifyLink(mail.transport) && approvalRequired ? { devApprovalUrl: reviewLink } : {}),
   });
 });
 
@@ -256,7 +515,7 @@ authRouter.get('/verify-email', async (req, res) => {
   const db = getDB();
   const user = db.users.find(u => u.username === username) as any;
 
-  if (!user) return res.redirect('/?verify_error=invalid');
+  if (!user || !userAccountIsEnabled(user)) return res.redirect('/?verify_error=invalid');
   if (user.emailVerified) return res.redirect('/?verified=already');
   if (!isVerificationTokenValid(user, token)) return res.redirect('/?verify_error=expired');
 
@@ -265,14 +524,134 @@ authRouter.get('/verify-email', async (req, res) => {
   delete user.verifyTokenExpires;
   await saveCoreMetadata('auth-verify-email');
 
-  const sessionToken = createSessionToken({ username: user.username, role: user.role }, true);
+  await auditSecurityEvent({
+    eventType: 'email.verified',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+  });
+
+  // A confirmed address is not access. Until an operator clears the account, the
+  // verification link must not mint a session.
+  const approval = approvalStatusForUser(user);
+  if (approval !== 'approved') {
+    return res.redirect(`/?verified=1&approval=${approval}`);
+  }
+
+  const sessionToken = createSessionToken(sessionPayloadForUser(user, user.role), true);
   res.setHeader('Set-Cookie', sessionCookie(sessionToken, 2592000)); // 30 days
 
   res.redirect('/?verified=1');
 });
 
+/**
+ * Emailed review page. This GET is deliberately side-effect free so a mailbox
+ * link scanner that prefetches the URL cannot approve an account; the decision
+ * is the POST below.
+ */
+authRouter.get('/registration-approval', async (req, res) => {
+  const token = String(req.query.token || '');
+  if (!await consumeRateLimit(registrationApprovalLimiter, [
+    rateLimitKey('registration-approval-ip', req),
+  ], res)) return;
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = token
+    ? db.users.find((candidate: any) => candidate.approvalTokenHash === hashToken(token)) as any
+    : null;
+
+  if (!user || !approvalTokenMatches(user, token)) {
+    return res.status(404).type('html').send(renderApprovalResultPage({
+      title: 'Review link is no longer valid',
+      message: 'This request has already been decided, or the link has expired. Pending accounts are always listed in the master admin console.',
+      appUrl: appBaseUrl(req),
+    }));
+  }
+
+  const data = await getUserData(user.username);
+  res.type('html').send(renderApprovalReviewPage({
+    details: describeApprovalRequest(user, data?.companyProfile),
+    blockingIssues: registrationApprovalBlockers(user, data?.companyProfile),
+    token,
+    actionPath: APPROVAL_REVIEW_PATH,
+  }));
+});
+
+authRouter.post('/registration-approval', async (req, res) => {
+  const token = String(req.body?.token || '');
+  const decision = String(req.body?.decision || '');
+  if (!await consumeRateLimit(registrationApprovalLimiter, [
+    rateLimitKey('registration-approval-ip', req),
+  ], res)) return;
+
+  if (decision !== 'approve' && decision !== 'reject') {
+    return res.status(400).type('html').send(renderApprovalResultPage({
+      title: 'Decision not recognised',
+      message: 'Open the review link again and choose either approve or reject.',
+      appUrl: appBaseUrl(req),
+    }));
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const db = getDB();
+  const user = token
+    ? db.users.find((candidate: any) => candidate.approvalTokenHash === hashToken(token)) as any
+    : null;
+
+  if (!user || !approvalTokenMatches(user, token)) {
+    return res.status(404).type('html').send(renderApprovalResultPage({
+      title: 'Review link is no longer valid',
+      message: 'This request has already been decided, or the link has expired. Pending accounts are always listed in the master admin console.',
+      appUrl: appBaseUrl(req),
+    }));
+  }
+
+  const approved = decision === 'approve';
+  if (approved) {
+    const data = await getUserData(user.username);
+    const blockers = registrationApprovalBlockers(user, data?.companyProfile);
+    if (blockers.length > 0) {
+      return res.status(422).type('html').send(renderApprovalResultPage({
+        title: 'Required registration details are missing',
+        message: `This request cannot be approved yet. Missing: ${blockers.join(', ')}. Ask the applicant to complete their profile and submit it again.`,
+        appUrl: appBaseUrl(req),
+      }));
+    }
+  }
+  applyApprovalDecision(user, decision, 'email-review-link');
+  if (!approved) {
+    // Cut any session the account might already hold.
+    user.sessionVersion = sessionVersionForUser(user) + 1;
+  }
+  await saveCoreMetadata('auth-registration-approval');
+
+  const appUrl = appBaseUrl(req);
+  await sendApprovalDecisionNotice(user, approved, appUrl);
+  await auditSecurityEvent({
+    eventType: approved ? 'account.approved' : 'account.rejected',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+    metadata: { via: 'email_review_link' },
+  });
+
+  res.type('html').send(renderApprovalResultPage({
+    title: approved ? 'Account approved' : 'Account rejected',
+    message: approved
+      ? `${user.fullName || user.username} can sign in as soon as their email address is confirmed. We let them know by email.`
+      : `${user.fullName || user.username} stays locked out. We let them know by email.`,
+    appUrl,
+  }));
+});
+
 authRouter.post('/resend-verification', async (req, res) => {
   const id = String(req.body?.identifier || '').toLowerCase().trim();
+  if (!await consumeRateLimit(accountRecoveryLimiter, [
+    rateLimitKey('verification-resend-ip', req),
+    rateLimitKey('verification-resend-identity', req, id),
+  ], res)) return;
+
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === id || (u.email || '').toLowerCase().trim() === id) as any;
@@ -281,13 +660,31 @@ authRouter.post('/resend-verification', async (req, res) => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
   };
 
-  if (user && user.emailVerified === false) {
+  if (user && userAccountIsEnabled(user) && user.emailVerified === false) {
     const verification = generateVerificationToken();
     user.verifyTokenHash = verification.tokenHash;
     user.verifyTokenExpires = verification.expiresAt;
     await saveCoreMetadata('auth-resend-verification');
     const link = `${appBaseUrl(req)}/api/auth/verify-email?token=${verification.token}&u=${encodeURIComponent(user.username)}`;
-    const mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+    let mail;
+    try {
+      mail = await sendMail(buildVerificationEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+      await auditSecurityEvent({
+        eventType: 'email.verification_resent',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+      });
+    } catch {
+      await auditSecurityEvent({
+        eventType: 'email.delivery_failed',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+        metadata: { purpose: 'email_verification' },
+      });
+      return res.json({ ok: true });
+    }
     if (exposeVerifyLink(mail.transport)) {
       return res.json({ ok: true, devVerifyUrl: link });
     }
@@ -297,16 +694,22 @@ authRouter.post('/resend-verification', async (req, res) => {
 
 authRouter.post('/forgot-password', async (req, res) => {
   const email = String(req.body?.email || '').toLowerCase().trim();
-  if (!email) {
-    return res.status(400).json({ error: 'Email is required' });
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'A valid email address is required' });
   }
+  if (!await consumeRateLimit(accountRecoveryLimiter, [
+    rateLimitKey('password-forgot-ip', req),
+    rateLimitKey('password-forgot-identity', req, email),
+  ], res)) return;
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => (u.email || '').toLowerCase().trim() === email) as any;
 
-  if (!user) {
-    return res.status(400).json({ error: 'No account found with this email address' });
+  // Always return the same public result for a syntactically valid email so
+  // this endpoint cannot be used to enumerate VinOS accounts.
+  if (!user || !userAccountIsEnabled(user)) {
+    return res.json({ ok: true });
   }
 
   const resetToken = generateVerificationToken();
@@ -315,7 +718,25 @@ authRouter.post('/forgot-password', async (req, res) => {
   await saveCoreMetadata('auth-forgot-password');
 
   const link = `${appBaseUrl(req)}/?reset_token=${resetToken.token}&u=${encodeURIComponent(user.username)}`;
-  const mail = await sendMail(buildResetPasswordEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+  let mail;
+  try {
+    mail = await sendMail(buildResetPasswordEmail({ to: user.email, link, lang: user.language, wineryName: 'VinOS' }));
+    await auditSecurityEvent({
+      eventType: 'password.reset_requested',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+    });
+  } catch {
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { purpose: 'password_reset' },
+    });
+    return res.json({ ok: true });
+  }
 
   const exposeVerifyLink = (transport: 'smtp' | 'console'): boolean => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
@@ -333,14 +754,23 @@ authRouter.post('/reset-password', async (req, res) => {
   if (!token || !username || !passcode) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
+  const passcodeError = passcodeValidationError(passcode);
+  if (passcodeError) {
+    return res.status(400).json({ error: passcodeError });
+  }
+
+  const cleanUsername = String(username).toLowerCase().trim();
+  if (!await consumeRateLimit(accountRecoveryLimiter, [
+    rateLimitKey('password-reset-ip', req),
+    rateLimitKey('password-reset-identity', req, cleanUsername),
+  ], res)) return;
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const cleanUsername = String(username).toLowerCase().trim();
   const user = db.users.find(u => u.username === cleanUsername) as any;
 
-  if (!user) {
-    return res.status(400).json({ error: 'User not found' });
+  if (!user || !userAccountIsEnabled(user)) {
+    return res.status(400).json({ error: 'Invalid or expired reset token' });
   }
 
   const isValid = isVerificationTokenValid({
@@ -353,9 +783,17 @@ authRouter.post('/reset-password', async (req, res) => {
   }
 
   user.passwordHash = hashPassword(passcode || 'vinea2026');
+  user.sessionVersion = sessionVersionForUser(user) + 1;
   delete user.resetTokenHash;
   delete user.resetTokenExpires;
   await saveCoreMetadata('auth-reset-password');
+
+  await auditSecurityEvent({
+    eventType: 'password.reset_completed',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+  });
 
   res.json({ ok: true });
 });
@@ -376,7 +814,12 @@ authRouter.post('/login', async (req, res) => {
   if (envAdminUser && envAdminPass && identifier && passcode) {
     const inputUser = String(identifier).trim().toLowerCase();
     const targetUser = String(envAdminUser).trim().toLowerCase();
-    if (inputUser === targetUser || inputUser === `${targetUser}@vinea.com` || inputUser === `${targetUser}@cellarflow.com`) {
+    if (
+      inputUser === targetUser
+      || inputUser === `${targetUser}@vinos.app`
+      || inputUser === `${targetUser}@vinea.com`
+      || inputUser === `${targetUser}@cellarflow.com`
+    ) {
       if (String(passcode).trim() === String(envAdminPass).trim()) {
         await loginLimiter.clear(limiterKey);
         const token = createSessionToken({ username: envAdminUser, role: 'Owner/Admin' }, rememberMe);
@@ -384,13 +827,14 @@ authRouter.post('/login', async (req, res) => {
         res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
         return res.json({
           username: envAdminUser,
-          email: `${envAdminUser}@cellarflow.com`,
+          email: `${envAdminUser}@vinos.app`,
           fullName: 'Master Administrator',
           role: 'Owner/Admin',
           language: 'en',
           enabledModules: ['vazi', 'gvino'],
           enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'],
           registrationComplete: true,
+          isMasterAdmin: true,
         });
       }
     }
@@ -398,11 +842,17 @@ authRouter.post('/login', async (req, res) => {
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  
+
   const user = db.users.find(u => u.username === identifier || u.email === identifier);
-  if (!user || !verifyPassword(passcode, user.passwordHash)) {
+  if (!user || !userAccountIsEnabled(user) || !verifyPassword(passcode, user.passwordHash)) {
     await loginLimiter.recordFailure(limiterKey);
     return res.status(401).json({ error: 'Invalid username or passcode' });
+  }
+
+  const approval = approvalStatusForUser(user);
+  if (approval === 'rejected') {
+    await loginLimiter.clear(limiterKey);
+    return approvalBlockResponse(res, 'rejected');
   }
 
   if ((user as any).emailVerified === false) {
@@ -411,6 +861,11 @@ authRouter.post('/login', async (req, res) => {
       error: 'Please verify your email before signing in. Check your inbox for the confirmation link.',
       code: 'email_unverified',
     });
+  }
+
+  if (approval === 'pending') {
+    await loginLimiter.clear(limiterKey);
+    return approvalBlockResponse(res, 'pending');
   }
 
   await loginLimiter.clear(limiterKey);
@@ -425,10 +880,11 @@ authRouter.post('/login', async (req, res) => {
     }
   }
 
-  const token = createSessionToken({ username: user.username, role: user.role }, rememberMe);
+  const effectiveRole = activeMembershipRole(db, user);
+  const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), rememberMe);
   const maxAge = rememberMe ? 2592000 : 86400;
   res.setHeader('Set-Cookie', sessionCookie(token, maxAge));
-  res.json(publicUser(user));
+  res.json(publicUser(user, { role: effectiveRole }));
 });
 
 authRouter.post('/demo', async (_req, res) => {
@@ -438,11 +894,13 @@ authRouter.post('/demo', async (_req, res) => {
 
   try {
     const user = await ensureDemoAccount();
-    if (!user) return res.status(404).json({ error: 'Demo login is unavailable.' });
+    if (!user || !userAccountIsEnabled(user)) return res.status(404).json({ error: 'Demo login is unavailable.' });
 
-    const token = createSessionToken({ username: user.username, role: user.role }, false);
+    const db = getDB();
+    const effectiveRole = activeMembershipRole(db, user);
+    const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), false);
     res.setHeader('Set-Cookie', sessionCookie(token, 86400));
-    res.json(publicUser(user, { isDemo: true, registrationComplete: true }));
+    res.json(publicUser(user, { role: effectiveRole, isDemo: true, registrationComplete: true }));
   } catch (err) {
     console.error('Demo login failed:', err);
     res.status(500).json({ error: 'Demo workspace could not be opened.' });
@@ -452,7 +910,7 @@ authRouter.post('/demo', async (_req, res) => {
 authRouter.get('/google/login', (req, res) => {
   const db = getDB() as any;
   const { clientId, clientSecret } = getGoogleOAuthCreds(db);
-  
+
   const reconfigure = req.query.reset === 'true' || req.query.reconfigure === 'true';
   const redirectUri = getRedirectUri(req);
   const runtimeConfigAllowed = isRuntimeOAuthConfigAllowed();
@@ -489,7 +947,7 @@ authRouter.get('/google/login', (req, res) => {
     `);
     return;
   }
-  
+
   if (!clientId || !clientSecret || reconfigure) {
     const displayClientId = db.googleConfig?.clientId || '';
 
@@ -561,18 +1019,25 @@ authRouter.get('/google/login', (req, res) => {
     `);
     return;
   }
-  
-  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
+
+  const oauthState = crypto.randomBytes(24).toString('hex');
+  appendSetCookie(res, temporaryCookie(
+    GOOGLE_OAUTH_STATE_COOKIE,
+    oauthState,
+    GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS,
+  ));
+
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
     `response_type=code` +
     `&client_id=${encodeURIComponent(clientId)}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=openid%20email%20profile` +
-    `&state=google_auth`;
-  
+    `&state=${encodeURIComponent(oauthState)}`;
+
   res.redirect(authUrl);
 });
 
-authRouter.post('/google/configure', (req, res) => {
+authRouter.post('/google/configure', async (req, res) => {
   if (!isRuntimeOAuthConfigAllowed()) {
     return res.status(403).send('Runtime OAuth configuration is disabled in production.');
   }
@@ -581,13 +1046,13 @@ authRouter.post('/google/configure', (req, res) => {
   if (!clientId || !clientSecret) {
     return res.status(400).send('Client ID and Client Secret are required');
   }
-  
+
   const db = getDB() as any;
   if (!db.googleConfig) db.googleConfig = {};
   db.googleConfig.clientId = String(clientId).trim();
   db.googleConfig.clientSecret = String(clientSecret).trim();
-  
-  saveCoreMetadata('auth-google-config');
+
+  await saveCoreMetadata('auth-google-config');
 
   const trimmedClientId = String(clientId).trim();
   const trimmedClientSecret = String(clientSecret).trim();
@@ -595,20 +1060,40 @@ authRouter.post('/google/configure', (req, res) => {
     GOOGLE_CLIENT_ID: trimmedClientId,
     GOOGLE_CLIENT_SECRET: trimmedClientSecret
   });
-  
+
+  await auditSecurityEvent({
+    eventType: 'runtime.oauth_configuration_updated',
+    ip: clientIp(req),
+    metadata: { provider: 'google' },
+  });
+
   res.redirect('/api/auth/google/login');
 });
 
 authRouter.get('/google/callback', async (req, res) => {
   const { code } = req.query;
+  const callbackRateKey = rateLimitKey('oauth-callback-ip', req);
+  if (!await consumeRateLimit(oauthCallbackLimiter, [callbackRateKey], res)) return;
   if (!code) {
     return res.status(400).send('Authorization code missing');
   }
-  
+
+  const oauthState = cleanText(req.query.state);
+  const expectedState = parseCookies(req.headers.cookie)[GOOGLE_OAUTH_STATE_COOKIE] || '';
+  appendSetCookie(res, clearTemporaryCookie(GOOGLE_OAUTH_STATE_COOKIE));
+  if (!oauthState || !expectedState || !secureEqual(oauthState, expectedState)) {
+    await auditSecurityEvent({
+      eventType: 'oauth.callback_failed',
+      ip: clientIp(req),
+      metadata: { stage: 'state_validation' },
+    });
+    return res.status(400).send('OAuth request expired or could not be verified. Please start again.');
+  }
+
   const db = getDB() as any;
   const { clientId, clientSecret } = getGoogleOAuthCreds(db);
   const redirectUri = getRedirectUri(req);
-  
+
   try {
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -618,94 +1103,320 @@ authRouter.get('/google/callback', async (req, res) => {
         client_id: clientId || '',
         client_secret: clientSecret || '',
         redirect_uri: redirectUri,
-        grant_type: 'authorization_code'
-      }).toString()
+        grant_type: 'authorization_code',
+      }).toString(),
     });
-    
+
     if (!tokenRes.ok) {
-      const errText = await tokenRes.text();
-      console.error('Google token exchange failed:', errText);
-      return res.status(tokenRes.status).send(`Failed to exchange code: ${errText}`);
+      console.error(`[auth] Google token exchange failed with status ${tokenRes.status}.`);
+      await auditSecurityEvent({
+        eventType: 'oauth.callback_failed',
+        ip: clientIp(req),
+        metadata: { stage: 'token_exchange', providerStatus: tokenRes.status },
+      });
+      return res.status(502).send('OAuth provider authentication failed');
     }
-    
+
     const tokenData = await tokenRes.json() as any;
-    const accessToken = tokenData.access_token;
-    
     const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` }
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
-    
+
     if (!userinfoRes.ok) {
-      const errText = await userinfoRes.text();
-      console.error('Google userinfo fetch failed:', errText);
-      return res.status(userinfoRes.status).send(`Failed to fetch userinfo: ${errText}`);
+      console.error(`[auth] Google user information request failed with status ${userinfoRes.status}.`);
+      await auditSecurityEvent({
+        eventType: 'oauth.callback_failed',
+        ip: clientIp(req),
+        metadata: { stage: 'userinfo', providerStatus: userinfoRes.status },
+      });
+      return res.status(502).send('OAuth provider authentication failed');
     }
-    
+
     const userinfo = await userinfoRes.json() as any;
-    const email = userinfo.email;
-    const fullName = userinfo.name || 'Google User';
-    
-    if (!email) {
-      return res.status(400).send('Email not returned by Google');
+    const cleanEmail = cleanText(userinfo.email).toLowerCase();
+    if (!cleanEmail || !isValidEmail(cleanEmail)) {
+      return res.status(400).send('A valid email was not returned by Google');
     }
-    
+
     await refreshCoreMetadataFromPostgres();
     const dbData = getDB();
-    const cleanEmail = email.toLowerCase().trim();
-    let user = dbData.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail);
-    
-    let username = '';
-    if (user) {
-      username = user.username;
-    } else {
-      const emailPrefix = cleanEmail.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
-      let baseUsername = emailPrefix || 'google_user';
-      username = baseUsername;
-      
-      let suffix = 1;
-      while (dbData.users.some(u => u.username === username)) {
-        username = `${baseUsername}_${suffix}`;
-        suffix++;
-      }
-      
-      user = {
-        username,
-        email: cleanEmail,
-        fullName,
-        role: 'Owner/Admin',
-        language: 'en',
-        passwordHash: '',
-        enabledModules: ['vazi', 'gvino'],
-        enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'],
-        registrationComplete: false,
-        emailVerified: true,
-      };
-      const orgId = 'org_' + Math.random().toString(36).substr(2, 9);
-      const org = { id: orgId, name: `${fullName || username}'s Estate` };
-      const membership = { id: 'mem_' + Math.random().toString(36).substr(2, 9), userId: username, organizationId: orgId, role: 'Owner/Admin' };
-      user.activeOrganizationId = orgId;
-      
-      ensureDbCollections(dbData);
-      dbData.organizations.push(org);
-      dbData.memberships.push(membership);
-      dbData.orgData[orgId] = createEmptyUserData();
-      dbData.users.push(user);
-      await saveCoreMetadata('auth-google-register');
-      await saveUserData(username, dbData.orgData[orgId]);
+    const user = dbData.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail) as any;
+    if (user && !userAccountIsEnabled(user)) {
+      await auditSecurityEvent({
+        eventType: 'oauth.login_rejected',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+        metadata: { reason: 'account_disabled', provider: 'google' },
+      });
+      return res.status(403).send('This account is unavailable');
     }
-    
-    const token = createSessionToken({ username: user.username, role: user.role }, true);
-    res.setHeader('Set-Cookie', sessionCookie(token, 2592000));
-    
-    res.redirect((user as any).registrationComplete === false ? '/?complete_registration=1' : '/');
+
+    const approval = user ? approvalStatusForUser(user) : 'approved';
+    if (approval === 'rejected') {
+      return res.redirect('/login?approval=rejected');
+    }
+
+    const userData = user ? await getUserData(user.username) : null;
+    const needsRequiredProfile = !user || (
+      !user.passwordHash
+      && registrationApprovalBlockers(user, userData?.companyProfile).length > 0
+    );
+
+    if (needsRequiredProfile) {
+      const registrationToken = createSessionToken({
+        purpose: 'google_registration',
+        email: cleanEmail,
+        firstName: cleanText(userinfo.given_name),
+        lastName: cleanText(userinfo.family_name),
+        googleSubject: cleanText(userinfo.sub),
+        ...(user ? { existingUsername: user.username } : {}),
+      });
+      appendSetCookie(res, temporaryCookie(
+        GOOGLE_REGISTRATION_COOKIE,
+        registrationToken,
+        GOOGLE_REGISTRATION_MAX_AGE_SECONDS,
+      ));
+      await oauthCallbackLimiter.clear(callbackRateKey);
+      return res.redirect('/login?google_registration=1');
+    }
+
+    if (approval !== 'approved') {
+      await auditSecurityEvent({
+        eventType: 'oauth.login_rejected',
+        username: user.username,
+        organizationId: user.activeOrganizationId,
+        ip: clientIp(req),
+        metadata: { reason: `approval_${approval}`, provider: 'google' },
+      });
+      return res.redirect(`/login?approval=${approval}`);
+    }
+
+    const effectiveRole = activeMembershipRole(dbData, user);
+    const token = createSessionToken(sessionPayloadForUser(user, effectiveRole), true);
+    appendSetCookie(res, sessionCookie(token, 2592000));
+
+    await oauthCallbackLimiter.clear(callbackRateKey);
+    await auditSecurityEvent({
+      eventType: 'oauth.login_succeeded',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { provider: 'google' },
+    });
+
+    res.redirect((user as any).registrationComplete === false ? '/dashboard?complete_registration=1' : '/dashboard');
   } catch (err) {
-    console.error('OAuth2 callback error:', err);
+    console.error(`[auth] OAuth callback failed (${err instanceof Error ? err.name : 'unknown_error'}).`);
+    await auditSecurityEvent({
+      eventType: 'oauth.callback_failed',
+      ip: clientIp(req),
+      metadata: { stage: 'unexpected' },
+    });
     res.status(500).send('OAuth2 flow failed');
   }
 });
 
-authRouter.post('/logout', (req, res) => {
+authRouter.get('/google/registration', (req, res) => {
+  const session = googleRegistrationSession(req);
+  if (!session?.email) {
+    return res.status(401).json({
+      error: 'Your Google registration session expired. Please continue with Google again.',
+      code: 'google_registration_expired',
+    });
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({
+    email: session.email,
+    firstName: cleanText(session.firstName),
+    lastName: cleanText(session.lastName),
+  });
+});
+
+authRouter.post('/google/registration/cancel', (req, res) => {
+  appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+  res.json({ ok: true });
+});
+
+authRouter.post('/google/registration', async (req, res) => {
+  const session = googleRegistrationSession(req);
+  if (!session?.email) {
+    return res.status(401).json({
+      error: 'Your Google registration session expired. Please continue with Google again.',
+      code: 'google_registration_expired',
+    });
+  }
+
+  const identity = validateRegistrationIdentity({
+    firstName: req.body?.firstName,
+    lastName: req.body?.lastName,
+  });
+  if (!identity.ok) return res.status(400).json(identity.issue);
+
+  const phone = validateRegistrationPhone(req.body?.phone);
+  if (!phone.ok) return res.status(400).json(phone.issue);
+
+  const companyName = cleanText(req.body?.companyName);
+  if (!companyName) {
+    return res.status(400).json({ error: 'Company or estate name is required', code: 'company_name_required' });
+  }
+
+  await refreshCoreMetadataFromPostgres();
+  const dbData = getDB();
+  ensureDbCollections(dbData);
+  const cleanEmail = String(session.email).toLowerCase().trim();
+  let user = dbData.users.find(u => (u.email || '').toLowerCase().trim() === cleanEmail) as any;
+  if (session.existingUsername && user?.username !== session.existingUsername) {
+    return res.status(409).json({ error: 'This account changed while registration was open. Please start again.' });
+  }
+  if (user && !session.existingUsername) {
+    appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+    return res.status(409).json({
+      error: 'An account with this email already exists. Return to sign in with Google.',
+      code: 'account_exists',
+    });
+  }
+  if (user && approvalStatusForUser(user) === 'rejected') {
+    appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+    return res.status(403).json({
+      error: 'This account was not approved for access. Contact the workspace administrator.',
+      code: 'approval_rejected',
+    });
+  }
+
+  const language = normalizeLanguage(req.body?.language);
+  let data;
+  let isNewUser = false;
+  if (!user) {
+    isNewUser = true;
+    const username = uniqueUsernameForEmail(cleanEmail, dbData.users.map(existingUser => existingUser.username));
+    const orgId = 'org_' + Math.random().toString(36).slice(2, 11);
+    user = {
+      username,
+      email: cleanEmail,
+      fullName: identity.value.fullName,
+      role: 'Owner/Admin',
+      language,
+      phone: phone.value,
+      passwordHash: '',
+      enabledModules: [...DEFAULT_MODULES],
+      enabledWidgets: [...DEFAULT_WIDGETS],
+      registrationComplete: false,
+      emailVerified: true,
+      accountEnabled: true,
+      sessionVersion: 1,
+      approvalStatus: 'approved',
+      activeOrganizationId: orgId,
+    };
+    dbData.users.push(user);
+    dbData.organizations.push({ id: orgId, name: companyName });
+    dbData.memberships.push({
+      id: 'mem_' + Math.random().toString(36).slice(2, 11),
+      userId: username,
+      organizationId: orgId,
+      role: 'Owner/Admin',
+    });
+    data = createEmptyUserData();
+    dbData.orgData[orgId] = data;
+  } else {
+    data = await getUserData(user.username) || createEmptyUserData();
+    user.fullName = identity.value.fullName;
+    user.phone = phone.value;
+    user.language = language;
+    user.emailVerified = true;
+  }
+
+  data.companyProfile = {
+    ...createEmptyUserData().companyProfile,
+    ...data.companyProfile,
+    companyName,
+    contactEmail: cleanEmail,
+    phone: phone.value,
+  };
+  const org = dbData.organizations.find(item => item.id === user.activeOrganizationId);
+  if (org) org.name = companyName;
+
+  const wasAlreadyApproved = !isNewUser && approvalStatusForUser(user) === 'approved';
+  const requiresApproval = registrationApprovalRequired() && !wasAlreadyApproved;
+  const approvalToken = generateApprovalToken();
+  if (requiresApproval) markAwaitingApproval(user, approvalToken);
+
+  await saveCoreMetadata('auth-google-register');
+  await saveUserData(user.username, data, { updatedBy: 'auth-google-register' });
+  if (isNewUser) await startOrganizationTrial(user.activeOrganizationId, user.username);
+
+  if (requiresApproval) {
+    await notifyApprovalReviewer(req, user, data.companyProfile, approvalReviewLink(req, approvalToken));
+    await auditSecurityEvent({
+      eventType: 'account.approval_requested',
+      username: user.username,
+      organizationId: user.activeOrganizationId,
+      ip: clientIp(req),
+      metadata: { provider: 'google' },
+    });
+  }
+  await auditSecurityEvent({
+    eventType: isNewUser ? 'account.registered' : 'account.registration_profile_completed',
+    username: user.username,
+    organizationId: user.activeOrganizationId,
+    ip: clientIp(req),
+    metadata: { provider: 'google' },
+  });
+
+  appendSetCookie(res, clearTemporaryCookie(GOOGLE_REGISTRATION_COOKIE));
+  if (!requiresApproval) {
+    const effectiveRole = activeMembershipRole(dbData, user);
+    const authToken = createSessionToken(sessionPayloadForUser(user, effectiveRole), true);
+    appendSetCookie(res, sessionCookie(authToken, 2592000));
+  }
+
+  res.json({
+    ok: true,
+    username: user.username,
+    email: user.email,
+    requiresApproval,
+    authenticated: !requiresApproval,
+  });
+});
+
+/**
+ * Session tokens are stateless HMAC blobs, so clearing the cookie only removes
+ * the browser's copy — a token captured beforehand stayed valid until its own
+ * expiry, which is up to 30 days for a "remember me" login. Bumping the stored
+ * session version invalidates it server-side on the next request, reusing the
+ * same mechanism as password reset and admin lockout.
+ *
+ * Note this is a global sign-out: every device holding a session for the
+ * account is logged out, because the version is per-user, not per-session.
+ * Per-device revocation would require issuing and tracking session ids.
+ */
+authRouter.post('/logout', async (req, res) => {
+  // Clear the cookie first and unconditionally. Revocation is best-effort on
+  // top of that — a database hiccup must never leave the user still signed in.
   res.setHeader('Set-Cookie', clearSessionCookie());
+
+  try {
+    const session = verifySessionToken(parseCookies(req.headers.cookie)['maranios_session']);
+    if (session?.username) {
+      await refreshCoreMetadataFromPostgres();
+      // The env master admin has no db.users row and therefore no version to
+      // bump; its session simply expires.
+      const user = getDB().users.find(u => u.username === session.username);
+      if (user) {
+        user.sessionVersion = sessionVersionForUser(user) + 1;
+        await saveCoreMetadata('auth-logout');
+        await auditSecurityEvent({
+          eventType: 'session.logout',
+          username: user.username,
+          organizationId: user.activeOrganizationId,
+          ip: clientIp(req),
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[auth] logout session revocation failed:', err);
+  }
+
   res.json({ success: true });
 });
 
@@ -713,34 +1424,50 @@ authRouter.get('/me', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
-  
+
   if (!session) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  
+
   const envAdmin = cleanEnv(process.env.ADMIN_USERNAME).toLowerCase();
   if (envAdmin && String(session.username).trim().toLowerCase() === envAdmin) {
     return res.json({
       username: session.username,
-      email: `${session.username}@cellarflow.com`,
+      email: `${session.username}@vinos.app`,
       fullName: 'Master Administrator',
       role: 'Owner/Admin',
       language: 'en',
       enabledModules: ['vazi', 'gvino'],
       enabledWidgets: ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks', 'audit'],
       registrationComplete: true,
+      isMasterAdmin: true,
     });
   }
-  
+
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
-  
+  if (user.activeOrganizationId && !db.memberships?.some((membership: any) => (
+    membership.userId === user.username && membership.organizationId === user.activeOrganizationId
+  ))) {
+    return res.status(401).json({ error: 'Session is no longer authorized for the active organization' });
+  }
+
   res.json(publicUser(user, {
+    role: activeMembershipRole(db, user),
     ...(session.impersonatedBy ? { impersonatedBy: session.impersonatedBy } : {})
   }));
+});
+
+// Lightweight heartbeat used for the master-admin online indicator. Presence
+// writes are throttled in liveSessionRole/touchUserPresence.
+authRouter.post('/presence', async (req, res) => {
+  const auth = await liveSessionRole(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ ok: true, at: new Date().toISOString() });
 });
 
 authRouter.post('/complete_registration', async (req, res) => {
@@ -756,36 +1483,45 @@ authRouter.post('/complete_registration', async (req, res) => {
   const db = getDB();
   ensureDbCollections(db);
   const user = db.users.find(u => u.username === session.username) as any;
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
-
-  const cleanFullName = cleanText(req.body?.fullName || user.fullName);
-  if (!cleanFullName) {
-    return res.status(400).json({ error: 'Full name is required' });
-  }
-  if (!isKnownRole(req.body?.role)) {
-    return res.status(400).json({ error: 'A valid role is required' });
+  if (user.registrationComplete !== false) {
+    return res.status(409).json({ error: 'Registration is already complete' });
   }
 
-  const enabledModules = selectedModules(req.body?.enabledModules);
-  if (enabledModules.length === 0) {
-    return res.status(400).json({ error: 'Select at least one workspace module' });
+  const identity = validateRegistrationIdentity({ fullName: req.body?.fullName || user.fullName });
+  if (!identity.ok) {
+    return res.status(400).json(identity.issue);
   }
+  const enabledModules = selectedModules(
+    req.body?.enabledModules,
+    selectedModules(user.enabledModules, DEFAULT_MODULES),
+  );
 
-  const companyProfile = normalizeCompanyProfile(req.body?.companyProfile, user.email);
+  const data = await getUserData(user.username) || createEmptyUserData();
+  const companyProfile = normalizeCompanyProfile({
+    ...data.companyProfile,
+    ...(req.body?.companyProfile && typeof req.body.companyProfile === 'object'
+      ? req.body.companyProfile
+      : {}),
+  }, user.email);
   if (!companyProfile.companyName) {
-    return res.status(400).json({ error: 'Company or estate name is required' });
+    return res.status(400).json({ error: 'Company or estate name is required', code: 'company_name_required' });
   }
+  const phone = validateRegistrationPhone(companyProfile.phone || user.phone);
+  if (!phone.ok) return res.status(400).json(phone.issue);
+  companyProfile.phone = phone.value;
 
-  user.fullName = cleanFullName;
-  user.role = req.body.role;
+  user.fullName = identity.value.fullName;
+  user.role = activeMembershipRole(db, user);
+  user.sessionVersion = sessionVersionForUser(user) + 1;
   user.language = normalizeLanguage(req.body?.language || user.language);
+  user.phone = phone.value;
   user.enabledModules = enabledModules;
   user.enabledWidgets = selectedWidgets(req.body?.enabledWidgets, enabledModules);
   user.registrationComplete = true;
 
-  const data = await getUserData(user.username) || createEmptyUserData();
   data.companyProfile = {
     ...createEmptyUserData().companyProfile,
     ...data.companyProfile,
@@ -801,7 +1537,7 @@ authRouter.post('/complete_registration', async (req, res) => {
   await saveCoreMetadata('auth-complete-registration');
   await saveUserData(user.username, data, { updatedBy: 'auth-complete-registration' });
 
-  const newToken = createSessionToken({ username: user.username, role: user.role }, true);
+  const newToken = createSessionToken(sessionPayloadForUser(user, user.role), true);
   res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
   res.json(publicUser(user));
 });
@@ -810,20 +1546,29 @@ authRouter.post('/update_profile', async (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies['maranios_session'];
   const session = verifySessionToken(token);
-  
+
   if (!session) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  
+
+  await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
-  
-  const { fullName, language, enabledModules, enabledWidgets } = req.body;
+
+  const { fullName, language, phone, enabledModules, enabledWidgets } = req.body;
   if (fullName !== undefined) user.fullName = cleanText(fullName) || user.fullName;
   if (language !== undefined) user.language = normalizeLanguage(language);
+  if (phone !== undefined) {
+    const rawPhone = cleanText(phone);
+    const normalizedPhone = rawPhone ? normalizeInternationalPhone(rawPhone) : '';
+    if (rawPhone && !normalizedPhone) {
+      return res.status(400).json({ error: 'Use an international phone number with country code, for example +995555123456.' });
+    }
+    user.phone = normalizedPhone || '';
+  }
   if (enabledModules !== undefined) {
     const modules = selectedModules(enabledModules);
     if (modules.length === 0) {
@@ -838,10 +1583,10 @@ authRouter.post('/update_profile', async (req, res) => {
     const modules = selectedModules((user as any).enabledModules, DEFAULT_MODULES);
     (user as any).enabledWidgets = selectedWidgets(enabledWidgets, modules);
   }
-  
+
   await saveCoreMetadata('auth-update-profile');
-  
-  res.json(publicUser(user));
+
+  res.json(publicUserForActiveOrganization(db, user));
 });
 
 // ── Organization Endpoints ─────────────────────────────────────────────
@@ -852,6 +1597,12 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
   const { email, role } = req.body;
   if (!email || !role) {
     return res.status(400).json({ error: 'Email and role are required' });
+  }
+  if (!isValidEmail(String(email).toLowerCase().trim())) {
+    return res.status(400).json({ error: 'A valid email address is required' });
+  }
+  if (!isKnownRole(role)) {
+    return res.status(400).json({ error: 'A valid role is required' });
   }
 
   await refreshCoreMetadataFromPostgres();
@@ -869,16 +1620,31 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
   const org = db.organizations?.find(o => o.id === orgId);
   const cleanEmail = String(email).toLowerCase().trim();
 
-  const token = generateVerificationToken().token;
+  if (!await consumeRateLimit(invitationLimiter, [
+    rateLimitKey('invitation-create-ip', req),
+    rateLimitKey('invitation-create-actor', req, session.username),
+  ], res)) return;
+
+  const existingPending = db.invitations?.find((candidate: any) => (
+    candidate.organizationId === orgId
+    && sameNormalizedEmail(candidate.email, cleanEmail)
+    && !candidate.acceptedAt
+    && new Date(candidate.expiresAt).getTime() > Date.now()
+  ));
+  if (existingPending) {
+    return res.status(409).json({ error: 'A current invitation already exists for this email address' });
+  }
+
+  const inviteToken = generateVerificationToken();
   const inviteId = 'invite_' + Math.random().toString(36).substr(2, 9);
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-  const invitation = {
+  const invitation: any = {
     id: inviteId,
     email: cleanEmail,
     organizationId: orgId,
     role: role,
-    token: token,
+    tokenHash: inviteToken.tokenHash,
     expiresAt: expiresAt.toISOString(),
     acceptedAt: null,
   };
@@ -887,14 +1653,40 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
   db.invitations.push(invitation);
   await saveCoreMetadata('org-invite-create');
 
-  const link = `${appBaseUrl(req)}/accept-invite?token=${token}`;
-  const mail = await sendMail(buildInvitationEmail({
-    to: cleanEmail,
-    inviterName: user.fullName,
-    orgName: org?.name || 'VinOS Estate',
-    link,
-    lang: user.language
-  }));
+  const link = `${appBaseUrl(req)}/accept-invite?token=${inviteToken.token}`;
+  let mail;
+  try {
+    mail = await sendMail(buildInvitationEmail({
+      to: cleanEmail,
+      inviterName: user.fullName,
+      orgName: org?.name || 'VinOS Estate',
+      link,
+      lang: user.language
+    }));
+  } catch {
+    // The raw token is intentionally gone after this request. Mark the record
+    // unusable so a failed delivery cannot leave a misleading pending invite.
+    invitation.acceptedAt = new Date().toISOString();
+    await saveCoreMetadata('org-invite-delivery-failed');
+    await auditSecurityEvent({
+      eventType: 'email.delivery_failed',
+      username: user.username,
+      actorUsername: user.username,
+      organizationId: orgId,
+      ip: clientIp(req),
+      metadata: { purpose: 'invitation' },
+    });
+    return res.status(503).json({ error: 'The invitation email could not be delivered. Please try again later.' });
+  }
+
+  await auditSecurityEvent({
+    eventType: 'invitation.created',
+    username: cleanEmail,
+    actorUsername: user.username,
+    organizationId: orgId,
+    ip: clientIp(req),
+    metadata: { role },
+  });
 
   const exposeVerifyLink = (transport: 'smtp' | 'console'): boolean => {
     return transport === 'console' && process.env.NODE_ENV !== 'production';
@@ -909,9 +1701,12 @@ orgRouter.post('/invite', checkWineryScope('manage_users'), async (req, res) => 
 
 orgRouter.get('/invitations/:token', async (req, res) => {
   const { token } = req.params;
+  if (!await consumeRateLimit(invitationLimiter, [
+    rateLimitKey('invitation-read-ip', req),
+  ], res)) return;
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const invite = db.invitations?.find(i => i.token === token);
+  const invite = db.invitations?.find(i => i.tokenHash === hashToken(token));
 
   if (!invite) {
     return res.status(404).json({ error: 'Invitation not found' });
@@ -936,6 +1731,9 @@ orgRouter.post('/accept-invite', async (req, res) => {
   if (!token) {
     return res.status(400).json({ error: 'Invitation token is required' });
   }
+  if (!await consumeRateLimit(invitationLimiter, [
+    rateLimitKey('invitation-accept-ip', req),
+  ], res)) return;
 
   const cookies = parseCookies(req.headers.cookie);
   const sessionToken = cookies['maranios_session'];
@@ -947,43 +1745,39 @@ orgRouter.post('/accept-invite', async (req, res) => {
 
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
-  const invite = db.invitations?.find(i => i.token === token);
-
-  if (!invite) {
-    return res.status(404).json({ error: 'Invitation not found' });
-  }
-  if (invite.acceptedAt) {
-    return res.status(400).json({ error: 'Invitation has already been accepted' });
-  }
-  if (new Date(invite.expiresAt) < new Date()) {
-    return res.status(400).json({ error: 'Invitation has expired' });
-  }
-
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
 
-  const memId = 'mem_' + Math.random().toString(36).substr(2, 9);
-  const membership = {
-    id: memId,
-    userId: user.username,
-    organizationId: invite.organizationId,
-    role: invite.role
-  };
-
-  if (!db.memberships) db.memberships = [];
-  
-  const alreadyMember = db.memberships.some(m => m.userId === user.username && m.organizationId === invite.organizationId);
-  if (!alreadyMember) {
-    db.memberships.push(membership);
+  const result = await acceptInvitationAtomically(hashToken(String(token)), user.username);
+  if (result.status === 'not_found') return res.status(404).json({ error: 'Invitation not found' });
+  if (result.status === 'already_accepted') return res.status(400).json({ error: 'Invitation has already been accepted' });
+  if (result.status === 'revoked') return res.status(400).json({ error: 'Invitation has been revoked' });
+  if (result.status === 'expired') return res.status(400).json({ error: 'Invitation has expired' });
+  if (result.status === 'email_mismatch') {
+    return res.status(403).json({ error: 'This invitation was issued to a different email address' });
+  }
+  if (result.status === 'email_unverified') {
+    return res.status(403).json({ error: 'Verify your email before accepting this invitation' });
+  }
+  if (result.status !== 'success' || !result.organizationId || !result.role) {
+    return res.status(401).json({ error: 'User not found' });
   }
 
-  invite.acceptedAt = new Date().toISOString();
-  user.activeOrganizationId = invite.organizationId;
-  await saveCoreMetadata('org-invite-accept');
+  const refreshedUser = getDB().users.find(candidate => candidate.username === user.username) || user;
+  const newToken = createSessionToken(sessionPayloadForUser(refreshedUser, result.role), true);
+  res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
+  await auditSecurityEvent({
+    eventType: 'invitation.accepted',
+    username: user.username,
+    actorUsername: user.username,
+    organizationId: result.organizationId,
+    ip: clientIp(req),
+    metadata: { role: result.role },
+  });
 
-  res.json({ ok: true, activeOrganizationId: invite.organizationId });
+  res.json({ ok: true, activeOrganizationId: result.organizationId });
 });
 
 orgRouter.post('/switch', async (req, res) => {
@@ -1003,23 +1797,25 @@ orgRouter.post('/switch', async (req, res) => {
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) {
+  if (!validSessionForUser(session, user)) {
     return res.status(401).json({ error: 'User not found' });
   }
 
-  const isMember = db.memberships?.some(m => m.userId === user.username && m.organizationId === organizationId);
-  if (!isMember) {
+  const membership = db.memberships?.find(m => m.userId === user.username && m.organizationId === organizationId);
+  if (!membership) {
     return res.status(403).json({ error: 'You are not a member of this organization' });
+  }
+  if (!isKnownRole(membership.role)) {
+    return res.status(403).json({ error: 'The organization membership has an invalid role' });
   }
 
   user.activeOrganizationId = organizationId;
   await saveCoreMetadata('org-switch');
 
-  const membership = db.memberships.find(m => m.userId === user.username && m.organizationId === organizationId);
-  const newToken = createSessionToken({ username: user.username, role: membership.role }, true);
+  const newToken = createSessionToken(sessionPayloadForUser(user, membership.role), true);
   res.setHeader('Set-Cookie', sessionCookie(newToken, 2592000));
 
-  res.json({ ok: true, activeOrganizationId: organizationId });
+  res.json(buildOrganizationSwitchResponse(organizationId, membership.role));
 });
 
 orgRouter.get('/members', checkWineryScope('read'), async (req, res) => {
@@ -1034,17 +1830,42 @@ orgRouter.get('/members', checkWineryScope('read'), async (req, res) => {
   if (!orgId) return res.status(400).json({ error: 'No active organization' });
 
   const memberships = db.memberships?.filter(m => m.organizationId === orgId) || [];
-  const members = memberships.map(m => {
+  const members = await Promise.all(memberships.map(async m => {
     const u = db.users.find(usr => usr.username === m.userId);
+    const [preference, account] = await Promise.all([
+      getAiNotificationPreference(orgId, m.userId),
+      getAiNotificationAccountStatus(orgId, m.userId),
+    ]);
     return {
       username: m.userId,
       fullName: u?.fullName || m.userId,
       email: u?.email || '',
       role: m.role,
+      language: normalizeLanguage(u?.language),
+      emailNotificationReady: Boolean(
+        preference.emailEnabled
+        && process.env.SMTP_HOST?.trim()
+        && account.emailVerified
+        && account.hasEmail
+      ),
+      pushNotificationReady: Boolean(
+        preference.pushEnabled
+        && account.pushConfigured
+        && account.pushSubscriptionCount > 0
+      ),
     };
-  });
+  }));
 
-  const pendingInvites = db.invitations?.filter(i => i.organizationId === orgId && !i.acceptedAt && new Date(i.expiresAt) > new Date()) || [];
+  const pendingInvites = (db.invitations?.filter(i => (
+    i.organizationId === orgId && !i.acceptedAt && new Date(i.expiresAt) > new Date()
+  )) || []).map((invite: any) => ({
+    id: invite.id,
+    email: invite.email,
+    organizationId: invite.organizationId,
+    role: invite.role,
+    expiresAt: invite.expiresAt,
+    createdAt: invite.createdAt,
+  }));
 
   res.json({ members, pendingInvites });
 });
@@ -1059,7 +1880,7 @@ orgRouter.get('/list', async (req, res) => {
   await refreshCoreMetadataFromPostgres();
   const db = getDB();
   const user = db.users.find(u => u.username === session.username);
-  if (!user) return res.status(401).json({ error: 'User not found' });
+  if (!validSessionForUser(session, user)) return res.status(401).json({ error: 'User not found' });
 
   const userMemberships = db.memberships?.filter(m => m.userId === user.username) || [];
   const orgs = userMemberships.map(m => {

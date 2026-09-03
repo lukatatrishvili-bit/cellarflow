@@ -7,6 +7,15 @@ import {
   createSessionToken,
   verifySessionToken,
   resolveSessionSecret,
+  passcodeValidationError,
+  MIN_PASSCODE_LENGTH,
+  MAX_PASSCODE_LENGTH,
+  sameNormalizedEmail,
+  uniqueUsernameForEmail,
+  sessionMatchesUserVersion,
+  sessionPayloadForUser,
+  sessionVersionForUser,
+  userAccountIsEnabled,
 } from '../server/auth';
 
 /** Reproduce the pre-2026 `salt:hash` format at 10,000 PBKDF2 iterations. */
@@ -42,6 +51,43 @@ describe('password hashing', () => {
   });
 });
 
+describe('passcode policy', () => {
+  it('accepts passphrases within the shared length bounds', () => {
+    expect(passcodeValidationError('vintage-2026')).toBeNull();
+    expect(passcodeValidationError('x'.repeat(MIN_PASSCODE_LENGTH))).toBeNull();
+    expect(passcodeValidationError('x'.repeat(MAX_PASSCODE_LENGTH))).toBeNull();
+  });
+
+  it('rejects short, oversized, and non-string passcodes', () => {
+    expect(passcodeValidationError('short')).toMatch(/at least/);
+    expect(passcodeValidationError('x'.repeat(MAX_PASSCODE_LENGTH + 1))).toMatch(/at most/);
+    expect(passcodeValidationError(undefined)).toMatch(/at least/);
+  });
+});
+
+describe('invitation email binding', () => {
+  it('matches invited accounts case-insensitively after trimming', () => {
+    expect(sameNormalizedEmail(' Cellar@Example.com ', 'cellar@example.com')).toBe(true);
+  });
+
+  it('rejects different or missing account emails', () => {
+    expect(sameNormalizedEmail('owner@example.com', 'worker@example.com')).toBe(false);
+    expect(sameNormalizedEmail('', '')).toBe(false);
+    expect(sameNormalizedEmail(undefined, 'worker@example.com')).toBe(false);
+  });
+});
+
+describe('email-derived account usernames', () => {
+  it('creates a readable internal key without asking for a separate username', () => {
+    expect(uniqueUsernameForEmail(' Owner.Wine+Cellar@Example.com ', [])).toBe('owner_wine_cellar');
+  });
+
+  it('resolves collisions deterministically and handles non-Latin prefixes', () => {
+    expect(uniqueUsernameForEmail('owner@example.com', ['owner', 'owner_2'])).toBe('owner_3');
+    expect(uniqueUsernameForEmail('მარანი@example.ge', [])).toBe('member');
+  });
+});
+
 describe('session tokens', () => {
   it('round-trips a valid signed token', () => {
     const token = createSessionToken({ username: 'alice', role: 'Owner/Admin' });
@@ -69,6 +115,27 @@ describe('session tokens', () => {
   it('rejects empty and malformed tokens', () => {
     expect(verifySessionToken('')).toBeNull();
     expect(verifySessionToken('no-dot')).toBeNull();
+  });
+
+  it('binds new sessions to the current server-side session version', () => {
+    const user = { username: 'alice', sessionVersion: 3 };
+    const token = createSessionToken(sessionPayloadForUser(user, 'Winemaker'));
+    const payload = verifySessionToken(token);
+
+    expect(payload.sessionVersion).toBe(3);
+    expect(sessionMatchesUserVersion(payload, user)).toBe(true);
+    expect(sessionMatchesUserVersion(payload, { ...user, sessionVersion: 4 })).toBe(false);
+  });
+
+  it('treats legacy versionless users and sessions as version one', () => {
+    expect(sessionVersionForUser({ username: 'legacy' })).toBe(1);
+    expect(sessionMatchesUserVersion({ username: 'legacy' }, { username: 'legacy' })).toBe(true);
+    expect(sessionMatchesUserVersion({ username: 'legacy' }, { username: 'legacy', sessionVersion: 2 })).toBe(false);
+  });
+
+  it('defaults legacy accounts to enabled but honors an explicit disable', () => {
+    expect(userAccountIsEnabled({ username: 'legacy' })).toBe(true);
+    expect(userAccountIsEnabled({ username: 'disabled', accountEnabled: false })).toBe(false);
   });
 });
 

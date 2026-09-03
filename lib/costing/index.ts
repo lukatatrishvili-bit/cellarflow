@@ -27,3 +27,11 @@ export type {
   BottlingPackagingComponent,
   BottlingPackagingSelections,
 } from './autoEntries';
+export {
+  DEFAULT_COST_AUTOMATION_SETTINGS,
+  DEFAULT_OPERATION_COST_PROFILES,
+  automaticLabCostEntry,
+  automaticOperationCostEntries,
+  operationCostProfile,
+  resolveCostAutomationSettings,
+} from './automation';

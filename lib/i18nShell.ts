@@ -2,6 +2,8 @@ import type { Language } from './i18n';
 
 type ShellTranslationKey =
   | 'dashboard'
+  | 'today'
+  | 'overview'
   | 'grape_intake'
   | 'rtveli'
   | 'wine_lots'
@@ -17,6 +19,7 @@ type ShellTranslationKey =
   | 'notes'
   | 'calculators'
   | 'ai_assistant'
+  | 'ai_intelligence'
   | 'nav_portal'
   | 'nav_vazi'
   | 'nav_gvino'
@@ -41,6 +44,8 @@ export type ShellTranslations = Record<ShellTranslationKey, string>;
 
 const en: ShellTranslations = {
   dashboard: 'Dashboard',
+  today: 'Today',
+  overview: 'Overview',
   grape_intake: 'Grape Intake',
   rtveli: 'Rtveli (Harvest)',
   wine_lots: 'Wine Lots',
@@ -56,6 +61,7 @@ const en: ShellTranslations = {
   notes: 'Notes',
   calculators: 'Winemaking Calculators',
   ai_assistant: 'AI Winemaker',
+  ai_intelligence: 'Winery Intelligence',
   nav_portal: 'Dashboard Portal',
   nav_vazi: 'Vazi (Vineyard)',
   nav_gvino: 'Gvino (Winery)',
@@ -79,13 +85,15 @@ const en: ShellTranslations = {
 
 const ka: ShellTranslations = {
   dashboard: 'მთავარი პანელი',
+  today: 'დღეს',
+  overview: 'მიმოხილვა',
   grape_intake: 'ყურძნის მიღება',
   rtveli: 'რთველი',
   wine_lots: 'ღვინის პარტიები',
   lineage: 'გენეალოგია',
   tanks: 'რეზერვუარები',
   cellar_operations: 'ოპერაციები',
-  transfers: 'გადაღება/გადატანა',
+  transfers: 'გადატანა',
   fermentation: 'დუღილი',
   lab_analysis: 'ლაბორატორია',
   bottling: 'ჩამოსხმა',
@@ -94,6 +102,7 @@ const ka: ShellTranslations = {
   notes: 'შენიშვნა',
   calculators: 'კალკულატორები',
   ai_assistant: 'AI მეღვინე',
+  ai_intelligence: 'მარნის ინტელექტი',
   nav_portal: 'მთავარი პორტალი',
   nav_vazi: 'ვაზი (ვენახები)',
   nav_gvino: 'ღვინო (მარანი)',

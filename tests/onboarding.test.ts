@@ -37,6 +37,17 @@ describe('setup journey', () => {
     expect(viaFerm.steps.find(s => s.id === 'operation')?.done).toBe(true);
   });
 
+  it('does not count a reversed operation or its compensation as active setup progress', () => {
+    const j = computeSetupJourney({
+      ...empty(),
+      cellarOps: [
+        { id: 'op1', recordKind: 'operation', reversedByCommandId: 'cmd-reversal' },
+        { id: 'op2', recordKind: 'reversal', reversalOfOperationId: 'op1' },
+      ],
+    });
+    expect(j.steps.find(s => s.id === 'operation')?.done).toBe(false);
+  });
+
   it('nextStep skips completed steps and lands on the first gap', () => {
     const j = computeSetupJourney({
       ...empty(),

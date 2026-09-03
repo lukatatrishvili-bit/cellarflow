@@ -4,6 +4,15 @@ import { fileURLToPath } from 'url';
 import type { PrismaClient as PrismaClientType } from '@prisma/client';
 import { downloadDb, uploadDb, gcsEnabled, gcsTarget } from './gcsStore';
 import { createEmptyIntegrationHubState, ensureIntegrationHubState, type IntegrationHubState } from '../lib/integrations';
+import {
+  DEFAULT_TERROIR_SHARING_SETTINGS,
+  normalizeTerroirSharingSettings,
+  type TerroirSharingSettings,
+} from '../lib/terroirPulse';
+import { readDemoAccountConfig } from './demoAccount';
+import { hashToken } from './emailVerification';
+import { approvalStatusForUser } from './registrationApproval';
+import { syncVesselLotProjection } from './relationalProjection';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,7 +34,9 @@ let lastPostgresMigrationSource: string | null = null;
 let pendingGcsBackupJson: string | null = null;
 let pendingGcsBackupTimer: ReturnType<typeof setTimeout> | null = null;
 const organizationStateMeta = new Map<string, OrganizationStateMeta>();
+const lastPresenceWriteAt = new Map<string, number>();
 const GCS_BACKUP_MIN_INTERVAL_MS = 90_000;
+const PRESENCE_WRITE_INTERVAL_MS = 30_000;
 const DEFAULT_USER_MODULES = ['vazi', 'gvino'];
 const DEFAULT_USER_WIDGETS = ['weather', 'chemistry', 'scouting', 'fermentation', 'notes', 'tasks'];
 
@@ -109,7 +120,6 @@ export async function initDB(): Promise<void> {
   console.log('[db] initializing PostgreSQL connection via Prisma...');
 
   try {
-    let migratedJsonToPostgres = false;
     const users = await prisma.user.findMany();
     const organizations = await prisma.organization.findMany();
     const memberships = await prisma.membership.findMany();
@@ -130,7 +140,6 @@ export async function initDB(): Promise<void> {
 
       cleanupDemoData();
       await persistFullDbToPostgres('gcs-or-local-json');
-      migratedJsonToPostgres = true;
       lastPostgresMigrationAt = new Date().toISOString();
       lastPostgresMigrationSource = gcsEnabled ? gcsTarget() : 'local-json';
       console.log(`[db] migrated JSON state into PostgreSQL JSONB: users=${dbData.users.length}, organizations=${dbData.organizations.length}, orgStates=${Object.keys(dbData.orgData || {}).length}.`);
@@ -143,10 +152,15 @@ export async function initDB(): Promise<void> {
     // that can race with user-initiated saves during cold starts.
     saveDB({ syncPostgres: false });
   } catch (err) {
-    console.warn('[db] PostgreSQL initialization failed. Falling back to GCS or local file:', err);
-    postgresDisabledAfterFailure = true;
     await prisma.$disconnect().catch(() => undefined);
     prismaInstance = null;
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[db] PostgreSQL initialization failed. Refusing fallback storage in production:', err);
+      throw err;
+    }
+
+    console.warn('[db] PostgreSQL initialization failed. Falling back to GCS or local file:', err);
+    postgresDisabledAfterFailure = true;
     await loadLocalOrGcsDB();
     dbData = normalizeDbState(dbData);
     cleanupDemoData();
@@ -154,9 +168,60 @@ export async function initDB(): Promise<void> {
   }
 }
 
+/**
+ * Drop organizations that the demo purge itself has just stranded.
+ *
+ * Deliberately narrow. A general "delete every organization nobody belongs to"
+ * sweep at boot is far too dangerous for this codebase: an organization can be
+ * claimed by `user.activeOrganizationId` alone, without a membership row — the
+ * e2e fixtures do exactly that — so a sweep would quietly delete live
+ * workspaces. Startup should never destroy data it did not create.
+ *
+ * This only considers ids that belonged to the demo user a moment ago, and only
+ * removes them once nothing else references them at all.
+ */
+function removeStrandedDemoOrganizations(demoOrgIds: string[]): void {
+  if (!dbData || !demoOrgIds.length) return;
+
+  const stillClaimed = new Set<string>([
+    ...(dbData.memberships || []).map((m: any) => m.organizationId),
+    ...(dbData.users || []).map((u: any) => u.activeOrganizationId).filter(Boolean),
+  ]);
+
+  const stranded = demoOrgIds.filter(id => !stillClaimed.has(id));
+  if (!stranded.length) return;
+
+  dbData.organizations = (dbData.organizations || []).filter((org: any) => !stranded.includes(org.id));
+  for (const id of stranded) delete dbData.orgData?.[id];
+  console.log(`[db] removed ${stranded.length} demo organization(s) left behind by the demo purge.`);
+}
+
 function cleanupDemoData(): void {
   if (!dbData) return;
+
+  /**
+   * When the demo login is switched on, the demo account IS the product
+   * surface. Deleting it on every boot meant `ensureDemoAccount` rebuilt it
+   * from scratch each restart, with a fresh organization — so anything seeded
+   * into the demo workspace was orphaned within one restart, and the demo was
+   * permanently empty.
+   *
+   * The purge exists so a real deployment carries no demo records, and that
+   * property is preserved: it still runs whenever demo mode is off. Enabled,
+   * the account persists and the demo becomes something you can actually
+   * prepare in advance.
+   */
+  if (readDemoAccountConfig().enabled) return;
+
   console.log('[db] performing demo data cleanup...');
+
+  // Note which workspaces the demo account holds before removing it, so the
+  // sweep below can only ever touch those.
+  const demoOrgIds = [
+    ...(dbData.memberships || []).filter((m: any) => m.userId === 'demo').map((m: any) => m.organizationId),
+    ...(dbData.users || []).filter((u: any) => u.username === 'demo').map((u: any) => u.activeOrganizationId),
+  ].filter(Boolean).filter((id, index, all) => all.indexOf(id) === index);
+
   dbData.users = (dbData.users || []).filter((u: any) => u.username !== 'demo');
   dbData.memberships = (dbData.memberships || []).filter((m: any) => m.userId !== 'demo');
   if (dbData.organizations) {
@@ -165,6 +230,7 @@ function cleanupDemoData(): void {
   if (dbData.orgData) {
     delete dbData.orgData['org_demo_georgian'];
   }
+  removeStrandedDemoOrganizations(demoOrgIds);
 }
 
 
@@ -195,27 +261,59 @@ async function loadLocalOrGcsDB(): Promise<void> {
       console.log('[db] successfully loaded database from local file!');
       return;
     } catch (e) {
-      console.error('[db] failed to parse local database file:', e);
+      /**
+       * A file that exists but will not parse is an emergency, not a reason to
+       * start fresh.
+       *
+       * This used to log and fall through to the empty database below, which
+       * `initDB` then saved straight back over the file — turning a corrupt but
+       * potentially salvageable database into a permanent, total loss, and
+       * destroying the evidence in the same step. The log even claimed no
+       * database had been found, while it sat right there unreadable.
+       *
+       * So: keep the bytes under a timestamped name and refuse to boot. Someone
+       * has to look at this, and an operator can recover far more from a corrupt
+       * file than from an empty one.
+       */
+      const preservedPath = `${targetPath}.corrupt-${Date.now()}`;
+      try {
+        fs.copyFileSync(targetPath, preservedPath);
+      } catch (copyError) {
+        console.error('[db] could not preserve the unreadable database file:', copyError);
+      }
+      const detail = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `The database file at ${targetPath} exists but could not be parsed (${detail}). `
+        + `Refusing to start, because continuing would overwrite it with an empty database. `
+        + `A copy has been kept at ${preservedPath}. `
+        + `Repair or restore that file, or move it aside to intentionally start from empty.`,
+      );
     }
   }
 
-  // 3. Fallback to empty
+  // 3. No database anywhere — a genuine first run.
   console.log('[db] no database found on GCS or local disk. Initializing empty database.');
   dbData = {
     users: [],
     organizations: [],
     memberships: [],
     invitations: [],
+    securityAuditEvents: [],
+    whatsappDeliveries: [],
     orgData: {}
   };
 }
 
 export interface UserDataState {
+  /** Server-private bounded ledger preventing stale clients from resurrecting deleted records. */
+  syncDeletionLedger: any[];
   vessels: any[];
   lots: any[];
   fermlogs: any[];
   lablogs: any[];
   inventory: any[];
+  invoiceReceipts: any[];
+  inventoryMovements: any[];
   tasks: any[];
   notes: any[];
   blocks: any[];
@@ -244,7 +342,22 @@ export interface UserDataState {
   attachments: any[];
   crmLeads: any[];
   aiDrafts: any[];
+  /** Server-owned review queue for command payloads awaiting human approval. */
+  workflowApprovals: any[];
+  qualitySops: any[];
+  purchaseOrders: any[];
+  productionPlans: any[];
+  recallCases: any[];
+  /** Named, assigned batches of planned work, and the templates they come from. */
+  workOrders: any[];
+  workOrderTemplates: any[];
+  /** Proposed blends that touch no inventory until they are committed. */
+  blendTrials: any[];
+  /** Intelligence-layer findings with their review lifecycle. */
+  aiFindings: any[];
   integrationHub?: IntegrationHubState;
+  /** Explicit, revocable opt-in for the public privacy-preserving vintage pulse. */
+  terroirSharing?: TerroirSharingSettings;
   companyProfile: any;
 }
 
@@ -253,16 +366,22 @@ export interface DBState {
   organizations: any[];
   memberships: any[];
   invitations: any[];
+  securityAuditEvents: any[];
+  /** Local/GCS fallback for durable WhatsApp delivery state when PostgreSQL is unavailable. */
+  whatsappDeliveries: any[];
   orgData: Record<string, UserDataState>;
 }
 
 export function createEmptyUserData(): UserDataState {
   return {
+    syncDeletionLedger: [],
     vessels: [],
     lots: [],
     fermlogs: [],
     lablogs: [],
     inventory: [],
+    invoiceReceipts: [],
+    inventoryMovements: [],
     tasks: [],
     notes: [],
     blocks: [],
@@ -291,7 +410,17 @@ export function createEmptyUserData(): UserDataState {
     attachments: [],
     crmLeads: [],
     aiDrafts: [],
+    workflowApprovals: [],
+    qualitySops: [],
+    purchaseOrders: [],
+    productionPlans: [],
+    recallCases: [],
+    workOrders: [],
+    workOrderTemplates: [],
+    blendTrials: [],
+    aiFindings: [],
     integrationHub: createEmptyIntegrationHubState(),
+    terroirSharing: { ...DEFAULT_TERROIR_SHARING_SETTINGS },
     companyProfile: {
       companyName: '',
       wineryName: '',
@@ -321,11 +450,14 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
   return {
     ...empty,
     ...data,
+    syncDeletionLedger: Array.isArray(data.syncDeletionLedger) ? data.syncDeletionLedger : [],
     vessels: Array.isArray(data.vessels) ? data.vessels : [],
     lots: Array.isArray(data.lots) ? data.lots : [],
     fermlogs: Array.isArray(data.fermlogs) ? data.fermlogs : [],
     lablogs: Array.isArray(data.lablogs) ? data.lablogs : [],
     inventory: Array.isArray(data.inventory) ? data.inventory : [],
+    invoiceReceipts: Array.isArray(data.invoiceReceipts) ? data.invoiceReceipts : [],
+    inventoryMovements: Array.isArray(data.inventoryMovements) ? data.inventoryMovements : [],
     tasks: Array.isArray(data.tasks) ? data.tasks : [],
     notes: Array.isArray(data.notes) ? data.notes : [],
     blocks: Array.isArray(data.blocks) ? data.blocks : [],
@@ -354,7 +486,20 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     crmLeads: Array.isArray(data.crmLeads) ? data.crmLeads : [],
     aiDrafts: Array.isArray(data.aiDrafts) ? data.aiDrafts : [],
+    workflowApprovals: Array.isArray(data.workflowApprovals) ? data.workflowApprovals : [],
+    qualitySops: Array.isArray(data.qualitySops) ? data.qualitySops : [],
+    purchaseOrders: Array.isArray(data.purchaseOrders) ? data.purchaseOrders : [],
+    productionPlans: Array.isArray(data.productionPlans) ? data.productionPlans : [],
+    recallCases: Array.isArray(data.recallCases) ? data.recallCases : [],
+    workOrders: Array.isArray(data.workOrders) ? data.workOrders : [],
+    workOrderTemplates: Array.isArray(data.workOrderTemplates) ? data.workOrderTemplates : [],
+    blendTrials: Array.isArray(data.blendTrials) ? data.blendTrials : [],
+    aiFindings: Array.isArray(data.aiFindings) ? data.aiFindings : [],
     integrationHub: ensureIntegrationHubState(data.integrationHub),
+    terroirSharing: normalizeTerroirSharingSettings(
+      data.terroirSharing,
+      (Array.isArray(data.blocks) ? data.blocks : []).map(block => String(block?.id || '')).filter(Boolean),
+    ),
     companyProfile: data.companyProfile && typeof data.companyProfile === 'object'
       ? { ...empty.companyProfile, ...data.companyProfile }
       : empty.companyProfile,
@@ -363,10 +508,41 @@ function normalizeUserData(data: Partial<UserDataState> | null | undefined): Use
 
 function normalizeDbState(data: Partial<DBState> & { userData?: Record<string, Partial<UserDataState>> } | null | undefined): DBState {
   const normalized: DBState = {
-    users: Array.isArray(data?.users) ? data.users : [],
-    organizations: Array.isArray(data?.organizations) ? data.organizations : [],
+    users: Array.isArray(data?.users)
+      ? data.users.map((user: any) => ({
+        ...user,
+        phone: typeof user?.phone === 'string' ? user.phone : '',
+        whatsappOptIn: user?.whatsappOptIn === true,
+        accountEnabled: user?.accountEnabled !== false,
+        // Accounts stored before manual approval existed stay usable.
+        approvalStatus: approvalStatusForUser(user),
+        sessionVersion: Number.isInteger(Number(user?.sessionVersion)) && Number(user.sessionVersion) > 0
+          ? Number(user.sessionVersion)
+          : 1,
+      }))
+      : [],
+    organizations: Array.isArray(data?.organizations)
+      ? data.organizations.map((organization: any) => {
+        organization.status = organization?.status || 'active';
+        organization.internalNotes = typeof organization?.internalNotes === 'string' ? organization.internalNotes : '';
+        organization.internalTags = Array.isArray(organization?.internalTags)
+          ? organization.internalTags.map((tag: unknown) => String(tag)).filter(Boolean)
+          : [];
+        return organization;
+      })
+      : [],
     memberships: Array.isArray(data?.memberships) ? data.memberships : [],
-    invitations: Array.isArray(data?.invitations) ? data.invitations : [],
+    invitations: Array.isArray(data?.invitations)
+      ? data.invitations.map((invite: any) => {
+        const { token, ...safeInvite } = invite || {};
+        return {
+          ...safeInvite,
+          tokenHash: safeInvite.tokenHash || (token ? hashToken(token) : hashToken(String(safeInvite.id || ''))),
+        };
+      })
+      : [],
+    securityAuditEvents: Array.isArray(data?.securityAuditEvents) ? data.securityAuditEvents : [],
+    whatsappDeliveries: Array.isArray(data?.whatsappDeliveries) ? data.whatsappDeliveries : [],
     orgData: {},
   };
 
@@ -413,9 +589,14 @@ function serializeDbState(data: DBState = getDB()): string {
     organizations: data.organizations || [],
     memberships: data.memberships || [],
     invitations: data.invitations || [],
+    securityAuditEvents: data.securityAuditEvents || [],
+    whatsappDeliveries: data.whatsappDeliveries || [],
     orgData: data.orgData || {},
   };
-  return JSON.stringify(plain, null, 2);
+  // Minified on purpose: this runs on every mutation and the result is written
+  // to disk and uploaded to GCS. Indentation is ~35% of the payload for a blob
+  // no human reads — use the admin snapshot export when you want it readable.
+  return JSON.stringify(plain);
 }
 
 function jsonForPrisma(value: unknown): any {
@@ -502,6 +683,60 @@ export async function flushPendingGcsBackup(): Promise<void> {
   await backupJsonToGcsNow(latestJson);
 }
 
+/**
+ * Map one PostgreSQL user row into the in-process directory shape.
+ *
+ * Shared by the bulk hydrate and the keyed session lookup on purpose: two
+ * mappings for the same row would drift, and the fields below decide whether a
+ * request is authorised (accountEnabled, approvalStatus, sessionVersion).
+ */
+function mapPostgresUserRow(u: any) {
+  return {
+    id: u.id,
+    username: u.username,
+    email: u.email,
+    fullName: u.fullName,
+    role: u.role,
+    language: u.language,
+    phone: u.phone || '',
+    whatsappOptIn: u.whatsappOptIn === true,
+    passwordHash: u.passwordHash,
+    emailVerified: u.emailVerified,
+    verifyTokenHash: u.verifyTokenHash,
+    verifyTokenExpires: u.verifyTokenExpires ? Number(u.verifyTokenExpires) : null,
+    resetTokenHash: u.resetTokenHash,
+    resetTokenExpires: u.resetTokenExpires ? Number(u.resetTokenExpires) : null,
+    isDemo: u.isDemo,
+    activeOrganizationId: u.activeOrganizationId,
+    enabledModules: stringArray(u.enabledModules, DEFAULT_USER_MODULES),
+    enabledWidgets: stringArray(u.enabledWidgets, DEFAULT_USER_WIDGETS),
+    registrationComplete: u.registrationComplete ?? true,
+    accountEnabled: u.accountEnabled !== false,
+    approvalStatus: approvalStatusForUser(u),
+    approvalRequestedAt: u.approvalRequestedAt ? new Date(u.approvalRequestedAt).toISOString() : undefined,
+    approvalDecidedAt: u.approvalDecidedAt ? new Date(u.approvalDecidedAt).toISOString() : undefined,
+    approvalDecidedBy: u.approvalDecidedBy || undefined,
+    approvalTokenHash: u.approvalTokenHash,
+    approvalTokenExpires: u.approvalTokenExpires ? Number(u.approvalTokenExpires) : null,
+    sessionVersion: Number.isInteger(u.sessionVersion) && u.sessionVersion > 0 ? u.sessionVersion : 1,
+    lastSeenAt: u.lastSeenAt ? new Date(u.lastSeenAt).toISOString() : undefined,
+    createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
+    updatedAt: u.updatedAt ? new Date(u.updatedAt).toISOString() : undefined,
+  };
+}
+
+/** Map one PostgreSQL membership row into the in-process directory shape. */
+function mapPostgresMembershipRow(m: any) {
+  return {
+    id: m.id,
+    userId: m.userId,
+    organizationId: m.organizationId,
+    role: m.role,
+    createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : undefined,
+    updatedAt: m.updatedAt ? new Date(m.updatedAt).toISOString() : undefined,
+  };
+}
+
 function dbFromPostgresRows(rows: {
   users: any[];
   organizations: any[];
@@ -510,28 +745,15 @@ function dbFromPostgresRows(rows: {
   organizationStates: any[];
 }): DBState {
   const db: DBState = {
-    users: rows.users.map(u => ({
-      id: u.id,
-      username: u.username,
-      email: u.email,
-      fullName: u.fullName,
-      role: u.role,
-      language: u.language,
-      passwordHash: u.passwordHash,
-      emailVerified: u.emailVerified,
-      verifyTokenHash: u.verifyTokenHash,
-      verifyTokenExpires: u.verifyTokenExpires ? Number(u.verifyTokenExpires) : null,
-      isDemo: u.isDemo,
-      activeOrganizationId: u.activeOrganizationId,
-      enabledModules: stringArray(u.enabledModules, DEFAULT_USER_MODULES),
-      enabledWidgets: stringArray(u.enabledWidgets, DEFAULT_USER_WIDGETS),
-      registrationComplete: u.registrationComplete ?? true,
-      createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
-      updatedAt: u.updatedAt ? new Date(u.updatedAt).toISOString() : undefined,
-    })),
+    users: rows.users.map(mapPostgresUserRow),
     organizations: rows.organizations.map(o => ({
       id: o.id,
       name: o.name,
+      status: o.status || 'active',
+      archivedAt: o.archivedAt ? new Date(o.archivedAt).toISOString() : null,
+      deletionScheduledAt: o.deletionScheduledAt ? new Date(o.deletionScheduledAt).toISOString() : null,
+      internalNotes: o.internalNotes || '',
+      internalTags: stringArray(o.internalTags),
       createdAt: o.createdAt ? new Date(o.createdAt).toISOString() : undefined,
       updatedAt: o.updatedAt ? new Date(o.updatedAt).toISOString() : undefined,
     })),
@@ -548,11 +770,14 @@ function dbFromPostgresRows(rows: {
       email: i.email,
       organizationId: i.organizationId,
       role: i.role,
-      token: i.token,
+      tokenHash: i.tokenHash,
       expiresAt: i.expiresAt.toISOString(),
       acceptedAt: i.acceptedAt ? i.acceptedAt.toISOString() : null,
+      revokedAt: i.revokedAt ? i.revokedAt.toISOString() : null,
       createdAt: i.createdAt ? new Date(i.createdAt).toISOString() : undefined,
     })),
+    securityAuditEvents: [],
+    whatsappDeliveries: [],
     orgData: {},
   };
 
@@ -595,6 +820,8 @@ export function getDB(): DBState {
       organizations: [],
       memberships: [],
       invitations: [],
+      securityAuditEvents: [],
+      whatsappDeliveries: [],
       orgData: {}
     };
   }
@@ -643,6 +870,33 @@ export function getDB(): DBState {
   return dbData;
 }
 
+/**
+ * Record lightweight user presence without turning every authenticated API
+ * request into a database write. Memory is updated immediately; the shared
+ * PostgreSQL row (or JSON fallback) is refreshed at most twice per minute.
+ */
+export async function touchUserPresence(username: string, now = new Date()): Promise<string | null> {
+  const normalized = String(username || '').trim();
+  if (!normalized) return null;
+  const db = getDB();
+  const user = db.users.find(candidate => candidate.username === normalized);
+  if (!user) return null;
+
+  const iso = now.toISOString();
+  user.lastSeenAt = iso;
+  const previousWrite = lastPresenceWriteAt.get(normalized) || 0;
+  if (now.getTime() - previousWrite < PRESENCE_WRITE_INTERVAL_MS) return iso;
+  lastPresenceWriteAt.set(normalized, now.getTime());
+
+  const prisma = await getPrisma();
+  if (prisma) {
+    await prisma.user.updateMany({ where: { username: normalized }, data: { lastSeenAt: now } });
+  } else {
+    saveDB({ syncPostgres: false, gcsBackup: false });
+  }
+  return iso;
+}
+
 function writeLocalJsonBackup(jsonStr: string): void {
   try {
     const templatePath = path.resolve(__dirname, '../db.json');
@@ -659,14 +913,18 @@ function writeLocalJsonBackup(jsonStr: string): void {
   }
 }
 
-export function saveDB(options: { syncPostgres?: boolean } = {}): void {
+export function saveDB(options: { syncPostgres?: boolean; gcsBackup?: boolean } = {}): void {
   if (!dbData) return;
   const jsonStr = serializeDbState(dbData);
 
   writeLocalJsonBackup(jsonStr);
 
   if (options.syncPostgres === false) {
-    if (!isPostgresConfigured() || postgresDisabledAfterFailure) backupJsonToGcs(jsonStr);
+    // `gcsBackup: true` lets callers that always want a GCS copy reuse this
+    // serialization instead of stringifying the whole database a second time.
+    if (options.gcsBackup || !isPostgresConfigured() || postgresDisabledAfterFailure) {
+      backupJsonToGcs(jsonStr);
+    }
     return;
   }
 
@@ -694,9 +952,12 @@ export async function forceSaveDB(): Promise<ReturnType<typeof getDbRuntimeStatu
 }
 
 async function syncCoreDbToPrisma(): Promise<void> {
-  const prisma = await getPrisma();
-  if (!prisma || !dbData) return;
   try {
+    // getPrisma() can reject (dynamic import / client construction). This runs
+    // as a floating promise from saveDB, so an escape here becomes an unhandled
+    // rejection and takes the process down — keep it inside the guard.
+    const prisma = await getPrisma();
+    if (!prisma || !dbData) return;
     await persistFullDbToPostgres('memory-cache');
   } catch (err) {
     // persistFullDbToPostgres records the detailed error. Keep this background
@@ -718,8 +979,23 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
         if (!org?.id) continue;
         await tx.organization.upsert({
           where: { id: org.id },
-          update: { name: org.name || org.id },
-          create: { id: org.id, name: org.name || org.id },
+          update: {
+            name: org.name || org.id,
+            status: org.status || 'active',
+            archivedAt: org.archivedAt ? new Date(org.archivedAt) : null,
+            deletionScheduledAt: org.deletionScheduledAt ? new Date(org.deletionScheduledAt) : null,
+            internalNotes: org.internalNotes || null,
+            internalTags: Array.isArray(org.internalTags) ? org.internalTags : [],
+          },
+          create: {
+            id: org.id,
+            name: org.name || org.id,
+            status: org.status || 'active',
+            archivedAt: org.archivedAt ? new Date(org.archivedAt) : null,
+            deletionScheduledAt: org.deletionScheduledAt ? new Date(org.deletionScheduledAt) : null,
+            internalNotes: org.internalNotes || null,
+            internalTags: Array.isArray(org.internalTags) ? org.internalTags : [],
+          },
         });
       }
 
@@ -732,15 +1008,28 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
+            resetTokenHash: user.resetTokenHash || null,
+            resetTokenExpires: user.resetTokenExpires ? BigInt(user.resetTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
+            lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : null,
           },
           create: {
             id: user.id || undefined,
@@ -749,15 +1038,28 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
+            resetTokenHash: user.resetTokenHash || null,
+            resetTokenExpires: user.resetTokenExpires ? BigInt(user.resetTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
+            lastSeenAt: user.lastSeenAt ? new Date(user.lastSeenAt) : null,
           },
         });
       }
@@ -785,18 +1087,20 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
           create: {
             id: invite.id,
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
         });
       }
@@ -808,6 +1112,78 @@ async function persistCoreMetadataToPostgres(source: string): Promise<void> {
     lastPostgresSyncError = err instanceof Error ? err.message : String(err);
     console.error(`[db] PostgreSQL core metadata persistence failed (${source}):`, err);
     throw err;
+  }
+}
+
+export interface SessionPrincipal {
+  user: any;
+  memberships: any[];
+}
+
+/**
+ * Load exactly the rows an authenticated request needs to authorise itself: one
+ * user and their memberships, by key.
+ *
+ * This exists because the request path used to call
+ * `refreshCoreMetadataFromPostgres()`, which issues four unfiltered `findMany`
+ * queries and rebuilds the whole in-process directory — every user,
+ * organization, membership, and invitation on the platform, on every
+ * authenticated request. That is O(all tenants) per request, serialized through
+ * one event loop, to answer a question about one person.
+ *
+ * Freshness is not relaxed to achieve that. The fields the request path decides
+ * on — `accountEnabled`, `approvalStatus`, `sessionVersion`, and the membership
+ * role — are still read from PostgreSQL on every request, because approval can
+ * be withdrawn and roles changed after a session is issued. Only the scope of
+ * the read changes.
+ *
+ * The rows are also written back into the process directory, so code that reads
+ * `getDB().users` for the *requesting* user keeps seeing current data. Routes
+ * that enumerate other users already call `refreshCoreMetadataFromPostgres()`
+ * themselves — every admin and auth handler does — so none of them depended on
+ * this path as their source of freshness.
+ *
+ * Returns `null` when PostgreSQL is unavailable, leaving the caller on the
+ * in-memory directory exactly as before.
+ */
+export async function loadSessionPrincipal(username: string): Promise<SessionPrincipal | null> {
+  const prisma = await getPrisma();
+  if (!prisma) return null;
+
+  try {
+    const row = await prisma.user.findUnique({
+      where: { username },
+      include: { memberships: true },
+    });
+    if (!row) {
+      // Deleted between requests: drop the stale directory entry so a cached
+      // row cannot keep authorising a user who no longer exists.
+      const db = getDB();
+      db.users = db.users.filter((candidate: any) => candidate.username !== username);
+      db.memberships = (db.memberships || []).filter((candidate: any) => candidate.userId !== username);
+      return null;
+    }
+
+    const user = mapPostgresUserRow(row);
+    const memberships = (row.memberships || []).map(mapPostgresMembershipRow);
+
+    const db = getDB();
+    const userIndex = db.users.findIndex((candidate: any) => candidate.username === username);
+    if (userIndex === -1) db.users.push(user);
+    else db.users[userIndex] = user;
+
+    if (!db.memberships) db.memberships = [];
+    db.memberships = [
+      ...db.memberships.filter((candidate: any) => candidate.userId !== username),
+      ...memberships,
+    ];
+
+    lastPostgresSyncError = null;
+    return { user, memberships };
+  } catch (err) {
+    lastPostgresSyncError = err instanceof Error ? err.message : String(err);
+    console.warn('[db] session principal lookup failed; using process cache fallback:', err);
+    return null;
   }
 }
 
@@ -831,6 +1207,194 @@ export async function refreshCoreMetadataFromPostgres(): Promise<boolean> {
     console.warn('[db] PostgreSQL core metadata refresh failed; using process cache fallback:', err);
     return false;
   }
+}
+
+export type InvitationAcceptanceStatus =
+  | 'success'
+  | 'not_found'
+  | 'already_accepted'
+  | 'revoked'
+  | 'expired'
+  | 'user_not_found'
+  | 'email_mismatch'
+  | 'email_unverified';
+
+export interface InvitationAcceptanceResult {
+  status: InvitationAcceptanceStatus;
+  organizationId?: string;
+  role?: string;
+}
+
+function normalizedEmail(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/**
+ * Claim an invitation and create/update its membership as one database
+ * transaction. The conditional update is the concurrency gate: only one
+ * request can move acceptedAt from null, so duplicate submissions cannot race
+ * into multiple or partially-applied memberships.
+ */
+export async function acceptInvitationAtomically(
+  tokenHash: string,
+  username: string,
+  now = new Date(),
+): Promise<InvitationAcceptanceResult> {
+  const prisma = await getPrisma();
+
+  if (prisma) {
+    const result = await prisma.$transaction(async (tx) => {
+      const invite = await tx.invitation.findUnique({ where: { tokenHash } });
+      if (!invite) return { status: 'not_found' } as InvitationAcceptanceResult;
+      if (invite.acceptedAt) return { status: 'already_accepted' } as InvitationAcceptanceResult;
+      if (invite.revokedAt) return { status: 'revoked' } as InvitationAcceptanceResult;
+      if (invite.expiresAt.getTime() <= now.getTime()) return { status: 'expired' } as InvitationAcceptanceResult;
+
+      const user = await tx.user.findUnique({ where: { username } });
+      if (!user) return { status: 'user_not_found' } as InvitationAcceptanceResult;
+      if (user.accountEnabled === false) return { status: 'user_not_found' } as InvitationAcceptanceResult;
+      if (normalizedEmail(user.email) !== normalizedEmail(invite.email)) {
+        return { status: 'email_mismatch' } as InvitationAcceptanceResult;
+      }
+      if (!user.emailVerified) return { status: 'email_unverified' } as InvitationAcceptanceResult;
+
+      const claimed = await tx.invitation.updateMany({
+        where: {
+          id: invite.id,
+          acceptedAt: null,
+          revokedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { acceptedAt: now },
+      });
+      if (claimed.count !== 1) {
+        return { status: 'already_accepted' } as InvitationAcceptanceResult;
+      }
+
+      await tx.membership.upsert({
+        where: {
+          userId_organizationId: {
+            userId: user.username,
+            organizationId: invite.organizationId,
+          },
+        },
+        update: { role: invite.role },
+        create: {
+          userId: user.username,
+          organizationId: invite.organizationId,
+          role: invite.role,
+        },
+      });
+      await tx.user.update({
+        where: { username: user.username },
+        data: { activeOrganizationId: invite.organizationId },
+      });
+
+      return {
+        status: 'success',
+        organizationId: invite.organizationId,
+        role: invite.role,
+      } as InvitationAcceptanceResult;
+    });
+
+    if (result.status === 'success') await refreshCoreMetadataFromPostgres();
+    return result;
+  }
+
+  const db = getDB();
+  const invite = db.invitations.find((candidate: any) => candidate.tokenHash === tokenHash);
+  if (!invite) return { status: 'not_found' };
+  if (invite.acceptedAt) return { status: 'already_accepted' };
+  if (invite.revokedAt) return { status: 'revoked' };
+  if (new Date(invite.expiresAt).getTime() <= now.getTime()) return { status: 'expired' };
+
+  const user = db.users.find((candidate: any) => candidate.username === username);
+  if (!user) return { status: 'user_not_found' };
+  if (user.accountEnabled === false) return { status: 'user_not_found' };
+  if (normalizedEmail(user.email) !== normalizedEmail(invite.email)) return { status: 'email_mismatch' };
+  if (user.emailVerified === false) return { status: 'email_unverified' };
+
+  // Claim before the first await so concurrent requests in this process see it.
+  invite.acceptedAt = now.toISOString();
+  const existing = db.memberships.find((membership: any) => (
+    membership.userId === user.username && membership.organizationId === invite.organizationId
+  ));
+  if (existing) {
+    existing.role = invite.role;
+  } else {
+    db.memberships.push({
+      id: `mem_${Math.random().toString(36).slice(2, 11)}`,
+      userId: user.username,
+      organizationId: invite.organizationId,
+      role: invite.role,
+    });
+  }
+  user.activeOrganizationId = invite.organizationId;
+  await saveCoreMetadata('org-invite-accept');
+  return { status: 'success', organizationId: invite.organizationId, role: invite.role };
+}
+
+export interface SecurityAuditEventInput {
+  eventType: string;
+  username?: string | null;
+  actorUsername?: string | null;
+  organizationId?: string | null;
+  ipHash?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+function safeAuditMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+  const entries = Object.entries(metadata).filter(([key]) => (
+    !/(authorization|cookie|passcode|password|secret|token)/i.test(key)
+  ));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+export async function recordSecurityAuditEvent(input: SecurityAuditEventInput): Promise<void> {
+  const eventType = String(input.eventType || '').trim();
+  if (!eventType) return;
+  const metadata = safeAuditMetadata(input.metadata);
+  const data = {
+    eventType,
+    username: input.username || null,
+    actorUsername: input.actorUsername || null,
+    organizationId: input.organizationId || null,
+    ipHash: input.ipHash || null,
+    metadata: metadata ? jsonForPrisma(metadata) : undefined,
+  };
+
+  const prisma = await getPrisma();
+  if (prisma && (prisma as any).securityAuditEvent) {
+    await (prisma as any).securityAuditEvent.create({ data });
+    return;
+  }
+
+  const db = getDB();
+  if (!db.securityAuditEvents) db.securityAuditEvents = [];
+  db.securityAuditEvents.unshift({
+    id: `security_${Math.random().toString(36).slice(2, 11)}`,
+    ...data,
+    createdAt: new Date().toISOString(),
+  });
+  if (db.securityAuditEvents.length > 2000) db.securityAuditEvents.length = 2000;
+  saveDB({ syncPostgres: false });
+}
+
+export async function listSecurityAuditEvents(limit = 200): Promise<any[]> {
+  const take = Math.min(500, Math.max(1, Math.floor(limit)));
+  const prisma = await getPrisma();
+  if (prisma && (prisma as any).securityAuditEvent) {
+    const rows = await (prisma as any).securityAuditEvent.findMany({
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+    return rows.map((row: any) => ({
+      ...row,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+    }));
+  }
+  return [...(getDB().securityAuditEvents || [])].slice(0, take);
 }
 
 export async function saveCoreMetadata(source = 'core-metadata'): Promise<void> {
@@ -868,6 +1432,49 @@ export async function deleteUserMetadataFromPostgres(username: string): Promise<
   }
 }
 
+/**
+ * Remove one tenant and every PostgreSQL record owned by it. The Prisma
+ * relations use cascading deletes, so this also clears memberships, the JSONB
+ * organization state, billing metadata, and relational projections.
+ *
+ * Core-metadata saves intentionally only upsert records. Deletion therefore
+ * needs an explicit database operation or another application instance would
+ * rehydrate the removed tenant on its next metadata refresh.
+ */
+export async function deleteOrganizationMetadataFromPostgres(organizationId: string): Promise<void> {
+  const prisma = await getPrisma();
+  if (!prisma) return;
+
+  try {
+    await prisma.organization.deleteMany({ where: { id: organizationId } });
+    lastPostgresSyncAt = new Date().toISOString();
+    lastPostgresSyncError = null;
+  } catch (err) {
+    lastPostgresSyncError = err instanceof Error ? err.message : String(err);
+    console.error(`[db] PostgreSQL organization metadata delete failed (${organizationId}):`, err);
+    throw err;
+  }
+}
+
+/** Explicit counterpart to the membership upserts in saveCoreMetadata. */
+export async function deleteMembershipMetadataFromPostgres(
+  username: string,
+  organizationId: string,
+): Promise<void> {
+  const prisma = await getPrisma();
+  if (!prisma) return;
+
+  try {
+    await prisma.membership.deleteMany({ where: { userId: username, organizationId } });
+    lastPostgresSyncAt = new Date().toISOString();
+    lastPostgresSyncError = null;
+  } catch (err) {
+    lastPostgresSyncError = err instanceof Error ? err.message : String(err);
+    console.error(`[db] PostgreSQL membership metadata delete failed (${username}, ${organizationId}):`, err);
+    throw err;
+  }
+}
+
 export interface PostgresReadinessProbe {
   ok: boolean;
   checkedAt: string;
@@ -878,6 +1485,9 @@ export interface PostgresReadinessProbe {
     coreMetadataRead: boolean;
     organizationStateRead: boolean;
     loginAttemptStoreRead: boolean;
+    securityAuditStoreRead: boolean;
+    billingStorageRead?: boolean;
+    relationalProjectionRead: boolean;
   };
   errors: string[];
 }
@@ -889,15 +1499,18 @@ async function probePrismaModelRead(model: any, label: string, errors: string[])
   }
 
   try {
-    if (typeof model.count === 'function') {
-      await model.count();
-      return true;
-    }
     if (typeof model.findMany === 'function') {
       await model.findMany({ take: 1 });
       return true;
     }
-    errors.push(`${label} Prisma model has no readable count/findMany method.`);
+    // Compatibility fallback for minimal clients/test doubles. Generated
+    // Prisma models use the bounded findMany branch above so readiness never
+    // scans an entire growing audit or login-attempt table.
+    if (typeof model.count === 'function') {
+      await model.count();
+      return true;
+    }
+    errors.push(`${label} Prisma model has no readable findMany/count method.`);
     return false;
   } catch (err) {
     errors.push(`${label} read failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -917,6 +1530,9 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
       coreMetadataRead: false,
       organizationStateRead: false,
       loginAttemptStoreRead: false,
+      securityAuditStoreRead: false,
+      billingStorageRead: false,
+      relationalProjectionRead: false,
     },
     errors: [],
   };
@@ -941,6 +1557,20 @@ export async function getPostgresReadinessProbe(): Promise<PostgresReadinessProb
   probe.checks.coreMetadataRead = coreChecks.every(Boolean);
   probe.checks.organizationStateRead = await probePrismaModelRead((prisma as any).organizationState, 'OrganizationState', probe.errors);
   probe.checks.loginAttemptStoreRead = await probePrismaModelRead((prisma as any).loginAttempt, 'LoginAttempt', probe.errors);
+  probe.checks.securityAuditStoreRead = await probePrismaModelRead((prisma as any).securityAuditEvent, 'SecurityAuditEvent', probe.errors);
+  const billingChecks = await Promise.all([
+    probePrismaModelRead((prisma as any).organizationSubscription, 'OrganizationSubscription', probe.errors),
+    probePrismaModelRead((prisma as any).billingPayment, 'BillingPayment', probe.errors),
+    probePrismaModelRead((prisma as any).subscriptionRequest, 'SubscriptionRequest', probe.errors),
+    probePrismaModelRead((prisma as any).subscriptionAudit, 'SubscriptionAudit', probe.errors),
+    probePrismaModelRead((prisma as any).annualProductionUsage, 'AnnualProductionUsage', probe.errors),
+  ]);
+  probe.checks.billingStorageRead = billingChecks.every(Boolean);
+  const projectionChecks = await Promise.all([
+    probePrismaModelRead((prisma as any).vessel, 'Vessel', probe.errors),
+    probePrismaModelRead((prisma as any).wineLot, 'WineLot', probe.errors),
+  ]);
+  probe.checks.relationalProjectionRead = projectionChecks.every(Boolean);
   probe.ok = Object.values(probe.checks).every(Boolean) && probe.errors.length === 0;
   return probe;
 }
@@ -982,15 +1612,27 @@ async function persistFullDbToPostgres(
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
+            resetTokenHash: user.resetTokenHash || null,
+            resetTokenExpires: user.resetTokenExpires ? BigInt(user.resetTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
           create: {
             username: user.username,
@@ -998,15 +1640,27 @@ async function persistFullDbToPostgres(
             fullName: user.fullName || user.username,
             role: user.role || 'Owner/Admin',
             language: user.language || 'en',
+            phone: user.phone || '',
+            whatsappOptIn: user.whatsappOptIn === true,
             passwordHash: user.passwordHash || '',
             emailVerified: user.emailVerified ?? false,
             verifyTokenHash: user.verifyTokenHash || null,
             verifyTokenExpires: user.verifyTokenExpires ? BigInt(user.verifyTokenExpires) : null,
+            resetTokenHash: user.resetTokenHash || null,
+            resetTokenExpires: user.resetTokenExpires ? BigInt(user.resetTokenExpires) : null,
             isDemo: user.isDemo ?? false,
             activeOrganizationId: user.activeOrganizationId || null,
             enabledModules: jsonForPrisma(stringArray(user.enabledModules, DEFAULT_USER_MODULES)),
             enabledWidgets: jsonForPrisma(stringArray(user.enabledWidgets, DEFAULT_USER_WIDGETS)),
             registrationComplete: user.registrationComplete ?? true,
+            accountEnabled: user.accountEnabled !== false,
+            approvalStatus: approvalStatusForUser(user),
+            approvalRequestedAt: user.approvalRequestedAt ? new Date(user.approvalRequestedAt) : null,
+            approvalDecidedAt: user.approvalDecidedAt ? new Date(user.approvalDecidedAt) : null,
+            approvalDecidedBy: user.approvalDecidedBy || null,
+            approvalTokenHash: user.approvalTokenHash || null,
+            approvalTokenExpires: user.approvalTokenExpires ? BigInt(user.approvalTokenExpires) : null,
+            sessionVersion: Number.isInteger(Number(user.sessionVersion)) ? Number(user.sessionVersion) : 1,
           },
         });
       }
@@ -1034,18 +1688,20 @@ async function persistFullDbToPostgres(
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
           create: {
             id: invite.id,
             email: invite.email,
             organizationId: invite.organizationId,
             role: invite.role || 'Read-Only',
-            token: invite.token || invite.id,
+            tokenHash: invite.tokenHash || hashToken(invite.id),
             expiresAt,
             acceptedAt: invite.acceptedAt ? new Date(invite.acceptedAt) : null,
+            revokedAt: invite.revokedAt ? new Date(invite.revokedAt) : null,
           },
         });
       }
@@ -1066,6 +1722,7 @@ async function persistFullDbToPostgres(
             updatedBy: source,
           },
         });
+        await syncVesselLotProjection(tx, orgId, state);
       }
     });
 
@@ -1122,6 +1779,8 @@ export function getDbRuntimeStatus() {
     organizations: [],
     memberships: [],
     invitations: [],
+    securityAuditEvents: [],
+    whatsappDeliveries: [],
     orgData: {}
   };
   const serializedBytes = Buffer.byteLength(JSON.stringify(db), 'utf8');
@@ -1294,8 +1953,7 @@ export async function saveOrganizationData(
 
   const prisma = await getPrisma();
   if (!prisma) {
-    saveDB({ syncPostgres: false });
-    backupJsonToGcs(serializeDbState(db));
+    saveDB({ syncPostgres: false, gcsBackup: true });
     return;
   }
 
@@ -1337,121 +1995,8 @@ export async function saveOrganizationData(
           },
         });
       }
+      await syncVesselLotProjection(tx, orgId, db.orgData[orgId]);
     });
-
-    // Background double-writing of vessels and lots (safe, non-blocking)
-    void (async () => {
-      try {
-        const normalizedData = db.orgData[orgId];
-        // 1. Double-write vessels
-        for (const vessel of normalizedData.vessels || []) {
-          if (!vessel.id) continue;
-          const qvevriFields = {
-            qvevriNumber: vessel.qvevriNumber || null,
-            maraniLocation: vessel.maraniLocation || null,
-            buried: vessel.buried !== undefined && vessel.buried !== null ? Boolean(vessel.buried) : null,
-            lastWashingDate: vessel.lastWashingDate || null,
-            limeWashStatus: vessel.limeWashStatus || null,
-            waxingStatus: vessel.waxingStatus || null,
-            inspectionNotes: vessel.inspectionNotes || null,
-            fillingDate: vessel.fillingDate || null,
-            grapeVariety: vessel.grapeVariety || null,
-            chachaPercentage: vessel.chachaPercentage !== undefined && vessel.chachaPercentage !== null ? Number(vessel.chachaPercentage) : null,
-            stemInclusion: vessel.stemInclusion !== undefined && vessel.stemInclusion !== null ? Boolean(vessel.stemInclusion) : null,
-            mixingFrequency: vessel.mixingFrequency || null,
-            dailyMixingLog: jsonForPrisma(Array.isArray(vessel.dailyMixingLog) ? vessel.dailyMixingLog : []),
-            sealingDate: vessel.sealingDate || null,
-            openingDate: vessel.openingDate || null,
-            skinContactDurationDays: vessel.skinContactDurationDays !== undefined && vessel.skinContactDurationDays !== null ? Number(vessel.skinContactDurationDays) : null,
-            firstRackingDate: vessel.firstRackingDate || null,
-            sanitationHistory: jsonForPrisma(Array.isArray(vessel.sanitationHistory) ? vessel.sanitationHistory : []),
-          };
-          await prisma.vessel.upsert({
-            where: { id: vessel.id },
-            update: {
-              type: vessel.type || '',
-              shape: vessel.shape || '',
-              capacity: Number(vessel.capacity) || 0,
-              currentVolume: Number(vessel.currentVolume) || 0,
-              assignedLotId: vessel.assignedLotId || null,
-              cleaningStatus: vessel.cleaningStatus || 'clean',
-              lastCleaned: vessel.lastCleaned || '',
-              temperature: Number(vessel.temperature) || 0,
-              coolingJacketActive: Boolean(vessel.coolingJacketActive),
-              targetTemperature: vessel.targetTemperature !== undefined && vessel.targetTemperature !== null ? Number(vessel.targetTemperature) : null,
-              lastOperation: vessel.lastOperation || '',
-              locationDetails: vessel.locationDetails || null,
-              xGrid: vessel.xGrid !== undefined && vessel.xGrid !== null ? Number(vessel.xGrid) : null,
-              yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
-              lastSealedDate: vessel.lastSealedDate || null,
-              soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
-              ...qvevriFields,
-            },
-            create: {
-              id: vessel.id,
-              organizationId: orgId,
-              type: vessel.type || '',
-              shape: vessel.shape || '',
-              capacity: Number(vessel.capacity) || 0,
-              currentVolume: Number(vessel.currentVolume) || 0,
-              assignedLotId: vessel.assignedLotId || null,
-              cleaningStatus: vessel.cleaningStatus || 'clean',
-              lastCleaned: vessel.lastCleaned || '',
-              temperature: Number(vessel.temperature) || 0,
-              coolingJacketActive: Boolean(vessel.coolingJacketActive),
-              targetTemperature: vessel.targetTemperature !== undefined && vessel.targetTemperature !== null ? Number(vessel.targetTemperature) : null,
-              lastOperation: vessel.lastOperation || '',
-              locationDetails: vessel.locationDetails || null,
-              xGrid: vessel.xGrid !== undefined && vessel.xGrid !== null ? Number(vessel.xGrid) : null,
-              yGrid: vessel.yGrid !== undefined && vessel.yGrid !== null ? Number(vessel.yGrid) : null,
-              lastSealedDate: vessel.lastSealedDate || null,
-              soilTemperature: vessel.soilTemperature !== undefined && vessel.soilTemperature !== null ? Number(vessel.soilTemperature) : null,
-              ...qvevriFields,
-            }
-          });
-        }
-        
-        // 2. Double-write lots
-        for (const lot of normalizedData.lots || []) {
-          if (!lot.id) continue;
-          await prisma.wineLot.upsert({
-            where: { id: lot.id },
-            update: {
-              name: lot.name || '',
-              vintage: Number(lot.vintage) || 0,
-              variety: lot.variety || '',
-              vineyardBlock: lot.vineyardBlock || '',
-              region: lot.region || '',
-              initialVolume: Number(lot.initialVolume) || 0,
-              currentVolume: Number(lot.currentVolume) || 0,
-              wineClass: lot.wineClass || '',
-              stage: lot.stage || '',
-              createdAt: lot.createdAt || new Date().toISOString(),
-              history: lot.history || [],
-              sensoryProfile: lot.sensoryProfile || null,
-            },
-            create: {
-              id: lot.id,
-              organizationId: orgId,
-              name: lot.name || '',
-              vintage: Number(lot.vintage) || 0,
-              variety: lot.variety || '',
-              vineyardBlock: lot.vineyardBlock || '',
-              region: lot.region || '',
-              initialVolume: Number(lot.initialVolume) || 0,
-              currentVolume: Number(lot.currentVolume) || 0,
-              wineClass: lot.wineClass || '',
-              stage: lot.stage || '',
-              createdAt: lot.createdAt || new Date().toISOString(),
-              history: lot.history || [],
-              sensoryProfile: lot.sensoryProfile || null,
-            }
-          });
-        }
-      } catch (relationalErr) {
-        console.error('[db] background relational double-write failed:', relationalErr);
-      }
-    })();
 
     lastPostgresSaveAt = new Date().toISOString();
     lastPostgresSaveError = null;
@@ -1460,8 +2005,7 @@ export async function saveOrganizationData(
     if ((prisma as any).organizationState?.findUnique) {
       await getOrganizationStateMeta(orgId);
     }
-    saveDB({ syncPostgres: false });
-    backupJsonToGcs(serializeDbState(db));
+    saveDB({ syncPostgres: false, gcsBackup: true });
   } catch (dbErr) {
     lastPostgresSaveError = dbErr instanceof Error ? dbErr.message : String(dbErr);
     lastPostgresSyncError = lastPostgresSaveError;

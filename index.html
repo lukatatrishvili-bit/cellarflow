@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <title>VinOS | Unified Winery &amp; Vineyard Control</title>
+    <meta name="description" content="VinOS connects vineyard, cellar, laboratory, inventory and intelligence in one living operational record—from vine to bottle." />
+    <meta property="og:title" content="VinOS | The operating system for wine" />
+    <meta property="og:description" content="Every vine. Every vessel. One living system." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/og.png" />
 
     <!-- PWA: installable + offline cellar use -->
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -20,11 +27,9 @@
         --font-mono: 'JetBrains Mono', 'Noto Sans Georgian', monospace;
       }
     </style>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Above-the-fold families + Noto Sans Georgian (unicode-range subsetted:
-         only downloaded when Georgian text renders) -->
-    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Georgian:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Fonts intentionally use the local system stacks below. A remote font
+         stylesheet held the window load event open on offline cellar tablets
+         and made protected deep links appear to hang. -->
   </head>
   <body class="antialiased bg-[#fbf9f6] text-[#1e1915]">
     <!-- Instant splash: pure inline CSS inside #root, so the very first React

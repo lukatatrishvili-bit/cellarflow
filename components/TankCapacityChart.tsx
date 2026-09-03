@@ -193,7 +193,7 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
       .on('click', (event, d) => {
         onSelectTank?.(d.id);
       });
- 
+
      // Draw foreground progress bars representing current levels
      const activeBars = g.selectAll('.fill-bar')
        .data(tanks)
@@ -217,10 +217,10 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
            .duration(150)
            .attr('height', yScale.bandwidth() + 4)
            .attr('y', (yScale(d.name) || 0) - 2);
- 
+
          selectTankBackground(d.id).transition().duration(150).style('fill', '#e2e8f0');
          selectTankBar(d.id).transition().duration(150).style('opacity', 0.85);
- 
+
          const [x, y] = d3.pointer(event, containerRef.current);
          setHoveredTank({
            x,
@@ -248,10 +248,10 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
            .duration(150)
            .attr('height', yScale.bandwidth())
            .attr('y', yScale(d.name) || 0);
- 
+
          selectTankBackground(d.id).transition().duration(150).style('fill', '#f1f5f9');
          selectTankBar(d.id).transition().duration(150).style('opacity', 1.0);
- 
+
          setHoveredTank(null);
        })
        .on('click', (event, d) => {
@@ -364,22 +364,22 @@ export default function TankCapacityChart({ tanks, onSelectTank, selectedTankId 
 
   return (
     <div className="w-full flex flex-col space-y-2">
-      <div 
-        ref={containerRef} 
-        id="d3-tank-capacity-container" 
+      <div
+        ref={containerRef}
+        id="d3-tank-capacity-container"
         className="relative w-full bg-[#FCFAF7] border border-[#f0e6da] rounded-xl p-3 overflow-hidden select-none"
       >
-        <svg 
-          ref={svgRef} 
-          width={dimensions.width} 
+        <svg
+          ref={svgRef}
+          width={dimensions.width}
           height={dimensions.height}
           className="overflow-visible block max-w-full"
         />
         {hoveredTank && (
-          <div 
+          <div
             className="absolute pointer-events-none bg-stone-950/95 text-white text-[11px] px-3 py-2 rounded-lg shadow-md border border-stone-800 flex flex-col gap-1.5 z-40 transition-all duration-75"
-            style={{ 
-              left: `${hoveredTank.x}px`, 
+            style={{
+              left: `${hoveredTank.x}px`,
               top: `${hoveredTank.y}px`,
               transform: 'translate(10px, -50%)'
             }}

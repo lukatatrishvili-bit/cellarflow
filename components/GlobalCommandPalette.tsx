@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
+  AlertOctagon,
   Boxes,
   ClipboardList,
   FileSpreadsheet,
   FileText,
   Grape,
+  ListChecks,
   PackageSearch,
   Search,
   Settings,
@@ -13,13 +15,32 @@ import {
   Sprout,
   Truck,
   Warehouse,
+  Zap,
   Wine,
   X,
 } from 'lucide-react';
 import type { InventoryItem, SalesDispatchRecord, SalesOrderRecord, Task, Vessel, WineLot } from '../lib/wineryState';
+import type { Role } from '../server/permissions';
+import type { Language } from '../lib/i18n';
+import { canViewAppDestination } from '../lib/navigationPermissions';
+import {
+  inventoryCategoryLabel,
+  reservationStatusLabel,
+  stageLabel,
+  taskPriorityLabel,
+  taskStatusLabel,
+  vesselTypeLabel,
+} from '../lib/enumLabels';
 import { useFocusTrap } from './useFocusTrap';
+import { parsePaletteAction, paletteActionHints, type PaletteAction } from '../lib/paletteActions';
 
-type CommandKind = 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
+type CommandKind = 'action' | 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
+
+const KIND_LABEL_KA: Record<CommandKind, string> = {
+  action: 'მოქმედება',
+  module: 'მოდული', lot: 'პარტია', lineage: 'გენეალოგია', vessel: 'ჭურჭელი',
+  inventory: 'ინვენტარი', task: 'დავალება', order: 'შეკვეთა', dispatch: 'გატანა',
+};
 
 interface CommandItem {
   id: string;
@@ -33,6 +54,7 @@ interface CommandItem {
 
 interface Props {
   open: boolean;
+  lang?: Language;
   onOpenChange: (open: boolean) => void;
   lots: WineLot[];
   vessels: Vessel[];
@@ -40,11 +62,17 @@ interface Props {
   tasks: Task[];
   orders: SalesOrderRecord[];
   dispatches: SalesDispatchRecord[];
+  role?: Role;
   setActiveModule: (moduleId: string) => void;
   setActiveTab: (tabId: string) => void;
   setPassportLotId: (lotId: string | null) => void;
   setSelectedTankId: (vesselId: string | null) => void;
   setLineageLotId: (lotId: string) => void;
+  /**
+   * Runs a parsed action. The palette never records anything itself — it hands
+   * the intent over and something else opens pre-filled for confirmation.
+   */
+  onRunAction?: (action: PaletteAction) => void;
 }
 
 function normalize(s: string): string {
@@ -53,6 +81,7 @@ function normalize(s: string): string {
 
 function kindTone(kind: CommandKind): string {
   switch (kind) {
+    case 'action': return 'bg-[#f0e6e8] text-[#651522] border-[#651522]/25';
     case 'module': return 'bg-stone-100 text-stone-700 border-stone-200';
     case 'lot': return 'bg-rose-100 text-[#4e0e15] border-rose-200';
     case 'lineage': return 'bg-amber-100 text-amber-900 border-amber-200';
@@ -67,6 +96,7 @@ function kindTone(kind: CommandKind): string {
 
 export default function GlobalCommandPalette({
   open,
+  lang = 'en',
   onOpenChange,
   lots,
   vessels,
@@ -74,17 +104,20 @@ export default function GlobalCommandPalette({
   tasks,
   orders,
   dispatches,
+  role = 'Owner/Admin',
   setActiveModule,
   setActiveTab,
   setPassportLotId,
   setSelectedTankId,
   setLineageLotId,
+  onRunAction,
 }: Props) {
+  const ka = lang === 'ka';
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const close = () => onOpenChange(false);
+  const close = useCallback(() => onOpenChange(false), [onOpenChange]);
   useFocusTrap(dialogRef, { active: open, onClose: close });
 
   useEffect(() => {
@@ -100,30 +133,36 @@ export default function GlobalCommandPalette({
     }
   }, [open]);
 
-  const jump = (moduleId: string, tabId?: string) => {
+  const jump = useCallback((moduleId: string, tabId?: string) => {
     setActiveModule(moduleId);
     if (tabId) setActiveTab(tabId);
     close();
-  };
+  }, [close, setActiveModule, setActiveTab]);
 
   const commands = useMemo<CommandItem[]>(() => {
-    const moduleCommands: CommandItem[] = [
-      { id: 'module-dashboard', kind: 'module', title: 'Dashboard', subtitle: 'Open main portal', keywords: 'dashboard portal home overview', icon: BarChart3, run: () => jump('portal') },
-      { id: 'module-vineyard', kind: 'module', title: 'Vineyard', subtitle: 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray', icon: Sprout, run: () => jump('vazi') },
-      { id: 'module-cellar', kind: 'module', title: 'Cellar', subtitle: 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels', icon: Wine, run: () => jump('gvino', 'dashboard') },
-      { id: 'module-sales', kind: 'module', title: 'Sales', subtitle: 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers', icon: ShoppingCart, run: () => jump('sales') },
-      { id: 'module-storage', kind: 'module', title: 'Storage', subtitle: 'Finished goods stock', keywords: 'storage warehouse stock bottles inventory finished goods', icon: Warehouse, run: () => jump('storage') },
-      { id: 'module-analytics', kind: 'module', title: 'Analytics', subtitle: 'Year comparison reports', keywords: 'analytics reports year comparison vintage margin', icon: BarChart3, run: () => jump('analytics') },
-      { id: 'module-docs', kind: 'module', title: 'Documents', subtitle: 'Official documents and exports', keywords: 'documents reports official forms exports', icon: FileSpreadsheet, run: () => jump('docs') },
-      { id: 'module-settings', kind: 'module', title: 'Settings', subtitle: 'Profile and company settings', keywords: 'settings profile company users', icon: Settings, run: () => jump('settings') },
+    const allModuleCommands: Array<CommandItem & { moduleId: string; tabId?: string }> = [
+      { id: 'module-dashboard', moduleId: 'portal', kind: 'module', title: ka ? 'დღეს' : 'Today', subtitle: ka ? 'დღევანდელი სამუშაოს გახსნა' : 'Open today’s priorities', keywords: 'today dashboard portal home overview დღეს მთავარი', icon: BarChart3, run: () => jump('portal') },
+      { id: 'module-work', moduleId: 'work', kind: 'module', title: ka ? 'სამუშაო რიგი' : 'Work Queue', subtitle: ka ? 'სრული სამუშაო რიგი და დამტკიცებები' : 'Open the complete queue and approvals', keywords: 'work queue tasks approvals today სამუშაო რიგი დამტკიცება', icon: ListChecks, run: () => jump('work') },
+      { id: 'module-vineyard', moduleId: 'vazi', kind: 'module', title: ka ? 'ვენახი' : 'Vineyard', subtitle: ka ? 'ვაზის მოდულის გახსნა' : 'Open Vazi vineyard module', keywords: 'vazi vineyard blocks harvest phenology spray ვენახი', icon: Sprout, run: () => jump('vazi') },
+      { id: 'module-cellar', moduleId: 'gvino', tabId: 'dashboard', kind: 'module', title: ka ? 'მარანი' : 'Cellar', subtitle: ka ? 'ღვინის მოდულის გახსნა' : 'Open Gvino winery module', keywords: 'gvino cellar winery lots tanks vessels მარანი', icon: Wine, run: () => jump('gvino', 'dashboard') },
+      { id: 'module-sales', moduleId: 'sales', kind: 'module', title: ka ? 'გაყიდვები' : 'Sales', subtitle: ka ? 'შეკვეთები, ჯავშნები, გატანა' : 'Orders, reservations, dispatch', keywords: 'sales orders reservations dispatch customers გაყიდვები', icon: ShoppingCart, run: () => jump('sales') },
+      { id: 'module-storage', moduleId: 'storage', kind: 'module', title: ka ? 'საწყობი' : 'Storage', subtitle: ka ? 'მზა პროდუქციის მარაგი' : 'Finished goods stock', keywords: 'storage warehouse stock bottles inventory finished goods საწყობი', icon: Warehouse, run: () => jump('storage') },
+      { id: 'module-recall', moduleId: 'recall', kind: 'module', title: ka ? 'პროდუქტის გაწვევა' : 'Product Recall', subtitle: ka ? 'გაყიდული პროდუქტის მიკვლევა და შეკავება' : 'Trace and contain affected finished goods', keywords: 'recall containment trace customers dispatch გაწვევა შეკავება', icon: AlertOctagon, run: () => jump('recall') },
+      { id: 'module-procurement', moduleId: 'procurement', kind: 'module', title: ka ? 'შესყიდვა' : 'Purchasing', subtitle: ka ? 'მომწოდებლები, შეკვეთები და მიღება' : 'Suppliers, purchase orders, and receiving', keywords: 'procurement purchasing suppliers purchase orders receiving შესყიდვა მომწოდებელი', icon: ShoppingCart, run: () => jump('procurement') },
+      { id: 'module-analytics', moduleId: 'analytics', kind: 'module', title: ka ? 'ანალიტიკა' : 'Analytics', subtitle: ka ? 'წლების შედარების ანგარიშები' : 'Year comparison reports', keywords: 'analytics reports year comparison vintage margin ანალიტიკა', icon: BarChart3, run: () => jump('analytics') },
+      { id: 'module-docs', moduleId: 'docs', kind: 'module', title: ka ? 'დოკუმენტები' : 'Documents', subtitle: ka ? 'ოფიციალური დოკუმენტები და ექსპორტი' : 'Official documents and exports', keywords: 'documents reports official forms exports დოკუმენტები', icon: FileSpreadsheet, run: () => jump('docs') },
+      { id: 'module-settings', moduleId: 'settings', kind: 'module', title: ka ? 'პარამეტრები' : 'Settings', subtitle: ka ? 'პროფილი და კომპანიის პარამეტრები' : 'Profile and company settings', keywords: 'settings profile company users პარამეტრები', icon: Settings, run: () => jump('settings') },
     ];
+    const moduleCommands = allModuleCommands.filter((item) => (
+      canViewAppDestination(role, item.moduleId, item.tabId)
+    ));
 
-    const lotCommands = lots.flatMap<CommandItem>((lot) => [
+    const lotCommands = canViewAppDestination(role, 'gvino', 'lots') ? lots.flatMap<CommandItem>((lot) => [
       {
         id: `lot-${lot.id}`,
         kind: 'lot',
         title: lot.id,
-        subtitle: `${lot.name} · ${lot.vintage} · ${lot.stage}`,
+        subtitle: `${lot.name} · ${lot.vintage} · ${stageLabel(lot.stage, lang)}`,
         keywords: `${lot.id} ${lot.name} ${lot.variety} ${lot.vineyardBlock} ${lot.region} ${lot.vintage} wine lot passport`,
         icon: Wine,
         run: () => {
@@ -136,7 +175,7 @@ export default function GlobalCommandPalette({
       {
         id: `lineage-${lot.id}`,
         kind: 'lineage',
-        title: `Lineage: ${lot.id}`,
+        title: `${ka ? 'გენეალოგია' : 'Lineage'}: ${lot.id}`,
         subtitle: lot.name,
         keywords: `${lot.id} ${lot.name} lineage traceability genealogy tree blend`,
         icon: PackageSearch,
@@ -148,13 +187,13 @@ export default function GlobalCommandPalette({
           close();
         },
       },
-    ]);
+    ]) : [];
 
-    const vesselCommands = vessels.map<CommandItem>((vessel) => ({
+    const vesselCommands = canViewAppDestination(role, 'gvino', 'vessels') ? vessels.map<CommandItem>((vessel) => ({
       id: `vessel-${vessel.id}`,
       kind: 'vessel',
       title: vessel.id,
-      subtitle: `${(vessel.type || 'vessel').replace(/_/g, ' ')} · ${(vessel.currentVolume || 0).toLocaleString()} / ${(vessel.capacity || 0).toLocaleString()} L`,
+      subtitle: `${vessel.type ? vesselTypeLabel(vessel.type, lang) : (ka ? 'ჭურჭელი' : 'vessel')} · ${(vessel.currentVolume || 0).toLocaleString()} / ${(vessel.capacity || 0).toLocaleString()} L`,
       keywords: `${vessel.id} ${vessel.type || ''} ${vessel.assignedLotId || ''} ${vessel.locationDetails || ''} tank vessel qvevri barrel`,
       icon: Grape,
       run: () => {
@@ -163,47 +202,49 @@ export default function GlobalCommandPalette({
         setSelectedTankId(vessel.id);
         close();
       },
-    }));
+    })) : [];
 
-    const inventoryCommands = inventory.map<CommandItem>((item) => ({
+    const inventoryCommands = canViewAppDestination(role, 'inventory') ? inventory.map<CommandItem>((item) => ({
       id: `inventory-${item.id}`,
       kind: 'inventory',
       title: item.name,
-      subtitle: `${item.category} · ${(item.stock || 0).toLocaleString()} ${item.unit}`,
+      subtitle: `${inventoryCategoryLabel(item.category, lang)} · ${(item.stock || 0).toLocaleString()} ${item.unit}`,
       keywords: `${item.id} ${item.name} ${item.category} ${item.supplierName} inventory additive packaging stock`,
       icon: Boxes,
-      run: () => jump('gvino', 'inventory'),
-    }));
+      run: () => jump('inventory'),
+    })) : [];
 
-    const taskCommands = tasks.map<CommandItem>((task) => ({
+    const taskCommands = canViewAppDestination(role, 'gvino', 'tasks') ? tasks.map<CommandItem>((task) => ({
       id: `task-${task.id}`,
       kind: 'task',
       title: task.title,
-      subtitle: `${task.priority} priority · due ${task.dueDate || 'n/a'} · ${task.status}`,
+      subtitle: ka
+        ? `${taskPriorityLabel(task.priority, lang)} · ვადა ${task.dueDate || '—'} · ${taskStatusLabel(task.status, lang)}`
+        : `${taskPriorityLabel(task.priority, lang)} priority · due ${task.dueDate || 'n/a'} · ${taskStatusLabel(task.status, lang)}`,
       keywords: `${task.title} ${task.description} ${task.assignedTo} ${task.priority} ${task.status} task todo`,
       icon: ClipboardList,
       run: () => jump('gvino', 'tasks'),
-    }));
+    })) : [];
 
-    const orderCommands = orders.map<CommandItem>((order) => ({
+    const orderCommands = canViewAppDestination(role, 'sales') ? orders.map<CommandItem>((order) => ({
       id: `order-${order.id}`,
       kind: 'order',
       title: order.orderNumber || order.customerName,
-      subtitle: `${order.customerName} · ${(order.bottles || 0).toLocaleString()} btl · ${order.status}`,
+      subtitle: `${order.customerName} · ${(order.bottles || 0).toLocaleString()} ${ka ? 'ბოთლი' : 'btl'} · ${reservationStatusLabel(order.status, lang)}`,
       keywords: `${order.id} ${order.orderNumber || ''} ${order.customerName} ${order.lotId} ${order.lotName} ${order.status} reservation order sales`,
       icon: ShoppingCart,
       run: () => jump('sales'),
-    }));
+    })) : [];
 
-    const dispatchCommands = dispatches.map<CommandItem>((dispatch) => ({
+    const dispatchCommands = canViewAppDestination(role, 'sales') ? dispatches.map<CommandItem>((dispatch) => ({
       id: `dispatch-${dispatch.id}`,
       kind: 'dispatch',
-      title: dispatch.customerName,
-      subtitle: `${dispatch.lotName} · ${(dispatch.bottles || 0).toLocaleString()} btl · ${dispatch.date}`,
-      keywords: `${dispatch.id} ${dispatch.customerName} ${dispatch.lotId} ${dispatch.lotName} dispatch sale revenue`,
+      title: `${dispatch.recordKind === 'reversal' ? (ka ? 'კორექცია: ' : 'Correction: ') : ''}${dispatch.customerName}`,
+      subtitle: `${dispatch.lotName} · ${(dispatch.bottles || 0).toLocaleString()} btl · ${dispatch.date}${dispatch.reversedByCommandId ? (ka ? ' · კორექტირებული' : ' · reversed') : ''}`,
+      keywords: `${dispatch.id} ${dispatch.customerName} ${dispatch.lotId} ${dispatch.lotName} dispatch sale revenue reversal correction return`,
       icon: Truck,
       run: () => jump('sales'),
-    }));
+    })) : [];
 
 
     return [
@@ -215,13 +256,45 @@ export default function GlobalCommandPalette({
       ...inventoryCommands,
       ...taskCommands,
     ];
-  }, [dispatches, inventory, lots, orders, tasks, vessels]);
+  }, [
+    close,
+    dispatches,
+    inventory,
+    jump,
+    ka,
+    lang,
+    lots,
+    orders,
+    role,
+    setActiveModule,
+    setActiveTab,
+    setLineageLotId,
+    setPassportLotId,
+    setSelectedTankId,
+    tasks,
+    vessels,
+  ]);
+
+  const actionCommand = useMemo<CommandItem | null>(() => {
+    if (!onRunAction) return null;
+    const parsed = parsePaletteAction({ query, vessels, lang });
+    if (!parsed) return null;
+    return {
+      id: 'action:parsed',
+      kind: 'action',
+      title: parsed.title,
+      subtitle: parsed.detail,
+      keywords: '',
+      icon: Zap,
+      run: () => { onRunAction(parsed.action); onOpenChange(false); },
+    };
+  }, [onRunAction, query, vessels, lang, onOpenChange]);
 
   const results = useMemo(() => {
     const q = normalize(query);
     if (!q) return commands.slice(0, 12);
     const tokens = q.split(' ').filter(Boolean);
-    return commands
+    const scored = commands
       .map(item => {
         const haystack = normalize(`${item.title} ${item.subtitle} ${item.keywords}`);
         const score = tokens.reduce((acc, token) => {
@@ -233,9 +306,10 @@ export default function GlobalCommandPalette({
       })
       .filter(x => x.score > 0)
       .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
-      .slice(0, 14)
+      .slice(0, actionCommand ? 13 : 14)
       .map(x => x.item);
-  }, [commands, query]);
+    return actionCommand ? [actionCommand, ...scored] : scored;
+  }, [commands, query, actionCommand]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -254,7 +328,7 @@ export default function GlobalCommandPalette({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Global command palette"
+        aria-label={ka ? 'გლობალური ბრძანებების პანელი' : 'Global command palette'}
         tabIndex={-1}
         className="mx-auto mt-10 max-w-2xl overflow-hidden rounded-3xl border border-[#e8dfd5] bg-white shadow-2xl dark:border-stone-800 dark:bg-stone-950"
         onMouseDown={(event) => event.stopPropagation()}
@@ -280,7 +354,7 @@ export default function GlobalCommandPalette({
                 select(results[selectedIndex]);
               }
             }}
-            placeholder="Search wine code, vessel, customer, task, document..."
+            placeholder={ka ? 'ძიება: ღვინის კოდი, ჭურჭელი, მომხმარებელი, დავალება, დოკუმენტი...' : 'Search wine code, vessel, customer, task, document...'}
             className="min-w-0 flex-1 bg-transparent py-2 text-sm font-semibold text-stone-900 outline-none placeholder:text-stone-400 dark:text-amber-50"
           />
           <button
@@ -296,8 +370,8 @@ export default function GlobalCommandPalette({
           {results.length === 0 ? (
             <div className="px-4 py-12 text-center">
               <FileText className="mx-auto mb-3 h-10 w-10 text-stone-300" />
-              <h3 className="text-sm font-bold text-stone-700 dark:text-stone-200">No results found</h3>
-              <p className="mt-1 text-xs text-stone-400">Try a wine code, vessel ID, customer name, or module.</p>
+              <h3 className="text-sm font-bold text-stone-700 dark:text-stone-200">{ka ? 'შედეგი არ მოიძებნა' : 'No results found'}</h3>
+              <p className="mt-1 text-xs text-stone-400">{ka ? 'სცადეთ ღვინის კოდი, ჭურჭლის ID, მომხმარებლის სახელი ან მოდული.' : 'Try a wine code, vessel ID, customer name, or module.'}</p>
             </div>
           ) : (
             <div className="space-y-1">
@@ -323,7 +397,7 @@ export default function GlobalCommandPalette({
                       <div className="flex items-center gap-2">
                         <strong className="truncate text-sm">{item.title}</strong>
                         <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide ${selected ? 'border-amber-300/40 text-amber-200' : kindTone(item.kind)}`}>
-                          {item.kind}
+                          {ka ? KIND_LABEL_KA[item.kind] : item.kind}
                         </span>
                       </div>
                       <p className={`truncate text-xs ${selected ? 'text-amber-100/75' : 'text-stone-400'}`}>{item.subtitle}</p>
@@ -335,8 +409,26 @@ export default function GlobalCommandPalette({
           )}
         </div>
 
+        {onRunAction && !query.trim() && (
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-[#e8dfd5] px-4 py-2 dark:border-stone-800">
+            <span className="text-[9px] font-black uppercase tracking-wider text-stone-400">
+              {ka ? 'ან ჩაწერეთ' : 'Or record'}
+            </span>
+            {paletteActionHints(ka).map(hint => (
+              <button
+                key={hint}
+                type="button"
+                onClick={() => setQuery(hint)}
+                className="rounded-md border border-stone-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-stone-500 hover:border-[#651522]/40 hover:text-[#651522] dark:border-stone-700 dark:hover:text-amber-300"
+              >
+                {hint}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center justify-between border-t border-[#e8dfd5] px-4 py-2 text-[10px] font-mono text-stone-400 dark:border-stone-800">
-          <span>↑↓ navigate · Enter open · Esc close</span>
+          <span>{ka ? '↑↓ ნავიგაცია · Enter გახსნა · Esc დახურვა' : '↑↓ navigate · Enter open · Esc close'}</span>
           <span>Ctrl / Cmd + K</span>
         </div>
       </div>

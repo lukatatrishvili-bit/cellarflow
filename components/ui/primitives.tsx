@@ -7,36 +7,34 @@ export function cx(...classes: Array<string | false | null | undefined>): string
 export function PageHeader({
   eyebrow,
   title,
-  description,
   icon: Icon,
   actions,
 }: {
   eyebrow?: ReactNode;
   title: ReactNode;
-  description?: ReactNode;
   icon?: ComponentType<{ className?: string }>;
   actions?: ReactNode;
 }) {
   return (
-    <div className="bg-white/90 border border-[#e8dfd5] p-5 lg:p-6 rounded-2xl shadow-sm dark:bg-stone-900/90 dark:border-stone-800">
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-        <div className="min-w-0">
+    <div className="px-0.5 py-1">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        {/* The title column must never be crushed by `actions`: several headers
+            put fixed-width search/select controls in there, and those refuse to
+            shrink. Without a floor the flex row squeezes the heading down to a
+            word-per-line sliver instead of wrapping the actions to their own
+            row. `min-w-0` still applies below sm, where actions stack full-width. */}
+        <div className="min-w-0 flex-[1_1_24rem] sm:min-w-[18rem]">
           {eyebrow && (
-            <span className="inline-flex text-[9px] uppercase tracking-widest bg-stone-100 text-stone-600 px-2.5 py-0.5 rounded font-bold dark:bg-stone-800 dark:text-stone-300">
+            <span className="inline-flex text-[10px] font-bold uppercase tracking-[0.14em] text-stone-500 dark:text-stone-400">
               {eyebrow}
             </span>
           )}
-          <h2 className="text-xl font-serif font-black text-stone-900 uppercase mt-1 flex items-center gap-2 dark:text-amber-100">
-            {Icon && <Icon className="w-5 h-5 text-[#4e0e15] dark:text-amber-300" />}
-            {title}
+          <h2 className="mt-1 flex items-start gap-2 break-words text-2xl font-extrabold leading-tight tracking-tight text-stone-900 dark:text-stone-100">
+            {Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-[#651522] dark:text-amber-200" />}
+            <span className="min-w-0">{title}</span>
           </h2>
-          {description && (
-            <p className="text-xs text-stone-500 dark:text-stone-400 font-semibold mt-0.5 max-w-3xl">
-              {description}
-            </p>
-          )}
         </div>
-        {actions && <div className="shrink-0">{actions}</div>}
+        {actions && <div className="w-full min-w-0 flex-[1_1_auto] lg:w-auto lg:flex-[0_1_auto]">{actions}</div>}
       </div>
     </div>
   );
@@ -44,31 +42,28 @@ export function PageHeader({
 
 export function SectionCard({
   title,
-  subtitle,
   icon: Icon,
   actions,
   children,
   className,
 }: {
   title?: ReactNode;
-  subtitle?: ReactNode;
   icon?: ComponentType<{ className?: string }>;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <section className={cx('bg-white/90 border border-[#e8dfd5] rounded-2xl shadow-sm dark:bg-stone-900/90 dark:border-stone-800', className)}>
+    <section className={cx('bg-white border border-stone-200 rounded-xl shadow-sm dark:bg-stone-900 dark:border-stone-800', className)}>
       {(title || actions) && (
         <div className="px-4 py-3 border-b border-[#e8dfd5] flex items-start justify-between gap-3 dark:border-stone-800">
           <div className="min-w-0">
             {title && (
-              <h3 className="text-xs font-bold text-stone-700 flex items-center gap-1.5 dark:text-amber-100">
+              <h3 className="flex items-center gap-1.5 text-sm font-bold text-stone-800 dark:text-amber-100">
                 {Icon && <Icon className="w-4 h-4" />}
                 {title}
               </h3>
             )}
-            {subtitle && <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">{subtitle}</p>}
           </div>
           {actions && <div className="shrink-0">{actions}</div>}
         </div>
@@ -104,7 +99,7 @@ export function MetricCard({
   const inner = (
     <>
       <div className="flex items-start justify-between gap-3">
-        <span className="block text-[10px] font-mono font-black uppercase tracking-[0.16em] text-stone-500 dark:text-stone-400">
+        <span className="block text-[11px] font-bold text-stone-500 dark:text-stone-400">
           {label}
         </span>
         {Icon && (
@@ -117,14 +112,14 @@ export function MetricCard({
         {value}
       </strong>
       {detail && (
-        <span className="mt-2 block text-[11px] font-semibold leading-snug text-stone-500 dark:text-stone-500 dark:text-stone-400">
+        <span className="mt-2 block text-[11px] font-semibold leading-snug text-stone-500 dark:text-stone-400">
           {detail}
         </span>
       )}
     </>
   );
   const className = cx(
-    'rounded-2xl border border-[#e8dfd5] border-l-4 bg-white/92 p-4 text-left shadow-sm transition-smooth dark:border-stone-800 dark:bg-stone-900/90',
+    'rounded-xl border border-stone-200 border-l-[3px] bg-white p-4 text-left shadow-sm transition-smooth dark:border-stone-800 dark:bg-stone-900',
     tones[tone].split(' ')[0],
     onClick && 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md',
   );
@@ -204,8 +199,8 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="text-center py-12 px-4 text-stone-500 dark:text-stone-400">
-      {Icon && <Icon className="w-10 h-10 mx-auto mb-3 opacity-40" />}
+    <div className="px-4 py-8 text-center text-stone-500 dark:text-stone-400">
+      {Icon && <Icon className="mx-auto mb-3 h-8 w-8 opacity-40" />}
       <h3 className="text-sm font-bold text-stone-600 dark:text-stone-300">{title}</h3>
       {description && <p className="text-xs mt-1 max-w-md mx-auto leading-relaxed">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
@@ -215,19 +210,17 @@ export function EmptyState({
 
 export function FormSection({
   title,
-  description,
   icon: Icon,
   children,
   footer,
 }: {
   title: ReactNode;
-  description?: ReactNode;
   icon?: ComponentType<{ className?: string }>;
   children: ReactNode;
   footer?: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-stone-200 bg-stone-50/50 p-4 dark:border-stone-800 dark:bg-stone-950/30">
+    <section className="rounded-xl border border-stone-200 bg-stone-50/50 p-4 dark:border-stone-800 dark:bg-stone-950/30">
       <div className="mb-3 flex items-start gap-2">
         {Icon && (
           <span className="rounded-xl border border-stone-200 bg-white p-2 text-[#4e0e15] dark:border-stone-800 dark:bg-stone-900 dark:text-amber-200">
@@ -236,7 +229,6 @@ export function FormSection({
         )}
         <div className="min-w-0">
           <h4 className="text-xs font-black uppercase tracking-wide text-stone-800 dark:text-amber-100">{title}</h4>
-          {description && <p className="mt-0.5 text-[11px] leading-relaxed text-stone-500 dark:text-stone-500 dark:text-stone-400">{description}</p>}
         </div>
       </div>
       <div className="space-y-3">{children}</div>
@@ -306,7 +298,7 @@ export function ActionButton({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={cx('inline-flex items-center justify-center rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed', tones[tone], className)}
+      className={cx('inline-flex min-h-10 items-center justify-center rounded-[10px] px-3.5 py-2 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed', tones[tone], className)}
     >
       {children}
     </button>
