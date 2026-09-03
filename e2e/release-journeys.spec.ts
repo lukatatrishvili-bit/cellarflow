@@ -160,7 +160,13 @@ test('winemaker can work with lots and vessels from one focused cellar workspace
   const initialPlanPosition = await firstPlanVessel.getAttribute('style');
   const planViewport = cellarPlan.getByLabel('Main cellar interactive plan', { exact: true });
   await planViewport.hover({ position: { x: 320, y: 160 } });
+  // A plain wheel belongs to the page: the plan used to swallow it and zoom,
+  // so a document with the map on it could not be scrolled past.
   await page.mouse.wheel(0, -150);
+  await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).toHaveValue('100');
+  await page.keyboard.down('Control');
+  await page.mouse.wheel(0, -150);
+  await page.keyboard.up('Control');
   await expect(cellarPlan.getByRole('slider', { name: 'Zoom level' })).not.toHaveValue('100');
   await cellarPlan.getByRole('button', { name: 'Fit', exact: true }).click();
   await cellarPlan.getByRole('button', { name: 'Edit layout', exact: true }).click();

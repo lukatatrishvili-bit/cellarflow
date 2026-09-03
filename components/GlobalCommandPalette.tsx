@@ -15,6 +15,7 @@ import {
   Sprout,
   Truck,
   Warehouse,
+  Zap,
   Wine,
   X,
 } from 'lucide-react';
@@ -31,10 +32,12 @@ import {
   vesselTypeLabel,
 } from '../lib/enumLabels';
 import { useFocusTrap } from './useFocusTrap';
+import { parsePaletteAction, paletteActionHints, type PaletteAction } from '../lib/paletteActions';
 
-type CommandKind = 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
+type CommandKind = 'action' | 'module' | 'lot' | 'lineage' | 'vessel' | 'inventory' | 'task' | 'order' | 'dispatch';
 
 const KIND_LABEL_KA: Record<CommandKind, string> = {
+  action: 'მოქმედება',
   module: 'მოდული', lot: 'პარტია', lineage: 'გენეალოგია', vessel: 'ჭურჭელი',
   inventory: 'ინვენტარი', task: 'დავალება', order: 'შეკვეთა', dispatch: 'გატანა',
 };
@@ -65,6 +68,11 @@ interface Props {
   setPassportLotId: (lotId: string | null) => void;
   setSelectedTankId: (vesselId: string | null) => void;
   setLineageLotId: (lotId: string) => void;
+  /**
+   * Runs a parsed action. The palette never records anything itself — it hands
+   * the intent over and something else opens pre-filled for confirmation.
+   */
+  onRunAction?: (action: PaletteAction) => void;
 }
 
 function normalize(s: string): string {
@@ -73,6 +81,7 @@ function normalize(s: string): string {
 
 function kindTone(kind: CommandKind): string {
   switch (kind) {
+    case 'action': return 'bg-[#f0e6e8] text-[#651522] border-[#651522]/25';
     case 'module': return 'bg-stone-100 text-stone-700 border-stone-200';
     case 'lot': return 'bg-rose-100 text-[#4e0e15] border-rose-200';
     case 'lineage': return 'bg-amber-100 text-amber-900 border-amber-200';
@@ -101,6 +110,7 @@ export default function GlobalCommandPalette({
   setPassportLotId,
   setSelectedTankId,
   setLineageLotId,
+  onRunAction,
 }: Props) {
   const ka = lang === 'ka';
   const [query, setQuery] = useState('');
@@ -265,11 +275,26 @@ export default function GlobalCommandPalette({
     vessels,
   ]);
 
+  const actionCommand = useMemo<CommandItem | null>(() => {
+    if (!onRunAction) return null;
+    const parsed = parsePaletteAction({ query, vessels, lang });
+    if (!parsed) return null;
+    return {
+      id: 'action:parsed',
+      kind: 'action',
+      title: parsed.title,
+      subtitle: parsed.detail,
+      keywords: '',
+      icon: Zap,
+      run: () => { onRunAction(parsed.action); onOpenChange(false); },
+    };
+  }, [onRunAction, query, vessels, lang, onOpenChange]);
+
   const results = useMemo(() => {
     const q = normalize(query);
     if (!q) return commands.slice(0, 12);
     const tokens = q.split(' ').filter(Boolean);
-    return commands
+    const scored = commands
       .map(item => {
         const haystack = normalize(`${item.title} ${item.subtitle} ${item.keywords}`);
         const score = tokens.reduce((acc, token) => {
@@ -281,9 +306,10 @@ export default function GlobalCommandPalette({
       })
       .filter(x => x.score > 0)
       .sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title))
-      .slice(0, 14)
+      .slice(0, actionCommand ? 13 : 14)
       .map(x => x.item);
-  }, [commands, query]);
+    return actionCommand ? [actionCommand, ...scored] : scored;
+  }, [commands, query, actionCommand]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -382,6 +408,24 @@ export default function GlobalCommandPalette({
             </div>
           )}
         </div>
+
+        {onRunAction && !query.trim() && (
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-[#e8dfd5] px-4 py-2 dark:border-stone-800">
+            <span className="text-[9px] font-black uppercase tracking-wider text-stone-400">
+              {ka ? 'ან ჩაწერეთ' : 'Or record'}
+            </span>
+            {paletteActionHints(ka).map(hint => (
+              <button
+                key={hint}
+                type="button"
+                onClick={() => setQuery(hint)}
+                className="rounded-md border border-stone-200 px-1.5 py-0.5 font-mono text-[10px] font-bold text-stone-500 hover:border-[#651522]/40 hover:text-[#651522] dark:border-stone-700 dark:hover:text-amber-300"
+              >
+                {hint}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-center justify-between border-t border-[#e8dfd5] px-4 py-2 text-[10px] font-mono text-stone-400 dark:border-stone-800">
           <span>{ka ? '↑↓ ნავიგაცია · Enter გახსნა · Esc დახურვა' : '↑↓ navigate · Enter open · Esc close'}</span>

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftRight, ArrowRight, Building2, CalendarPlus, Check, ClipboardList, Crosshair, DoorOpen, Droplet,
-  Factory, Grid3X3, Layers3, LayoutGrid, Map as MapIcon, Maximize2, Minus,
+  ArrowDownToLine, Factory, Grid3X3, Layers, Layers3, LayoutGrid, Map as MapIcon, Maximize2, Minus,
   Minimize2, Move, Pencil, PlugZap, Plus, RotateCcw, Ruler, Save, Search, ShieldCheck,
   Thermometer, Trash2, Waves, Wine, Wrench, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
@@ -91,6 +91,14 @@ export interface CellarPlanProps {
   onRecordSanitation?: (vesselId: string) => void;
   onScheduleOperation?: (vesselId: string) => void;
   onPlanTransfer?: (sourceVesselId: string, destinationVesselId?: string) => void;
+  /**
+   * Record the transfer here rather than handing off to the transfers screen.
+   * When present it becomes the primary action and `onPlanTransfer` stays as
+   * the way out to the full form.
+   */
+  onRecordTransfer?: (sourceVesselId: string, destinationVesselId: string, maxVolumeL: number) => void;
+  /** Record one operation across several vessels picked on the map at once. */
+  onBatchTopping?: (vesselIds: string[]) => void;
   onOpenProductionPlan?: (planId: string) => void;
   onUpdateVessels: (vessels: Vessel[]) => void;
   onUpdateFloors?: (floors: CellarFloor[]) => void;
@@ -185,7 +193,7 @@ function levelLabel(level: number, ka: boolean): string {
 export default function CellarPlan({
   lang, vessels, lots, floors: rawFloors, productionPlans = [], tasks = [],
   selectedVesselId, onSelectVessel, onOpenVessel, onOpenProductionPlan,
-  onOpenLot, onLogOperation, onRecordSanitation, onScheduleOperation, onPlanTransfer,
+  onOpenLot, onLogOperation, onRecordSanitation, onScheduleOperation, onPlanTransfer, onRecordTransfer, onBatchTopping,
   onUpdateVessels, onUpdateFloors, canUpdate, immersive = false,
 }: CellarPlanProps) {
   const ka = lang === 'ka';
@@ -233,6 +241,10 @@ export default function CellarPlan({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [dragGuide, setDragGuide] = useState<{ x: number; y: number; label: string } | null>(null);
   const [viewWindow, setViewWindow] = useState<ViewWindow>({ left: 0, top: 0, width: 100, height: 100 });
+  // Vessels gathered for one batch action. Ctrl/Cmd-click adds and removes;
+  // a plain click means "just this one", which is what a plain click has always
+  // meant here.
+  const [batchIds, setBatchIds] = useState<string[]>([]);
   const [transferSourceId, setTransferSourceId] = useState<string | null>(null);
   const [transferDestinationId, setTransferDestinationId] = useState<string | null>(null);
 
@@ -291,11 +303,21 @@ export default function CellarPlan({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVesselId]);
 
-  const selectPlanVessel = (vesselId: string) => {
+  const selectPlanVessel = (vesselId: string, additive = false) => {
     if (!editing && transferSourceId && vesselId !== transferSourceId) {
       setTransferDestinationId(vesselId);
       return;
     }
+    if (additive && onBatchTopping && !editing) {
+      setBatchIds(current => (current.includes(vesselId)
+        ? current.filter(id => id !== vesselId)
+        // Appended rather than sorted: the order barrels were picked is the
+        // order they get worked, and the batch preview keeps that order.
+        : [...current, vesselId]));
+      onSelectVessel(vesselId);
+      return;
+    }
+    setBatchIds([]);
     onSelectVessel(vesselId);
   };
 
@@ -312,7 +334,17 @@ export default function CellarPlan({
 
   const continueTransfer = () => {
     if (!transferSource || !transferDestination || transferDestinationIssue || transferableVolume <= 0) return;
-    onPlanTransfer?.(transferSource.id, transferDestination.id);
+    if (onRecordTransfer) {
+      onRecordTransfer(transferSource.id, transferDestination.id, transferableVolume);
+    } else {
+      onPlanTransfer?.(transferSource.id, transferDestination.id);
+    }
+    cancelTransferSelection();
+  };
+
+  const openFullTransferForm = () => {
+    if (!transferSource) return;
+    onPlanTransfer?.(transferSource.id, transferDestination?.id);
     cancelTransferSelection();
   };
 
@@ -765,7 +797,16 @@ export default function CellarPlan({
     if (event.key === 'Escape') { setSelectedObjectId(null); setDragGuide(null); cancelTransferSelection(); }
   };
 
+  /**
+   * Ctrl/Cmd + wheel zooms; a plain wheel belongs to the page.
+   *
+   * The plan used to zoom on any wheel event and swallow it, so a page with the
+   * map on it could not be scrolled past — the pointer only had to cross the
+   * plan for the document to stop moving and the cellar to start resizing.
+   * Panning is the drag gesture, which the map already has.
+   */
   const handlePlanWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     const delta = event.deltaMode === 1 ? event.deltaY * 18 : event.deltaMode === 2 ? event.deltaY * 120 : event.deltaY;
     const factor = Math.exp(-delta * 0.0016);
@@ -821,6 +862,34 @@ export default function CellarPlan({
 
       {floorDraft && <FloorEditor draft={floorDraft} setDraft={setFloorDraft} onSave={saveFloor} onCancel={() => setFloorDraft(null)} ka={ka} isNew={!floorDraft.id} />}
 
+      {!transferSource && batchIds.length > 0 && onBatchTopping && (
+        <div className="border-b border-sky-200 bg-sky-50 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/25" role="status">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-200">
+                <Layers className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <strong className="block text-xs text-sky-950 dark:text-sky-100">
+                  {batchIds.length} {ka ? 'ჭურჭელი არჩეულია' : (batchIds.length === 1 ? 'vessel selected' : 'vessels selected')}
+                </strong>
+                <span className="mt-0.5 block truncate text-[10px] font-semibold text-sky-700/75 dark:text-sky-300/75">
+                  {batchIds.join(' · ')}
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setBatchIds([])} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 text-xs font-black text-sky-800 dark:border-sky-800 dark:bg-stone-900 dark:text-sky-200">
+                <X className="h-3.5 w-3.5" />{ka ? 'გასუფთავება' : 'Clear'}
+              </button>
+              <button type="button" onClick={() => onBatchTopping(batchIds)} disabled={batchIds.length < 1} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-sky-700 px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40">
+                <ArrowDownToLine className="h-4 w-4" />{ka ? 'ყველას დოლივა' : 'Top all'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {transferSource && (
         <div className="border-b border-violet-200 bg-violet-50 px-4 py-3 dark:border-violet-900 dark:bg-violet-950/25" role="status">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -842,7 +911,8 @@ export default function CellarPlan({
             </div>
             <div className="flex gap-2">
               <button type="button" onClick={cancelTransferSelection} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 text-xs font-black text-violet-800 dark:border-violet-800 dark:bg-stone-900 dark:text-violet-200"><X className="h-3.5 w-3.5" />{ka ? 'გაუქმება' : 'Cancel'}</button>
-              {transferDestination && <button type="button" onClick={continueTransfer} disabled={Boolean(transferDestinationIssue) || transferableVolume <= 0} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-violet-700 px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40"><ArrowRight className="h-4 w-4" />{ka ? 'გადატანის გაგრძელება' : 'Continue transfer'}</button>}
+              {transferDestination && onRecordTransfer && onPlanTransfer && <button type="button" onClick={openFullTransferForm} className="inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 text-xs font-black text-violet-800 dark:border-violet-800 dark:bg-stone-900 dark:text-violet-200">{ka ? 'სრული ფორმა' : 'Full form'}</button>}
+              {transferDestination && <button type="button" onClick={continueTransfer} disabled={Boolean(transferDestinationIssue) || transferableVolume <= 0} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-violet-700 px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40"><ArrowRight className="h-4 w-4" />{onRecordTransfer ? (ka ? 'გადატანის ჩაწერა' : 'Record transfer') : (ka ? 'გადატანის გაგრძელება' : 'Continue transfer')}</button>}
             </div>
           </div>
         </div>
@@ -851,7 +921,7 @@ export default function CellarPlan({
       <div className="border-b border-stone-100 bg-stone-50 px-3 py-2 dark:border-stone-800 dark:bg-stone-950/50"><div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-stone-500"><span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 dark:bg-stone-900"><Ruler className="h-3.5 w-3.5" />{selectedFloor.widthMeters} × {selectedFloor.heightMeters} m</span><span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 dark:bg-stone-900"><Grid3X3 className="h-3.5 w-3.5" />{selectedFloor.gridMeters} m</span>{canUpdate && onUpdateFloors && <button type="button" onClick={openEditFloor} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-2.5 text-[10px] font-black text-stone-600 transition-colors hover:border-[#651522]/40 hover:text-[#651522] dark:border-stone-700 dark:bg-stone-900"><Pencil className="h-3 w-3" />{ka ? 'სართულის პარამეტრები' : 'Floor settings'}</button>}{editing && <label className="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-stone-200 bg-white px-2.5 dark:border-stone-700 dark:bg-stone-900"><input type="checkbox" checked={snapEnabled} onChange={event => setSnapEnabled(event.target.checked)} className="accent-[#651522]" />{ka ? 'ბადეზე მიბმა' : 'Snap to grid'}</label>}{editing && dirty && <span className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-amber-100 px-2.5 text-[9px] font-black text-amber-800 dark:bg-amber-950 dark:text-amber-200"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />{ka ? 'შეუნახავი ცვლილებები' : 'Unsaved changes'}</span>}</div><div className="flex items-center gap-1 self-end rounded-xl border border-stone-200 bg-white p-1 shadow-sm dark:border-stone-700 dark:bg-stone-900" aria-label={ka ? 'მასშტაბის მართვა' : 'Zoom controls'}><button type="button" onClick={() => changeZoom(zoomRef.current - 0.15)} aria-label={ka ? 'დაპატარავება' : 'Zoom out'} className="rounded-lg p-2 text-stone-500 transition-colors hover:bg-stone-100"><ZoomOut className="h-3.5 w-3.5" /></button><input aria-label={ka ? 'მასშტაბი' : 'Zoom level'} type="range" min="45" max="250" step="1" value={Math.round(zoom * 100)} onChange={event => changeZoom(Number(event.target.value) / 100)} className="w-24 accent-[#651522] sm:w-32" /><span className={`w-10 text-center font-mono text-[9px] font-black transition-colors ${zooming ? 'text-[#651522] dark:text-amber-200' : 'text-stone-500'}`}>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => changeZoom(zoomRef.current + 0.15)} aria-label={ka ? 'გადიდება' : 'Zoom in'} className="rounded-lg p-2 text-stone-500 transition-colors hover:bg-stone-100"><ZoomIn className="h-3.5 w-3.5" /></button><button type="button" onClick={fitPlan} title={ka ? 'მთლიანი გეგმის ჩატევა' : 'Fit entire plan'} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-stone-100 px-2 text-[9px] font-black text-stone-600 transition-colors hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700"><Crosshair className="h-3.5 w-3.5" />{ka ? 'ჩატევა' : 'Fit'}</button><button type="button" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? (ka ? 'სრული ეკრანიდან გამოსვლა' : 'Exit full screen') : (ka ? 'სრულ ეკრანზე გახსნა' : 'Open full screen')} className="rounded-lg p-2 text-stone-500 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800">{isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button></div></div></div>
 
       <div className={`grid bg-stone-950 xl:grid-cols-[minmax(0,1fr)_15rem] ${isFullscreen ? 'min-h-0 flex-1' : ''}`}>
-        <div ref={viewportRef} tabIndex={0} aria-label={ka ? `${floorDisplayName(selectedFloor, ka)} ინტერაქტიული გეგმა` : `${floorDisplayName(selectedFloor, ka)} interactive plan`} onKeyDown={handlePlanKeyDown} onKeyUp={event => { if (event.key === ' ') spacePressedRef.current = false; }} onBlur={() => { spacePressedRef.current = false; }} onWheel={handlePlanWheel} onPointerDown={beginCanvasGesture} onPointerMove={moveCanvasGesture} onPointerUp={endCanvasGesture} onPointerCancel={endCanvasGesture} onScroll={scheduleViewWindow} className={`${isFullscreen ? 'h-full' : 'h-[34rem]'} touch-none overflow-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-300 ${canvasPan || pinching ? 'cursor-grabbing select-none' : 'cursor-grab'}`}>
+        <div ref={viewportRef} tabIndex={0} aria-label={ka ? `${floorDisplayName(selectedFloor, ka)} ინტერაქტიული გეგმა` : `${floorDisplayName(selectedFloor, ka)} interactive plan`} onKeyDown={handlePlanKeyDown} onKeyUp={event => { if (event.key === ' ') spacePressedRef.current = false; }} onBlur={() => { spacePressedRef.current = false; }} onWheel={handlePlanWheel} onPointerDown={beginCanvasGesture} onPointerMove={moveCanvasGesture} onPointerUp={endCanvasGesture} onPointerCancel={endCanvasGesture} onScroll={scheduleViewWindow} className={`${isFullscreen ? 'h-full' : 'h-[34rem]'} touch-none overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-300 ${canvasPan || pinching ? 'cursor-grabbing select-none' : 'cursor-grab'}`}>
           <div className="flex items-center justify-center p-5" style={{ width: `max(100%, ${canvasWidth + 40}px)`, height: `max(100%, ${canvasHeight + 40}px)` }}>
           <div ref={canvasRef} className={`relative shrink-0 overflow-hidden rounded-2xl border bg-stone-900 shadow-2xl transition-[border-color,box-shadow] duration-200 ${editing ? 'border-amber-200/20 shadow-amber-950/20' : 'border-white/10'}`} style={{ width: canvasWidth, height: canvasHeight, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(101,21,34,.14), transparent 42%), linear-gradient(rgba(255,255,255,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.06) 1px, transparent 1px)', backgroundSize: `100% 100%, ${selectedFloor.gridMeters * pxPerMeter * zoom}px ${selectedFloor.gridMeters * pxPerMeter * zoom}px, ${selectedFloor.gridMeters * pxPerMeter * zoom}px ${selectedFloor.gridMeters * pxPerMeter * zoom}px` }}>
             <div className="pointer-events-none absolute inset-x-4 top-3 flex items-center justify-between text-[9px] font-black uppercase tracking-[0.16em] text-stone-500"><span>{floorDisplayName(selectedFloor, ka)} · {levelLabel(selectedFloor.level, ka)}</span><span>{editing ? (ka ? 'განლაგების რედაქტირება' : 'Layout editing') : `${selectedFloor.widthMeters} × ${selectedFloor.heightMeters} m`}</span></div>
@@ -875,7 +945,7 @@ export default function CellarPlan({
               const mapSize = vesselMapSize(vessel, zoom);
               const statusLabel = layer === 'contents' ? `${Math.round(fill)}% · ${vessel.currentVolume.toLocaleString()} L` : layer === 'temperature' ? `${vessel.temperature}°C` : layer === 'sanitation' ? (needsSanitation ? (ka ? 'გასარეცხი' : 'To clean') : (ka ? 'სუფთა' : 'Clean')) : work.length ? `${work.length} ${ka ? 'სამუშაო' : work.length === 1 ? 'work item' : 'work items'}` : (ka ? 'სამუშაო არ არის' : 'No open work');
               const secondaryLabel = labelMode === 'lot' ? lot ? `${lot.id} · ${Math.round(fill)}%` : (ka ? 'თავისუფალი' : 'Available') : labelMode === 'status' ? statusLabel : vesselTypeLabel(vessel.type, lang);
-              return <button key={vessel.id} type="button" data-plan-vessel="true" aria-label={`${vessel.id} · ${Math.round(fill)}% ${ka ? 'შევსებული' : 'full'}${work.length ? ` · ${work.length} ${ka ? 'სამუშაო' : 'work items'}` : ''}`} aria-pressed={selected} onClick={() => selectPlanVessel(vessel.id)} onDoubleClick={() => { if (!editing && !transferSourceId) onOpenVessel(vessel.id); }} onKeyDown={event => nudge(event, vessel.id)} onPointerDown={event => beginVesselDrag(event, vessel.id)} onPointerMove={moveDraggedEntity} onPointerUp={endDraggedEntity} onPointerCancel={endDraggedEntity} className={`group absolute z-20 flex touch-none -translate-x-1/2 -translate-y-1/2 flex-col items-center text-white will-change-[left,top] focus-visible:outline-none ${draggingId === vessel.id ? 'z-40 cursor-grabbing scale-[1.04] transition-none' : 'transition-[left,top,transform] duration-200 ease-out hover:z-40 hover:scale-[1.04]'} ${editing ? 'cursor-grab' : 'cursor-pointer'} ${transferSourceId && vessel.id !== transferSourceId ? 'ring-offset-stone-950 hover:ring-4 hover:ring-violet-400/40' : ''}`} style={{ left: `${position.x}%`, top: `${position.y}%` }}><span className={`relative rounded-full transition-[filter,box-shadow] duration-200 ${selected ? 'shadow-[0_0_0_3px_rgba(252,211,77,.85),0_0_0_8px_rgba(252,211,77,.12)]' : 'group-hover:brightness-110'} ${transferDestinationId === vessel.id ? 'shadow-[0_0_0_3px_rgba(167,139,250,.95),0_0_0_9px_rgba(167,139,250,.18)]' : ''}`}><VesselMapGlyph vessel={vessel} fill={fill} wineClass={lot?.wineClass} xRay={xRay} size={mapSize} layer={layer} needsSanitation={needsSanitation} openWork={work.length} />{layer === 'temperature' && <span className={`absolute -right-2 top-0 rounded-md px-1.5 py-0.5 text-[8px] font-black shadow-lg ${temperatureTone(vessel.temperature)}`}>{vessel.temperature}°</span>}{layer === 'sanitation' && <span className={`absolute -right-1 top-0 flex h-5 w-5 items-center justify-center rounded-full shadow-lg ${needsSanitation ? 'bg-amber-500 text-stone-950' : 'bg-emerald-500 text-white'}`}>{needsSanitation ? '!' : <Check className="h-3 w-3" />}</span>}{layer === 'work' && <span className={`absolute -right-1 top-0 flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[9px] font-black shadow-lg ${work.length ? 'bg-violet-500 text-white' : 'bg-stone-700 text-stone-300'}`}>{work.length}</span>}</span><span className={`mt-1 max-w-32 rounded-lg border px-2 py-1 text-center shadow-lg backdrop-blur-sm transition-colors ${selected ? 'border-amber-300/60 bg-stone-800/95' : 'border-white/10 bg-stone-950/90 group-hover:border-white/25 group-hover:bg-stone-900/95'}`}><strong className="block truncate font-mono text-[9px] text-white">{vessel.id}</strong><span className="mt-0.5 block max-w-28 truncate text-[7px] font-bold text-stone-300">{secondaryLabel}</span></span><span aria-hidden="true" className={`pointer-events-none absolute w-56 rounded-2xl border border-white/10 bg-stone-950/95 p-3 text-left opacity-0 shadow-2xl backdrop-blur-md transition-[opacity,transform] duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 ${position.y < 35 ? 'top-full mt-3 translate-y-1 group-hover:translate-y-0' : 'bottom-full mb-3 -translate-y-1 group-hover:translate-y-0'} ${position.x < 18 ? 'left-0' : position.x > 82 ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}><span className="flex items-center gap-3"><span className="shrink-0 text-stone-200"><VesselFill fillPct={fill} wineClass={lot?.wineClass || 'red'} qvevri={vessel.type === 'qvevri'} width={32} height={42} /></span><span className="min-w-0"><strong className="block truncate text-xs text-white">{vessel.id}</strong><span className="mt-0.5 block truncate text-[9px] font-bold text-stone-300">{lot?.name || (ka ? 'თავისუფალი ჭურჭელი' : 'Available vessel')}</span>{lot && <span className="mt-0.5 block truncate font-mono text-[8px] text-stone-500">{lot.id} · {lot.stage.replace(/_/g, ' ')}</span>}</span></span><span className="mt-3 grid grid-cols-2 gap-1.5"><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'მოცულობა' : 'Volume'}</small><strong className="mt-0.5 block text-[9px] text-stone-200">{vessel.currentVolume.toLocaleString()} / {vessel.capacity.toLocaleString()} L</strong></span><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'სტატუსი' : 'Status'}</small><strong className="mt-0.5 block truncate text-[9px] text-stone-200">{statusLabel}</strong></span></span>{lot?.createdAt && <span className="mt-2 block text-[8px] font-bold text-stone-500">{ka ? 'პირველი ჩანაწერი' : 'First recorded'} · {lot.createdAt}</span>}{!editing && !transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-amber-200">{ka ? 'ორმაგი კლიკი — ჭურჭლის გახსნა' : 'Double-click to open vessel'}</span>}{transferSourceId && vessel.id !== transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-violet-200">{ka ? 'დააჭირეთ მიმღებად ასარჩევად' : 'Click to choose destination'}</span>}</span></button>;
+              return <button key={vessel.id} type="button" data-plan-vessel="true" aria-label={`${vessel.id} · ${Math.round(fill)}% ${ka ? 'შევსებული' : 'full'}${work.length ? ` · ${work.length} ${ka ? 'სამუშაო' : 'work items'}` : ''}`} aria-pressed={selected} onClick={event => selectPlanVessel(vessel.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => { if (!editing && !transferSourceId) onOpenVessel(vessel.id); }} onKeyDown={event => nudge(event, vessel.id)} onPointerDown={event => beginVesselDrag(event, vessel.id)} onPointerMove={moveDraggedEntity} onPointerUp={endDraggedEntity} onPointerCancel={endDraggedEntity} className={`group absolute z-20 flex touch-none -translate-x-1/2 -translate-y-1/2 flex-col items-center text-white will-change-[left,top] focus-visible:outline-none ${draggingId === vessel.id ? 'z-40 cursor-grabbing scale-[1.04] transition-none' : 'transition-[left,top,transform] duration-200 ease-out hover:z-40 hover:scale-[1.04]'} ${editing ? 'cursor-grab' : 'cursor-pointer'} ${transferSourceId && vessel.id !== transferSourceId ? 'ring-offset-stone-950 hover:ring-4 hover:ring-violet-400/40' : ''}`} style={{ left: `${position.x}%`, top: `${position.y}%` }}><span className={`relative rounded-full transition-[filter,box-shadow] duration-200 ${batchIds.includes(vessel.id) ? 'shadow-[0_0_0_3px_rgba(56,189,248,.95),0_0_0_9px_rgba(56,189,248,.2)]' : transferDestinationId === vessel.id ? 'shadow-[0_0_0_3px_rgba(167,139,250,.95),0_0_0_9px_rgba(167,139,250,.18)]' : selected ? 'shadow-[0_0_0_3px_rgba(252,211,77,.85),0_0_0_8px_rgba(252,211,77,.12)]' : 'group-hover:brightness-110'}`}><VesselMapGlyph vessel={vessel} fill={fill} wineClass={lot?.wineClass} xRay={xRay} size={mapSize} layer={layer} needsSanitation={needsSanitation} openWork={work.length} />{layer === 'temperature' && <span className={`absolute -right-2 top-0 rounded-md px-1.5 py-0.5 text-[8px] font-black shadow-lg ${temperatureTone(vessel.temperature)}`}>{vessel.temperature}°</span>}{layer === 'sanitation' && <span className={`absolute -right-1 top-0 flex h-5 w-5 items-center justify-center rounded-full shadow-lg ${needsSanitation ? 'bg-amber-500 text-stone-950' : 'bg-emerald-500 text-white'}`}>{needsSanitation ? '!' : <Check className="h-3 w-3" />}</span>}{layer === 'work' && <span className={`absolute -right-1 top-0 flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[9px] font-black shadow-lg ${work.length ? 'bg-violet-500 text-white' : 'bg-stone-700 text-stone-300'}`}>{work.length}</span>}</span><span className={`mt-1 max-w-32 rounded-lg border px-2 py-1 text-center shadow-lg backdrop-blur-sm transition-colors ${selected ? 'border-amber-300/60 bg-stone-800/95' : 'border-white/10 bg-stone-950/90 group-hover:border-white/25 group-hover:bg-stone-900/95'}`}><strong className="block truncate font-mono text-[9px] text-white">{vessel.id}</strong><span className="mt-0.5 block max-w-28 truncate text-[7px] font-bold text-stone-300">{secondaryLabel}</span></span><span aria-hidden="true" className={`pointer-events-none absolute w-56 rounded-2xl border border-white/10 bg-stone-950/95 p-3 text-left opacity-0 shadow-2xl backdrop-blur-md transition-[opacity,transform] duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 ${position.y < 35 ? 'top-full mt-3 translate-y-1 group-hover:translate-y-0' : 'bottom-full mb-3 -translate-y-1 group-hover:translate-y-0'} ${position.x < 18 ? 'left-0' : position.x > 82 ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}><span className="flex items-center gap-3"><span className="shrink-0 text-stone-200"><VesselFill fillPct={fill} wineClass={lot?.wineClass || 'red'} qvevri={vessel.type === 'qvevri'} width={32} height={42} /></span><span className="min-w-0"><strong className="block truncate text-xs text-white">{vessel.id}</strong><span className="mt-0.5 block truncate text-[9px] font-bold text-stone-300">{lot?.name || (ka ? 'თავისუფალი ჭურჭელი' : 'Available vessel')}</span>{lot && <span className="mt-0.5 block truncate font-mono text-[8px] text-stone-500">{lot.id} · {lot.stage.replace(/_/g, ' ')}</span>}</span></span><span className="mt-3 grid grid-cols-2 gap-1.5"><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'მოცულობა' : 'Volume'}</small><strong className="mt-0.5 block text-[9px] text-stone-200">{vessel.currentVolume.toLocaleString()} / {vessel.capacity.toLocaleString()} L</strong></span><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'სტატუსი' : 'Status'}</small><strong className="mt-0.5 block truncate text-[9px] text-stone-200">{statusLabel}</strong></span></span>{lot?.createdAt && <span className="mt-2 block text-[8px] font-bold text-stone-500">{ka ? 'პირველი ჩანაწერი' : 'First recorded'} · {lot.createdAt}</span>}{!editing && !transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-amber-200">{ka ? 'ორმაგი კლიკი — ჭურჭლის გახსნა' : 'Double-click to open vessel'}</span>}{transferSourceId && vessel.id !== transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-violet-200">{ka ? 'დააჭირეთ მიმღებად ასარჩევად' : 'Click to choose destination'}</span>}</span></button>;
             })}
             {floorVessels.length === 0 && <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-xs font-bold text-stone-500"><Building2 className="mb-3 h-8 w-8 text-stone-700" />{ka ? 'ამ სართულზე ჭურჭელი ჯერ არ არის.' : 'No vessels are assigned to this floor yet.'}{editing && selectedVessel && <button type="button" onClick={() => moveSelectedVessel(selectedFloor.id)} className="mt-3 rounded-xl bg-white/10 px-3 py-2 text-[10px] text-stone-300">{ka ? 'არჩეული ჭურჭლის აქ გადმოტანა' : 'Move selected vessel here'}</button>}</div>}
           </div>

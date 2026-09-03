@@ -6,13 +6,18 @@ import type React from 'react';
  */
 
 /**
- * `full` labels every destination, `rail` keeps the icons and their grouping in
- * 56px with a hover flyout for the labels, and `hidden` gives the whole width
- * to the content — which the cellar's wider tables actually want.
+ * `full` labels every destination and holds 224px. `rail` keeps the icons and
+ * their grouping in 56px with a hover flyout for the labels. `auto` gives the
+ * whole width back: the sidebar collapses to a spine, and a cursor arriving at
+ * the screen edge slides the full panel out over the content.
+ *
+ * `auto` replaced an earlier `hidden` mode. Hidden reclaimed the same width but
+ * cost a deliberate click on a floating tab to get the sidebar back, so it was
+ * strictly worse than this for the same benefit.
  */
-export type SidebarMode = 'full' | 'rail' | 'hidden';
+export type SidebarMode = 'full' | 'rail' | 'auto';
 
-export const SIDEBAR_MODE_CYCLE: SidebarMode[] = ['full', 'rail', 'hidden'];
+export const SIDEBAR_MODE_CYCLE: SidebarMode[] = ['full', 'rail', 'auto'];
 
 /** One control, one order: the toggle button and Ctrl/Cmd+B advance the same cycle. */
 export function nextSidebarMode(mode: SidebarMode): SidebarMode {

@@ -14,7 +14,6 @@ import type { CostEntry } from '../lib/costing';
 import { localISODate } from '../lib/weatherApi';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
-  applyTransferCommand,
   type TransferCommandPayload,
   type TransferCommandResult,
 } from '../lib/commands/transfer';
@@ -24,15 +23,14 @@ import {
 } from '../lib/commands/transferReversal';
 import {
   CommandRequestError,
-  createTransferCommandIntent,
   createTransferReversalCommandIntent,
   pendingTransferCommandIntent,
   pendingTransferReversalCommandIntent,
-  submitTransferCommand,
   submitTransferReversalCommand,
   type TransferCommandResponse,
   type TransferReversalCommandResponse,
 } from '../lib/commands/client';
+import { useTransferExecution } from '../hooks/useTransferExecution';
 import OperationMaterialsEditor, {
   materialDraftIssue,
   materialDraftsToUsages,
@@ -298,26 +296,24 @@ export function TransfersTab({
     setMaterialDrafts([]);
   }, [lang, lots, onAddCellarOperation, pendingMaterialPosting, vessels]);
 
-  const applyTransferLocally = (intent: PendingCommandIntent<TransferCommandPayload>) => {
-    const applied = applyTransferCommand(
-      { vessels, lots, transfers: pastTransfers, costEntries },
-      intent.payload,
-      {
-        commandId: intent.commandId,
-        actorUsername: intent.payload.operator || 'Cellar Crew',
-        currency,
-        performedAt: new Date(),
-      },
-    );
-    onUpdateVessels(applied.state.vessels);
-    onUpdateLots(applied.state.lots);
-    saveTransfers(applied.state.transfers);
-    onUpdateCostEntries?.(applied.state.costEntries);
-    setOperationReceipt(localizedReceipt(applied.result));
-    queueTransferMaterials(applied.result);
-    resetTransferForm();
-    onTransferLogged?.();
-  };
+  const { executeTransfer } = useTransferExecution({
+    vessels,
+    lots,
+    transfers: pastTransfers,
+    costEntries,
+    currency,
+    onUpdateVessels,
+    onUpdateLots,
+    onUpdateTransfers: saveTransfers,
+    onUpdateCostEntries,
+    onApplyCommandResponse: onApplyTransferCommandResponse,
+    onApplied: (result) => {
+      setOperationReceipt(localizedReceipt(result));
+      queueTransferMaterials(result);
+      resetTransferForm();
+      onTransferLogged?.();
+    },
+  });
 
   const handleExecuteTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -331,63 +327,27 @@ export function TransfersTab({
       return;
     }
 
-    const intent = pendingIntent || createTransferCommandIntent({
-      sourceVesselId: sourceId,
-      destinationVesselId: destId,
-      volumeLiters: transferVol,
-      lossLiters: lossVol,
-      operator: operatorName || 'Cellar Crew',
-      category: reasonCategory,
-      pump: pumpModel,
-    });
-
     setCommandError(null);
-    if (!onApplyTransferCommandResponse || !SyncQueueManager.isOnline()) {
-      if (pendingIntent) {
-        setCommandError(lang === 'ka'
-          ? 'დაუდასტურებელი ბრძანების აღდგენას ინტერნეტთან კავშირი სჭირდება.'
-          : 'Recovering an unacknowledged transfer requires a server connection.');
-        return;
-      }
-      try {
-        applyTransferLocally(intent);
-      } catch (error) {
-        setCommandError(error instanceof Error ? error.message : 'Transfer validation failed.');
-      }
-      return;
-    }
-
-    setPendingIntent(intent);
     setIsSubmitting(true);
     try {
-      const response = await submitTransferCommand(intent);
-      onApplyTransferCommandResponse(response);
-      setOperationReceipt(localizedReceipt(response.result));
-      queueTransferMaterials(response.result);
-      resetTransferForm();
-      onTransferLogged?.();
-    } catch (error) {
-      if (error instanceof CommandRequestError
-        && error.code === 'command_store_unavailable'
-        && !pendingIntent) {
-        // The server rejected before claiming or mutating anything. This is the
-        // development/JSON-backend compatibility path and is safe to queue via
-        // the established whole-state sync flow.
-        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
-        try {
-          applyTransferLocally(intent);
-          return;
-        } catch (fallbackError) {
-          setCommandError(fallbackError instanceof Error ? fallbackError.message : 'Transfer validation failed.');
-          setPendingIntent(null);
-          return;
-        }
-      }
-      const message = error instanceof Error ? error.message : 'Transfer command failed.';
-      setCommandError(message);
-      if (error instanceof CommandRequestError && !error.retryable) {
+      const outcome = await executeTransfer({
+        sourceVesselId: sourceId,
+        destinationVesselId: destId,
+        volumeLiters: transferVol,
+        lossLiters: lossVol,
+        operator: operatorName || 'Cellar Crew',
+        category: reasonCategory,
+        pump: pumpModel,
+      }, pendingIntent);
+
+      if (outcome.ok) {
         setPendingIntent(null);
+        return;
       }
+      setCommandError(outcome.error);
+      // An intent the server may still hold is kept so it can be re-sent;
+      // anything else is discarded so the form is not stuck on a dead command.
+      setPendingIntent(outcome.retryableIntent ?? null);
     } finally {
       setIsSubmitting(false);
     }

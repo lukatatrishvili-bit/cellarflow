@@ -36,6 +36,7 @@ import CellarPlan from './CellarPlan';
 import DateInput from './ui/DateInput';
 
 const WineryPlan3D = React.lazy(() => import('./WineryPlan3D'));
+const BatchToppingDialog = React.lazy(() => import('./BatchToppingDialog'));
 
 interface WineryPlanTabProps {
   lang: Language;
@@ -55,6 +56,15 @@ interface WineryPlanTabProps {
   onOpenLot?: (lotId: string) => void;
   onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
   onStartTransfer?: (sourceVesselId: string, destinationVesselId?: string) => void;
+  /** Opens the shell's transfer recorder for these two vessels. */
+  onRecordTransfer?: (sourceVesselId: string, destinationVesselId: string) => void;
+  /**
+   * Tops several vessels from one source. Resolves to an error message when the
+   * batch was refused, naming the vessel that stopped it.
+   */
+  onBatchTopping?: (input: { sourceVesselId: string; litresPerVessel: number; vesselIds: string[] }) => Promise<string | null>;
+  batchToppingProgress?: { done: number; total: number } | null;
+
   onOpenProductionPlan?: (planId: string) => void;
   onOpenPlanner?: () => void;
   onBackToWinery?: () => void;
@@ -103,6 +113,9 @@ export default function WineryPlanTab({
   onOpenLot,
   onLogOperation,
   onStartTransfer,
+  onRecordTransfer,
+  onBatchTopping,
+  batchToppingProgress,
   onOpenProductionPlan,
   onOpenPlanner,
   onBackToWinery,
@@ -119,7 +132,6 @@ export default function WineryPlanTab({
   const [scheduleVesselId, setScheduleVesselId] = React.useState<string | null>(null);
   const [sanitationVesselId, setSanitationVesselId] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<'top-down' | '3d'>('top-down');
-
   React.useEffect(() => {
     if (!initialVesselId || !vessels.some(vessel => vessel.id === initialVesselId)) return;
     setSelectedVesselId(initialVesselId);
@@ -128,6 +140,15 @@ export default function WineryPlanTab({
   const selectVessel = (vesselId: string) => {
     setSelectedVesselId(vesselId);
     onSelectedVesselChange?.(vesselId);
+  };
+
+  const [batchVesselIds, setBatchVesselIds] = React.useState<string[] | null>(null);
+  const [batchBusy, setBatchBusy] = React.useState(false);
+  const [batchError, setBatchError] = React.useState<string | null>(null);
+
+  const closeBatchDialog = () => {
+    setBatchVesselIds(null);
+    setBatchError(null);
   };
 
   const occupied = vessels.filter(vessel => vessel.currentVolume > 0);
@@ -186,6 +207,10 @@ export default function WineryPlanTab({
           onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
           onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
           onPlanTransfer={onStartTransfer}
+          onRecordTransfer={onRecordTransfer ? (sourceId, destinationId) => onRecordTransfer(sourceId, destinationId) : undefined}
+          onBatchTopping={onBatchTopping
+            ? (vesselIds) => { setBatchError(null); setBatchVesselIds(vesselIds); }
+            : undefined}
           onOpenProductionPlan={onOpenProductionPlan}
           onUpdateVessels={onUpdateVessels}
           onUpdateFloors={onUpdateFloors}
@@ -209,6 +234,29 @@ export default function WineryPlanTab({
             canUpdate={canUpdateLayout}
           />
         </React.Suspense>}
+
+      {batchVesselIds && onBatchTopping && (
+        <React.Suspense fallback={null}>
+          <BatchToppingDialog
+            lang={lang}
+            vesselIds={batchVesselIds}
+            vessels={vessels}
+            lots={lots}
+            busy={batchBusy}
+            error={batchError}
+            progress={batchToppingProgress}
+            onCancel={closeBatchDialog}
+            onConfirm={async ({ sourceVesselId, litresPerVessel }) => {
+              setBatchBusy(true);
+              setBatchError(null);
+              const failure = await onBatchTopping({ sourceVesselId, litresPerVessel, vesselIds: batchVesselIds });
+              setBatchBusy(false);
+              if (failure) { setBatchError(failure); return; }
+              closeBatchDialog();
+            }}
+          />
+        </React.Suspense>
+      )}
 
       {scheduleVesselId && vessels.some(vessel => vessel.id === scheduleVesselId) && (
         <ScheduleOperationDialog

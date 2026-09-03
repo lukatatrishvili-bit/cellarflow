@@ -1556,8 +1556,12 @@ export function useWineryState() {
 
     const hasLocalSession = localStorage.getItem('vinea_is_logged_in') === 'true';
     const storedSidebarMode = localStorage.getItem('cf_sidebar_mode');
-    if (storedSidebarMode === 'full' || storedSidebarMode === 'rail' || storedSidebarMode === 'hidden') {
+    if (storedSidebarMode === 'full' || storedSidebarMode === 'rail' || storedSidebarMode === 'auto') {
       setSidebarMode(storedSidebarMode);
+    } else if (storedSidebarMode === 'hidden') {
+      // 'hidden' became 'auto': same reclaimed width, but the sidebar comes
+      // back on approach instead of needing a click.
+      setSidebarMode('auto');
     } else if (localStorage.getItem('cf_sidebar_collapsed') === 'true') {
       setSidebarMode('rail');
     }

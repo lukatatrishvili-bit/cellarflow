@@ -23,7 +23,6 @@ import {
 } from '../lib/costing';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
-  applyCellarOperationCommand,
   type CellarOperationCommandPayload,
   type CellarOperationInput,
 } from '../lib/commands/cellarOperation';
@@ -31,15 +30,14 @@ import type { CellarOperationReversalCommandPayload } from '../lib/commands/cell
 import { isActiveCellarOperation } from '../lib/cellarOperationIntegrity';
 import {
   CommandRequestError,
-  createCellarOperationCommandIntent,
   createCellarOperationReversalCommandIntent,
   pendingCellarOperationCommandIntent,
   pendingCellarOperationReversalCommandIntent,
-  submitCellarOperationCommand,
   submitCellarOperationReversalCommand,
   type CellarOperationCommandResponse,
 } from '../lib/commands/client';
 import { useFormDraft } from '../hooks/useFormDraft';
+import { useOperationExecution } from '../hooks/useOperationExecution';
 import OperationMaterialsEditor, {
   materialDraftIssue,
   materialDraftsToUsages,
@@ -486,90 +484,47 @@ export function CellarOperationsTab({
     resetSoft();
   };
 
-  const applyOperationLocally = (intent: PendingCommandIntent<CellarOperationCommandPayload>) => {
-    const hasCommandBindings = Boolean(
-      onUpdateLots && onUpdateVessels && onUpdateInventory && onUpdateOperations
-      && onUpdateCostEntries && onUpdateAuditLogs,
-    );
-    if (!hasCommandBindings) {
-      const operationId = onAddOperation(intent.payload.operation);
+  const { executeOperation } = useOperationExecution({
+    lots,
+    vessels,
+    inventory,
+    cellarOps: ops,
+    costEntries,
+    auditLogs: auditLogs || [],
+    currency,
+    costAutomation,
+    actorUsername: currentUserName,
+    onUpdateLots,
+    onUpdateVessels,
+    onUpdateInventory,
+    onUpdateOperations,
+    onUpdateCostEntries,
+    onUpdateAuditLogs,
+    onApplyCommandResponse: onApplyCellarOperationCommandResponse,
+    onAddOperation,
+    onApplied: (operation) => {
       setToastMessage?.(ka ? 'ოპერაცია აღირიცხა.' : 'Operation logged.');
       finishCommand();
-      if (operationId) {
-        onOperationLogged?.({ id: operationId, vesselId: intent.payload.operation.vesselId });
-      }
-      return;
-    }
+      onOperationLogged?.(operation);
+    },
+  });
 
-    const applied = applyCellarOperationCommand(
-      { lots, vessels, inventory, cellarOps: ops, costEntries, auditLogs },
-      intent.payload,
-      {
-        commandId: intent.commandId,
-        actorUsername: currentUserName,
-        currency,
-        costAutomation,
-        performedAt: new Date(intent.capturedAt),
-      },
-    );
-    onUpdateLots?.(applied.state.lots);
-    onUpdateVessels?.(applied.state.vessels);
-    onUpdateInventory?.(applied.state.inventory);
-    onUpdateOperations?.(applied.state.cellarOps);
-    onUpdateCostEntries?.(applied.state.costEntries);
-    onUpdateAuditLogs?.(applied.state.auditLogs);
-    setToastMessage?.(ka
-      ? `ოპერაცია აღირიცხა: ${applied.result.operation.lotName}`
-      : `Operation logged: ${applied.result.operation.lotName}`);
-    finishCommand();
-    onOperationLogged?.(applied.result.operation);
-  };
-
-  const executeOperationCommand = async (intent: PendingCommandIntent<CellarOperationCommandPayload>) => {
+  const executeOperationCommand = async (
+    input: CellarOperationInput,
+    resume?: PendingCommandIntent<CellarOperationCommandPayload>,
+  ) => {
     setCommandError(null);
-    if (!onApplyCellarOperationCommandResponse || !SyncQueueManager.isOnline()) {
-      if (pendingIntent) {
-        setCommandError(ka
-          ? 'დაუდასტურებელი ოპერაციის აღდგენას ინტერნეტთან კავშირი სჭირდება.'
-          : 'Recovering an unacknowledged cellar operation requires a server connection.');
-        return;
-      }
-      try {
-        applyOperationLocally(intent);
-      } catch (error) {
-        setCommandError(error instanceof Error ? error.message : 'Cellar operation validation failed.');
-      }
-      return;
-    }
-
-    setPendingIntent(intent);
     setIsSubmitting(true);
     try {
-      const response = await submitCellarOperationCommand(intent);
-      onApplyCellarOperationCommandResponse(response);
-      setToastMessage?.(ka
-        ? `ოპერაცია აღირიცხა: ${response.result.operation.lotName}`
-        : `Operation logged: ${response.result.operation.lotName}`);
-      finishCommand();
-      onOperationLogged?.(response.result.operation);
-    } catch (error) {
-      if (error instanceof CommandRequestError
-        && error.code === 'command_store_unavailable'
-        && !pendingIntent) {
-        SyncQueueManager.consumePendingCommandIntent(intent.commandId);
-        try {
-          applyOperationLocally(intent);
-          return;
-        } catch (fallbackError) {
-          setCommandError(fallbackError instanceof Error
-            ? fallbackError.message
-            : 'Cellar operation validation failed.');
-          setPendingIntent(null);
-          return;
-        }
+      const outcome = await executeOperation(input, resume);
+      if (outcome.ok) {
+        setPendingIntent(null);
+        return;
       }
-      setCommandError(error instanceof Error ? error.message : 'Cellar operation failed.');
-      if (error instanceof CommandRequestError && !error.retryable) setPendingIntent(null);
+      setCommandError(outcome.error);
+      // An intent the server may still hold is kept so it can be re-sent;
+      // anything else is dropped so the form is not stuck on a dead command.
+      setPendingIntent(outcome.retryableIntent ?? null);
     } finally {
       setIsSubmitting(false);
     }
@@ -685,7 +640,7 @@ export function CellarOperationsTab({
       canConsumeOperationMaterials,
     });
     if (!input) return;
-    void executeOperationCommand(createCellarOperationCommandIntent(input));
+    void executeOperationCommand(input);
   };
 
   const labelCls = 'text-[9px] uppercase font-mono block mb-1 font-bold text-stone-400 tracking-widest';
@@ -771,7 +726,7 @@ export function CellarOperationsTab({
               disabled={isSubmitting || isReversing}
               onClick={() => pendingReversalIntent
                 ? void handleReverseOperation()
-                : pendingIntent && void executeOperationCommand(pendingIntent)}
+                : pendingIntent && void executeOperationCommand(pendingIntent.payload.operation, pendingIntent)}
               className="rounded-lg bg-[#4e0e15] px-3 py-1.5 font-bold text-white disabled:cursor-wait disabled:opacity-60"
             >
               {isSubmitting || isReversing

@@ -5,6 +5,16 @@ import type { Language } from '../lib/i18n';
 import { getShellTranslations } from '../lib/i18nShell';
 import { computeAlerts, type Alert } from '../lib/alerts';
 import type { SidebarMode, WorkspaceNavSection } from '../lib/workspaceNavigation';
+import { useTransferExecution } from '../hooks/useTransferExecution';
+import { useBatchTopping } from '../hooks/useBatchTopping';
+import { useOperationExecution } from '../hooks/useOperationExecution';
+import type { PaletteAction } from '../lib/paletteActions';
+
+/** What the shell-level recorders were asked to record. */
+type RecorderRequest =
+  | { kind: 'transfer'; sourceVesselId: string; destinationVesselId: string; suggestedVolumeL?: number }
+  | { kind: 'operation'; vesselId: string; type?: CellarOperationType; litres?: number };
+import type { TransferCategory } from '../lib/commands/transfer';
 import { vaziNavigationGroups, type VaziTab } from '../lib/vaziNavigation';
 import type { AiFinding } from '../lib/ai/types';
 import {
@@ -93,6 +103,8 @@ const ProductionPlannerTab = lazyRetry(() => import('../components/ProductionPla
 const ScanToAction = lazyRetry(() => import('../components/ScanToAction'));
 const WorkspaceShell = lazyRetry(() => import('../components/WorkspaceShell'));
 const BlendTrialsPanel = lazyRetry(() => import('../components/BlendTrialsPanel'));
+const MapTransferDialog = lazyRetry(() => import('../components/MapTransferDialog'));
+const MapOperationDialog = lazyRetry(() => import('../components/MapOperationDialog'));
 
 // Subcomponents modular layout
 import AuroraBackdrop from '../components/AuroraBackdrop';
@@ -293,6 +305,190 @@ export default function App() {
     setActiveModule('gvino');
     setActiveTab('transfers');
   }, [setActiveModule, setActiveTab, setPrefilledDestId, setPrefilledSourceId]);
+  // The map commits through the same command path the transfers screen uses,
+  // so there is one implementation of moving wine rather than two.
+  const { executeTransfer } = useTransferExecution({
+    vessels: state.vessels,
+    lots: state.lots,
+    transfers: state.transfers,
+    costEntries: state.costEntries,
+    currency: state.companyProfile.currency || 'GEL',
+    onUpdateVessels: state.setVessels,
+    onUpdateLots: state.setLots,
+    onUpdateTransfers: state.setTransfers,
+    onUpdateCostEntries: state.setCostEntries,
+    onApplyCommandResponse: state.applyTransferCommandResponse,
+    // Settles the planned work this transfer fulfils, from any recorder.
+    onApplied: () => state.signalPlanRecord('transfer'),
+  });
+
+  const executeTransferFromMap = useCallback(async (input: {
+    sourceVesselId: string;
+    destinationVesselId: string;
+    volumeLiters: number;
+    lossLiters: number;
+    category: TransferCategory;
+    pump: string;
+  }): Promise<string | null> => {
+    const outcome = await executeTransfer({
+      ...input,
+      operator: state.currentUser.fullName || state.currentUser.username || 'Cellar Crew',
+    });
+    return outcome.ok ? null : outcome.error;
+  }, [executeTransfer, state.currentUser.fullName, state.currentUser.username]);
+
+  const { executeOperation } = useOperationExecution({
+    lots: state.lots,
+    vessels: state.vessels,
+    inventory: state.inventory,
+    cellarOps: state.cellarOps,
+    costEntries: state.costEntries,
+    auditLogs: state.auditLogs,
+    currency: state.companyProfile.currency || 'GEL',
+    costAutomation: state.companyProfile.costAutomation,
+    actorUsername: state.currentUser.fullName || state.currentUser.username,
+    onUpdateLots: state.setLots,
+    onUpdateVessels: state.setVessels,
+    onUpdateInventory: state.setInventory,
+    onUpdateOperations: state.setCellarOps,
+    onUpdateCostEntries: state.setCostEntries,
+    onUpdateAuditLogs: state.setAuditLogs,
+    onApplyCommandResponse: state.applyCellarOperationCommandResponse,
+    onAddOperation: state.handleAddCellarOperation,
+    // Settles the planned work this recording fulfils, wherever it was
+    // recorded from — the map, the vessel drawer, or the command palette.
+    onApplied: () => state.signalPlanRecord('operation'),
+  });
+
+  /**
+   * The recorders live here rather than inside the cellar map.
+   *
+   * They started on the map because that is where the first caller was, which
+   * meant every other way of reaching them — the vessel drawer, the cellar
+   * workspace, the command palette — had to send you to the map first. Owned by
+   * the shell, they open over whatever you are already looking at.
+   */
+  const [recorderRequest, setRecorderRequest] = useState<RecorderRequest | null>(null);
+  const [recorderBusy, setRecorderBusy] = useState(false);
+  const [recorderError, setRecorderError] = useState<string | null>(null);
+  const openRecorder = useCallback((request: RecorderRequest) => {
+    setRecorderError(null);
+    setRecorderRequest(request);
+  }, []);
+  const closeRecorder = useCallback(() => {
+    setRecorderRequest(null);
+    setRecorderError(null);
+  }, []);
+  const recorderVessel = recorderRequest?.kind === 'operation'
+    ? state.vessels.find(vessel => vessel.id === recorderRequest.vesselId) || null
+    : null;
+  const recorderTransfer = (() => {
+    if (recorderRequest?.kind !== 'transfer') return null;
+    const source = state.vessels.find(vessel => vessel.id === recorderRequest.sourceVesselId);
+    const destination = state.vessels.find(vessel => vessel.id === recorderRequest.destinationVesselId);
+    if (!source || !destination) return null;
+    return {
+      source,
+      destination,
+      maxVolumeL: Math.max(0, Math.min(
+        source.currentVolume,
+        destination.capacity - destination.currentVolume,
+      )),
+    };
+  })();
+  const runPaletteAction = useCallback((action: PaletteAction) => {
+    // No navigation: the recorder opens where you already are.
+    openRecorder(action.kind === 'transfer'
+      ? {
+        kind: 'transfer',
+        sourceVesselId: action.sourceVesselId,
+        destinationVesselId: action.destinationVesselId,
+        suggestedVolumeL: action.litres,
+      }
+      : { kind: 'operation', vesselId: action.vesselId, type: action.type, litres: action.litres });
+  }, [openRecorder]);
+
+  const executeOperationFromMap = useCallback(async (input: {
+    vesselId: string;
+    type: CellarOperationType;
+    volumeAfterL?: number;
+    sourceVesselId?: string;
+    toppingVolumeL?: number;
+    materialId?: string;
+    dose?: number;
+    notes: string;
+  }): Promise<string | null> => {
+    const vessel = state.vessels.find(entry => entry.id === input.vesselId);
+    if (!vessel?.assignedLotId) {
+      return isKa ? 'ამ ჭურჭელს პარტია არ აქვს.' : 'This vessel holds no lot.';
+    }
+    const outcome = await executeOperation({
+      date: new Date().toISOString().slice(0, 10),
+      type: input.type,
+      lotId: vessel.assignedLotId,
+      vesselId: vessel.id,
+      vesselToId: null,
+      ...(input.sourceVesselId ? { sourceVesselId: input.sourceVesselId } : {}),
+      ...(input.toppingVolumeL !== undefined ? { toppingVolumeL: input.toppingVolumeL } : {}),
+      ...(input.volumeAfterL !== undefined ? { volumeAfterL: input.volumeAfterL } : {}),
+      ...(input.materialId && input.dose ? { materialId: input.materialId, dose: input.dose } : {}),
+      operator: state.currentUser.fullName || state.currentUser.username || 'Cellar Crew',
+      notes: input.notes,
+    });
+    if (!outcome.ok) return outcome.error;
+    state.setToastMessage(isKa ? 'ოპერაცია აღირიცხა.' : 'Operation recorded.');
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [executeOperation, state.vessels, state.currentUser.fullName, state.currentUser.username, state.setToastMessage, isKa]);
+
+  const { runBatchTopping, progress: batchToppingProgress } = useBatchTopping({
+    lots: state.lots,
+    vessels: state.vessels,
+    inventory: state.inventory,
+    cellarOps: state.cellarOps,
+    costEntries: state.costEntries,
+    auditLogs: state.auditLogs,
+    currency: state.companyProfile.currency || 'GEL',
+    costAutomation: state.companyProfile.costAutomation,
+    actorUsername: state.currentUser.username,
+    operatorName: state.currentUser.fullName || state.currentUser.username,
+    onUpdateLots: state.setLots,
+    onUpdateVessels: state.setVessels,
+    onUpdateInventory: state.setInventory,
+    onUpdateOperations: state.setCellarOps,
+    onUpdateCostEntries: state.setCostEntries,
+    onUpdateAuditLogs: state.setAuditLogs,
+    onApplied: () => state.signalPlanRecord('operation'),
+  });
+
+  const batchTopFromMap = useCallback(async (input: {
+    sourceVesselId: string;
+    litresPerVessel: number;
+    vesselIds: string[];
+  }): Promise<string | null> => {
+    const { planBatchTopping } = await import('../lib/batchTopping');
+    const preview = planBatchTopping({
+      sourceVesselId: input.sourceVesselId,
+      targetVesselIds: input.vesselIds,
+      litresPerVessel: input.litresPerVessel,
+      vessels: state.vessels,
+      lots: state.lots,
+    });
+    const plans = preview.toppable.map(entry => entry.plan!).filter(Boolean);
+    if (!plans.length) {
+      return isKa ? 'ვერცერთი ჭურჭელი ვერ შეივსება.' : 'None of these vessels can be topped.';
+    }
+    const outcome = await runBatchTopping(plans);
+    if (outcome.failure) {
+      return `${outcome.failure.vesselId}: ${outcome.failure.error}`;
+    }
+    state.setToastMessage(isKa
+      ? `${outcome.done} ჭურჭელი შეივსო.`
+      : `Topped ${outcome.done} vessel${outcome.done === 1 ? '' : 's'}.`);
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runBatchTopping, state.vessels, state.lots, state.setToastMessage, isKa]);
+
   const openTransferFromWineryPlan = useCallback((sourceVesselId: string, destinationVesselId?: string) => {
     setPrefilledSourceId(sourceVesselId);
     setPrefilledDestId(destinationVesselId || '');
@@ -313,6 +509,19 @@ export default function App() {
   );
   const openProcurement = useCallback(() => setActiveModule('procurement'), [setActiveModule]);
   const openProductionPlanWork = useCallback(async (item: ProductionPlanItem) => {
+    const { isQuickCellarOperation } = await import('../lib/wineryOperations');
+    // A quick operation has a recorder that opens over wherever you are, so
+    // there is no reason to send you to the treatments screen for it.
+    if (item.operationType && isQuickCellarOperation(item.operationType)
+      && cellarPermissions.operations.canLogCellarOperation && item.vesselIds[0]) {
+      state.setPendingPlanFulfilment({
+        planItemId: item.id,
+        kind: 'operation',
+        openedAt: new Date().toISOString(),
+      });
+      openRecorder({ kind: 'operation', vesselId: item.vesselIds[0], type: item.operationType });
+      return;
+    }
     const { openProductionPlanItem } = await import('../lib/productionPlanNavigation');
     // Remember what this operator was sent off to do. Whichever recorder saves
     // the matching record settles the plan item and its task, so recording the
@@ -779,6 +988,12 @@ export default function App() {
     if (typeof window !== 'undefined') localStorage.setItem('cf_header_hidden', String(headerHidden));
   }, [headerHidden]);
   const showHeader = !headerHidden;
+  useEffect(() => {
+    // Published as a custom property rather than a prop: the sticky sidebar and
+    // the auto-reveal panel both need it, and one of them is portalled out of
+    // the tree that would carry it.
+    document.documentElement.style.setProperty('--app-header-offset', headerHidden ? '0.75rem' : '5rem');
+  }, [headerHidden]);
 
   // Network connection state
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -831,19 +1046,6 @@ export default function App() {
 
   // Nav bar: which dropdown is open — a module-group id, 'settings', 'mobile', or null.
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  // The cellar focus card used to be permanent sidebar furniture — ~150px of
-  // vertical space above the sections on every cellar screen. It still opens by
-  // default, but it folds to its headline and the choice sticks.
-  const [isCellarFocusOpen, setIsCellarFocusOpen] = useState(
-    () => typeof window === 'undefined' || window.localStorage?.getItem('cf_cellar_focus_open') !== 'false',
-  );
-  const toggleCellarFocus = useCallback(() => {
-    setIsCellarFocusOpen(open => {
-      const next = !open;
-      if (typeof window !== 'undefined') window.localStorage?.setItem('cf_cellar_focus_open', String(next));
-      return next;
-    });
-  }, []);
   const navRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!openMenu) return;
@@ -1220,11 +1422,6 @@ export default function App() {
   const averageOccupiedTemp = occupiedTanksCount > 0
     ? parseFloat((occupiedVessels.reduce((acc, vessel) => acc + (vessel.temperature || 0), 0) / occupiedTanksCount).toFixed(1))
     : 0;
-  const totalCellarCapacity = state.vessels.reduce((acc, vessel) => acc + vessel.capacity, 0);
-  const usedCellarVolume = occupiedVessels.reduce((acc, vessel) => acc + vessel.currentVolume, 0);
-  const cellarCapacityPct = totalCellarCapacity > 0 ? Math.round((usedCellarVolume / totalCellarCapacity) * 100) : 0;
-  const pendingTaskCount = state.tasks.filter(task => task.status !== 'completed').length;
-  const urgentAlertCount = alerts.filter(alert => alert.severity === 'critical').length;
   // Sections group the cellar by what a person is doing, not by which register
   // owns the data. Four headings of three-to-five, rather than one of six next
   // to a two-item "Tools" catch-all — a heading you can hold in your head is
@@ -1288,7 +1485,6 @@ export default function App() {
   const canViewWineryLots = canViewModule('gvino', 'lots');
   const canViewWineryVessels = canViewModule('gvino', 'vessels');
   const canViewWineryPlan = canViewModule('gvino', 'winery-plan');
-  const canViewWineryFermentation = canViewModule('gvino', 'fermentation');
   const activeWineryNavTab = state.activeTab === 'lots' || state.activeTab === 'vessels'
     ? 'cellar'
     : state.activeTab;
@@ -1522,10 +1718,6 @@ export default function App() {
     return true;
   });
   const activeModuleGroup = moduleGroups.find(group => group.modules.some(mod => mod.id === state.activeModule)) || moduleGroups[0];
-  const activeWineryTab = accessibleWineryTabGroups
-    .flatMap(group => group.tabs)
-    .find(tab => tab.id === activeWineryNavTab);
-
   // One sidebar, three sources. The cellar lists its tabs, the vineyard lists
   // its own, and every other group lists the modules it contains — so the
   // navigation reads the same wherever you are.
@@ -1568,77 +1760,10 @@ export default function App() {
           onSelect: () => switchModule(mod.id),
         })),
       }));
-  // Cellar-only context card above the sidebar sections — collapsible, so the
-  // sections start near the top of the viewport when it is not wanted.
-  const cellarFocusSummary = (
-    <div className="app-sidebar-summary hidden md:block mb-3 p-3 dark:border-stone-800 dark:bg-stone-900/90">
-      <button
-        type="button"
-        onClick={toggleCellarFocus}
-        aria-expanded={isCellarFocusOpen}
-        className="flex w-full cursor-pointer items-center justify-between gap-2 text-left"
-        title={isCellarFocusOpen ? (isKa ? 'ჩაკეცვა' : 'Collapse') : (isKa ? 'გაშლა' : 'Expand')}
-      >
-        <span className="min-w-0">
-          <span className="block text-[9px] font-mono font-black uppercase tracking-[0.18em] text-stone-400">
-            {isKa ? 'დღის ფოკუსი' : 'Today focus'}
-          </span>
-          <strong className="mt-0.5 block truncate text-sm font-black text-stone-900 dark:text-amber-100">
-            {activeWineryTab?.label || activeModuleGroup.label}
-          </strong>
-        </span>
-        <span className="flex shrink-0 items-center gap-1">
-          <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
-            urgentAlertCount > 0
-              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/30 dark:text-rose-300'
-              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300'
-          }`}>
-            {urgentAlertCount > 0 ? `${urgentAlertCount} ${isKa ? 'გადაუდებელი' : 'urgent'}` : (isKa ? 'სტაბილური' : 'steady')}
-          </span>
-          <ChevronDown className={`w-3.5 h-3.5 text-stone-400 transition-transform ${isCellarFocusOpen ? '' : '-rotate-90'}`} />
-        </span>
-      </button>
-      {isCellarFocusOpen && (canViewWineryTasks || canViewWineryFermentation) && (
-        <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
-          {canViewWineryTasks && (
-            <button type="button" onClick={() => state.setActiveTab('tasks')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-              <span className="text-stone-400">{t.tasks || 'Tasks'}</span>
-              <strong className="text-sm text-stone-900 dark:text-amber-100">{pendingTaskCount}</strong>
-            </button>
-          )}
-          {canViewWineryFermentation && (
-            <button type="button" onClick={() => state.setActiveTab('fermentation')} className="flex min-h-9 items-center justify-between rounded-lg bg-stone-50 px-2.5 text-left font-bold text-stone-600 hover:bg-[#f5efe9] hover:text-[#4e0e15] dark:bg-stone-950/40 dark:text-stone-300">
-              <span className="text-stone-400">{isKa ? 'დუღილი' : 'Ferments'}</span>
-              <strong className="text-sm text-stone-900 dark:text-amber-100">{activeFermsCount}</strong>
-            </button>
-          )}
-        </div>
-      )}
-      {isCellarFocusOpen && canViewWineryVessels && (
-      <div className="mt-2.5">
-        <div className="mb-1 flex items-center justify-between text-[9px] font-mono font-bold uppercase tracking-wide text-stone-400">
-          <span>{isKa ? 'ტევადობა' : 'Capacity'}</span>
-          <span>{cellarCapacityPct}%</span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-          <div
-            className={`h-full rounded-full ${cellarCapacityPct > 85 ? 'bg-amber-500' : 'bg-[#4e0e15]'}`}
-            style={{ width: `${Math.min(100, cellarCapacityPct)}%` }}
-          />
-        </div>
-        <span className="mt-1.5 block text-[9px] font-semibold text-stone-400">
-          {isKa
-            ? `${occupiedTanksCount} დაკავებული ჭურჭელი · საშ. ${averageOccupiedTemp} °C`
-            : `${occupiedTanksCount} occupied vessels · avg ${averageOccupiedTemp} °C`}
-        </span>
-      </div>
-      )}
-    </div>
-  );
   const sidebarModeLabels: Record<SidebarMode, string> = {
-    full: isKa ? 'მენიუს გაშლა' : 'Expand menu',
+    full: isKa ? 'მენიუს ჩამაგრება' : 'Pin menu open',
     rail: isKa ? 'მენიუს შევიწროება' : 'Narrow menu',
-    hidden: isKa ? 'მენიუს დამალვა' : 'Hide menu',
+    auto: isKa ? 'ავტომატური დამალვა' : 'Hide until hovered',
   };
   const workspaceMobileLabel = activeModuleGroup.id === 'cellar'
     ? (isKa ? 'მარნის განყოფილება' : 'Winery section')
@@ -1956,6 +2081,80 @@ export default function App() {
 
       {state.isLoggedIn && !state.currentUser.isMasterAdmin && (
         <Suspense fallback={null}>
+          {recorderRequest?.kind === 'transfer' && recorderTransfer && (
+            <Suspense fallback={null}>
+              <MapTransferDialog
+                key={`${recorderRequest.sourceVesselId}-${recorderRequest.destinationVesselId}-${recorderRequest.suggestedVolumeL ?? ''}`}
+                lang={state.lang}
+                source={recorderTransfer.source}
+                destination={recorderTransfer.destination}
+                lots={state.lots}
+                maxVolumeL={recorderTransfer.maxVolumeL}
+                suggestedVolumeL={recorderRequest.suggestedVolumeL}
+                operatorName={state.currentUser.fullName || state.currentUser.username}
+                busy={recorderBusy}
+                error={recorderError}
+                onCancel={closeRecorder}
+                onOpenFullTransfer={() => {
+                  const request = recorderRequest;
+                  closeRecorder();
+                  openTransferFromWineryPlan(request.sourceVesselId, request.destinationVesselId);
+                }}
+                onConfirm={async ({ volumeLiters, lossLiters, category, pump }) => {
+                  setRecorderBusy(true);
+                  setRecorderError(null);
+                  const failure = await executeTransferFromMap({
+                    sourceVesselId: recorderRequest.sourceVesselId,
+                    destinationVesselId: recorderRequest.destinationVesselId,
+                    volumeLiters,
+                    lossLiters,
+                    category,
+                    pump,
+                  });
+                  setRecorderBusy(false);
+                  // A refusal keeps the dialog open with the reason, so the
+                  // numbers just entered are not thrown away.
+                  if (failure) { setRecorderError(failure); return; }
+                  closeRecorder();
+                }}
+              />
+            </Suspense>
+          )}
+
+          {recorderRequest?.kind === 'operation' && recorderVessel && (
+            <Suspense fallback={null}>
+              <MapOperationDialog
+                key={`${recorderRequest.vesselId}-${recorderRequest.type ?? ''}-${recorderRequest.litres ?? ''}`}
+                lang={state.lang}
+                vessel={recorderVessel}
+                lot={state.lots.find(lot => lot.id === recorderVessel.assignedLotId) || null}
+                vessels={state.vessels}
+                lots={state.lots}
+                inventory={state.inventory}
+                operatorName={state.currentUser.fullName || state.currentUser.username}
+                initialType={recorderRequest.type}
+                initialLitres={recorderRequest.litres}
+                canUseMaterials={cellarPermissions.operations.canConsumeOperationMaterials}
+                busy={recorderBusy}
+                error={recorderError}
+                onCancel={closeRecorder}
+                onOpenFullRecorder={() => {
+                  const request = recorderRequest;
+                  closeRecorder();
+                  openVesselOperation(request.vesselId, request.type);
+                }}
+                onConfirm={async (input) => {
+                  setRecorderBusy(true);
+                  setRecorderError(null);
+                  const failure = await executeOperationFromMap({ vesselId: recorderRequest.vesselId, ...input });
+                  setRecorderBusy(false);
+                  if (failure) { setRecorderError(failure); return; }
+                  closeRecorder();
+                }}
+              />
+            </Suspense>
+          )}
+
           <GlobalCommandPalette
             open={isCommandOpen}
             lang={state.lang}
@@ -1972,6 +2171,10 @@ export default function App() {
             setPassportLotId={state.setPassportLotId}
             setSelectedTankId={state.setSelectedTankId}
             setLineageLotId={setLineageFocusLotId}
+            onRunAction={cellarPermissions.operations.canLogCellarOperation
+              || cellarPermissions.transfers.canExecuteTransfer
+              ? runPaletteAction
+              : undefined}
           />
         </Suspense>
       )}
@@ -2519,7 +2722,6 @@ export default function App() {
           modeLabels={sidebarModeLabels}
           mode={state.sidebarMode}
           onModeChange={state.setSidebarMode}
-          summary={activeModuleGroup.id === 'cellar' ? cellarFocusSummary : undefined}
         >
         {state.activeModule === 'vazi' ? (
           <Suspense fallback={<ModuleLoader />}>
@@ -2967,7 +3169,7 @@ export default function App() {
                   state={state}
                   permissions={cellarPermissions}
                   onOpenProductionPlan={(planId) => openWorkflowItem('planner', planId)}
-                  onLogOperation={openVesselOperation}
+                  onLogOperation={(vesselId, operationType) => openRecorder({ kind: 'operation', vesselId, type: operationType })}
                   onPlanTransfer={openTransferFromVessel}
                   onLocateOnWineryPlan={openWineryPlanForVessel}
                   renderQvevriRecords={renderQvevriRecords}
@@ -2996,9 +3198,14 @@ export default function App() {
                 onOpenVessel={state.setSelectedTankId}
                 onOpenLot={canViewWineryLots ? state.setPassportLotId : undefined}
                 onLogOperation={cellarPermissions.operations.canLogCellarOperation
-                  ? (vesselId, operationType) => openVesselOperation(vesselId, operationType, 'winery-plan')
+                  ? (vesselId, operationType) => openRecorder({ kind: 'operation', vesselId, type: operationType })
                   : undefined}
                 onStartTransfer={cellarPermissions.transfers.canExecuteTransfer ? openTransferFromWineryPlan : undefined}
+                onRecordTransfer={cellarPermissions.transfers.canExecuteTransfer
+                  ? (sourceVesselId, destinationVesselId) => openRecorder({ kind: 'transfer', sourceVesselId, destinationVesselId })
+                  : undefined}
+                onBatchTopping={cellarPermissions.operations.canLogCellarOperation ? batchTopFromMap : undefined}
+                batchToppingProgress={batchToppingProgress}
                 onOpenProductionPlan={canViewWineryPlanner ? (planId) => openWorkflowItem('planner', planId) : undefined}
                 onOpenPlanner={canViewWineryPlanner ? () => state.setActiveTab('planner') : undefined}
                 onBackToWinery={() => state.setActiveTab('cellar')}
@@ -3515,7 +3722,9 @@ export default function App() {
             onToggleSanitation={state.handleToggleSanitation}
             onToggleCoolingJacket={state.handleToggleCoolingJacket}
             onUpdateVessels={state.setVessels}
-            onLogOperation={cellarPermissions.operations.canLogCellarOperation ? openVesselOperation : undefined}
+            onLogOperation={cellarPermissions.operations.canLogCellarOperation
+              ? (vesselId, operationType) => openRecorder({ kind: 'operation', vesselId, type: operationType })
+              : undefined}
             canUpdateVessel={cellarPermissions.vessels.canUpdateVessel}
           />
         </Suspense>
