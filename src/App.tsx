@@ -257,9 +257,11 @@ export default function App() {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [prefilledOpType, setPrefilledOpType] = useState<CellarOperationType | undefined>();
   const [prefilledTransferVolume, setPrefilledTransferVolume] = useState<number | undefined>();
+  const [prefilledTransferCategory, setPrefilledTransferCategory] = useState<TransferCategory | undefined>();
   const [operationReturnVesselId, setOperationReturnVesselId] = useState<string | null>(null);
   const [operationReturnTab, setOperationReturnTab] = useState<'vessels' | 'winery-plan'>('vessels');
   const [wineryPlanFocusVesselId, setWineryPlanFocusVesselId] = useState<string | null>(null);
+  const [wineryPlanBottlingVesselId, setWineryPlanBottlingVesselId] = useState<string | null>(null);
   const [recentlyLoggedOperationId, setRecentlyLoggedOperationId] = useState<string | null>(null);
   // Stable identity, so ToastHost's memo actually holds across App re-renders.
   const openSyncTroubleshooter = useCallback(() => setShowSyncTroubleshooter(true), []);
@@ -297,6 +299,7 @@ export default function App() {
     setPrefilledSourceId('');
     setPrefilledDestId('');
     setPrefilledTransferVolume(undefined);
+    setPrefilledTransferCategory(undefined);
   }, [setPrefilledSourceId, setPrefilledDestId]);
   const openTransferFromVessel = useCallback((vesselId: string, role: 'source' | 'destination' = 'source') => {
     setPrefilledSourceId(role === 'source' ? vesselId : '');
@@ -489,14 +492,31 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runBatchTopping, state.vessels, state.lots, state.setToastMessage, isKa]);
 
-  const openTransferFromWineryPlan = useCallback((sourceVesselId: string, destinationVesselId?: string) => {
+  const openTransferFromWineryPlan = useCallback((sourceVesselId: string, destinationVesselId?: string, operationType: 'racking' | 'blending' = 'racking') => {
     setPrefilledSourceId(sourceVesselId);
     setPrefilledDestId(destinationVesselId || '');
     setPrefilledTransferVolume(undefined);
+    setPrefilledTransferCategory(operationType === 'blending' ? 'blend' : 'racking');
     setWineryPlanFocusVesselId(sourceVesselId);
     setActiveModule('gvino');
     setActiveTab('transfers');
   }, [setActiveModule, setActiveTab, setPrefilledDestId, setPrefilledSourceId]);
+  const openFillingFromWineryPlan = useCallback((destinationVesselId: string) => {
+    setPrefilledSourceId('');
+    setPrefilledDestId(destinationVesselId);
+    setPrefilledTransferVolume(undefined);
+    setPrefilledTransferCategory('racking');
+    setWineryPlanFocusVesselId(destinationVesselId);
+    setActiveModule('gvino');
+    setActiveTab('transfers');
+  }, [setActiveModule, setActiveTab, setPrefilledDestId, setPrefilledSourceId]);
+  const openBottlingFromWineryPlan = useCallback((sourceVesselId: string) => {
+    setWineryPlanFocusVesselId(sourceVesselId);
+    setWineryPlanBottlingVesselId(sourceVesselId);
+    setActiveModule('gvino');
+    setActiveTab('bottling');
+  }, [setActiveModule, setActiveTab]);
+  const clearWineryPlanBottlingVessel = useCallback(() => setWineryPlanBottlingVesselId(null), []);
   const openWineryPlanForVessel = useCallback((vesselId: string) => {
     setWineryPlanFocusVesselId(vesselId);
     setSelectedTankId(null);
@@ -3201,6 +3221,8 @@ export default function App() {
                   ? (vesselId, operationType) => openRecorder({ kind: 'operation', vesselId, type: operationType })
                   : undefined}
                 onStartTransfer={cellarPermissions.transfers.canExecuteTransfer ? openTransferFromWineryPlan : undefined}
+                onStartFilling={cellarPermissions.transfers.canExecuteTransfer ? openFillingFromWineryPlan : undefined}
+                onOpenBottling={cellarPermissions.bottling.canCreateBottling ? openBottlingFromWineryPlan : undefined}
                 onRecordTransfer={cellarPermissions.transfers.canExecuteTransfer
                   ? (sourceVesselId, destinationVesselId) => openRecorder({ kind: 'transfer', sourceVesselId, destinationVesselId })
                   : undefined}
@@ -3313,6 +3335,7 @@ export default function App() {
                 prefilledSourceId={state.prefilledSourceId}
                 prefilledDestId={state.prefilledDestId}
                 prefilledVolume={prefilledTransferVolume}
+                prefilledCategory={prefilledTransferCategory}
                 pastTransfers={state.transfers}
                 onUpdateTransfers={state.setTransfers}
                 onUpdateCostEntries={state.setCostEntries}
@@ -3394,6 +3417,8 @@ export default function App() {
             {state.activeTab === 'bottling' && (
               <BottlingTab
                 lang={state.lang}
+                initialVesselId={wineryPlanBottlingVesselId || undefined}
+                onInitialVesselConsumed={clearWineryPlanBottlingVessel}
                 {...cellarPermissions.bottling}
                 lots={state.lots}
                 onUpdateLots={state.setLots}

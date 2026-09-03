@@ -87,12 +87,34 @@ describe('CellarPlan', () => {
       onLogOperation: vi.fn(),
       onScheduleOperation: vi.fn(),
       onPlanTransfer: vi.fn(),
+      onOpenBottling: vi.fn(),
     });
 
     expect(markup).toContain('Open wine lot');
     expect(markup).toContain('Record operation');
+    expect(markup).toContain('Available vessel operations');
+    expect(markup).toContain('data-operation-type="fining"');
+    expect(markup).toContain('data-operation-type="custom"');
+    expect(markup).toContain('data-operation-type="bottling"');
     expect(markup).toContain('Assign work');
     expect(markup).toContain('Start transfer');
+  });
+
+  it('draws the top-down footprint from the same physical model used in 3D', () => {
+    const markup = renderPlan({
+      vessels: [vessel('TK-PHYSICAL', {
+        planModel: 'horizontal_tank',
+        planWidthMeters: 3,
+        planDepthMeters: 1.2,
+        planHeightMeters: 1.4,
+        planRotationDegrees: 37,
+      })],
+      selectedVesselId: 'TK-PHYSICAL',
+    });
+
+    expect(markup).toContain('Horizontal tank');
+    expect(markup).toContain('3.0 × 1.2 m');
+    expect(markup).toContain('transform:rotate(37deg)');
   });
 
   it('records sanitation as evidence for an empty vessel instead of a status toggle', () => {

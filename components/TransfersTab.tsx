@@ -14,6 +14,7 @@ import type { CostEntry } from '../lib/costing';
 import { localISODate } from '../lib/weatherApi';
 import { SyncQueueManager, type PendingCommandIntent } from '../lib/syncQueue';
 import {
+  type TransferCategory,
   type TransferCommandPayload,
   type TransferCommandResult,
 } from '../lib/commands/transfer';
@@ -64,6 +65,7 @@ interface Props {
   prefilledSourceId?: string;
   prefilledDestId?: string;
   prefilledVolume?: number;
+  prefilledCategory?: TransferCategory;
   clearPrefilled?: () => void;
   pastTransfers: CellarTransferRecord[];
   onUpdateTransfers: (transfers: CellarTransferRecord[]) => void;
@@ -83,7 +85,7 @@ type TransferRecord = CellarTransferRecord;
 export function TransfersTab({
   lang, vessels, lots, inventory = [], costEntries = [], currency = 'GEL',
   onUpdateVessels, onUpdateLots, onAddCellarOperation,
-  prefilledSourceId, prefilledDestId, prefilledVolume, clearPrefilled, pastTransfers, onUpdateTransfers,
+  prefilledSourceId, prefilledDestId, prefilledVolume, prefilledCategory, clearPrefilled, pastTransfers, onUpdateTransfers,
   onUpdateCostEntries,
   onTransferLogged,
   onApplyTransferCommandResponse, onApplyTransferReversalCommandResponse,
@@ -165,10 +167,13 @@ export function TransfersTab({
     if (prefilledDestId) {
       setDestId(prefilledDestId);
     }
-    if (prefilledSourceId || prefilledDestId) {
+    if (prefilledCategory) {
+      setReasonCategory(prefilledCategory);
+    }
+    if (prefilledSourceId || prefilledDestId || prefilledCategory) {
       clearPrefilled?.();
     }
-  }, [prefilledSourceId, prefilledDestId, prefilledVolume, vessels, clearPrefilled]);
+  }, [prefilledSourceId, prefilledDestId, prefilledVolume, prefilledCategory, vessels, clearPrefilled]);
 
   const saveTransfers = (newXfers: TransferRecord[]) => {
     onUpdateTransfers(newXfers);

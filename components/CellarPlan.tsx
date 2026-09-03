@@ -2,14 +2,14 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeftRight, ArrowRight, Building2, CalendarPlus, Check, ClipboardList, Crosshair, DoorOpen, Droplet,
+  AlertTriangle, ArrowLeftRight, ArrowRight, Building2, CalendarPlus, Check, ClipboardList, Crosshair, DoorOpen, Droplet,
   ArrowDownToLine, Factory, Grid3X3, Layers, Layers3, LayoutGrid, Map as MapIcon, Maximize2, Minus,
   Minimize2, Move, Pencil, PlugZap, Plus, RotateCcw, Ruler, Save, Search, ShieldCheck,
   Thermometer, Trash2, Waves, Wine, Wrench, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
 import type {
-  CellarFloor, CellarOperationType, CellarPlanObject, CellarPlanObjectKind, CellarZoneUse, Task, Vessel, WineLot,
+  CellarFloor, CellarOperationType, CellarPlanObject, CellarPlanObjectKind, CellarZoneUse, Task, Vessel, VesselPlanModel, WineLot,
 } from '../lib/wineryState';
 import type { ProductionPlanItem } from '../lib/operationsControl';
 import {
@@ -17,7 +17,15 @@ import {
   primaryCellarFloorId, snapPlanPosition, vesselsOnFloor,
 } from '../lib/cellarLayout';
 import { vesselTypeLabel } from '../lib/enumLabels';
+import {
+  applyVesselPlan3dSettings,
+  VESSEL_PLAN_MODELS,
+  vesselPlan3dSettings,
+  vesselPlanCollisions,
+  type VesselPlan3dSettings,
+} from '../lib/wineryPlan3d';
 import VesselFill from './VesselFill';
+import VesselOperationMenu from './VesselOperationMenu';
 
 type PlanLayer = 'contents' | 'temperature' | 'sanitation' | 'work';
 type VesselLabelMode = 'vessel' | 'lot' | 'status';
@@ -90,7 +98,9 @@ export interface CellarPlanProps {
   onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
   onRecordSanitation?: (vesselId: string) => void;
   onScheduleOperation?: (vesselId: string) => void;
-  onPlanTransfer?: (sourceVesselId: string, destinationVesselId?: string) => void;
+  onPlanTransfer?: (sourceVesselId: string, destinationVesselId?: string, operationType?: 'racking' | 'blending') => void;
+  onStartFilling?: (destinationVesselId: string) => void;
+  onOpenBottling?: (sourceVesselId: string) => void;
   /**
    * Record the transfer here rather than handing off to the transfers screen.
    * When present it becomes the primary action and `onPlanTransfer` stays as
@@ -121,20 +131,23 @@ function wineMapColor(wineClass: string | undefined): { liquid: string; light: s
   } as Record<string, { liquid: string; light: string }>)[wineClass || 'red'] || { liquid: '#771a2d', light: '#b54d62' };
 }
 
-function vesselMapSize(vessel: Vessel, zoom: number): number {
-  const capacityFactor = Math.max(0, Math.min(6, Math.log2(Math.max(500, vessel.capacity) / 500)));
-  const typeAdjustment = vessel.type === 'barrel' ? -4 : vessel.type === 'qvevri' ? 2 : 0;
-  return Math.round(Math.max(44, Math.min(96, (48 + capacityFactor * 7 + typeAdjustment) * Math.pow(zoom, 0.28))));
+function vesselFootprintSize(settings: VesselPlan3dSettings, pxPerMeter: number, zoom: number) {
+  return {
+    width: Math.max(34, Math.round(settings.widthMeters * pxPerMeter * zoom)),
+    height: Math.max(34, Math.round(settings.depthMeters * pxPerMeter * zoom)),
+  };
 }
 
 function VesselMapGlyph({
-  vessel, fill, wineClass, xRay, size, layer, needsSanitation, openWork,
+  vessel, settings, fill, wineClass, xRay, width, height, layer, needsSanitation, openWork,
 }: {
   vessel: Vessel;
+  settings: VesselPlan3dSettings;
   fill: number;
   wineClass?: string;
   xRay: boolean;
-  size: number;
+  width: number;
+  height: number;
   layer: PlanLayer;
   needsSanitation: boolean;
   openWork: number;
@@ -144,30 +157,34 @@ function VesselMapGlyph({
   const shadowId = `map-shadow-${generatedId}`;
   const colors = wineMapColor(wineClass);
   const pct = Math.max(0, Math.min(100, fill));
-  const horizontal = vessel.type === 'barrel' || vessel.shape === 'horizontal';
-  const qvevri = vessel.type === 'qvevri';
-  const material = vessel.type === 'barrel' ? ['#d7ad71', '#9b6636', '#5d371f']
+  const model = settings.model;
+  const horizontal = model === 'barrel' || model === 'horizontal_tank';
+  const rectangular = model === 'portable' || model === 'concrete';
+  const qvevri = model === 'qvevri';
+  const openTop = model === 'open_top' || model === 'open_top_jacket';
+  const jacketed = model === 'closed_top_jacket' || model === 'open_top_jacket';
+  const material = model === 'barrel' ? ['#d7ad71', '#9b6636', '#5d371f']
     : qvevri ? ['#d4a071', '#a7643d', '#704127']
-      : vessel.type === 'concrete' ? ['#f1f0eb', '#b9b8b2', '#777772']
-        : vessel.type === 'plastic' ? ['#f8fafc', '#dbe2e8', '#8a96a0']
+      : model === 'concrete' ? ['#f1f0eb', '#b9b8b2', '#777772']
+        : model === 'plastic' || model === 'portable' || model === 'insulated' ? ['#ffffff', '#dbe2e8', '#8a96a0']
           : ['#f1f5f9', '#a8b0b8', '#555f68'];
   const statusColor = layer === 'temperature'
     ? vessel.temperature < 10 ? '#38bdf8' : vessel.temperature <= 20 ? '#7dd3fc' : vessel.temperature <= 25 ? '#fbbf24' : '#fb7185'
     : layer === 'sanitation' ? needsSanitation ? '#f59e0b' : '#34d399'
       : layer === 'work' ? openWork ? '#a78bfa' : '#64748b'
         : colors.light;
-  const width = horizontal ? Math.round(size * 1.28) : size;
-  const height = horizontal ? Math.round(size * 0.8) : size;
   const progress = pct * 2.638;
-  return <svg aria-hidden="true" width={width} height={height} viewBox="0 0 100 100" className="overflow-visible drop-shadow-[0_10px_12px_rgba(0,0,0,.45)]">
+  return <svg aria-hidden="true" width={width} height={height} viewBox="0 0 100 100" preserveAspectRatio="none" className="overflow-visible drop-shadow-[0_10px_12px_rgba(0,0,0,.45)]">
     <defs>
       <radialGradient id={metalId} cx="34%" cy="27%" r="72%"><stop offset="0" stopColor={material[0]} /><stop offset="0.45" stopColor={material[1]} /><stop offset="1" stopColor={material[2]} /></radialGradient>
       <filter id={shadowId} x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="5" stdDeviation="4" floodColor="#000" floodOpacity=".48" /></filter>
     </defs>
-    {horizontal ? <g filter={`url(#${shadowId})`}><rect x="5" y="18" width="90" height="64" rx="28" fill={`url(#${metalId})`} stroke={statusColor} strokeWidth="3" /><rect x="13" y="26" width="74" height="48" rx="22" fill={xRay && pct > 0 ? colors.liquid : '#111827'} fillOpacity={xRay && pct > 0 ? 0.72 : 0.12} /><path d="M28 20v60M50 18v64M72 20v60" stroke="#fff" strokeOpacity=".2" strokeWidth="2" /></g> : <g filter={`url(#${shadowId})`}><circle cx="50" cy="50" r="45" fill={`url(#${metalId})`} stroke={statusColor} strokeWidth="3" /><circle cx="50" cy="50" r="34" fill={xRay && pct > 0 ? colors.liquid : '#111827'} fillOpacity={xRay && pct > 0 ? 0.74 : 0.12} /><circle cx="50" cy="50" r="27" fill="none" stroke="#fff" strokeOpacity={qvevri ? 0.2 : 0.13} strokeWidth="2" />{qvevri && <><circle cx="50" cy="50" r="39" fill="none" stroke="#6f3e24" strokeOpacity=".5" strokeWidth="2" /><path d="M20 50h60M50 20v60" stroke="#6f3e24" strokeOpacity=".18" /></>}</g>}
-    {!horizontal && <circle cx="50" cy="50" r="42" fill="none" stroke={colors.light} strokeWidth="4" strokeLinecap="round" strokeDasharray={`${progress} 264`} transform="rotate(-90 50 50)" opacity={xRay ? 0.95 : 0.18} />}
-    <circle cx="50" cy="50" r="8" fill={qvevri ? '#75452c' : '#d8dde2'} stroke="#fff" strokeOpacity=".35" strokeWidth="2" />
-    <circle cx="47" cy="47" r="2" fill="#fff" fillOpacity=".55" />
+    {horizontal ? <g filter={`url(#${shadowId})`}><rect x="4" y="12" width="92" height="76" rx={model === 'barrel' ? 35 : 24} fill={`url(#${metalId})`} stroke={statusColor} strokeWidth="3" /><rect x="11" y="20" width="78" height="60" rx={model === 'barrel' ? 29 : 18} fill={xRay && pct > 0 ? colors.liquid : '#111827'} fillOpacity={xRay && pct > 0 ? 0.7 : 0.1} /><path d="M25 14v72M50 12v76M75 14v72" stroke={model === 'barrel' ? '#4b2a18' : '#fff'} strokeOpacity={model === 'barrel' ? 0.6 : 0.2} strokeWidth="3" /></g>
+      : rectangular ? <g filter={`url(#${shadowId})`}><rect x="5" y="5" width="90" height="90" rx={model === 'portable' ? 10 : 4} fill={`url(#${metalId})`} stroke={statusColor} strokeWidth="3" /><rect x="15" y="15" width="70" height="70" rx={model === 'portable' ? 8 : 2} fill={xRay && pct > 0 ? colors.liquid : '#111827'} fillOpacity={xRay && pct > 0 ? 0.68 : 0.08} />{model === 'portable' && <path d="M27 7v86M50 7v86M73 7v86M7 27h86M7 50h86M7 73h86" stroke="#64748b" strokeOpacity=".5" strokeWidth="2" />}</g>
+        : <g filter={`url(#${shadowId})`}><circle cx="50" cy="50" r="45" fill={`url(#${metalId})`} stroke={statusColor} strokeWidth="3" /><circle cx="50" cy="50" r={openTop ? 37 : 34} fill={xRay && pct > 0 ? colors.liquid : '#111827'} fillOpacity={xRay && pct > 0 ? 0.74 : openTop ? 0.32 : 0.12} /><circle cx="50" cy="50" r={jacketed ? 39 : 27} fill="none" stroke="#fff" strokeOpacity={jacketed ? 0.32 : qvevri ? 0.2 : 0.13} strokeWidth={jacketed ? 5 : 2} />{qvevri && <><circle cx="50" cy="50" r="39" fill="none" stroke="#6f3e24" strokeOpacity=".5" strokeWidth="2" /><path d="M20 50h60M50 20v60" stroke="#6f3e24" strokeOpacity=".18" /></>}</g>}
+    {!horizontal && !rectangular && <circle cx="50" cy="50" r="42" fill="none" stroke={colors.light} strokeWidth="4" strokeLinecap="round" strokeDasharray={`${progress} 264`} transform="rotate(-90 50 50)" opacity={xRay ? 0.95 : 0.18} />}
+    {!openTop && !rectangular && !horizontal && <><circle cx="50" cy="50" r="8" fill={qvevri ? '#75452c' : '#d8dde2'} stroke="#fff" strokeOpacity=".35" strokeWidth="2" /><circle cx="47" cy="47" r="2" fill="#fff" fillOpacity=".55" /></>}
+    <text x="50" y="54" textAnchor="middle" fill="#fff" fillOpacity=".82" fontSize="13" fontWeight="800" style={{ textShadow: '0 1px 3px #000' }}>{Math.round(pct)}%</text>
   </svg>;
 }
 
@@ -193,7 +210,8 @@ function levelLabel(level: number, ka: boolean): string {
 export default function CellarPlan({
   lang, vessels, lots, floors: rawFloors, productionPlans = [], tasks = [],
   selectedVesselId, onSelectVessel, onOpenVessel, onOpenProductionPlan,
-  onOpenLot, onLogOperation, onRecordSanitation, onScheduleOperation, onPlanTransfer, onRecordTransfer, onBatchTopping,
+  onOpenLot, onLogOperation, onRecordSanitation, onScheduleOperation, onPlanTransfer, onStartFilling, onOpenBottling,
+  onRecordTransfer, onBatchTopping,
   onUpdateVessels, onUpdateFloors, canUpdate, immersive = false,
 }: CellarPlanProps) {
   const ka = lang === 'ka';
@@ -213,15 +231,21 @@ export default function CellarPlan({
   const zoomFeedbackTimerRef = useRef<number | null>(null);
   const viewFrameRef = useRef<number | null>(null);
   const spacePressedRef = useRef(false);
+  const zoomModifierPressedRef = useRef(false);
   const storedPositions = useMemo(() => deriveCellarPlanPositions(vessels), [vessels]);
   const storedAssignments = useMemo(() => Object.fromEntries(vessels.map(vessel => [vessel.id, floorIdForVessel(vessel, floors)])), [floors, vessels]);
   const storedPlanObjects = useMemo(
     () => Object.fromEntries(floors.map(floor => [floor.id, normalizeCellarPlanObjects(floor.planObjects, floor)])),
     [floors],
   );
+  const storedPlanSettings = useMemo(
+    () => Object.fromEntries(vessels.map(vessel => [vessel.id, vesselPlan3dSettings(vessel)])),
+    [vessels],
+  );
   const [positions, setPositions] = useState<Record<string, Position>>(storedPositions);
   const [assignments, setAssignments] = useState<Record<string, string>>(storedAssignments);
   const [planObjects, setPlanObjects] = useState<Record<string, CellarPlanObject[]>>(storedPlanObjects);
+  const [planSettings, setPlanSettings] = useState<Record<string, VesselPlan3dSettings>>(storedPlanSettings);
   const [selectedFloorId, setSelectedFloorId] = useState(primaryFloorId);
   const [layer, setLayer] = useState<PlanLayer>('contents');
   const [xRay, setXRay] = useState(true);
@@ -260,6 +284,7 @@ export default function CellarPlan({
     ? floors.find(floor => floor.id === (assignments[selectedVessel.id] || primaryFloorId)) || selectedFloor
     : selectedFloor;
   const selectedLot = selectedVessel?.assignedLotId ? lots.find(lot => lot.id === selectedVessel.assignedLotId) || null : null;
+  const selectedSettings = selectedVessel ? planSettings[selectedVessel.id] || vesselPlan3dSettings(selectedVessel) : null;
   const transferSource = transferSourceId ? vessels.find(vessel => vessel.id === transferSourceId) || null : null;
   const transferDestination = transferDestinationId ? vessels.find(vessel => vessel.id === transferDestinationId) || null : null;
   const transferHeadroom = transferDestination
@@ -285,13 +310,24 @@ export default function CellarPlan({
   const floorCapacity = floorVessels.reduce((sum, vessel) => sum + vessel.capacity, 0);
   const floorVolume = floorVessels.reduce((sum, vessel) => sum + vessel.currentVolume, 0);
   const floorSanitation = floorVessels.filter(vessel => vessel.cleaningStatus !== 'clean').length;
+  const projectedFloorVessels = useMemo(() => floorVessels.map(vessel => {
+    const position = positions[vessel.id] || storedPositions[vessel.id] || { x: 50, y: 50 };
+    const settings = planSettings[vessel.id] || vesselPlan3dSettings(vessel);
+    return applyVesselPlan3dSettings({ ...vessel, xGrid: position.x, yGrid: position.y }, settings);
+  }), [floorVessels, planSettings, positions, storedPositions]);
+  const collisions = useMemo(
+    () => vesselPlanCollisions(projectedFloorVessels, selectedFloor),
+    [projectedFloorVessels, selectedFloor],
+  );
+  const selectedCollisions = selectedVessel ? collisions.get(selectedVessel.id) || [] : [];
 
   useEffect(() => {
     if (editing) return;
     setPositions(storedPositions);
     setAssignments(storedAssignments);
     setPlanObjects(storedPlanObjects);
-  }, [editing, storedAssignments, storedPlanObjects, storedPositions]);
+    setPlanSettings(storedPlanSettings);
+  }, [editing, storedAssignments, storedPlanObjects, storedPlanSettings, storedPositions]);
   useEffect(() => {
     if (!floors.some(floor => floor.id === selectedFloorId)) setSelectedFloorId(primaryFloorId);
   }, [floors, primaryFloorId, selectedFloorId]);
@@ -302,6 +338,23 @@ export default function CellarPlan({
     // Only selection changes should navigate floors; manual floor navigation must remain stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVesselId]);
+  useEffect(() => {
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Control' || event.key === 'Meta') zoomModifierPressedRef.current = true;
+    };
+    const keyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Control' || event.key === 'Meta') zoomModifierPressedRef.current = false;
+    };
+    const resetModifier = () => { zoomModifierPressedRef.current = false; };
+    document.addEventListener('keydown', keyDown);
+    document.addEventListener('keyup', keyUp);
+    window.addEventListener('blur', resetModifier);
+    return () => {
+      document.removeEventListener('keydown', keyDown);
+      document.removeEventListener('keyup', keyUp);
+      window.removeEventListener('blur', resetModifier);
+    };
+  }, []);
 
   const selectPlanVessel = (vesselId: string, additive = false) => {
     if (!editing && transferSourceId && vesselId !== transferSourceId) {
@@ -562,17 +615,31 @@ export default function CellarPlan({
     setPinching(false);
     stopInertia();
   };
-  const beginEditing = () => { clearActiveGestures(); setPositions(storedPositions); setAssignments(storedAssignments); setPlanObjects(storedPlanObjects); setSelectedObjectId(null); setDirty(false); setEditing(true); };
-  const cancelEditing = () => { clearActiveGestures(); setPositions(storedPositions); setAssignments(storedAssignments); setPlanObjects(storedPlanObjects); setSelectedObjectId(null); setDirty(false); setEditing(false); };
+  const beginEditing = () => { clearActiveGestures(); setPositions(storedPositions); setAssignments(storedAssignments); setPlanObjects(storedPlanObjects); setPlanSettings(storedPlanSettings); setSelectedObjectId(null); setDirty(false); setEditing(true); };
+  const cancelEditing = () => { clearActiveGestures(); setPositions(storedPositions); setAssignments(storedAssignments); setPlanObjects(storedPlanObjects); setPlanSettings(storedPlanSettings); setSelectedObjectId(null); setDirty(false); setEditing(false); };
   const arrangeAutomatically = () => { setPositions(current => ({ ...current, ...automaticCellarPlanPositions(floorVessels) })); setDirty(true); };
   const savePlan = () => {
     const lastModified = new Date().toISOString();
-    onUpdateVessels(vessels.map(vessel => ({ ...vessel, cellarFloorId: assignments[vessel.id] || primaryFloorId, xGrid: Math.round((positions[vessel.id]?.x || 50) * 100) / 100, yGrid: Math.round((positions[vessel.id]?.y || 50) * 100) / 100, lastModified })));
+    onUpdateVessels(vessels.map(vessel => applyVesselPlan3dSettings({
+      ...vessel,
+      cellarFloorId: assignments[vessel.id] || primaryFloorId,
+      xGrid: Math.round((positions[vessel.id]?.x || 50) * 100) / 100,
+      yGrid: Math.round((positions[vessel.id]?.y || 50) * 100) / 100,
+      lastModified,
+    }, planSettings[vessel.id] || vesselPlan3dSettings(vessel))));
     if (onUpdateFloors) onUpdateFloors(floors.map(floor => {
       const objects = normalizeCellarPlanObjects(planObjects[floor.id], floor);
       return objects.length > 0 ? { ...floor, planObjects: objects } : { ...floor, planObjects: undefined };
     }));
     clearActiveGestures(); setSelectedObjectId(null); setDirty(false); setEditing(false);
+  };
+  const updateSelectedPlanSettings = (patch: Partial<VesselPlan3dSettings>) => {
+    if (!selectedVessel) return;
+    setPlanSettings(current => ({
+      ...current,
+      [selectedVessel.id]: { ...(current[selectedVessel.id] || vesselPlan3dSettings(selectedVessel)), ...patch },
+    }));
+    setDirty(true);
   };
   const moveSelectedVessel = (floorId: string) => {
     if (!selectedVessel) return;
@@ -806,7 +873,7 @@ export default function CellarPlan({
    * Panning is the drag gesture, which the map already has.
    */
   const handlePlanWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey && !event.metaKey) return;
+    if (!event.ctrlKey && !event.metaKey && !zoomModifierPressedRef.current) return;
     event.preventDefault();
     const delta = event.deltaMode === 1 ? event.deltaY * 18 : event.deltaMode === 2 ? event.deltaY * 120 : event.deltaY;
     const factor = Math.exp(-delta * 0.0016);
@@ -842,7 +909,7 @@ export default function CellarPlan({
   };
 
   return (
-    <section ref={sectionRef} className={`overflow-hidden bg-white dark:bg-stone-900 ${immersive ? 'border-0 shadow-none' : 'border border-stone-200 shadow-sm dark:border-stone-800'} ${isFullscreen ? 'flex h-screen flex-col rounded-none' : immersive ? 'rounded-none' : 'rounded-2xl'}`} data-testid="cellar-plan">
+    <section ref={sectionRef} onWheel={handlePlanWheel} className={`overflow-hidden bg-white dark:bg-stone-900 ${immersive ? 'border-0 shadow-none' : 'border border-stone-200 shadow-sm dark:border-stone-800'} ${isFullscreen ? 'flex h-screen flex-col rounded-none' : immersive ? 'rounded-none' : 'rounded-2xl'}`} data-testid="cellar-plan">
       <header className={`border-b border-stone-100 dark:border-stone-800 ${immersive ? 'p-3' : 'p-4'}`}>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           {!immersive && <div><div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#651522] dark:text-amber-200"><MapIcon className="h-4 w-4" />{ka ? 'მარნის ციფრული გეგმა' : 'Digital cellar plan'}</div><p className="mt-1 max-w-2xl text-xs leading-5 text-stone-500">{ka ? 'მასშტაბური სივრცე, სართულები და ცოცხალი სამუშაოები — ჭურჭლის ფიზიკური მდებარეობიდან ოპერაციამდე.' : 'A scaled, multi-floor workspace that connects each physical vessel to live cellar work.'}</p></div>}
@@ -921,7 +988,7 @@ export default function CellarPlan({
       <div className="border-b border-stone-100 bg-stone-50 px-3 py-2 dark:border-stone-800 dark:bg-stone-950/50"><div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-stone-500"><span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 dark:bg-stone-900"><Ruler className="h-3.5 w-3.5" />{selectedFloor.widthMeters} × {selectedFloor.heightMeters} m</span><span className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 dark:bg-stone-900"><Grid3X3 className="h-3.5 w-3.5" />{selectedFloor.gridMeters} m</span>{canUpdate && onUpdateFloors && <button type="button" onClick={openEditFloor} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-2.5 text-[10px] font-black text-stone-600 transition-colors hover:border-[#651522]/40 hover:text-[#651522] dark:border-stone-700 dark:bg-stone-900"><Pencil className="h-3 w-3" />{ka ? 'სართულის პარამეტრები' : 'Floor settings'}</button>}{editing && <label className="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-stone-200 bg-white px-2.5 dark:border-stone-700 dark:bg-stone-900"><input type="checkbox" checked={snapEnabled} onChange={event => setSnapEnabled(event.target.checked)} className="accent-[#651522]" />{ka ? 'ბადეზე მიბმა' : 'Snap to grid'}</label>}{editing && dirty && <span className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-amber-100 px-2.5 text-[9px] font-black text-amber-800 dark:bg-amber-950 dark:text-amber-200"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />{ka ? 'შეუნახავი ცვლილებები' : 'Unsaved changes'}</span>}</div><div className="flex items-center gap-1 self-end rounded-xl border border-stone-200 bg-white p-1 shadow-sm dark:border-stone-700 dark:bg-stone-900" aria-label={ka ? 'მასშტაბის მართვა' : 'Zoom controls'}><button type="button" onClick={() => changeZoom(zoomRef.current - 0.15)} aria-label={ka ? 'დაპატარავება' : 'Zoom out'} className="rounded-lg p-2 text-stone-500 transition-colors hover:bg-stone-100"><ZoomOut className="h-3.5 w-3.5" /></button><input aria-label={ka ? 'მასშტაბი' : 'Zoom level'} type="range" min="45" max="250" step="1" value={Math.round(zoom * 100)} onChange={event => changeZoom(Number(event.target.value) / 100)} className="w-24 accent-[#651522] sm:w-32" /><span className={`w-10 text-center font-mono text-[9px] font-black transition-colors ${zooming ? 'text-[#651522] dark:text-amber-200' : 'text-stone-500'}`}>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => changeZoom(zoomRef.current + 0.15)} aria-label={ka ? 'გადიდება' : 'Zoom in'} className="rounded-lg p-2 text-stone-500 transition-colors hover:bg-stone-100"><ZoomIn className="h-3.5 w-3.5" /></button><button type="button" onClick={fitPlan} title={ka ? 'მთლიანი გეგმის ჩატევა' : 'Fit entire plan'} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-stone-100 px-2 text-[9px] font-black text-stone-600 transition-colors hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700"><Crosshair className="h-3.5 w-3.5" />{ka ? 'ჩატევა' : 'Fit'}</button><button type="button" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? (ka ? 'სრული ეკრანიდან გამოსვლა' : 'Exit full screen') : (ka ? 'სრულ ეკრანზე გახსნა' : 'Open full screen')} className="rounded-lg p-2 text-stone-500 transition-colors hover:bg-stone-100 dark:hover:bg-stone-800">{isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}</button></div></div></div>
 
       <div className={`grid bg-stone-950 xl:grid-cols-[minmax(0,1fr)_15rem] ${isFullscreen ? 'min-h-0 flex-1' : ''}`}>
-        <div ref={viewportRef} tabIndex={0} aria-label={ka ? `${floorDisplayName(selectedFloor, ka)} ინტერაქტიული გეგმა` : `${floorDisplayName(selectedFloor, ka)} interactive plan`} onKeyDown={handlePlanKeyDown} onKeyUp={event => { if (event.key === ' ') spacePressedRef.current = false; }} onBlur={() => { spacePressedRef.current = false; }} onWheel={handlePlanWheel} onPointerDown={beginCanvasGesture} onPointerMove={moveCanvasGesture} onPointerUp={endCanvasGesture} onPointerCancel={endCanvasGesture} onScroll={scheduleViewWindow} className={`${isFullscreen ? 'h-full' : 'h-[34rem]'} touch-none overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-300 ${canvasPan || pinching ? 'cursor-grabbing select-none' : 'cursor-grab'}`}>
+        <div ref={viewportRef} tabIndex={0} aria-label={ka ? `${floorDisplayName(selectedFloor, ka)} ინტერაქტიული გეგმა` : `${floorDisplayName(selectedFloor, ka)} interactive plan`} onKeyDown={handlePlanKeyDown} onKeyUp={event => { if (event.key === ' ') spacePressedRef.current = false; }} onBlur={() => { spacePressedRef.current = false; }} onPointerDown={beginCanvasGesture} onPointerMove={moveCanvasGesture} onPointerUp={endCanvasGesture} onPointerCancel={endCanvasGesture} onScroll={scheduleViewWindow} className={`${isFullscreen ? 'h-full' : 'h-[34rem]'} touch-none overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-300 ${canvasPan || pinching ? 'cursor-grabbing select-none' : 'cursor-grab'}`}>
           <div className="flex items-center justify-center p-5" style={{ width: `max(100%, ${canvasWidth + 40}px)`, height: `max(100%, ${canvasHeight + 40}px)` }}>
           <div ref={canvasRef} className={`relative shrink-0 overflow-hidden rounded-2xl border bg-stone-900 shadow-2xl transition-[border-color,box-shadow] duration-200 ${editing ? 'border-amber-200/20 shadow-amber-950/20' : 'border-white/10'}`} style={{ width: canvasWidth, height: canvasHeight, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(101,21,34,.14), transparent 42%), linear-gradient(rgba(255,255,255,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.06) 1px, transparent 1px)', backgroundSize: `100% 100%, ${selectedFloor.gridMeters * pxPerMeter * zoom}px ${selectedFloor.gridMeters * pxPerMeter * zoom}px, ${selectedFloor.gridMeters * pxPerMeter * zoom}px ${selectedFloor.gridMeters * pxPerMeter * zoom}px` }}>
             <div className="pointer-events-none absolute inset-x-4 top-3 flex items-center justify-between text-[9px] font-black uppercase tracking-[0.16em] text-stone-500"><span>{floorDisplayName(selectedFloor, ka)} · {levelLabel(selectedFloor.level, ka)}</span><span>{editing ? (ka ? 'განლაგების რედაქტირება' : 'Layout editing') : `${selectedFloor.widthMeters} × ${selectedFloor.heightMeters} m`}</span></div>
@@ -942,10 +1009,50 @@ export default function CellarPlan({
               const selected = vessel.id === selectedVesselId;
               const needsSanitation = vessel.cleaningStatus !== 'clean';
               const work = workByVessel.get(vessel.id) || [];
-              const mapSize = vesselMapSize(vessel, zoom);
+              const settings = planSettings[vessel.id] || vesselPlan3dSettings(vessel);
+              const footprint = vesselFootprintSize(settings, pxPerMeter, zoom);
+              const modelName = VESSEL_PLAN_MODELS.find(model => model.id === settings.model);
+              const vesselCollisions = collisions.get(vessel.id) || [];
               const statusLabel = layer === 'contents' ? `${Math.round(fill)}% · ${vessel.currentVolume.toLocaleString()} L` : layer === 'temperature' ? `${vessel.temperature}°C` : layer === 'sanitation' ? (needsSanitation ? (ka ? 'გასარეცხი' : 'To clean') : (ka ? 'სუფთა' : 'Clean')) : work.length ? `${work.length} ${ka ? 'სამუშაო' : work.length === 1 ? 'work item' : 'work items'}` : (ka ? 'სამუშაო არ არის' : 'No open work');
               const secondaryLabel = labelMode === 'lot' ? lot ? `${lot.id} · ${Math.round(fill)}%` : (ka ? 'თავისუფალი' : 'Available') : labelMode === 'status' ? statusLabel : vesselTypeLabel(vessel.type, lang);
-              return <button key={vessel.id} type="button" data-plan-vessel="true" aria-label={`${vessel.id} · ${Math.round(fill)}% ${ka ? 'შევსებული' : 'full'}${work.length ? ` · ${work.length} ${ka ? 'სამუშაო' : 'work items'}` : ''}`} aria-pressed={selected} onClick={event => selectPlanVessel(vessel.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => { if (!editing && !transferSourceId) onOpenVessel(vessel.id); }} onKeyDown={event => nudge(event, vessel.id)} onPointerDown={event => beginVesselDrag(event, vessel.id)} onPointerMove={moveDraggedEntity} onPointerUp={endDraggedEntity} onPointerCancel={endDraggedEntity} className={`group absolute z-20 flex touch-none -translate-x-1/2 -translate-y-1/2 flex-col items-center text-white will-change-[left,top] focus-visible:outline-none ${draggingId === vessel.id ? 'z-40 cursor-grabbing scale-[1.04] transition-none' : 'transition-[left,top,transform] duration-200 ease-out hover:z-40 hover:scale-[1.04]'} ${editing ? 'cursor-grab' : 'cursor-pointer'} ${transferSourceId && vessel.id !== transferSourceId ? 'ring-offset-stone-950 hover:ring-4 hover:ring-violet-400/40' : ''}`} style={{ left: `${position.x}%`, top: `${position.y}%` }}><span className={`relative rounded-full transition-[filter,box-shadow] duration-200 ${batchIds.includes(vessel.id) ? 'shadow-[0_0_0_3px_rgba(56,189,248,.95),0_0_0_9px_rgba(56,189,248,.2)]' : transferDestinationId === vessel.id ? 'shadow-[0_0_0_3px_rgba(167,139,250,.95),0_0_0_9px_rgba(167,139,250,.18)]' : selected ? 'shadow-[0_0_0_3px_rgba(252,211,77,.85),0_0_0_8px_rgba(252,211,77,.12)]' : 'group-hover:brightness-110'}`}><VesselMapGlyph vessel={vessel} fill={fill} wineClass={lot?.wineClass} xRay={xRay} size={mapSize} layer={layer} needsSanitation={needsSanitation} openWork={work.length} />{layer === 'temperature' && <span className={`absolute -right-2 top-0 rounded-md px-1.5 py-0.5 text-[8px] font-black shadow-lg ${temperatureTone(vessel.temperature)}`}>{vessel.temperature}°</span>}{layer === 'sanitation' && <span className={`absolute -right-1 top-0 flex h-5 w-5 items-center justify-center rounded-full shadow-lg ${needsSanitation ? 'bg-amber-500 text-stone-950' : 'bg-emerald-500 text-white'}`}>{needsSanitation ? '!' : <Check className="h-3 w-3" />}</span>}{layer === 'work' && <span className={`absolute -right-1 top-0 flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[9px] font-black shadow-lg ${work.length ? 'bg-violet-500 text-white' : 'bg-stone-700 text-stone-300'}`}>{work.length}</span>}</span><span className={`mt-1 max-w-32 rounded-lg border px-2 py-1 text-center shadow-lg backdrop-blur-sm transition-colors ${selected ? 'border-amber-300/60 bg-stone-800/95' : 'border-white/10 bg-stone-950/90 group-hover:border-white/25 group-hover:bg-stone-900/95'}`}><strong className="block truncate font-mono text-[9px] text-white">{vessel.id}</strong><span className="mt-0.5 block max-w-28 truncate text-[7px] font-bold text-stone-300">{secondaryLabel}</span></span><span aria-hidden="true" className={`pointer-events-none absolute w-56 rounded-2xl border border-white/10 bg-stone-950/95 p-3 text-left opacity-0 shadow-2xl backdrop-blur-md transition-[opacity,transform] duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 ${position.y < 35 ? 'top-full mt-3 translate-y-1 group-hover:translate-y-0' : 'bottom-full mb-3 -translate-y-1 group-hover:translate-y-0'} ${position.x < 18 ? 'left-0' : position.x > 82 ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}><span className="flex items-center gap-3"><span className="shrink-0 text-stone-200"><VesselFill fillPct={fill} wineClass={lot?.wineClass || 'red'} qvevri={vessel.type === 'qvevri'} width={32} height={42} /></span><span className="min-w-0"><strong className="block truncate text-xs text-white">{vessel.id}</strong><span className="mt-0.5 block truncate text-[9px] font-bold text-stone-300">{lot?.name || (ka ? 'თავისუფალი ჭურჭელი' : 'Available vessel')}</span>{lot && <span className="mt-0.5 block truncate font-mono text-[8px] text-stone-500">{lot.id} · {lot.stage.replace(/_/g, ' ')}</span>}</span></span><span className="mt-3 grid grid-cols-2 gap-1.5"><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'მოცულობა' : 'Volume'}</small><strong className="mt-0.5 block text-[9px] text-stone-200">{vessel.currentVolume.toLocaleString()} / {vessel.capacity.toLocaleString()} L</strong></span><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'სტატუსი' : 'Status'}</small><strong className="mt-0.5 block truncate text-[9px] text-stone-200">{statusLabel}</strong></span></span>{lot?.createdAt && <span className="mt-2 block text-[8px] font-bold text-stone-500">{ka ? 'პირველი ჩანაწერი' : 'First recorded'} · {lot.createdAt}</span>}{!editing && !transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-amber-200">{ka ? 'ორმაგი კლიკი — ჭურჭლის გახსნა' : 'Double-click to open vessel'}</span>}{transferSourceId && vessel.id !== transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-violet-200">{ka ? 'დააჭირეთ მიმღებად ასარჩევად' : 'Click to choose destination'}</span>}</span></button>;
+              return (
+                <button
+                  key={vessel.id}
+                  type="button"
+                  data-plan-vessel="true"
+                  aria-label={`${vessel.id} · ${Math.round(fill)}% ${ka ? 'შევსებული' : 'full'}${work.length ? ` · ${work.length} ${ka ? 'სამუშაო' : 'work items'}` : ''}`}
+                  aria-pressed={selected}
+                  onClick={event => selectPlanVessel(vessel.id, event.ctrlKey || event.metaKey)}
+                  onDoubleClick={() => { if (!editing && !transferSourceId) onOpenVessel(vessel.id); }}
+                  onKeyDown={event => nudge(event, vessel.id)}
+                  onPointerDown={event => beginVesselDrag(event, vessel.id)}
+                  onPointerMove={moveDraggedEntity}
+                  onPointerUp={endDraggedEntity}
+                  onPointerCancel={endDraggedEntity}
+                  className={`group absolute z-20 flex touch-none -translate-x-1/2 -translate-y-1/2 flex-col items-center text-white will-change-[left,top] focus-visible:outline-none ${draggingId === vessel.id ? 'z-40 cursor-grabbing scale-[1.04] transition-none' : 'transition-[left,top,transform] duration-200 ease-out hover:z-40 hover:scale-[1.04]'} ${editing ? 'cursor-grab' : 'cursor-pointer'} ${transferSourceId && vessel.id !== transferSourceId ? 'ring-offset-stone-950 hover:ring-4 hover:ring-violet-400/40' : ''}`}
+                  style={{ left: `${position.x}%`, top: `${position.y}%` }}
+                >
+                  <span
+                    className={`relative transition-[filter,box-shadow,transform] duration-200 ${batchIds.includes(vessel.id) ? 'shadow-[0_0_0_3px_rgba(56,189,248,.95),0_0_0_9px_rgba(56,189,248,.2)]' : transferDestinationId === vessel.id ? 'shadow-[0_0_0_3px_rgba(167,139,250,.95),0_0_0_9px_rgba(167,139,250,.18)]' : selected ? 'shadow-[0_0_0_3px_rgba(252,211,77,.85),0_0_0_8px_rgba(252,211,77,.12)]' : 'group-hover:brightness-110'}`}
+                    style={{ transform: `rotate(${settings.rotationDegrees}deg)` }}
+                  >
+                    <VesselMapGlyph vessel={vessel} settings={settings} fill={fill} wineClass={lot?.wineClass} xRay={xRay} width={footprint.width} height={footprint.height} layer={layer} needsSanitation={needsSanitation} openWork={work.length} />
+                    {layer === 'temperature' && <span className={`absolute -right-2 top-0 rounded-md px-1.5 py-0.5 text-[8px] font-black shadow-lg ${temperatureTone(vessel.temperature)}`} style={{ transform: `rotate(-${settings.rotationDegrees}deg)` }}>{vessel.temperature}°</span>}
+                    {layer === 'sanitation' && <span className={`absolute -right-1 top-0 flex h-5 w-5 items-center justify-center rounded-full shadow-lg ${needsSanitation ? 'bg-amber-500 text-stone-950' : 'bg-emerald-500 text-white'}`} style={{ transform: `rotate(-${settings.rotationDegrees}deg)` }}>{needsSanitation ? '!' : <Check className="h-3 w-3" />}</span>}
+                    {layer === 'work' && <span className={`absolute -right-1 top-0 flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[9px] font-black shadow-lg ${work.length ? 'bg-violet-500 text-white' : 'bg-stone-700 text-stone-300'}`} style={{ transform: `rotate(-${settings.rotationDegrees}deg)` }}>{work.length}</span>}
+                    {vesselCollisions.length > 0 && <span className="absolute -left-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-white shadow-lg" style={{ transform: `rotate(-${settings.rotationDegrees}deg)` }}><AlertTriangle className="h-3 w-3" /></span>}
+                  </span>
+                  <span className={`mt-1 max-w-32 rounded-lg border px-2 py-1 text-center shadow-lg backdrop-blur-sm transition-colors ${selected ? 'border-amber-300/60 bg-stone-800/95' : 'border-white/10 bg-stone-950/90 group-hover:border-white/25 group-hover:bg-stone-900/95'}`}><strong className="block truncate font-mono text-[9px] text-white">{vessel.id}</strong><span className="mt-0.5 block max-w-28 truncate text-[7px] font-bold text-stone-300">{secondaryLabel}</span></span>
+                  <span aria-hidden="true" className={`pointer-events-none absolute w-60 rounded-2xl border border-white/10 bg-stone-950/95 p-3 text-left opacity-0 shadow-2xl backdrop-blur-md transition-[opacity,transform] duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 ${position.y < 35 ? 'top-full mt-3 translate-y-1 group-hover:translate-y-0' : 'bottom-full mb-3 -translate-y-1 group-hover:translate-y-0'} ${position.x < 18 ? 'left-0' : position.x > 82 ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}>
+                    <span className="flex items-center gap-3"><span className="shrink-0 text-stone-200"><VesselFill fillPct={fill} wineClass={lot?.wineClass || 'red'} qvevri={vessel.type === 'qvevri'} width={32} height={42} /></span><span className="min-w-0"><strong className="block truncate text-xs text-white">{vessel.id}</strong><span className="mt-0.5 block truncate text-[9px] font-bold text-stone-300">{lot?.name || (ka ? 'თავისუფალი ჭურჭელი' : 'Available vessel')}</span>{lot && <span className="mt-0.5 block truncate font-mono text-[8px] text-stone-500">{lot.id} · {lot.stage.replace(/_/g, ' ')}</span>}</span></span>
+                    <span className="mt-3 grid grid-cols-2 gap-1.5"><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'მოცულობა' : 'Volume'}</small><strong className="mt-0.5 block text-[9px] text-stone-200">{vessel.currentVolume.toLocaleString()} / {vessel.capacity.toLocaleString()} L</strong></span><span className="rounded-lg bg-white/5 px-2 py-1.5"><small className="block text-[7px] font-black uppercase text-stone-500">{ka ? 'ზედხედი' : 'Footprint'}</small><strong className="mt-0.5 block truncate text-[9px] text-stone-200">{settings.widthMeters.toFixed(1)} × {settings.depthMeters.toFixed(1)} m</strong></span></span>
+                    <span className="mt-2 block truncate text-[8px] font-bold text-stone-500">{modelName ? (ka ? modelName.ka : modelName.en) : settings.model} · {statusLabel}</span>
+                    {vesselCollisions.length > 0 && <span className="mt-1.5 block text-[8px] font-bold text-rose-300">{ka ? 'იკვეთება' : 'Overlaps'}: {vesselCollisions.join(', ')}</span>}
+                    {!editing && !transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-amber-200">{ka ? 'ორმაგი კლიკი — ჭურჭლის გახსნა' : 'Double-click to open vessel'}</span>}
+                    {transferSourceId && vessel.id !== transferSourceId && <span className="mt-1.5 block text-[8px] font-bold text-violet-200">{ka ? 'დააჭირეთ მიმღებად ასარჩევად' : 'Click to choose destination'}</span>}
+                  </span>
+                </button>
+              );
             })}
             {floorVessels.length === 0 && <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-xs font-bold text-stone-500"><Building2 className="mb-3 h-8 w-8 text-stone-700" />{ka ? 'ამ სართულზე ჭურჭელი ჯერ არ არის.' : 'No vessels are assigned to this floor yet.'}{editing && selectedVessel && <button type="button" onClick={() => moveSelectedVessel(selectedFloor.id)} className="mt-3 rounded-xl bg-white/10 px-3 py-2 text-[10px] text-stone-300">{ka ? 'არჩეული ჭურჭლის აქ გადმოტანა' : 'Move selected vessel here'}</button>}</div>}
           </div>
@@ -957,27 +1064,44 @@ export default function CellarPlan({
 
       {selectedVessel && (
         <div className="border-t border-stone-100 p-4 dark:border-stone-800">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0 flex-1">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,28rem)]">
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <strong className="text-sm text-stone-900 dark:text-stone-100">{selectedVessel.id}</strong>
-                <span className="text-[10px] font-bold text-stone-400">{vesselTypeLabel(selectedVessel.type, lang)}</span>
+                <strong className="text-lg text-stone-900 dark:text-stone-100">{selectedVessel.id}</strong>
+                <span className="text-[10px] font-bold text-stone-400">{selectedSettings ? (ka ? VESSEL_PLAN_MODELS.find(model => model.id === selectedSettings.model)?.ka : VESSEL_PLAN_MODELS.find(model => model.id === selectedSettings.model)?.en) : vesselTypeLabel(selectedVessel.type, lang)}</span>
+                <span className={`rounded-lg px-2 py-1 text-[8px] font-black uppercase ${selectedVessel.cleaningStatus === 'clean' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'}`}>{selectedVessel.cleaningStatus.replace('_', ' ')}</span>
                 {positions[selectedVessel.id] && <span className="rounded-md bg-stone-100 px-2 py-1 font-mono text-[9px] text-stone-500 dark:bg-stone-800">{((positions[selectedVessel.id].x / 100) * selectedVesselFloor.widthMeters).toFixed(1)} × {((positions[selectedVessel.id].y / 100) * selectedVesselFloor.heightMeters).toFixed(1)} m</span>}
               </div>
-              <p className="mt-1 truncate text-xs text-stone-500">{selectedLot?.name || (ka ? 'თავისუფალი ჭურჭელი' : 'Available vessel')} · {selectedVessel.currentVolume.toLocaleString()} / {selectedVessel.capacity.toLocaleString()} L · {floorDisplayName(selectedVesselFloor, ka)}</p>
-              {!editing && (onOpenLot || onLogOperation || onRecordSanitation || onScheduleOperation || onPlanTransfer) && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {selectedLot && onOpenLot && <button type="button" onClick={() => onOpenLot(selectedLot.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-stone-200 px-3 text-[10px] font-black text-stone-700 hover:border-[#651522]/35 hover:text-[#651522] dark:border-stone-700 dark:text-stone-200"><Wine className="h-3.5 w-3.5" />{ka ? 'პარტიის გახსნა' : 'Open wine lot'}</button>}
-                  {selectedLot && onLogOperation && <button type="button" onClick={() => onLogOperation(selectedVessel.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-stone-200 px-3 text-[10px] font-black text-stone-700 hover:border-[#651522]/35 hover:text-[#651522] dark:border-stone-700 dark:text-stone-200"><Wrench className="h-3.5 w-3.5" />{ka ? 'ოპერაციის ჩაწერა' : 'Record operation'}</button>}
-                  {selectedVessel.currentVolume <= 0 && selectedVessel.cleaningStatus !== 'clean' && onRecordSanitation && <button type="button" onClick={() => onRecordSanitation(selectedVessel.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-[10px] font-black text-amber-800 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><ShieldCheck className="h-3.5 w-3.5" />{ka ? 'სანიტარიის ჩაწერა' : 'Record sanitation'}</button>}
-                  {onScheduleOperation && <button type="button" onClick={() => onScheduleOperation(selectedVessel.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-violet-100 px-3 text-[10px] font-black text-violet-800 hover:bg-violet-200 dark:bg-violet-950 dark:text-violet-200"><CalendarPlus className="h-3.5 w-3.5" />{ka ? 'სამუშაოს დანიშვნა' : 'Assign work'}</button>}
-                  {selectedLot && selectedVessel.currentVolume > 0 && onPlanTransfer && <button type="button" onClick={() => beginTransferSelection(selectedVessel.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#651522] px-3 text-[10px] font-black text-white hover:bg-[#7a1c2b]"><ArrowLeftRight className="h-3.5 w-3.5" />{ka ? 'გადატანის დაწყება' : 'Start transfer'}</button>}
-                </div>
+              <p className="mt-1 truncate text-xs text-stone-500">{selectedLot?.name || (ka ? 'თავისუფალი ჭურჭელი' : 'Available vessel')} · {floorDisplayName(selectedVesselFloor, ka)}{selectedVessel.locationDetails ? ` · ${selectedVessel.locationDetails}` : ''}</p>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <PlanFact label={ka ? 'მოცულობა' : 'Volume'} value={`${selectedVessel.currentVolume.toLocaleString()} L`} />
+                <PlanFact label={ka ? 'შევსება' : 'Fill'} value={`${Math.round((selectedVessel.currentVolume / Math.max(1, selectedVessel.capacity)) * 100)}%`} />
+                <PlanFact label={ka ? 'ტემპერატურა' : 'Temperature'} value={`${selectedVessel.temperature}°C`} />
+                <PlanFact label={ka ? 'ზედხედი' : 'Footprint'} value={selectedSettings ? `${selectedSettings.widthMeters.toFixed(1)} × ${selectedSettings.depthMeters.toFixed(1)} m` : '—'} />
+              </div>
+              {selectedCollisions.length > 0 && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[10px] font-bold text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span>{ka ? `ზედხედი იკვეთება: ${selectedCollisions.join(', ')}` : `Footprint overlaps ${selectedCollisions.join(', ')}. Move, rotate, or resize the vessel before saving.`}</span></div>}
+              {editing && selectedSettings && (
+                <fieldset className="mt-4 rounded-2xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-700 dark:bg-stone-950/50">
+                  <legend className="px-2 text-[9px] font-black uppercase tracking-[0.12em] text-stone-500">{ka ? 'ფიზიკური მოდელი · 2D და 3D' : 'Physical model · shared by 2D and 3D'}</legend>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <label className="sm:col-span-2"><span className="text-[8px] font-black uppercase tracking-wide text-stone-500">{ka ? 'ჭურჭლის მოდელი' : 'Vessel model'}</span><select value={selectedSettings.model} onChange={event => updateSelectedPlanSettings({ model: event.target.value as VesselPlanModel })} className="mt-1 min-h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-xs font-bold dark:border-stone-700 dark:bg-stone-900">{VESSEL_PLAN_MODELS.map(model => <option key={model.id} value={model.id}>{ka ? model.ka : model.en}</option>)}</select></label>
+                    <VesselDimensionField label={ka ? 'სიგანე, მ' : 'Width, m'} value={selectedSettings.widthMeters} onChange={value => updateSelectedPlanSettings({ widthMeters: value })} />
+                    <VesselDimensionField label={ka ? 'სიღრმე, მ' : 'Depth, m'} value={selectedSettings.depthMeters} onChange={value => updateSelectedPlanSettings({ depthMeters: value })} />
+                    <VesselDimensionField label={ka ? 'სიმაღლე, მ' : 'Height, m'} value={selectedSettings.heightMeters} onChange={value => updateSelectedPlanSettings({ heightMeters: value })} />
+                    <VesselDimensionField label={ka ? 'მიწიდან, მ' : 'From ground, m'} value={selectedSettings.elevationMeters} onChange={value => updateSelectedPlanSettings({ elevationMeters: value })} min={-10} />
+                    <label className="sm:col-span-2"><span className="flex items-center justify-between text-[8px] font-black uppercase tracking-wide text-stone-500"><span>{ka ? 'მობრუნება' : 'Rotation'}</span><span className="font-mono">{Math.round(selectedSettings.rotationDegrees)}°</span></span><input aria-label={ka ? 'ჭურჭლის მობრუნება' : 'Vessel rotation'} type="range" min="0" max="359" step="1" value={selectedSettings.rotationDegrees} onChange={event => updateSelectedPlanSettings({ rotationDegrees: Number(event.target.value) })} className="mt-3 w-full accent-violet-600" /></label>
+                  </div>
+                </fieldset>
               )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {editing && <label className="flex min-h-10 items-center gap-2 rounded-xl border border-stone-200 px-3 text-[10px] font-black text-stone-600 dark:border-stone-700"><Building2 className="h-3.5 w-3.5" /><select aria-label={ka ? 'ჭურჭლის სართული' : 'Vessel floor'} value={assignments[selectedVessel.id] || floors[0].id} onChange={event => moveSelectedVessel(event.target.value)} className="bg-transparent outline-none">{floors.map(floor => <option key={floor.id} value={floor.id}>{floorDisplayName(floor, ka)}</option>)}</select></label>}
-              {!editing && <button type="button" onClick={() => onOpenVessel(selectedVessel.id)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#651522]/25 px-4 text-xs font-black text-[#651522] hover:bg-[#fbf4f5] dark:border-amber-300/30 dark:text-amber-100 dark:hover:bg-amber-950/20">{ka ? 'ჭურჭლის დეტალები' : 'Vessel details'}<ArrowRight className="h-4 w-4" /></button>}
+            <div>
+              <div className="grid grid-cols-2 gap-2">
+                {editing && <label className="col-span-2 flex min-h-10 items-center gap-2 rounded-xl border border-stone-200 px-3 text-[10px] font-black text-stone-600 dark:border-stone-700"><Building2 className="h-3.5 w-3.5" /><select aria-label={ka ? 'ჭურჭლის სართული' : 'Vessel floor'} value={assignments[selectedVessel.id] || floors[0].id} onChange={event => moveSelectedVessel(event.target.value)} className="w-full bg-transparent outline-none">{floors.map(floor => <option key={floor.id} value={floor.id}>{floorDisplayName(floor, ka)}</option>)}</select></label>}
+                {!editing && selectedLot && onOpenLot && <button type="button" onClick={() => onOpenLot(selectedLot.id)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-stone-200 px-3 text-[10px] font-black text-stone-700 hover:border-[#651522]/35 hover:text-[#651522] dark:border-stone-700 dark:text-stone-200"><Wine className="h-3.5 w-3.5" />{ka ? 'პარტიის გახსნა' : 'Open wine lot'}</button>}
+                {!editing && onScheduleOperation && <button type="button" onClick={() => onScheduleOperation(selectedVessel.id)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-violet-100 px-3 text-[10px] font-black text-violet-800 hover:bg-violet-200 dark:bg-violet-950 dark:text-violet-200"><CalendarPlus className="h-3.5 w-3.5" />{ka ? 'სამუშაოს დანიშვნა' : 'Assign work'}</button>}
+                {!editing && <button type="button" onClick={() => onOpenVessel(selectedVessel.id)} className="col-span-2 inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#651522]/25 px-4 text-xs font-black text-[#651522] hover:bg-[#fbf4f5] dark:border-amber-300/30 dark:text-amber-100 dark:hover:bg-amber-950/20">{ka ? 'ჭურჭლის დეტალები' : 'Vessel details'}<ArrowRight className="h-4 w-4" /></button>}
+              </div>
+              {!editing && <VesselOperationMenu lang={lang} vessel={selectedVessel} lot={selectedLot} onLogOperation={onLogOperation} onStartTransfer={onPlanTransfer ? (_sourceId, operationType) => { if (operationType === 'blending') onPlanTransfer(selectedVessel.id, undefined, operationType); else beginTransferSelection(selectedVessel.id); } : undefined} onStartFilling={onStartFilling} onOpenBottling={onOpenBottling} onRecordSanitation={onRecordSanitation} />}
             </div>
           </div>
           {selectedWork.length > 0 && <div className="mt-3 grid gap-2 border-t border-stone-100 pt-3 dark:border-stone-800 sm:grid-cols-2 xl:grid-cols-3">{selectedWork.slice(0, 6).map(plan => { const linkedTask = taskByPlanId.get(plan.id); return <button key={plan.id} type="button" disabled={!onOpenProductionPlan} onClick={() => onOpenProductionPlan?.(plan.id)} className="flex min-h-12 items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/50 px-3 text-left enabled:hover:border-violet-300 dark:border-violet-900 dark:bg-violet-950/20"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-200"><ClipboardList className="h-3.5 w-3.5" /></span><span className="min-w-0 flex-1"><strong className="block truncate text-[10px] text-stone-800 dark:text-stone-100">{plan.title}</strong><span className="mt-0.5 block text-[8px] font-bold text-stone-400">{plan.startDate} · {linkedTask ? (linkedTask.status === 'completed' ? (ka ? 'დავალება დასრულებულია' : 'task completed') : (ka ? 'დავალება ღიაა' : 'task open')) : (ka ? 'დავალება ჯერ არ შექმნილა' : 'no task yet')}</span></span><ArrowRight className="h-3.5 w-3.5 text-violet-400" /></button>; })}</div>}
@@ -985,6 +1109,14 @@ export default function CellarPlan({
       )}
     </section>
   );
+}
+
+function PlanFact({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-xl bg-stone-100 px-3 py-2 dark:bg-stone-800"><span className="block text-[7px] font-black uppercase tracking-wider text-stone-500">{label}</span><strong className="mt-0.5 block truncate text-[10px] text-stone-900 dark:text-white">{value}</strong></div>;
+}
+
+function VesselDimensionField({ label, value, onChange, min = 0.2 }: { label: string; value: number; onChange: (value: number) => void; min?: number }) {
+  return <label><span className="text-[8px] font-black uppercase tracking-wide text-stone-500">{label}</span><input type="number" min={min} max="30" step="0.1" value={Number(value.toFixed(2))} onChange={event => { const next = Number(event.target.value); if (Number.isFinite(next)) onChange(next); }} className="mt-1 min-h-10 w-full rounded-xl border border-stone-200 bg-white px-2 text-xs font-bold dark:border-stone-700 dark:bg-stone-900" /></label>;
 }
 
 interface CellarPlanSidebarProps {

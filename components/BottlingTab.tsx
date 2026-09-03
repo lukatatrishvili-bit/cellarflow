@@ -42,6 +42,9 @@ import { localISODate } from '../lib/weatherApi';
 
 interface Props {
   lang: Language;
+  /** Vessel context carried from the winery plan's operation menu. */
+  initialVesselId?: string;
+  onInitialVesselConsumed?: () => void;
   canCreateBottling?: boolean;
   canReverseBottling?: boolean;
   canUseBottlingCosting?: boolean;
@@ -103,6 +106,8 @@ const PACKAGING_COMPONENTS: Array<{ key: BottlingPackagingComponent; en: string;
 
 export function BottlingTab({
   lang,
+  initialVesselId,
+  onInitialVesselConsumed,
   canCreateBottling = true,
   canReverseBottling = true,
   canUseBottlingCosting = true,
@@ -145,9 +150,15 @@ export function BottlingTab({
     [lots, pendingIntent?.payload.lotId, vessels],
   );
 
-  const [lotId, setLotId] = useState(bottleable[0]?.id || '');
+  const initialVessel = initialVesselId ? vessels.find(vessel => vessel.id === initialVesselId) : undefined;
+  const initialLotId = initialVessel?.assignedLotId && bottleable.some(lot => lot.id === initialVessel.assignedLotId)
+    ? initialVessel.assignedLotId
+    : bottleable[0]?.id || '';
+  const [lotId, setLotId] = useState(initialLotId);
   const [sourceVesselId, setSourceVesselId] = useState(() => (
-    vessels.find(vessel => vessel.assignedLotId === bottleable[0]?.id && vessel.currentVolume > 0)?.id || ''
+    initialVessel && initialVessel.assignedLotId === initialLotId && initialVessel.currentVolume > 0
+      ? initialVessel.id
+      : vessels.find(vessel => vessel.assignedLotId === initialLotId && vessel.currentVolume > 0)?.id || ''
   ));
   const [date, setDate] = useState(localISODate());
   const [lotNumber, setLotNumber] = useState('');
@@ -205,6 +216,16 @@ export function BottlingTab({
       setSourceVesselId(sourceVessels[0]?.id || '');
     }
   }, [pendingIntent, sourceVesselId, sourceVessels]);
+
+  useEffect(() => {
+    if (!initialVesselId) return;
+    onInitialVesselConsumed?.();
+    if (pendingIntent) return;
+    const preferred = vessels.find(vessel => vessel.id === initialVesselId && vessel.currentVolume > 0);
+    if (!preferred?.assignedLotId || !bottleable.some(candidate => candidate.id === preferred.assignedLotId)) return;
+    setLotId(preferred.assignedLotId);
+    setSourceVesselId(preferred.id);
+  }, [bottleable, initialVesselId, onInitialVesselConsumed, pendingIntent, vessels]);
 
   const displayedFormats = useMemo(() => {
     const known = new Set(BOTTLE_FORMATS.map(format => format.key));

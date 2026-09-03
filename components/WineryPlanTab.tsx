@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   ArrowRightLeft,
   Box,
@@ -55,7 +56,9 @@ interface WineryPlanTabProps {
   onOpenVessel: (vesselId: string) => void;
   onOpenLot?: (lotId: string) => void;
   onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
-  onStartTransfer?: (sourceVesselId: string, destinationVesselId?: string) => void;
+  onStartTransfer?: (sourceVesselId: string, destinationVesselId?: string, operationType?: 'racking' | 'blending') => void;
+  onStartFilling?: (destinationVesselId: string) => void;
+  onOpenBottling?: (sourceVesselId: string) => void;
   /** Opens the shell's transfer recorder for these two vessels. */
   onRecordTransfer?: (sourceVesselId: string, destinationVesselId: string) => void;
   /**
@@ -113,6 +116,8 @@ export default function WineryPlanTab({
   onOpenLot,
   onLogOperation,
   onStartTransfer,
+  onStartFilling,
+  onOpenBottling,
   onRecordTransfer,
   onBatchTopping,
   batchToppingProgress,
@@ -124,6 +129,7 @@ export default function WineryPlanTab({
   setToastMessage,
 }: WineryPlanTabProps) {
   const ka = lang === 'ka';
+  const reduceMotion = useReducedMotion();
   const [selectedVesselId, setSelectedVesselId] = React.useState<string | null>(
     initialVesselId && vessels.some(vessel => vessel.id === initialVesselId)
       ? initialVesselId
@@ -132,6 +138,23 @@ export default function WineryPlanTab({
   const [scheduleVesselId, setScheduleVesselId] = React.useState<string | null>(null);
   const [sanitationVesselId, setSanitationVesselId] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<'top-down' | '3d'>('top-down');
+  const [viewDirection, setViewDirection] = React.useState(1);
+  React.useEffect(() => {
+    // Warm the Three.js chunk while the user reads the plan. The actual canvas
+    // remains unmounted until requested, but the first perspective change no
+    // longer stalls on a network/parse boundary.
+    const preload = () => { void import('./WineryPlan3D'); };
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof idleWindow.requestIdleCallback === 'function') {
+      const handle = idleWindow.requestIdleCallback(preload, { timeout: 1_500 });
+      return () => idleWindow.cancelIdleCallback?.(handle);
+    }
+    const handle = window.setTimeout(preload, 250);
+    return () => window.clearTimeout(handle);
+  }, []);
   React.useEffect(() => {
     if (!initialVesselId || !vessels.some(vessel => vessel.id === initialVesselId)) return;
     setSelectedVesselId(initialVesselId);
@@ -140,6 +163,11 @@ export default function WineryPlanTab({
   const selectVessel = (vesselId: string) => {
     setSelectedVesselId(vesselId);
     onSelectedVesselChange?.(vesselId);
+  };
+  const switchView = (next: 'top-down' | '3d') => {
+    if (next === viewMode) return;
+    setViewDirection(next === '3d' ? 1 : -1);
+    React.startTransition(() => setViewMode(next));
   };
 
   const [batchVesselIds, setBatchVesselIds] = React.useState<string[] | null>(null);
@@ -170,8 +198,8 @@ export default function WineryPlanTab({
 
         <div className="ml-2 flex shrink-0 overflow-hidden rounded-md border border-slate-950/50 bg-slate-100 text-[10px] font-black text-slate-800 shadow-sm" aria-label={ka ? 'ხედის არჩევა' : 'View selector'}>
           <span className="flex items-center border-r border-slate-300 bg-white px-3 text-[8px] uppercase tracking-wider text-slate-500">{ka ? 'ხედი' : 'View'}</span>
-          <button type="button" aria-pressed={viewMode === 'top-down'} onClick={() => setViewMode('top-down')} className={`min-h-9 border-r border-slate-300 px-3 ${viewMode === 'top-down' ? 'bg-sky-100 text-slate-900' : 'bg-slate-100 text-slate-500 hover:bg-white'}`}>{ka ? 'ზემოდან' : 'Top-down'}</button>
-          <button type="button" aria-pressed={viewMode === '3d'} onClick={() => setViewMode('3d')} className={`inline-flex min-h-9 items-center gap-1.5 px-3 ${viewMode === '3d' ? 'bg-sky-100 text-slate-900' : 'bg-slate-100 text-slate-500 hover:bg-white'}`}><Box className="h-3 w-3" />3D</button>
+          <button type="button" aria-pressed={viewMode === 'top-down'} onClick={() => switchView('top-down')} className={`min-h-9 border-r border-slate-300 px-3 transition-colors duration-200 ${viewMode === 'top-down' ? 'bg-sky-100 text-slate-900' : 'bg-slate-100 text-slate-500 hover:bg-white'}`}>{ka ? 'ზემოდან' : 'Top-down'}</button>
+          <button type="button" aria-pressed={viewMode === '3d'} onClick={() => switchView('3d')} className={`inline-flex min-h-9 items-center gap-1.5 px-3 transition-colors duration-200 ${viewMode === '3d' ? 'bg-sky-100 text-slate-900' : 'bg-slate-100 text-slate-500 hover:bg-white'}`}><Box className="h-3 w-3" />3D</button>
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -192,48 +220,66 @@ export default function WineryPlanTab({
         </p>
       </div>
 
-      {viewMode === 'top-down' ? <CellarPlan
-          lang={lang}
-          vessels={vessels}
-          lots={lots}
-          floors={floors}
-          productionPlans={productionPlans}
-          tasks={tasks}
-          selectedVesselId={selectedVesselId}
-          onSelectVessel={selectVessel}
-          onOpenVessel={onOpenVessel}
-          onOpenLot={onOpenLot}
-          onLogOperation={onLogOperation}
-          onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
-          onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
-          onPlanTransfer={onStartTransfer}
-          onRecordTransfer={onRecordTransfer ? (sourceId, destinationId) => onRecordTransfer(sourceId, destinationId) : undefined}
-          onBatchTopping={onBatchTopping
-            ? (vesselIds) => { setBatchError(null); setBatchVesselIds(vesselIds); }
-            : undefined}
-          onOpenProductionPlan={onOpenProductionPlan}
-          onUpdateVessels={onUpdateVessels}
-          onUpdateFloors={onUpdateFloors}
-          canUpdate={canUpdateLayout}
-          immersive
-        /> : <React.Suspense fallback={<div className="flex min-h-[690px] items-center justify-center bg-slate-800 text-xs font-black text-slate-200"><Box className="mr-2 h-5 w-5 animate-pulse" />{ka ? '3D მარნის ჩატვირთვა…' : 'Loading 3D winery…'}</div>}>
-          <WineryPlan3D
-            lang={lang}
-            vessels={vessels}
-            lots={lots}
-            floors={floors}
-            selectedVesselId={selectedVesselId}
-            onSelectVessel={selectVessel}
-            onUpdateVessels={onUpdateVessels}
-            onOpenVessel={onOpenVessel}
-            onOpenLot={onOpenLot}
-            onLogOperation={onLogOperation}
-            onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
-            onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
-            onPlanTransfer={onStartTransfer}
-            canUpdate={canUpdateLayout}
-          />
-        </React.Suspense>}
+      <div className="relative min-h-[690px] overflow-hidden bg-slate-900" data-view-transition={viewMode}>
+        <AnimatePresence initial={false} mode="wait" custom={viewDirection}>
+          <motion.div
+            key={viewMode}
+            custom={viewDirection}
+            initial={reduceMotion ? false : { opacity: 0, scale: viewDirection > 0 ? 0.985 : 1.015, filter: 'blur(5px)' }}
+            animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+            exit={reduceMotion ? { opacity: 0, pointerEvents: 'none' } : { opacity: 0, scale: viewDirection > 0 ? 1.012 : 0.988, filter: 'blur(4px)', pointerEvents: 'none' }}
+            transition={reduceMotion ? { duration: 0.01 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            className="w-full origin-center transform-gpu"
+          >
+            {viewMode === 'top-down' ? <CellarPlan
+              lang={lang}
+              vessels={vessels}
+              lots={lots}
+              floors={floors}
+              productionPlans={productionPlans}
+              tasks={tasks}
+              selectedVesselId={selectedVesselId}
+              onSelectVessel={selectVessel}
+              onOpenVessel={onOpenVessel}
+              onOpenLot={onOpenLot}
+              onLogOperation={onLogOperation}
+              onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
+              onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
+              onPlanTransfer={onStartTransfer}
+              onStartFilling={onStartFilling}
+              onOpenBottling={onOpenBottling}
+              onRecordTransfer={onRecordTransfer ? (sourceId, destinationId) => onRecordTransfer(sourceId, destinationId) : undefined}
+              onBatchTopping={onBatchTopping
+                ? (vesselIds) => { setBatchError(null); setBatchVesselIds(vesselIds); }
+                : undefined}
+              onOpenProductionPlan={onOpenProductionPlan}
+              onUpdateVessels={onUpdateVessels}
+              onUpdateFloors={onUpdateFloors}
+              canUpdate={canUpdateLayout}
+              immersive
+            /> : <React.Suspense fallback={<div className="flex min-h-[690px] items-center justify-center bg-slate-800 text-xs font-black text-slate-200"><Box className="mr-2 h-5 w-5 animate-pulse" />{ka ? '3D მარნის ჩატვირთვა…' : 'Loading 3D winery…'}</div>}>
+              <WineryPlan3D
+                lang={lang}
+                vessels={vessels}
+                lots={lots}
+                floors={floors}
+                selectedVesselId={selectedVesselId}
+                onSelectVessel={selectVessel}
+                onUpdateVessels={onUpdateVessels}
+                onOpenVessel={onOpenVessel}
+                onOpenLot={onOpenLot}
+                onLogOperation={onLogOperation}
+                onRecordSanitation={canUpdateLayout ? setSanitationVesselId : undefined}
+                onScheduleOperation={canScheduleWork ? setScheduleVesselId : undefined}
+                onPlanTransfer={onStartTransfer}
+                onStartFilling={onStartFilling}
+                onOpenBottling={onOpenBottling}
+                canUpdate={canUpdateLayout}
+              />
+            </React.Suspense>}
+          </motion.div>
+        </AnimatePresence>
+      </div>
 
       {batchVesselIds && onBatchTopping && (
         <React.Suspense fallback={null}>

@@ -5,7 +5,6 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   AlertTriangle,
-  ArrowLeftRight,
   Box,
   CalendarPlus,
   Check,
@@ -16,9 +15,7 @@ import {
   Plus,
   RotateCcw,
   Save,
-  ShieldCheck,
   Wine,
-  Wrench,
   X,
 } from 'lucide-react';
 import type { Language } from '../lib/i18n';
@@ -33,6 +30,7 @@ import {
   vesselPlanWorldPosition,
   type VesselPlan3dSettings,
 } from '../lib/wineryPlan3d';
+import VesselOperationMenu from './VesselOperationMenu';
 
 interface WineryPlan3DProps {
   lang: Language;
@@ -47,7 +45,9 @@ interface WineryPlan3DProps {
   onLogOperation?: (vesselId: string, operationType?: CellarOperationType) => void;
   onRecordSanitation?: (vesselId: string) => void;
   onScheduleOperation?: (vesselId: string) => void;
-  onPlanTransfer?: (sourceVesselId: string) => void;
+  onPlanTransfer?: (sourceVesselId: string, destinationVesselId?: string, operationType?: 'racking' | 'blending') => void;
+  onStartFilling?: (destinationVesselId: string) => void;
+  onOpenBottling?: (sourceVesselId: string) => void;
   canUpdate: boolean;
 }
 
@@ -255,6 +255,8 @@ export default function WineryPlan3D({
   onRecordSanitation,
   onScheduleOperation,
   onPlanTransfer,
+  onStartFilling,
+  onOpenBottling,
   canUpdate,
 }: WineryPlan3DProps) {
   const ka = lang === 'ka';
@@ -643,13 +645,13 @@ export default function WineryPlan3D({
             <label className="block"><FieldLabel>{ka ? 'სართული' : 'Floor assignment'}</FieldLabel><select value={floorIdForVessel(selectedVessel, floors)} onChange={event => { updateSelected({ cellarFloorId: event.target.value }); setSelectedFloorId(event.target.value); }} className="mt-1 min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold dark:border-slate-700 dark:bg-slate-950">{floors.map(floor => <option key={floor.id} value={floor.id}>{floor.name}</option>)}</select></label>
           </fieldset>
 
-          {!editing && <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-200 pt-4 dark:border-slate-700">
-            {selectedLot && onOpenLot && <Action icon={Wine} label={ka ? 'პარტიის გახსნა' : 'Open wine lot'} onClick={() => onOpenLot(selectedLot.id)} />}
-            {onLogOperation && <Action icon={Wrench} label={ka ? 'ოპერაციის ჩაწერა' : 'Record operation'} onClick={() => onLogOperation(selectedVessel.id)} />}
-            {onScheduleOperation && <Action icon={CalendarPlus} label={ka ? 'სამუშაოს დანიშვნა' : 'Assign work'} onClick={() => onScheduleOperation(selectedVessel.id)} />}
-            {selectedVessel.currentVolume > 0 && onPlanTransfer && <Action icon={ArrowLeftRight} label={ka ? 'გადატანის დაწყება' : 'Start transfer'} onClick={() => onPlanTransfer(selectedVessel.id)} />}
-            {selectedVessel.currentVolume <= 0 && selectedVessel.cleaningStatus !== 'clean' && onRecordSanitation && <Action icon={ShieldCheck} label={ka ? 'სანიტარიის ჩაწერა' : 'Record sanitation'} onClick={() => onRecordSanitation(selectedVessel.id)} />}
-            <Action icon={Check} label={ka ? 'ჭურჭლის დეტალები' : 'Vessel details'} onClick={() => onOpenVessel(selectedVessel.id)} />
+          {!editing && <div className="mt-4 border-t border-slate-200 pt-4 dark:border-slate-700">
+            <div className="grid grid-cols-2 gap-2">
+              {selectedLot && onOpenLot && <Action icon={Wine} label={ka ? 'პარტიის გახსნა' : 'Open wine lot'} onClick={() => onOpenLot(selectedLot.id)} />}
+              {onScheduleOperation && <Action icon={CalendarPlus} label={ka ? 'სამუშაოს დანიშვნა' : 'Assign work'} onClick={() => onScheduleOperation(selectedVessel.id)} />}
+              <Action icon={Check} label={ka ? 'ჭურჭლის დეტალები' : 'Vessel details'} onClick={() => onOpenVessel(selectedVessel.id)} />
+            </div>
+            <VesselOperationMenu lang={lang} vessel={selectedVessel} lot={selectedLot} onLogOperation={onLogOperation} onStartTransfer={onPlanTransfer ? (sourceVesselId, operationType) => onPlanTransfer(sourceVesselId, undefined, operationType) : undefined} onStartFilling={onStartFilling} onOpenBottling={onOpenBottling} onRecordSanitation={onRecordSanitation} />
           </div>}
         </div> : <div className="flex flex-1 items-center justify-center p-8 text-center text-xs font-semibold text-slate-500">{ka ? 'აირჩიეთ ჭურჭელი 3D რუკაზე.' : 'Select a vessel in the 3D room to inspect, operate, or edit it.'}</div>}
       </aside>

@@ -35,6 +35,8 @@ describe('WineryPlanTab', () => {
       onOpenLot={vi.fn()}
       onLogOperation={vi.fn()}
       onStartTransfer={vi.fn()}
+      onStartFilling={vi.fn()}
+      onOpenBottling={vi.fn()}
       onOpenPlanner={vi.fn()}
       onBackToWinery={vi.fn()}
       canUpdateLayout
@@ -52,5 +54,7 @@ describe('WineryPlanTab', () => {
     expect(markup).toContain('Record operation');
     expect(markup).toContain('Assign work');
     expect(markup).toContain('Start transfer');
+    expect(markup).toContain('data-operation-type="bottling"');
+    expect(markup).toContain('data-view-transition="top-down"');
   });
 });
